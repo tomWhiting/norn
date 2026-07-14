@@ -4,6 +4,8 @@
 //! norn: PKCE browser login, `~/.codex/auth.json` storage, proactive refresh,
 //! revocation, and status/JWT helpers.
 
+mod browser;
+mod code_exchange;
 mod endpoints;
 pub mod jwt;
 mod login_server;

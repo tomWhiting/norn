@@ -222,7 +222,6 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
             let entry = tool_calls_map.get(merge_key)?;
             let call_id = entry.call_id.clone().unwrap_or_else(|| {
                 tracing::warn!(
-                    merge_key = merge_key.as_str(),
                     "ToolCallComplete never arrived; promoting streaming merge key to call_id (the model will likely reject the echo)",
                 );
                 merge_key.clone()
@@ -271,7 +270,46 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
     clippy::match_wildcard_for_single_variants
 )]
 mod tests {
+    use std::io;
+    use std::sync::{Arc, Mutex};
+
     use super::*;
+
+    #[derive(Clone, Default)]
+    struct SharedLog(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for SharedLog {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            let mut destination = self
+                .0
+                .lock()
+                .map_err(|error| io::Error::other(format!("shared log lock poisoned: {error}")))?;
+            std::io::Write::write(&mut *destination, buffer)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for SharedLog {
+        type Writer = Self;
+
+        fn make_writer(&'writer self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    impl SharedLog {
+        fn rendered(&self) -> io::Result<String> {
+            let bytes = self
+                .0
+                .lock()
+                .map_err(|error| io::Error::other(format!("shared log lock poisoned: {error}")))?
+                .clone();
+            String::from_utf8(bytes).map_err(io::Error::other)
+        }
+    }
 
     #[test]
     fn text_only_response() {
@@ -601,6 +639,44 @@ mod tests {
         let resp = assemble_response(&events).expect("assembled");
         assert_eq!(resp.tool_calls.len(), 1);
         assert_eq!(resp.tool_calls[0].kind, ToolCallKind::Function);
+    }
+
+    #[test]
+    fn fallback_warning_does_not_disclose_streaming_merge_key()
+    -> Result<(), Box<dyn std::error::Error>> {
+        const SECRET_MERGE_KEY: &str = "merge-key-secret-must-not-escape";
+        let events = vec![
+            ProviderEvent::ToolCallDelta {
+                item_id: SECRET_MERGE_KEY.to_owned(),
+                call_id: None,
+                name: Some("read".to_owned()),
+                arguments_delta: "{}".to_owned(),
+                kind: ToolCallKind::Function,
+            },
+            ProviderEvent::Done {
+                stop_reason: StopReason::ToolUse,
+                usage: Usage::default(),
+                response_id: None,
+            },
+        ];
+        let logs = SharedLog::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(logs.clone())
+            .finish();
+        let response = tracing::subscriber::with_default(subscriber, || assemble_response(&events))
+            .ok_or_else(|| io::Error::other("delta-only response did not assemble"))?;
+
+        assert_eq!(response.tool_calls[0].call_id, SECRET_MERGE_KEY);
+        let rendered = logs.rendered()?;
+        assert!(
+            rendered.contains("ToolCallComplete never arrived"),
+            "warning was not captured: {rendered}"
+        );
+        assert!(!rendered.contains(SECRET_MERGE_KEY), "trace: {rendered}");
+        Ok(())
     }
 
     #[test]

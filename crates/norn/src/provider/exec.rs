@@ -126,11 +126,7 @@ impl StreamExecutor {
         }
 
         let request_start = std::time::Instant::now();
-        tracing::debug!(
-            endpoint = %self.endpoint,
-            backend = self.backend_label,
-            "provider request starting"
-        );
+        tracing::debug!(backend = self.backend_label, "provider request starting");
 
         let response = self.send_with_retries(&body).await?;
 
@@ -203,23 +199,26 @@ impl StreamExecutor {
                     );
                     resp
                 }
-                Err(e) => {
+                Err(error) => {
+                    let is_timeout = error.is_timeout();
+                    let is_connect = error.is_connect();
+                    let error = error.without_url();
                     tracing::warn!(
                         elapsed_s = send_start.elapsed().as_secs_f64(),
-                        is_timeout = e.is_timeout(),
-                        is_connect = e.is_connect(),
-                        error = %e,
+                        is_timeout,
+                        is_connect,
+                        error = %error,
                         backend = self.backend_label,
                         "provider request failed"
                     );
-                    if e.is_timeout() {
+                    if is_timeout {
                         return Err(ProviderError::ConnectionFailed {
-                            reason: format!("connection timed out: {e}"),
+                            reason: format!("connection timed out: {error}"),
                             kind: TransientKind::Timeout,
                         });
                     }
                     return Err(ProviderError::ConnectionFailed {
-                        reason: format!("request failed: {e}"),
+                        reason: format!("request failed: {error}"),
                         kind: TransientKind::ConnectionReset,
                     });
                 }
@@ -335,11 +334,15 @@ impl StreamExecutor {
                 };
             }
             Ok(Err(error)) => {
+                let is_timeout = error.is_timeout();
+                let is_body = error.is_body();
+                let error = error.without_url();
                 tracing::warn!(
                     status = status.as_u16(),
-                    is_timeout = error.is_timeout(),
-                    is_body = error.is_body(),
+                    is_timeout,
+                    is_body,
                     backend = self.backend_label,
+                    error = %error,
                     "failed while discarding provider error-response body"
                 );
             }
@@ -398,18 +401,19 @@ impl StreamExecutor {
             let Some(chunk_result) = next else {
                 break;
             };
-            let chunk = chunk_result.map_err(|e| {
+            let chunk = chunk_result.map_err(|error| {
+                let error = error.without_url();
                 tracing::warn!(
                     stream_elapsed_s = stream_start.elapsed().as_secs_f64(),
                     since_last_chunk_s = last_chunk.elapsed().as_secs_f64(),
                     chunks_received = chunk_count,
                     events_parsed = event_count,
-                    error = %e,
+                    error = %error,
                     backend = self.backend_label,
                     "SSE stream interrupted"
                 );
                 ProviderError::StreamInterrupted {
-                    reason: format!("connection lost mid-stream: {e}"),
+                    reason: format!("connection lost mid-stream: {error}"),
                 }
             })?;
             chunk_count = chunk_count.saturating_add(1);

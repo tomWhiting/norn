@@ -194,11 +194,8 @@ async fn run_concurrent_step(
             CallPlan::Execute { .. } => {
                 let Some(result) = results.next() else {
                     return Err(NornError::Tool(ToolError::ExecutionFailed {
-                        reason: format!(
-                            "internal scheduling error: missing concurrent result for tool call \
-                             '{}'",
-                            tc.call_id,
-                        ),
+                        reason: "internal scheduling error: missing concurrent tool result"
+                            .to_owned(),
                     }));
                 };
                 injections.extend(
@@ -228,7 +225,7 @@ async fn run_spawned_members(
     prepared: &[PreparedCall],
     loop_context: &LoopContext,
 ) -> Vec<SingleToolResult> {
-    let mut handles: Vec<(usize, AbortOnDropHandle<SingleToolResult>)> = Vec::new();
+    let mut handles: Vec<AbortOnDropHandle<SingleToolResult>> = Vec::new();
     for p in prepared {
         let CallPlan::Execute { args_override } = &p.plan else {
             continue;
@@ -241,34 +238,29 @@ async fn run_spawned_members(
             .clone()
             .unwrap_or_else(|| tc.arguments.clone());
         let diagnostics = loop_context.diagnostics.clone();
-        handles.push((
-            p.tc_index,
-            AbortOnDropHandle::new(tokio::spawn(async move {
-                execute_single_tool(
-                    executor.as_ref(),
-                    &name,
-                    &call_id,
-                    &args,
-                    diagnostics.as_ref(),
-                )
-                .await
-            })),
-        ));
+        handles.push(AbortOnDropHandle::new(tokio::spawn(async move {
+            execute_single_tool(
+                executor.as_ref(),
+                &name,
+                &call_id,
+                &args,
+                diagnostics.as_ref(),
+            )
+            .await
+        })));
     }
 
     let mut results = Vec::with_capacity(handles.len());
-    for (tc_index, handle) in handles {
+    for handle in handles {
         match handle.await {
             Ok(result) => results.push(result),
             Err(join_error) => {
-                let tc = &response.tool_calls[tc_index];
                 tracing::error!(
-                    tool = %tc.name,
-                    call_id = %tc.call_id,
-                    error = %join_error,
+                    task_cancelled = join_error.is_cancelled(),
+                    task_panicked = join_error.is_panic(),
                     "concurrent tool task did not complete; surfacing a structured failure",
                 );
-                results.push(join_failure_result(&tc.name, &join_error));
+                results.push(join_failure_result(&join_error));
             }
         }
     }
@@ -280,11 +272,15 @@ async fn run_spawned_members(
 /// payload rides the same `error`-key wire shape as every other tool
 /// failure so downstream phases (action log, post-tool hooks, the
 /// model-facing result) treat it uniformly.
-fn join_failure_result(tool_name: &str, join_error: &tokio::task::JoinError) -> SingleToolResult {
-    let payload = ToolErrorPayload::new(
-        ToolErrorKind::ExecutionFailed,
-        format!("tool '{tool_name}' task did not complete: {join_error}"),
-    );
+fn join_failure_result(join_error: &tokio::task::JoinError) -> SingleToolResult {
+    let message = if join_error.is_cancelled() {
+        "concurrent tool task was cancelled"
+    } else if join_error.is_panic() {
+        "concurrent tool task panicked"
+    } else {
+        "concurrent tool task did not complete"
+    };
+    let payload = ToolErrorPayload::new(ToolErrorKind::ExecutionFailed, message.to_owned());
     SingleToolResult {
         output: serde_json::json!({ "error": payload.to_value() }),
         error: Some(payload),
@@ -395,10 +391,13 @@ mod tests {
     /// Read-only tool that panics mid-execution.
     struct PanickingReadTool;
 
+    const PANIC_TOOL_NAME: &str = "tool-name-secret-must-not-escape";
+    const PANIC_CALL_ID: &str = "call-id-secret-must-not-escape";
+
     #[async_trait]
     impl Tool for PanickingReadTool {
         fn name(&self) -> &'static str {
-            "panicker"
+            PANIC_TOOL_NAME
         }
         fn description(&self) -> &'static str {
             "read-only test tool that panics"
@@ -528,19 +527,22 @@ mod tests {
         let store = EventStore::new();
         let mut messages = Vec::new();
         let response = response_with(vec![
-            read_call("call_panic", "panicker"),
+            read_call(PANIC_CALL_ID, PANIC_TOOL_NAME),
             read_call("call_ok", "steady"),
         ]);
 
         run_batch(&executor, &response, &mut messages, &store).await;
 
         assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].tool_call_id.as_deref(), Some("call_panic"));
+        assert_eq!(messages[0].tool_call_id.as_deref(), Some(PANIC_CALL_ID));
         let failure = messages[0].content.as_deref().expect("failure content");
         assert!(
-            failure.contains("error") && failure.contains("did not complete"),
+            failure.contains("error") && failure.contains("task panicked"),
             "panicked member must surface a structured failure: {failure}",
         );
+        assert!(!failure.contains(PANIC_TOOL_NAME));
+        assert!(!failure.contains(PANIC_CALL_ID));
+        assert!(!failure.contains("deliberate test panic"));
         assert_eq!(messages[1].tool_call_id.as_deref(), Some("call_ok"));
         assert!(
             messages[1]

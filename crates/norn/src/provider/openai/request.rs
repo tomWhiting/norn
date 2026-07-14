@@ -413,10 +413,8 @@ fn serialize_tool_result(msg: &Message) -> Result<serde_json::Value, ProviderErr
         .as_deref()
         .filter(|s| !s.is_empty())
         .ok_or_else(|| ProviderError::RequestSerializationFailed {
-            reason: format!(
-                "tool result for {tool_name} missing tool_call_id; refusing to dispatch an unmoored tool_call_output",
-                tool_name = msg.tool_name.as_deref().unwrap_or("<unknown tool>"),
-            ),
+            reason: "tool result missing tool_call_id; refusing to dispatch an unmoored tool_call_output"
+                .to_owned(),
         })?;
     let item_type = match msg.tool_call_kind.unwrap_or_default() {
         ToolCallKind::Function => "function_call_output",
@@ -929,7 +927,7 @@ mod tests {
                 thinking: String::new(),
                 tool_calls: vec![],
                 tool_call_id: None,
-                tool_name: Some("read".to_string()),
+                tool_name: Some("tool-name-secret-must-not-escape".to_string()),
                 tool_call_kind: None,
             }],
             tools: vec![],
@@ -951,10 +949,7 @@ mod tests {
                     reason.contains("missing tool_call_id"),
                     "reason should describe the missing field: {reason}",
                 );
-                assert!(
-                    reason.contains("read"),
-                    "reason should name the tool so the bug can be traced upstream: {reason}",
-                );
+                assert!(!reason.contains("tool-name-secret-must-not-escape"));
             }
             other => panic!("expected RequestSerializationFailed, got {other:?}"),
         }

@@ -61,7 +61,6 @@ globset.workspace = true
 html-to-markdown-rs = "3.5.4"
 rand = "0.9"
 tiny_http = "0.12"
-webbrowser = "1.2"
 
 [build-dependencies]
 serde_json = { workspace = true }

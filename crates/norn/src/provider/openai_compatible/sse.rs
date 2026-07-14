@@ -49,10 +49,7 @@ impl SseEventMapper for ChatCompletionsMapper {
         }
         let Ok(chunk) = ChatChunk::deserialize(&event.data) else {
             return vec![Err(ProviderError::ResponseParseError {
-                reason: format!(
-                    "failed to deserialize chat completion chunk: {}",
-                    event.data
-                ),
+                reason: "failed to deserialize chat completion chunk".to_owned(),
             })];
         };
         if let Some(usage) = chunk.usage {
@@ -247,8 +244,8 @@ impl ChatCompletionsMapper {
             "stop" => self.pending_stop = Some(StopReason::EndTurn),
             "length" => self.pending_stop = Some(StopReason::MaxTokens),
             "content_filter" => self.pending_stop = Some(StopReason::ContentFilter),
-            other => out.push(Err(ProviderError::ResponseParseError {
-                reason: format!("unknown chat completion finish_reason '{other}'"),
+            _ => out.push(Err(ProviderError::ResponseParseError {
+                reason: "provider returned an unknown chat completion finish_reason".to_owned(),
             })),
         }
     }
@@ -288,7 +285,7 @@ impl ChatCompletionsMapper {
             };
             let Some(name) = state.name else {
                 out.push(Err(ProviderError::ResponseParseError {
-                    reason: format!("chat tool call {call_id} missing function name"),
+                    reason: format!("chat tool call {} missing function name", key.item_id()),
                 }));
                 all_complete = false;
                 continue;
@@ -379,31 +376,31 @@ impl From<ChatUsage> for Usage {
     }
 }
 
-fn stream_error_message(data: &serde_json::Value) -> Option<String> {
+fn stream_error_message(data: &serde_json::Value) -> Option<&str> {
     let error = data.get("error")?;
     if let Some(message) = error.get("message").and_then(serde_json::Value::as_str) {
-        return Some(message.to_owned());
+        return Some(message);
     }
     if let Some(message) = error.as_str() {
-        return Some(message.to_owned());
+        return Some(message);
     }
-    data.get("message")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned)
+    data.get("message").and_then(serde_json::Value::as_str)
 }
 
-fn stream_error_from_message(message: String) -> ProviderError {
+fn stream_error_from_message(message: &str) -> ProviderError {
     let lower = message.to_ascii_lowercase();
     if lower.contains("context length")
         || lower.contains("context window")
         || lower.contains("number of tokens")
     {
-        return ProviderError::InvalidRequest { message };
+        return ProviderError::InvalidRequest {
+            message: "provider rejected the request because it exceeded a context limit".to_owned(),
+        };
     }
     // In-band chat error objects carry no transport semantics the client
     // can verify, so they never opt into retry (`transient: None`).
     ProviderError::StreamError {
-        reason: format!("provider stream error: {message}"),
+        reason: "provider reported an in-band stream error".to_owned(),
         transient: None,
     }
 }
@@ -612,20 +609,84 @@ mod tests {
     }
 
     #[test]
-    fn maps_stream_error_object_to_terminal_error() {
+    fn maps_stream_error_object_to_terminal_error() -> Result<(), Box<dyn std::error::Error>> {
+        const SECRET: &str = "stream-error-secret-must-not-escape";
         let mut mapper = ChatCompletionsMapper::default();
         let events = mapper.map_event(&event(serde_json::json!({
             "error": {
-                "message": "The number of tokens to keep from the initial prompt is greater than the context length"
+                "message": format!("The number of tokens exceeds the context length: {SECRET}\nforged-log-line")
             },
-            "message": "The number of tokens to keep from the initial prompt is greater than the context length"
+            "message": SECRET
         })));
 
-        assert!(matches!(
-            &events[0],
-            Err(ProviderError::InvalidRequest { message })
-                if message.contains("context length"),
-        ));
+        let Err(ProviderError::InvalidRequest { message }) = &events[0] else {
+            return Err(std::io::Error::other(format!(
+                "expected InvalidRequest, got {:?}",
+                events[0]
+            ))
+            .into());
+        };
+        assert_eq!(
+            message,
+            "provider rejected the request because it exceeded a context limit"
+        );
+        assert!(!message.contains(SECRET), "rendered error: {message}");
+        assert!(
+            !message.contains("forged-log-line"),
+            "rendered error: {message}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn maps_unknown_stream_error_without_disclosing_provider_text()
+    -> Result<(), Box<dyn std::error::Error>> {
+        const SECRET: &str = "stream-error-secret-must-not-escape";
+        let mut mapper = ChatCompletionsMapper::default();
+        let events = mapper.map_event(&event(serde_json::json!({
+            "error": {"message": format!("{SECRET}\nforged-log-line")}
+        })));
+
+        let Err(ProviderError::StreamError { reason, transient }) = &events[0] else {
+            return Err(std::io::Error::other(format!(
+                "expected StreamError, got {:?}",
+                events[0]
+            ))
+            .into());
+        };
+        assert_eq!(reason, "provider reported an in-band stream error");
+        assert_eq!(*transient, None);
+        assert!(!reason.contains(SECRET), "rendered error: {reason}");
+        assert!(
+            !reason.contains("forged-log-line"),
+            "rendered error: {reason}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_chunk_does_not_disclose_provider_payload() -> Result<(), Box<dyn std::error::Error>>
+    {
+        const SECRET: &str = "malformed-chunk-secret-must-not-escape";
+        let mut mapper = ChatCompletionsMapper::default();
+        let events = mapper.map_event(&event(serde_json::json!({
+            "choices": {"unexpected": format!("{SECRET}\n\u{1b}[31mforged-log-line")}
+        })));
+
+        let Err(ProviderError::ResponseParseError { reason }) = &events[0] else {
+            return Err(std::io::Error::other(format!(
+                "expected ResponseParseError, got {:?}",
+                events[0]
+            ))
+            .into());
+        };
+        assert_eq!(reason, "failed to deserialize chat completion chunk");
+        assert!(!reason.contains(SECRET), "rendered error: {reason}");
+        assert!(
+            !reason.contains("forged-log-line"),
+            "rendered error: {reason}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -732,6 +793,44 @@ mod tests {
     }
 
     #[test]
+    fn missing_tool_name_does_not_disclose_provider_call_id()
+    -> Result<(), Box<dyn std::error::Error>> {
+        const SECRET: &str = "call-id-secret-must-not-escape";
+        let mut mapper = ChatCompletionsMapper::default();
+        let _ = mapper.map_event(&event(serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": format!("{SECRET}\nforged-log-line"),
+                        "type": "function",
+                        "function": {"arguments": "{}"}
+                    }]
+                },
+                "finish_reason": null
+            }]
+        })));
+        let events = mapper.map_event(&event(serde_json::json!({
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]
+        })));
+
+        let Some(Err(ProviderError::ResponseParseError { reason })) = events.first() else {
+            return Err(std::io::Error::other(format!(
+                "expected ResponseParseError, got {events:?}"
+            ))
+            .into());
+        };
+        assert_eq!(reason, "chat tool call chatcmpl:0:0 missing function name");
+        assert!(!reason.contains(SECRET), "rendered error: {reason}");
+        assert!(
+            !reason.contains("forged-log-line"),
+            "rendered error: {reason}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn clean_close_after_text_synthesizes_end_turn() {
         let mut mapper = ChatCompletionsMapper::default();
         let events = mapper.map_event(&event(serde_json::json!({
@@ -782,14 +881,33 @@ mod tests {
     }
 
     #[test]
-    fn unknown_finish_reason_is_parse_error() {
+    fn unknown_finish_reason_is_parse_error_without_disclosure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        const SECRET: &str = "finish-reason-secret-must-not-escape";
         let mut mapper = ChatCompletionsMapper::default();
         let events = mapper.map_event(&event(serde_json::json!({
-            "choices": [{"index": 0, "delta": {}, "finish_reason": "mystery"}]
+            "choices": [{
+                "index": 0,
+                "delta": {},
+                "finish_reason": format!("{SECRET}\nforged-log-line")
+            }]
         })));
-        assert!(matches!(
-            &events[0],
-            Err(ProviderError::ResponseParseError { reason }) if reason.contains("mystery"),
-        ));
+        let Err(ProviderError::ResponseParseError { reason }) = &events[0] else {
+            return Err(std::io::Error::other(format!(
+                "expected ResponseParseError, got {:?}",
+                events[0]
+            ))
+            .into());
+        };
+        assert_eq!(
+            reason,
+            "provider returned an unknown chat completion finish_reason"
+        );
+        assert!(!reason.contains(SECRET), "rendered error: {reason}");
+        assert!(
+            !reason.contains("forged-log-line"),
+            "rendered error: {reason}"
+        );
+        Ok(())
     }
 }

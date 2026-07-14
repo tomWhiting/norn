@@ -322,10 +322,7 @@ pub(super) async fn append_tool_result(
             Some(spool) => Some(
                 spool_write_off_executor(spool, &base.id, full_output).map_err(|error| {
                     crate::error::SessionError::StorageError {
-                        reason: format!(
-                            "failed to spool full output of tool '{tool_name}' \
-                             (call {tool_call_id}): {error}",
-                        ),
+                        reason: format!("failed to spool full tool output: {error}"),
                     }
                 })?,
             ),
@@ -1619,13 +1616,15 @@ mod tests {
         store: &EventStore,
         messages: &mut Vec<Message>,
         inline_char_limit: usize,
+        tool_call_id: &str,
+        tool_name: &str,
     ) -> Result<Value, crate::error::SessionError> {
         append_tool_result(
             store,
             messages,
             ToolResultRecord {
-                tool_call_id: "tc-spool",
-                tool_name: "bash",
+                tool_call_id,
+                tool_name,
                 kind: crate::provider::request::ToolCallKind::Function,
                 output: &oversized_output(),
                 duration_ms: 1,
@@ -1651,7 +1650,7 @@ mod tests {
         let full = oversized_output();
         let mut messages = Vec::new();
 
-        append_oversized(&store, &mut messages, 1_000)
+        append_oversized(&store, &mut messages, 1_000, "tc-spool", "bash")
             .await
             .expect("append succeeds");
 
@@ -1766,7 +1765,7 @@ mod tests {
         let store = EventStore::new();
         let mut messages = Vec::new();
 
-        append_oversized(&store, &mut messages, 1_000)
+        append_oversized(&store, &mut messages, 1_000, "tc-spool", "bash")
             .await
             .expect("append succeeds");
 
@@ -1797,13 +1796,22 @@ mod tests {
         std::fs::write(tmp.path().join(&session_id), b"not a directory").expect("block dir");
         let mut messages = Vec::new();
 
-        let err = append_oversized(&store, &mut messages, 1_000)
-            .await
-            .expect_err("spool write must fail");
+        let err = append_oversized(
+            &store,
+            &mut messages,
+            1_000,
+            "call-id-secret-must-not-escape",
+            "tool-name-secret-must-not-escape",
+        )
+        .await
+        .expect_err("spool write must fail");
         assert!(
             matches!(err, crate::error::SessionError::StorageError { .. }),
             "expected typed StorageError, got {err:?}",
         );
+        let rendered = err.to_string();
+        assert!(!rendered.contains("call-id-secret-must-not-escape"));
+        assert!(!rendered.contains("tool-name-secret-must-not-escape"));
         assert!(
             store.is_empty(),
             "no event may be appended when its spool payload was not written through",
@@ -1832,7 +1840,7 @@ mod tests {
         ));
         let mut messages = Vec::new();
 
-        let err = append_oversized(&store, &mut messages, 1_000)
+        let err = append_oversized(&store, &mut messages, 1_000, "tc-spool", "bash")
             .await
             .expect_err("sink failure must surface");
         assert!(

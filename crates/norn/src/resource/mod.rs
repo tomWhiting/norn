@@ -12,8 +12,8 @@ pub use descriptor_governor::DescriptorAdmissionError;
 pub(crate) use descriptor_governor::{DescriptorGovernor, DescriptorPermit};
 pub(crate) use descriptor_governor::{
     HTTP_REQUEST_PEAK, NULL_STDIO_SUBPROCESS_PEAK, ONE_PIPE_SPAWN_PEAK, OUTPUT_SUBPROCESS_PEAK,
-    PRIVATE_FS_OPERATION_PEAK, RECURSIVE_WALK_PEAK, THREE_PIPE_RETAINED, THREE_PIPE_SPAWN_PEAK,
-    TWO_PIPE_SPAWN_PEAK,
+    PRIVATE_FS_OPERATION_PEAK, RECURSIVE_WALK_PEAK, STDIN_PIPE_NULL_OUTPUT_SPAWN_PEAK,
+    THREE_PIPE_RETAINED, THREE_PIPE_SPAWN_PEAK, TWO_PIPE_SPAWN_PEAK,
 };
 pub use private_line_log::PrivateLineLog;
 

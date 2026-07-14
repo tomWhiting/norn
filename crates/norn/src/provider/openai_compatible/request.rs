@@ -216,10 +216,8 @@ fn serialize_tool_result(message: &Message) -> Result<serde_json::Value, Provide
         .as_deref()
         .filter(|id| !id.is_empty())
         .ok_or_else(|| ProviderError::RequestSerializationFailed {
-            reason: format!(
-                "tool result for {tool_name} missing tool_call_id; refusing to dispatch unmoored chat tool result",
-                tool_name = message.tool_name.as_deref().unwrap_or("<unknown tool>"),
-            ),
+            reason: "tool result missing tool_call_id; refusing to dispatch an unmoored chat tool result"
+                .to_owned(),
         })?;
     Ok(serde_json::json!({
         "role": "tool",
@@ -402,7 +400,7 @@ mod tests {
             thinking: String::new(),
             tool_calls: Vec::new(),
             tool_call_id: Some("call_123".to_owned()),
-            tool_name: Some("read_file".to_owned()),
+            tool_name: Some("tool-name-secret-must-not-escape".to_owned()),
             tool_call_kind: Some(ToolCallKind::Function),
         });
 
@@ -437,6 +435,7 @@ mod tests {
             err,
             ProviderError::RequestSerializationFailed { .. }
         ));
+        assert!(!err.to_string().contains("tool-name-secret-must-not-escape"));
     }
 
     #[test]

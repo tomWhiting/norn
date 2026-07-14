@@ -38,7 +38,7 @@ impl SenderProvider {
             }
         })?;
         tracing::debug!(
-            endpoint = %self.executor.endpoint,
+            backend = self.executor.backend_label,
             message_count = request.messages.len(),
             "chat completions request starting"
         );
