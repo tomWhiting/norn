@@ -202,7 +202,7 @@ pub enum SkillContext {
 pub enum SkillShell {
     /// POSIX shell (`sh -c`).
     Bash,
-    /// PowerShell.
+    /// `PowerShell`.
     PowerShell,
 }
 

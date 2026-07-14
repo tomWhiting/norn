@@ -480,7 +480,7 @@ impl UserPromptHook for ShellCommandHook {
         // The dispatch site supplies its own session id; prefer it over the
         // value captured at hook construction so cross-session reuse stays
         // honest.
-        input.session_id = session_id.to_owned();
+        session_id.clone_into(&mut input.session_id);
         // Reuse final_text to carry the prompt text — the JSON shape stays
         // flat per HookInput's documented schema, and the hook script reads
         // the value it needs by event-type discrimination on
@@ -541,7 +541,7 @@ impl SessionLifecycleHook for ShellCommandHook {
         }
         // session_start does not support a matcher (D17) — always fires.
         let mut input = self.base_input();
-        input.session_id = session_id.to_owned();
+        session_id.clone_into(&mut input.session_id);
         let _ = self.execute(input).await;
     }
 
@@ -550,7 +550,7 @@ impl SessionLifecycleHook for ShellCommandHook {
             return;
         }
         let mut input = self.base_input();
-        input.session_id = session_id.to_owned();
+        session_id.clone_into(&mut input.session_id);
         let _ = self.execute(input).await;
     }
 }
@@ -599,7 +599,6 @@ impl PostToolFailureHook for ShellCommandHook {
     clippy::no_effect_underscore_binding,
     clippy::useless_vec,
     clippy::missing_const_for_fn,
-    clippy::duration_suboptimal_units,
     clippy::needless_pass_by_value,
     clippy::similar_names,
     clippy::redundant_closure_for_method_calls,
@@ -609,7 +608,6 @@ impl PostToolFailureHook for ShellCommandHook {
     clippy::err_expect,
     clippy::get_unwrap,
     clippy::doc_markdown,
-    clippy::unnecessary_trailing_comma,
     clippy::uninlined_format_args,
     clippy::wildcard_enum_match_arm,
     clippy::collapsible_if,
