@@ -1,10 +1,16 @@
 # P0 final candidate and evidence package
 
+> **Superseded for final Gate D:** this document remains the exact retained
+> `bfa0b8e` candidate record. H-1 was subsequently closed by pinning Rust
+> 1.94.0 at `13d661c`; the new evidence and reviewer instructions are in
+> [`2026-07-14-p0-whole-phase-gate-d-handoff.md`](2026-07-14-p0-whole-phase-gate-d-handoff.md).
+
 **Date:** 2026-07-14
 **Phase base:** `41ea210d24ec0653480be3a097b15adcb1e4bfb0`
 **Tested code head:** `bfa0b8e96ec6501feb85fff5b369b82db2d11656`
 **Evidence package commit:** `e9b02d0`
-**Status:** automated implementer Gate C complete; manual inspection, owner dispositions, and independent Gate D remain open
+**Snapshot status:** automated implementer Gate C complete; manual inspection,
+owner dispositions, and independent Gate D were open at this retained snapshot
 
 ## Scope
 
@@ -112,14 +118,16 @@ project scopes.
 
 The following are not hidden inside a broad P0 pass claim:
 
-- The retrospective Gate A timing exception and Gate B source-proof disposition
-  still require explicit owner approval. No document can reconstruct missing
-  historical red runs.
-- Gate C's current-head manual secret inspection and reviewer-verified LOC/bypass
-  reproduction remain open. The retained machine policy and attester do not
-  substitute for that independent inspection.
-- Whole-phase Gate D remains `NOT READY` until a fresh independent reviewer
-  reproduces the evidence and returns `READY`.
+- At this retained snapshot, the retrospective Gate A timing exception and Gate
+  B source-proof disposition required explicit owner approval. They were
+  subsequently approved for P0 only and are recorded in the superseding
+  handoff. No document reconstructs the missing historical red runs.
+- At this retained snapshot, Gate C's manual secret inspection and
+  reviewer-verified LOC/bypass reproduction remained open. They remain final
+  Gate D work at the separate source and packaging heads defined by the
+  superseding handoff.
+- At this retained snapshot, whole-phase Gate D was `NOT READY`. The
+  superseding handoff requires a new verdict at `13d661c`.
 - On macOS, OAuth authorization data is delivered to fixed `/usr/bin/osascript`
   over stdin and is absent from argv/environment. The test proves command and
   JXA construction; it does not invoke `NSWorkspace` end to end.
@@ -144,12 +152,16 @@ The following are not hidden inside a broad P0 pass claim:
 
 ## Reviewer action
 
+This historical action list applies to the `bfa0b8e` snapshot. It is superseded
+by the whole-phase handoff's exact `13d661c` review packet.
+
 1. Review the logical code commits through `bfa0b8e`, then inspect the later
    evidence and documentation package separately.
 2. Re-run the integrated runner and attester from a clean checkout at
    `bfa0b8e`; do not trust the summary tables alone.
-3. Manually inspect the current-head fixtures/evidence for secrets and reproduce
-   the syntax-aware LOC/bypass review across all 333 changed Rust files.
+3. At that snapshot, manually inspect the fixtures/evidence for secrets and
+   reproduce the syntax-aware LOC/bypass review across all 333 changed Rust
+   files.
 4. Reconcile all 97 writer candidates and the complete descriptor-permit
    inventory.
 5. Challenge the explicit residual classifications rather than treating them

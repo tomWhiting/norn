@@ -1,14 +1,16 @@
 # Responses API remediation plan
 
 - **Status:** Active. P0 implementation and automated Gate C are complete at the
-  clean tested code head `bfa0b8e`; the raw evidence chain is retained in the
-  documentation-only commit `e9b02d0`. The final gate is 35/35 with 9,205 Rust
+  clean tested code head `13d661c`; the pinned-toolchain raw evidence chain is
+  retained in commit `564af2d`. The native-host gate is 35/35 with 9,205 Rust
   test executions, the repeated distribution is 750/750 with 1,170 Rust test
-  executions, and the exact policy/attestation pass. The original whole-phase
-  Gate D verdict is still `NOT READY`; no later whole-phase `READY` report is
-  present. P0 now waits for current-head manual secret/LOC inspection, the
-  explicit retrospective Gate A/Gate B owner dispositions, and a fresh
-  independent whole-phase Gate D review. P1 and P2 have not started.
+  executions, and the exact policy/attestation pass. A sandbox-denied 28/35
+  precursor is retained separately. The owner-approved retrospective Gate A
+  and Gate B exceptions are recorded in `DECISIONS-2026-07.md` section 11. No
+  whole-phase `READY` report is present. P0 now waits for manual secret
+  inspection of the committed review package, clean-`13d661c` source/LOC
+  reproduction, writer/permit reconciliation, and the fresh independent
+  whole-phase Gate D review. P1 and P2 have not started.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -21,9 +23,11 @@
   all reviewing snapshot `7d121c9`. Subsequent targeted closure re-reviews of
   credential/config, transport/streaming, and private artifacts report `READY`
   on their respective surfaces; none is a whole-phase Gate D verdict. The
-  final code range, machine/policy evidence, failed-first-run disclosure, and
-  residual boundaries are recorded in the
-  [`P0 final candidate`](reviews/2026-07-14-p0-final-candidate.md). The
+  final code range, machine/policy evidence, failed-first-run disclosure,
+  owner dispositions, residual boundaries, and reviewer packet are recorded in
+  the [`whole-phase Gate D handoff`](reviews/2026-07-14-p0-whole-phase-gate-d-handoff.md).
+  The superseded [`P0 final candidate`](reviews/2026-07-14-p0-final-candidate.md)
+  remains the historical `bfa0b8e` record. The
   [`historical Gate C handoff`](reviews/2026-07-11-p0-gate-c-handoff.md) is
   retained for the earlier review chronology. A separately
   reported `reviews/2026-07-11-exchange-changeset-review.md` artifact has not
@@ -209,11 +213,17 @@ never acceptance evidence for this program.
 Every phase must satisfy all four gates below.
 
 Gates A-C are the active-phase dashboard for the current tested P0 code head
-`bfa0b8e`. The green automated workspace Gate C, full-range policy,
+`13d661c`. The green automated workspace Gate C, full-range policy,
 750-observation distribution, and mechanical attestation are retained at that
-exact clean head. Manual current-head inspection remains open below.
+exact clean head. Manual inspection remains open at the scopes defined below.
 The later documentation-only evidence package does not relabel itself as the
 tested code head.
+Source, LOC, policy, and machine-gate reproduction must use a clean checkout at
+`13d661c`. Manual secret inspection must instead cover the final committed
+documentation package containing the retained artifacts and handoff; the
+reviewer records that packaging commit separately. The attester is expected to
+reject execution at the later packaging head because it is not the artifacts'
+tested source head.
 After P0 receives Gate D `READY` and its final evidence is entered in the
 ledger, this dashboard resets for P1; the ledger preserves P0's accepted gate
 record.
@@ -244,6 +254,11 @@ substitutes for those two historical requirements when evaluating Gate A and
 the universal exit gate; it does not make the historical claims true. P1 and
 later phases must satisfy both requirements prospectively.
 
+Tom approved that exact P0-only exception on 2026-07-14, as recorded in
+`DECISIONS-2026-07.md` section 11. The two boxes remain unchecked because their
+historical timing claims are still false; the recorded exception now satisfies
+the P0 evaluation rule above.
+
 ### Gate B: implementation
 
 - [ ] Confirmed-defect regressions fail for the documented reason on the reviewed
@@ -258,7 +273,11 @@ P0 evidence note: the candidate traceability matrix is recorded in
 `2026-07-12-p0-traceability.md` and includes the later D1D/SEC-14 row. The
 historical audit still cannot prove each confirmed regression failed for the
 documented reason on `41ea210`; passing candidate tests do not retroactively
-prove that claim.
+prove that claim. Tom approved the P0-only Gate B disposition on 2026-07-14:
+retained source or positive-characterization proof plus exact candidate
+regressions may substitute where no native pre-fix executable state exists.
+The native `openat` red-green sequence remains required, and the unchecked
+historical box is not relabelled as true.
 
 ### Gate C: machine verification
 
@@ -303,6 +322,16 @@ sentinel contents. `bfa0b8e` corrects that test contract; the final result is
 coverage claim still requires the exact mechanically generated inventory it
 quantifies.
 
+H-1 subsequently pinned the repository toolchain to the already-proven Rust
+1.94.0 at `13d661c`. A sandboxed clean run was retained as 28/35. The implementer
+observed loopback `bind` failures with `PermissionDenied` in its failing output;
+the hash-only artifact independently proves the seven failed runner cases, not
+that diagnosis. The exact native-host rerun passed 35/35 and 9,205 Rust test
+executions. The independently
+attested 750/750 distribution and unchanged 333-file/97-writer policy are bound
+to the same clean head. The full chain and failure classification are in
+`2026-07-14-p0-whole-phase-gate-d-handoff.md`.
+
 ### Gate D: independent review
 
 - [ ] The domain reviewer inspects the implementation, tests, and raw evidence.
@@ -322,7 +351,7 @@ quantifies.
 
 | Phase | Status | Primary outcome |
 |---|---|---|
-| P0. Credential and workspace authority containment | [ ] Implementation and automated Gate C complete at `bfa0b8e`; manual inspection, owner dispositions, and Gate D open | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
+| P0. Credential and workspace authority containment | [ ] Implementation and automated Gate C complete at `13d661c`; owner dispositions recorded; manual inspection and Gate D open | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] | The program has executable contracts and protected quality gates. |
 | P2. OAuth lifecycle correctness | [ ] | Login, refresh, storage, and logout fail safely; named-account selection is either evidence-backed or explicitly unsupported. |
 | P3. Canonical ordered transcript | [ ] | Responses items survive stream, persistence, resume, and replay in order. |
@@ -390,27 +419,29 @@ close the P0 findings.
 
 ## P0. Credential and workspace authority containment
 
-**Acceptance:** [ ] Gate D remains `NOT READY`; no fresh whole-phase verdict is
-recorded. **Implementation status:** the original 33 work items, F1, D1B, D1C,
+**Acceptance:** [ ] No fresh whole-phase Gate D verdict is recorded.
+**Implementation status:** the original 33 work items, F1, D1B, D1C,
 D1E structural descriptor closure, D1D startup and live control, legacy
 path-helper removal, missing transport/loop sentinels, SEC-05 compile contracts,
 the TUI-history correction, final provider/request/SSE disclosure corrections,
 and OAuth callback/browser lifecycle corrections are implemented through the
-clean tested code head `bfa0b8e`. The raw evidence is retained in the later
-documentation-only commit `e9b02d0`. Historical baseline evidence disposition,
-independent acceptance, and whole-phase Gate D remain open;
+Rust-code head `bfa0b8e`; H-1 pins the repository gate toolchain at the clean
+tested candidate `13d661c`. The current raw evidence is retained in commit
+`564af2d`. The P0-only Gate A/Gate B owner dispositions are recorded;
+independent acceptance and whole-phase Gate D remain open;
 **findings addressed by candidate:** `SEC-01` through `SEC-13`, `SEC-15`,
 `SEC-16`, `BACKEND-01`, `BACKEND-02`, `SEC-08A`, `NF-1`, `NF-2`, `NF-4`, and
 `QUAL-01`; the D1D startup candidate now includes provenance, approval,
 zero-activation, and real-activation fixtures, while whole-phase `SEC-14`
 acceptance remains review-gated;
-**current machine evidence:** the scoped closure reviews remain valid for their exact
-historical surfaces. The final `41ea210...bfa0b8e` code range, both the failed
-34/35 and corrected 35/35 gate attempts, 750/750 distribution, full-range policy,
-attestation, and explicit residual boundaries are recorded in
-`2026-07-14-p0-final-candidate.md`. **Dependencies:** D1, D1A, D1B, D1C, D1D,
-and the D1E implementation are resolved; D1E/D1D independent acceptance, the
-P0-only retrospective Gate A/Gate B dispositions, and Gate D remain open.
+**current machine evidence:** the scoped closure reviews remain valid for their
+exact historical surfaces. The `41ea210...13d661c` candidate has a retained
+35/35 native-host Gate C, 750/750 distribution, full-range policy, passing
+attestation, and an honestly retained sandbox-denied precursor. The exact chain
+is recorded in `2026-07-14-p0-whole-phase-gate-d-handoff.md`.
+**Dependencies:** D1, D1A, D1B, D1C, D1D, D1E, and the P0-only Gate A/Gate B
+dispositions are resolved; D1E/D1D independent acceptance and Gate D remain
+open.
 
 ### What this phase fixes
 
@@ -679,8 +710,10 @@ retain their intended behavior where they are operator-selected.
   callback/browser lifecycle gaps in `e218c9c`; remove the remaining prohibited
   test-result extraction in `8299df0`; add an exact, adversarially checked
   evidence contract in `82e44f4`; and correct the delegated-browser sentinel
-  race in `bfa0b8e`. The complete current-head record is
-  [`2026-07-14-p0-final-candidate.md`](reviews/2026-07-14-p0-final-candidate.md).
+  race in `bfa0b8e`. The exact retained `bfa0b8e` record is
+  [`2026-07-14-p0-final-candidate.md`](reviews/2026-07-14-p0-final-candidate.md),
+  and the superseding pinned-toolchain record is the
+  [`whole-phase handoff`](reviews/2026-07-14-p0-whole-phase-gate-d-handoff.md).
 - [x] Delete or demote `session_file_path` and
   `resolved_session_file_path`; no production-compatible raw path derivation may
   remain beside the validated replacement. Both helpers are now `cfg(test)` and
@@ -708,7 +741,8 @@ retain their intended behavior where they are operator-selected.
   totals: 333 changed Rust files, 62 test-only files, zero over 500, zero
   thin-entrypoint violations, zero added policy matches, and 97 enumerated
   artifact-writer candidates.
-- [ ] Complete the baseline-failure and finding-to-test traceability records,
+- [x] Complete the attainable baseline-evidence audit and finding-to-test
+  traceability records,
   then correct rather than append to the invalidated Gate C handoff. The exact
   candidate matrix now exists in the
   [`traceability record`](reviews/2026-07-12-p0-traceability.md), but it honestly
@@ -716,7 +750,9 @@ retain their intended behavior where they are operator-selected.
   the [`baseline-evidence audit`](reviews/2026-07-12-p0-baseline-evidence-audit.md)
   proves Git contains only one native defect-red/corrected-green sequence and
   that a P0-only Gate B process exception is unavoidable. The D1D/SEC-14 row is
-  now populated; owner disposition and independent acceptance remain open.
+  populated, and Tom approved the exact P0-only exception on 2026-07-14 without
+  relabelling the missing historical red runs. Independent acceptance remains
+  open.
 
 ### Phase-specific evidence
 
@@ -873,20 +909,22 @@ then becomes a P0 blocker:
 
 ### Review and exit gate
 
-**Current gate state:** Gate D returned `NOT READY`; no fresh whole-phase verdict
-has replaced it. The final implementation head `bfa0b8e` now has one exact green
-automated Gate C bundle (35/35, 9,205 Rust test executions), a 750/750 repeated
-distribution (1,170 Rust test executions), a 333-file full-range policy pass,
-and a passing mechanical attestation. The failed 34/35 attempt at `82e44f4` is
-retained with its policy artifact rather than hidden. The current evidence,
-hashes, correction reason, and explicit browser/panic/cross-target/raw-debug/
-provenance residuals are in
-[`2026-07-14-p0-final-candidate.md`](reviews/2026-07-14-p0-final-candidate.md).
+**Current gate state:** no fresh whole-phase `READY` verdict is recorded. The
+final candidate head `13d661c` has one exact green native-host Gate C bundle
+(35/35, 9,205 Rust test executions), a 750/750 repeated distribution (1,170
+Rust test executions), a 333-file full-range policy pass, and a passing
+mechanical attestation. The sandbox-denied 28/35 precursor and the earlier
+failed 34/35 attempt at `82e44f4` are retained rather than hidden. The current
+evidence, hashes, failure classification, owner dispositions, exact final-review
+instructions, and explicit residuals are in
+[`2026-07-14-p0-whole-phase-gate-d-handoff.md`](reviews/2026-07-14-p0-whole-phase-gate-d-handoff.md).
 Three provisional reports remain archived snapshot input, and later scoped
-`READY` reviews remain valid only for their exact historical surfaces. The owner
-Gate A/Gate B dispositions and fresh integrated Gate D verdict remain open. No
-scoped `READY`, implementer attestation, or prior lucky sample is a whole-phase
-verdict.
+`READY` reviews remain valid only for their exact historical surfaces. The
+2026-07-14 round review accepted its scoped range but explicitly desk-checked
+rather than adversarially reproduced D1D, D1E, and live MCP. The owner Gate A
+and Gate B dispositions are closed; manual inspection and the fresh integrated
+Gate D verdict remain open. No scoped acceptance, implementer attestation, or
+prior lucky sample is a whole-phase verdict.
 
 - [ ] A security reviewer threat-models every credential destination, redirect,
   automatic working-directory command, and eager working-directory file read.
@@ -1680,7 +1718,7 @@ ledger prematurely.
 
 | Phase | Current implementation | Retained candidate evidence | Work still required before acceptance |
 |---|---|---|---|
-| P0 | Final tested code head `bfa0b8e`; raw evidence package `e9b02d0`; tracking reconciliation in this documentation package | Automated Gate C 35/35 and 9,205 Rust tests; distributions 750/750 and 1,170 Rust tests; 333-file policy pass; mechanical attestation pass; failed 34/35 precursor retained | Current-head manual secret/LOC inspection; owner Gate A/B dispositions; independent D1D/D1E/whole-phase reproduction; fresh whole-phase Gate D verdict |
+| P0 | Final tested candidate `13d661c`; raw evidence package `564af2d`; owner dispositions and handoff in this documentation package | Native-host Gate C 35/35 and 9,205 Rust tests; distributions 750/750 and 1,170 Rust tests; 333-file/97-writer policy pass; mechanical attestation pass; sandbox-denied 28/35 and historical 34/35 precursors retained | Packaging-head secret inspection; clean-`13d661c` LOC/policy reproduction; writer and permit reconciliation; independent D1D/D1E/live-MCP reproduction; fresh whole-phase Gate D verdict |
 | P1 | Not started | None | P0 acceptance and D0 |
 | P2 | Not started | None | P1 acceptance and D9 |
 

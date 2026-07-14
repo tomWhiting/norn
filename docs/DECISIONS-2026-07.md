@@ -973,3 +973,36 @@ pool. Live session mutation, request-boundary tool-catalogue refresh, connecting
 a child-only server outside the current pool, dynamic roots, HTTP GET listening,
 reconnection/resumption, and DELETE shutdown remain open and are not claimed by
 this slice.
+
+**Subsequent implementation status (2026-07-14):** the P0 live-control slice
+now implements serialized add/remove/enable/disable/reload operations,
+request-boundary generation/runtime publication, contextual roots, per-agent
+views, provider-visible tool refresh, and bounded watcher/descriptor release.
+Idle standalone HTTP GET notification listening, reconnect/resumption, HTTP
+session DELETE, MCP OAuth, sampling, resources, and prompts remain outside this
+slice. Whole-phase adversarial acceptance remains open.
+
+## 11. P0 retrospective exceptions and pinned Rust gate (2026-07-14)
+
+**Owner ruling:** Tom approved all three dispositions in-thread on 2026-07-14.
+
+- **Gate A receives a P0-only retrospective process exception.** The owner
+  decisions and implementer/reviewer evidence-method agreement were not
+  durably recorded before P0 implementation began. The two historical Gate A
+  boxes remain unchecked because later approval cannot make those timing
+  claims true. For P0 only, this exception substitutes for them when Gate A and
+  the universal exit gate are evaluated. It creates no precedent for P1 or any
+  later phase.
+- **Gate B receives a P0-only baseline-evidence exception.** Where Git contains
+  no native pre-fix executable regression, P0 may use the retained source or
+  positive-characterization proof together with the exact candidate
+  regression. The native macOS `openat` defect-red/corrected-green sequence
+  remains required. This exception waives no implementation, regression,
+  lint, LOC, secret review, Gate C, or Gate D requirement, and the historical
+  Gate B checkbox remains unchecked.
+- **The repository Rust gate is pinned to 1.94.0.** `rust-toolchain.toml`
+  selects Rust 1.94.0 plus the required Clippy and rustfmt components. This is
+  the exact toolchain on which the strict P0 gate passed, so plain repository
+  commands no longer inherit a floating local `stable` alias. Toolchain
+  upgrades are explicit reviewed changes. No lower minimum Rust version is
+  claimed until one is separately proven and encoded.
