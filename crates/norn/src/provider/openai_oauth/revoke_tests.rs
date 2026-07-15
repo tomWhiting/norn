@@ -86,6 +86,40 @@ async fn revoke_failure_still_removes_local_credential() -> TestResult {
 }
 
 #[tokio::test]
+async fn durable_logout_clears_the_exact_refresh_recovery_marker() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let root = auth_root(&home)?;
+    let auth = auth_document();
+    super::super::storage::save_auth_dot_json(home.path(), &auth)?;
+    let timing = OAuthHttpOptions::default().credential_lock_timing()?;
+    let transaction = CredentialTransaction::acquire(&root, timing)?;
+    let snapshot = transaction.snapshot()?;
+    let revision = snapshot
+        .revision
+        .ok_or_else(|| std::io::Error::other("test credential revision is missing"))?;
+    let _operation = transaction.begin_refresh_recovery(&revision, &auth)?;
+    assert!(transaction.recovery_revision_for_logout()?.is_some());
+    drop(transaction);
+
+    let report = logout_with_revoker(
+        &root,
+        AuthCredentialsStoreMode::File,
+        timing,
+        |refresh_token| async move {
+            drop(refresh_token);
+            Ok(())
+        },
+    )
+    .await;
+
+    assert!(matches!(report.local, Ok(DeleteAuthOutcome::Removed)));
+    assert!(matches!(report.remote, RemoteRevokeOutcome::Revoked));
+    let transaction = CredentialTransaction::acquire(&root, timing)?;
+    assert!(transaction.recovery_revision_for_logout()?.is_none());
+    Ok(())
+}
+
+#[tokio::test]
 async fn access_only_logout_does_not_attempt_remote_revoke() -> TestResult {
     let home = tempfile::tempdir()?;
     let root = auth_root(&home)?;

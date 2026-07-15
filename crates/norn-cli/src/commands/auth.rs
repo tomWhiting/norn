@@ -12,11 +12,14 @@
 //! credential classification; it never claims remote validity.
 
 use chrono::Utc;
-use norn::provider::auth::{LoginConfig, login, logout};
+use norn::provider::auth::{
+    LoginConfig, command_account_root, list_auth_accounts, login, login_named, logout,
+    logout_all_auth_accounts, logout_named, use_auth_account,
+};
 use norn::provider::openai_oauth::{
     AuthCredentialsStoreMode, CredentialInspectionError, LocalCredentialState, LogoutReport,
     MalformedCredentialReason, NornAuthRoot, RefreshCandidateReason, RemoteRevokeOutcome,
-    UnknownExpiryReason, inspect_file_credential, resolve_norn_auth_root,
+    UnknownExpiryReason, inspect_file_credential,
 };
 
 use crate::cli::AuthCmd;
@@ -25,9 +28,11 @@ use crate::cli::ExitCode;
 /// Top-level dispatcher for `norn auth`.
 pub fn run_auth(cmd: &AuthCmd) -> ExitCode {
     match cmd {
-        AuthCmd::Login => run_login(),
-        AuthCmd::Logout => run_logout(),
-        AuthCmd::Status => run_status(),
+        AuthCmd::Login { name } => run_login(name.as_deref()),
+        AuthCmd::Logout { name, all } => run_logout(name.as_deref(), *all),
+        AuthCmd::Status { name } => run_status(name.as_deref()),
+        AuthCmd::List => run_list(),
+        AuthCmd::Use { name } => run_use(name),
     }
 }
 
@@ -35,7 +40,7 @@ pub fn run_auth(cmd: &AuthCmd) -> ExitCode {
 // R8: login
 // ---------------------------------------------------------------------------
 
-fn run_login() -> ExitCode {
+fn run_login(name: Option<&str>) -> ExitCode {
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(err) => {
@@ -43,7 +48,11 @@ fn run_login() -> ExitCode {
             return ExitCode::AuthError;
         }
     };
-    match rt.block_on(login(LoginConfig::default())) {
+    let result = name.map_or_else(
+        || rt.block_on(login(LoginConfig::default())),
+        |name| rt.block_on(login_named(LoginConfig::default(), name)),
+    );
+    match result {
         Ok(()) => {
             eprintln!("Login successful.");
             ExitCode::Success
@@ -59,7 +68,7 @@ fn run_login() -> ExitCode {
 // R9: logout
 // ---------------------------------------------------------------------------
 
-fn run_logout() -> ExitCode {
+fn run_logout(name: Option<&str>, all: bool) -> ExitCode {
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(err) => {
@@ -67,13 +76,37 @@ fn run_logout() -> ExitCode {
             return ExitCode::AuthError;
         }
     };
-    match rt.block_on(logout(LoginConfig::default())) {
+    if all {
+        return run_logout_all(&rt);
+    }
+    let result = name.map_or_else(
+        || rt.block_on(logout(LoginConfig::default())),
+        |name| rt.block_on(logout_named(LoginConfig::default(), name)),
+    );
+    match result {
         Ok(report) => report_logout(report),
         Err(err) => {
             eprintln!("norn: logout failed: {err}");
             ExitCode::AuthError
         }
     }
+}
+
+fn run_logout_all(runtime: &tokio::runtime::Runtime) -> ExitCode {
+    let reports = match runtime.block_on(logout_all_auth_accounts()) {
+        Ok(reports) => reports,
+        Err(error) => {
+            eprintln!("norn: could not complete all-account logout: {error}");
+            return ExitCode::AuthError;
+        }
+    };
+    let mut exit_code = ExitCode::Success;
+    for report in reports {
+        if report_logout(report) != ExitCode::Success {
+            exit_code = ExitCode::AuthError;
+        }
+    }
+    exit_code
 }
 
 fn report_logout(report: LogoutReport) -> ExitCode {
@@ -110,8 +143,8 @@ fn report_logout(report: LogoutReport) -> ExitCode {
 // R10: status
 // ---------------------------------------------------------------------------
 
-fn run_status() -> ExitCode {
-    let auth_root = match resolve_norn_auth_root(None) {
+fn run_status(name: Option<&str>) -> ExitCode {
+    let auth_root = match command_account_root(name) {
         Ok(root) => root,
         Err(reason) => {
             eprintln!("norn: cannot resolve auth state: {reason}");
@@ -119,6 +152,35 @@ fn run_status() -> ExitCode {
         }
     };
     run_status_at(&auth_root)
+}
+
+fn run_list() -> ExitCode {
+    match list_auth_accounts() {
+        Ok(accounts) => {
+            for account in accounts {
+                let marker = if account.active { "*" } else { " " };
+                println!("{marker} {}", account.alias);
+            }
+            ExitCode::Success
+        }
+        Err(error) => {
+            eprintln!("norn: could not list auth accounts: {error}");
+            ExitCode::AuthError
+        }
+    }
+}
+
+fn run_use(name: &str) -> ExitCode {
+    match use_auth_account(name) {
+        Ok(()) => {
+            eprintln!("Selected OAuth account for new providers.");
+            ExitCode::Success
+        }
+        Err(error) => {
+            eprintln!("norn: could not select auth account: {error}");
+            ExitCode::AuthError
+        }
+    }
 }
 
 fn run_status_at(auth_root: &NornAuthRoot) -> ExitCode {

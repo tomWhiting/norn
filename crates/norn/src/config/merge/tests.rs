@@ -13,8 +13,9 @@ use std::collections::BTreeMap;
 use super::merge_settings;
 use crate::config::types::{
     AgentSettings, HookEntry, HookSettings, LengthOverrideEntry, McpServerSettings,
-    ModelAliasSettings, NornSettings, PermissionSettings, ProviderProfileSettings,
-    ProviderSettings, SkillToolSettings, ToolSettings, VariantSettings, WriteToolSettings,
+    ModelAliasSettings, NornSettings, PermissionSettings, ProviderAuthMode,
+    ProviderProfileSettings, ProviderSettings, SkillToolSettings, ToolSettings, VariantSettings,
+    WriteToolSettings,
 };
 
 fn ns_model(model: &str) -> NornSettings {
@@ -29,6 +30,17 @@ fn ns_index_lock_deadline(ms: u64) -> NornSettings {
         agent: Some(AgentSettings {
             index_lock_deadline_ms: Some(ms),
             ..AgentSettings::default()
+        }),
+        ..NornSettings::default()
+    }
+}
+
+fn ns_provider(auth: Option<ProviderAuthMode>, api_key_env: Option<&str>) -> NornSettings {
+    NornSettings {
+        provider: Some(ProviderSettings {
+            auth,
+            api_key_env: api_key_env.map(str::to_owned),
+            ..ProviderSettings::default()
         }),
         ..NornSettings::default()
     }
@@ -118,6 +130,102 @@ fn cli_layer_outranks_all_others() {
     let mut cli = ns_model("cli");
     let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
     assert_eq!(merged.model.as_deref(), Some("cli"));
+}
+
+#[test]
+fn higher_provider_oauth_clears_inherited_api_key_source() {
+    let mut user = ns_provider(None, Some("USER_API_KEY"));
+    let mut project = NornSettings::default();
+    let mut local = ns_provider(Some(ProviderAuthMode::OAuth), None);
+    let mut cli = NornSettings::default();
+
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+
+    assert_eq!(
+        merged.provider.as_ref().and_then(|provider| provider.auth),
+        Some(ProviderAuthMode::OAuth),
+    );
+    assert_eq!(
+        merged
+            .provider
+            .as_ref()
+            .and_then(|provider| provider.api_key_env.as_deref()),
+        None,
+    );
+}
+
+#[test]
+fn provider_oauth_keeps_same_or_higher_layer_api_key_source_for_validation() {
+    for (mut user, mut local) in [
+        (
+            NornSettings::default(),
+            ns_provider(Some(ProviderAuthMode::OAuth), Some("LOCAL_API_KEY")),
+        ),
+        (
+            ns_provider(Some(ProviderAuthMode::OAuth), None),
+            ns_provider(None, Some("LOCAL_API_KEY")),
+        ),
+    ] {
+        let mut project = NornSettings::default();
+        let mut cli = NornSettings::default();
+        let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+
+        assert_eq!(
+            merged.provider.as_ref().and_then(|provider| provider.auth),
+            Some(ProviderAuthMode::OAuth),
+        );
+        assert_eq!(
+            merged
+                .provider
+                .as_ref()
+                .and_then(|provider| provider.api_key_env.as_deref()),
+            Some("LOCAL_API_KEY"),
+        );
+    }
+}
+
+#[test]
+fn higher_provider_api_key_mode_retains_best_available_companion() {
+    let mut user = ns_provider(None, Some("USER_API_KEY"));
+    let mut project = ns_provider(None, Some("PROJECT_API_KEY"));
+    let mut local = ns_provider(Some(ProviderAuthMode::ApiKey), None);
+    let mut cli = NornSettings::default();
+
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+
+    assert_eq!(
+        merged.provider.as_ref().and_then(|provider| provider.auth),
+        Some(ProviderAuthMode::ApiKey),
+    );
+    assert_eq!(
+        merged
+            .provider
+            .as_ref()
+            .and_then(|provider| provider.api_key_env.as_deref()),
+        Some("PROJECT_API_KEY"),
+    );
+}
+
+#[test]
+fn provider_api_key_does_not_resurrect_source_cleared_by_intermediate_oauth() {
+    let mut user = ns_provider(None, Some("USER_API_KEY"));
+    let mut project = ns_provider(Some(ProviderAuthMode::OAuth), None);
+    let mut local = ns_provider(Some(ProviderAuthMode::ApiKey), None);
+    let mut cli = NornSettings::default();
+
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+
+    assert_eq!(
+        merged.provider.as_ref().and_then(|provider| provider.auth),
+        Some(ProviderAuthMode::ApiKey),
+    );
+    assert_eq!(
+        merged
+            .provider
+            .as_ref()
+            .and_then(|provider| provider.api_key_env.as_deref()),
+        None,
+    );
 }
 
 #[test]

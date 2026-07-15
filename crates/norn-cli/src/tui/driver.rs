@@ -78,6 +78,7 @@ async fn run_async(cli: &Cli) -> ExitCode {
 /// status panel reads it); the other is handed to the builder.
 async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut startup_trace = StartupTrace::start();
+    let oauth_account = cli.account.as_deref();
 
     // LD-015 R3: construct ONE shared `LspWorkspace` at TUI startup so the
     // `lsp` tool, the `DiagnosticsPostCheck` LSP path, and the `LspBridge`
@@ -106,8 +107,14 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         provider_overrides.debug_dump_file = Some(dir.join(format!("{hint}.jsonl")));
     }
 
-    let built_provider =
-        build_provider(resolved.provider_kind, &provider_overrides, &resolved.model).await?;
+    let built_provider = build_provider(
+        resolved.provider_kind,
+        &provider_overrides,
+        &resolved.model,
+        oauth_account,
+        cli.agent_run_may_reuse_session(),
+    )
+    .await?;
     startup_trace.mark("provider_built");
 
     let mcp = connect_mcp_runtime(&resolved.project_root, &resolved.mcp_servers).await?;

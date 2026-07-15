@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use norn::agent_loop::config::ConversationStateMode;
-use norn::config::AutoCompactReserve;
+use norn::config::{AutoCompactReserve, ProviderAuthMode};
 use serde_json::Value;
 
 use crate::cli::BuildError;
@@ -126,6 +126,8 @@ pub struct ConfigOverrides {
     /// `-c api_key_env=<name>` → environment variable holding an API key
     /// for API-key based providers.
     pub api_key_env: Option<String>,
+    /// `-c auth=<oauth|api_key>` → explicit provider authentication mode.
+    pub auth: Option<ProviderAuthMode>,
     /// `-c rate_limit_interval=<duration>` → `ProviderConfig::rate_limit_interval`
     /// (replenishment window for the provider rate limiter; `None` defers
     /// to the library's owner-approved 60s default).
@@ -171,6 +173,8 @@ pub struct ProviderConfigOverrides {
     pub provider_options: Option<Value>,
     /// Environment variable holding an API key for API-key based providers.
     pub api_key_env: Option<String>,
+    /// Explicit provider authentication mode.
+    pub auth: Option<ProviderAuthMode>,
     /// Base directory from `--debug-api` or `-c debug_api=<path>`.
     pub debug_dump_dir: Option<PathBuf>,
     /// Resolved JSONL file path (`{dir}/{session_id}.jsonl`), set by
@@ -212,6 +216,7 @@ impl std::fmt::Debug for ConfigOverrides {
                 &(self.base_url.is_some()
                     || self.provider_options.is_some()
                     || self.api_key_env.is_some()
+                    || self.auth.is_some()
                     || self.debug_dump_dir.is_some()),
             )
             .finish_non_exhaustive()
@@ -225,6 +230,7 @@ impl std::fmt::Debug for ProviderConfigOverrides {
             .field("base_url_present", &self.base_url.is_some())
             .field("provider_options_present", &self.provider_options.is_some())
             .field("api_key_env_present", &self.api_key_env.is_some())
+            .field("auth", &self.auth)
             .field("debug_dump_dir_present", &self.debug_dump_dir.is_some())
             .field("debug_dump_file_present", &self.debug_dump_file.is_some())
             .field("runner_path_present", &self.runner_path.is_some())
@@ -262,6 +268,7 @@ impl ConfigOverrides {
             request_timeout: self.request_timeout,
             provider_options: self.provider_options.clone(),
             api_key_env: self.api_key_env.clone(),
+            auth: self.auth,
             debug_dump_dir: self.debug_dump_dir.clone(),
             debug_dump_file: None,
             rate_limit: None,
@@ -361,6 +368,17 @@ impl ConfigOverrides {
                     ));
                 }
                 self.api_key_env = Some(trimmed.to_owned());
+            }
+            "auth" => {
+                self.auth = Some(match value {
+                    "oauth" => ProviderAuthMode::OAuth,
+                    "api_key" => ProviderAuthMode::ApiKey,
+                    _ => {
+                        return Err(BuildError::Argument(
+                            "invalid value for auth: expected exactly oauth or api_key".to_owned(),
+                        ));
+                    }
+                });
             }
             "write.max_code_lines" => {
                 self.write_max_code_lines = Some(parse_typed::<usize>(key, "usize", value)?);

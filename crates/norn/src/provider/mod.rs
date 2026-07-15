@@ -11,7 +11,8 @@ pub use self::api_shape::{
 };
 pub use self::auth::{
     ApiKeyAuthProvider, AuthProvider, AuthSource, LoginConfig, OAuthAuthProvider,
-    build_from_auth_source, login, logout,
+    build_from_auth_source, command_account_root, list_auth_accounts, login, login_named, logout,
+    logout_all_auth_accounts, logout_named, provider_account_root, use_auth_account,
 };
 pub use self::events::{ProviderEvent, StopReason};
 pub use self::reasoning::{ReasoningContentPart, ReasoningItem, ReasoningSummaryPart};

@@ -273,13 +273,11 @@ pub struct ProviderSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key_env: Option<String>,
 
-    /// Authentication mode selector. Recognised values are `"oauth"`,
-    /// `"api_key"`, and `"env"` per `DESIGN.md` D12. Validation of the
-    /// string and the actual secret resolution (env var lookup, codex
-    /// auth.json read) live in NC-003 and runtime wiring — this struct
-    /// holds the raw string only.
+    /// Authentication mode selector. Only `"oauth"` and `"api_key"` are
+    /// accepted; omitted mode preserves the provider-specific compatibility
+    /// behavior resolved at the runtime boundary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth: Option<String>,
+    pub auth: Option<ProviderAuthMode>,
 
     /// Rate-limit cap in requests per minute. Provides an override for the
     /// hardcoded `60 req/min` in `provider/openai/mod.rs`.
@@ -322,6 +320,52 @@ pub struct ProviderSettings {
     /// downstream layer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub debug_dump_dir: Option<String>,
+}
+
+/// Explicit provider authentication mode.
+///
+/// The wire names are deliberately exact. In particular, the legacy
+/// `"env"` spelling is not an alias for API-key authentication.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum ProviderAuthMode {
+    /// Use Norn-owned OAuth credentials.
+    #[serde(rename = "oauth")]
+    OAuth,
+    /// Read an API key from the configured environment-variable name.
+    #[serde(rename = "api_key")]
+    ApiKey,
+}
+
+impl<'de> Deserialize<'de> for ProviderAuthMode {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        enum WireMode {
+            #[serde(rename = "oauth")]
+            OAuth,
+            #[serde(rename = "api_key")]
+            ApiKey,
+        }
+
+        WireMode::deserialize(deserializer)
+            .map(|mode| match mode {
+                WireMode::OAuth => Self::OAuth,
+                WireMode::ApiKey => Self::ApiKey,
+            })
+            .map_err(|_wire_error| {
+                de::Error::custom("invalid provider auth mode: expected exactly oauth or api_key")
+            })
+    }
+}
+
+impl ProviderAuthMode {
+    /// Return the exact settings spelling for this mode.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OAuth => "oauth",
+            Self::ApiKey => "api_key",
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1308,7 +1352,7 @@ mod tests {
                 max_retries: Some(3),
                 options: Some(serde_json::json!({"alpha":1})),
                 api_key_env: Some("LOCAL_AI_KEY".to_owned()),
-                auth: Some("oauth".to_owned()),
+                auth: Some(ProviderAuthMode::OAuth),
                 rate_limit: Some(120),
                 rate_limit_interval: Some("90s".to_owned()),
                 retry_backoff: Some("500ms".to_owned()),

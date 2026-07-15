@@ -8,32 +8,23 @@ use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use parking_lot::{Condvar, Mutex};
-use sha2::{Digest as _, Sha256};
-
 use super::auth_root::NornAuthRoot;
 use super::credential_decode::{MalformedCredentialReason, decode_auth_dot_json};
 use super::credential_lock_timing::CredentialLockTiming;
+use super::credential_revision::{revision, serialize_auth};
 use super::storage::{AUTH_JSON_FILE, DeleteAuthOutcome, StorageError};
 use super::types::AuthDotJson;
 use crate::resource::DescriptorPermit;
 use crate::util::PrivateRoot;
+use parking_lot::{Condvar, Mutex};
+
+pub(crate) use super::credential_revision::CredentialRevision;
 
 const CREDENTIAL_LOCK_FILE: &str = ".norn-auth.lock";
 
 static PROCESS_GATES: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 static PROCESS_GATE_CHANGED: Condvar = Condvar::new();
-
-/// Raw-byte identity of one observed `auth.json` version.
-#[derive(Clone, Eq, PartialEq)]
-pub(crate) struct CredentialRevision([u8; 32]);
-
-impl std::fmt::Debug for CredentialRevision {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("CredentialRevision([REDACTED])")
-    }
-}
 
 /// Decoded state of one present credential document.
 #[derive(Clone, Debug)]
@@ -122,7 +113,7 @@ impl ProcessGuard {
 /// Exclusive transaction over one file-backed credential identity.
 pub(crate) struct CredentialTransaction {
     file: File,
-    root: PrivateRoot,
+    pub(super) root: PrivateRoot,
     process_guard: ProcessGuard,
     descriptor_permit: DescriptorPermit,
 }
@@ -214,9 +205,7 @@ impl CredentialTransaction {
         expected: Option<&CredentialRevision>,
         auth: &AuthDotJson,
     ) -> Result<CredentialRevision, CredentialTransactionError> {
-        let mut proposed = serde_json::to_vec_pretty(auth).map_err(StorageError::Json)?;
-        proposed.push(b'\n');
-        let proposed_revision = revision(&proposed);
+        let (proposed, proposed_revision) = serialize_auth(auth).map_err(StorageError::Json)?;
         let current = self.current_revision()?;
         if current.as_ref() == Some(&proposed_revision) {
             self.sync_existing_revision(&proposed_revision)?;
@@ -232,6 +221,12 @@ impl CredentialTransaction {
             file.write_all(&proposed).map_err(StorageError::Io)?;
             file.sync_all().map_err(StorageError::Io)?;
             drop(file);
+            #[cfg(test)]
+            super::credential_recovery::io::inject_recovery_fault(
+                &self.root,
+                super::credential_recovery::io::RecoveryFaultPoint::AuthPublication,
+            )
+            .map_err(StorageError::Io)?;
             self.root
                 .rename(&temporary, Path::new(AUTH_JSON_FILE))
                 .map_err(StorageError::Io)?;
@@ -412,10 +407,6 @@ fn snapshot_from_root(
         }
     };
     Ok(CredentialSnapshot { document, revision })
-}
-
-fn revision(raw: &[u8]) -> CredentialRevision {
-    CredentialRevision(Sha256::digest(raw).into())
 }
 
 fn temporary_path() -> PathBuf {

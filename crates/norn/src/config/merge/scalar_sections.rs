@@ -7,8 +7,8 @@
 //! [`Option`] field resolved by [`pick_scalar`].
 
 use crate::config::types::{
-    AgentSettings, ProviderSettings, RetrySettings, SessionSettings, SkillToolSettings,
-    ToolSettings, WriteToolSettings,
+    AgentSettings, ProviderAuthMode, ProviderSettings, RetrySettings, SessionSettings,
+    SkillToolSettings, ToolSettings, WriteToolSettings,
 };
 
 use super::primitives::pick_scalar;
@@ -27,6 +27,12 @@ pub(super) fn merge_provider(
     let mut prj = prj.take().unwrap_or_default();
     let mut lcl = lcl.take().unwrap_or_default();
     let mut ovr = ovr.take().unwrap_or_default();
+    let (auth, api_key_env) = merge_provider_auth_fields([
+        (usr.auth.take(), usr.api_key_env.take()),
+        (prj.auth.take(), prj.api_key_env.take()),
+        (lcl.auth.take(), lcl.api_key_env.take()),
+        (ovr.auth.take(), ovr.api_key_env.take()),
+    ]);
     Some(ProviderSettings {
         base_url: pick_scalar(
             &mut usr.base_url,
@@ -52,13 +58,8 @@ pub(super) fn merge_provider(
             &mut lcl.options,
             &mut ovr.options,
         ),
-        api_key_env: pick_scalar(
-            &mut usr.api_key_env,
-            &mut prj.api_key_env,
-            &mut lcl.api_key_env,
-            &mut ovr.api_key_env,
-        ),
-        auth: pick_scalar(&mut usr.auth, &mut prj.auth, &mut lcl.auth, &mut ovr.auth),
+        api_key_env,
+        auth,
         rate_limit: pick_scalar(
             &mut usr.rate_limit,
             &mut prj.rate_limit,
@@ -96,6 +97,24 @@ pub(super) fn merge_provider(
             &mut ovr.debug_dump_dir,
         ),
     })
+}
+
+fn merge_provider_auth_fields(
+    layers: [(Option<ProviderAuthMode>, Option<String>); 4],
+) -> (Option<ProviderAuthMode>, Option<String>) {
+    let mut selected_auth = None;
+    let mut selected_env = None;
+    for (auth, api_key_env) in layers {
+        if let Some(name) = api_key_env {
+            selected_env = Some(name);
+        } else if auth == Some(ProviderAuthMode::OAuth) {
+            selected_env = None;
+        }
+        if auth.is_some() {
+            selected_auth = auth;
+        }
+    }
+    (selected_auth, selected_env)
 }
 
 /// Merge the `agent` section scalar-wise across the four layers.

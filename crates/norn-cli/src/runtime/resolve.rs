@@ -26,7 +26,7 @@ use crate::config::{
     apply_settings_reasoning_to_profile, apply_working_dir, collect_extension_servers,
     overlay_cli_provider_overrides, overlay_provider_profile_overrides,
     provider_overrides_from_settings, resolve_index_lock_deadline, resolve_model_selection,
-    resolve_profile_with_origin, resolve_provider_selection,
+    resolve_profile_with_origin, resolve_provider_auth, resolve_provider_selection,
 };
 
 /// The resolved CLI invocation state each driver needs to construct the
@@ -157,6 +157,8 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         )?;
     }
     overlay_cli_provider_overrides(&mut provider_overrides, &config_overrides);
+    resolve_provider_auth(provider_selection.kind, &provider_overrides)
+        .map_err(|error| BuildError::Argument(error.to_string()))?;
     if provider_overrides
         .debug_dump_dir
         .as_ref()
@@ -446,6 +448,28 @@ mod tests {
                 "secret leaked in error: {rendered}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn hostile_project_auth_value_is_not_rendered() -> Result<(), Box<dyn std::error::Error>> {
+        let environment = IsolatedResolutionEnvironment::new();
+        let settings_dir = environment.working_dir().join(".norn");
+        std::fs::create_dir_all(&settings_dir)?;
+        std::fs::write(
+            settings_dir.join("settings.json"),
+            r#"{"provider":{"auth":"AUTH_VALUE_MUST_NOT_APPEAR\u001b[31m"}}"#,
+        )?;
+
+        let Err(error) = resolve_invocation(&Cli::try_parse_from(["norn"])?) else {
+            return Err(std::io::Error::other("hostile project auth mode was accepted").into());
+        };
+        let rendered = error.to_string();
+        assert!(rendered.contains("expected exactly oauth or api_key"));
+        assert!(!rendered.contains("AUTH_VALUE_MUST_NOT_APPEAR"));
+        assert!(!rendered.contains('\u{1b}'));
+        assert!(!rendered.contains("[31m"));
         Ok(())
     }
 

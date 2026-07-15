@@ -2,9 +2,12 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use norn::provider::auth::{AuthSource, LoginConfig, build_from_auth_source, logout};
+use norn::provider::auth::{
+    AuthSource, LoginConfig, build_from_auth_source, list_auth_accounts, logout, use_auth_account,
+};
 use norn::provider::openai_oauth::{
-    DeleteAuthOutcome, RemoteRevokeOutcome, resolve_norn_auth_root,
+    DeleteAuthOutcome, NamedLoginPreparation, OAuthHttpOptions, RemoteRevokeOutcome,
+    prepare_named_login, resolve_norn_auth_root,
 };
 
 use super::*;
@@ -13,6 +16,11 @@ const TEST_JWT: &str = concat!(
     "eyJhbGciOiJub25lIn0.",
     "eyJzdWIiOiJ1c2VyIiwiZXhwIjo0MTAyNDQ0ODAwLCJodHRwczovL2FwaS5vcGVu",
     "YWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjb3VudCJ9fQ."
+);
+const NAMED_TEST_JWT: &str = concat!(
+    "eyJhbGciOiJub25lIn0.",
+    "eyJzdWIiOiJ1c2VyIiwiZXhwIjo0MTAyNDQ0ODAwLCJodHRwczovL2FwaS5vcGVu",
+    "YWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoibmFtZWQtYWNjb3VudCJ9fQ."
 );
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -72,10 +80,29 @@ async fn default_auth_surfaces_leave_foreign_home_unchanged_at_each_checkpoint()
             let expected_root = NornAuthRoot::try_from(norn_home.path().join("auth"))?;
             assert_eq!(resolve_norn_auth_root(None)?, expected_root);
 
-            assert_eq!(run_status(), ExitCode::Success);
+            assert_eq!(run_status(None), ExitCode::Success);
             verify_foreign_home_unchanged(codex_home.path(), &foreign_before)?;
 
             assert!(crate::commands::doctor::check_auth());
+            verify_foreign_home_unchanged(codex_home.path(), &foreign_before)?;
+
+            let prepared =
+                prepare_named_login(&expected_root, "isolated", OAuthHttpOptions::default())?;
+            let NamedLoginPreparation::Pending(reservation) = prepared else {
+                return Err(
+                    std::io::Error::other("fresh named login unexpectedly recovered").into(),
+                );
+            };
+            seed_norn_auth_as(
+                reservation.auth_root().as_path(),
+                NAMED_TEST_JWT,
+                "named-account",
+            )?;
+            reservation.commit()?;
+            use_auth_account("isolated")?;
+            assert!(list_auth_accounts()?.iter().any(|account| {
+                account.alias == "isolated" && account.active && !account.legacy_default
+            }));
             verify_foreign_home_unchanged(codex_home.path(), &foreign_before)?;
 
             let provider = build_from_auth_source(&AuthSource::oauth_default()).await?;
@@ -85,6 +112,15 @@ async fn default_auth_surfaces_leave_foreign_home_unchanged_at_each_checkpoint()
                 .build()?;
             assert!(request.headers().contains_key("Authorization"));
             drop(provider);
+            verify_foreign_home_unchanged(codex_home.path(), &foreign_before)?;
+
+            let named_report =
+                norn::provider::auth::logout_named(LoginConfig::default(), "isolated").await?;
+            assert!(matches!(named_report.local, Ok(DeleteAuthOutcome::Removed)));
+            assert!(matches!(
+                named_report.remote,
+                RemoteRevokeOutcome::NotApplicable
+            ));
             verify_foreign_home_unchanged(codex_home.path(), &foreign_before)?;
 
             let report = logout(LoginConfig::default()).await?;
@@ -102,16 +138,20 @@ async fn default_auth_surfaces_leave_foreign_home_unchanged_at_each_checkpoint()
 }
 
 fn seed_norn_auth(root: &Path) -> TestResult {
-    std::fs::create_dir(root)?;
+    seed_norn_auth_as(root, TEST_JWT, "account")
+}
+
+fn seed_norn_auth_as(root: &Path, jwt: &str, account_id: &str) -> TestResult {
+    std::fs::create_dir_all(root)?;
     std::fs::write(
         root.join("auth.json"),
         serde_json::to_vec(&serde_json::json!({
             "auth_mode": "chatgpt",
             "tokens": {
-                "id_token": TEST_JWT,
-                "access_token": TEST_JWT,
+                "id_token": jwt,
+                "access_token": jwt,
                 "refresh_token": "",
-                "account_id": "account"
+                "account_id": account_id
             }
         }))?,
     )?;

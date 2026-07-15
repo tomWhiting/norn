@@ -267,7 +267,30 @@ impl LoginServer {
     /// # Errors
     ///
     /// Returns `LoginError` for callback, exchange, or storage failures.
-    pub async fn block_until_done(mut self) -> Result<(), LoginError> {
+    pub async fn block_until_done(self) -> Result<(), LoginError> {
+        self.block_until_done_with_hooks(|_| Ok(()), || Ok(()))
+            .await
+    }
+
+    /// Commits one caller-owned durable index before browser success is shown.
+    pub(crate) async fn block_until_done_with_commit<F>(self, commit: F) -> Result<(), LoginError>
+    where
+        F: FnOnce() -> Result<(), LoginError>,
+    {
+        self.block_until_done_with_hooks(|_| Ok(()), commit).await
+    }
+
+    /// Validates prepared credentials before save and commits caller state
+    /// after save, with both steps preceding browser success.
+    pub(crate) async fn block_until_done_with_hooks<V, F>(
+        mut self,
+        validate: V,
+        commit: F,
+    ) -> Result<(), LoginError>
+    where
+        V: FnOnce(&AuthDotJson) -> Result<(), LoginError>,
+        F: FnOnce() -> Result<(), LoginError>,
+    {
         let prepared = match (&mut self.prepared).await {
             Ok(prepared) => prepared,
             Err(closed) => {
@@ -282,6 +305,13 @@ impl LoginServer {
                 return Err(error);
             }
         };
+        if let Err(error) = validate(&auth) {
+            let acknowledged = self.acknowledge_worker(CommitAcknowledgement::Canceled);
+            let finished = self.wait_for_worker().await;
+            acknowledged?;
+            finished?;
+            return Err(error);
+        }
 
         let root = self.auth_root.clone();
         let timing = self.credential_lock_timing;
@@ -303,7 +333,8 @@ impl LoginServer {
                 .map(drop)
                 .map_err(map_credential_transaction_error),
             (AuthCredentialsStoreMode::File, Err(error)) => Err(error),
-        };
+        }
+        .and_then(|()| commit());
         let acknowledgement = if stored.is_ok() {
             CommitAcknowledgement::Committed
         } else {

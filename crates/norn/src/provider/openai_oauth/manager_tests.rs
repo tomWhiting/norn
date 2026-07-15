@@ -304,7 +304,7 @@ async fn sequential_refreshes_each_exchange() -> TestResult {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn persist_failure_is_shared_and_blocks_rotated_lineage() -> TestResult {
+async fn journal_failure_is_shared_and_prevents_authority_dispatch() -> TestResult {
     use std::os::unix::fs::PermissionsExt as _;
 
     let server = MockServer::start().await;
@@ -328,27 +328,19 @@ async fn persist_failure_is_shared_and_blocks_rotated_lineage() -> TestResult {
         manager.refresh_token_from_authority(),
     );
     assert!(
-        matches!(first, Err(RefreshTokenError::Undurable(_))),
-        "first waiter must observe the persistence failure: {first:?}"
+        matches!(first, Err(RefreshTokenError::Coordination(_))),
+        "first waiter must observe the journal failure: {first:?}"
     );
     assert!(
-        matches!(second, Err(RefreshTokenError::Undurable(_))),
-        "second waiter must observe the persistence failure: {second:?}"
+        matches!(second, Err(RefreshTokenError::Coordination(_))),
+        "second waiter must observe the journal failure: {second:?}"
     );
-    let cached_token = match manager.auth.lock().await.clone() {
-        CachedAuthState::PendingPersistence { refreshed, .. } => refreshed
-            .tokens
-            .as_ref()
-            .map(|tokens| tokens.access_token.clone()),
-        CachedAuthState::Missing
-        | CachedAuthState::Ready { .. }
-        | CachedAuthState::Indeterminate { .. } => None,
-    };
-    assert_eq!(cached_token.as_deref(), Some("new-access-token"));
-    assert!(matches!(
-        manager.auth().await,
-        Err(RefreshTokenError::Undurable(_))
-    ));
+    assert_eq!(access_token(&manager).await?, "seed-access-token");
+    assert_eq!(
+        received_request_count(&server).await?,
+        0,
+        "journal failure must occur before authority dispatch"
+    );
 
     std::fs::set_permissions(&auth_root_path, std::fs::Permissions::from_mode(0o700))?;
     manager.refresh_token_from_authority().await?;
@@ -356,7 +348,7 @@ async fn persist_failure_is_shared_and_blocks_rotated_lineage() -> TestResult {
     assert_eq!(
         received_request_count(&server).await?,
         1,
-        "persistence retry must not rotate again"
+        "restoring journal storage permits one refresh exchange"
     );
     Ok(())
 }

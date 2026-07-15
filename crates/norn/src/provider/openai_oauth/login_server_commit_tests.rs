@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicBool;
+
 use super::super::credential_lock_timing::CredentialLockTimingError;
 use super::super::types::CodexAuth;
 use super::*;
@@ -304,6 +306,108 @@ async fn durable_save_precedes_commit_acknowledgement() -> Result<(), Box<dyn st
 
     assert_eq!(acknowledgement, CommitAcknowledgement::Committed);
     assert!(credential_was_durable);
+    Ok(())
+}
+
+#[tokio::test]
+async fn caller_commit_precedes_success_acknowledgement() -> Result<(), Box<dyn std::error::Error>>
+{
+    let directory = tempfile::tempdir()?;
+    let auth_root = NornAuthRoot::try_from(directory.path())?;
+    let (prepared_sender, prepared) = oneshot::channel();
+    let (acknowledgement, acknowledgement_receiver) = oneshot::channel();
+    let (finished_sender, finished) = oneshot::channel();
+    let published = Arc::new(AtomicBool::new(false));
+    let observed = Arc::clone(&published);
+    let server = LoginServer {
+        prepared,
+        acknowledgement: Some(acknowledgement),
+        finished,
+        auth_root,
+        expected_revision: None,
+        mode: AuthCredentialsStoreMode::File,
+        credential_lock_timing: OAuthHttpOptions::default().credential_lock_timing()?,
+        lifecycle: Arc::new(AtomicU8::new(LOGIN_CALLBACK_CLAIMED)),
+    };
+    prepared_sender
+        .send(Ok(test_auth_document()?))
+        .map_err(|prepared| {
+            drop(prepared);
+            std::io::Error::other("prepared receiver closed")
+        })?;
+    let worker = tokio::spawn(async move {
+        let acknowledgement = acknowledgement_receiver
+            .await
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let published_before_ack = observed.load(Ordering::Acquire);
+        finished_sender
+            .send(())
+            .map_err(|()| std::io::Error::other("completion receiver closed"))?;
+        Ok::<_, std::io::Error>((acknowledgement, published_before_ack))
+    });
+
+    server
+        .block_until_done_with_commit(|| {
+            published.store(true, Ordering::Release);
+            Ok(())
+        })
+        .await?;
+    let (acknowledgement, published_before_ack) = worker
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))??;
+
+    assert_eq!(acknowledgement, CommitAcknowledgement::Committed);
+    assert!(published_before_ack);
+    Ok(())
+}
+
+#[tokio::test]
+async fn caller_commit_failure_cancels_browser_success() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let auth_root = NornAuthRoot::try_from(directory.path())?;
+    let (prepared_sender, prepared) = oneshot::channel();
+    let (acknowledgement, acknowledgement_receiver) = oneshot::channel();
+    let (finished_sender, finished) = oneshot::channel();
+    let server = LoginServer {
+        prepared,
+        acknowledgement: Some(acknowledgement),
+        finished,
+        auth_root,
+        expected_revision: None,
+        mode: AuthCredentialsStoreMode::File,
+        credential_lock_timing: OAuthHttpOptions::default().credential_lock_timing()?,
+        lifecycle: Arc::new(AtomicU8::new(LOGIN_CALLBACK_CLAIMED)),
+    };
+    prepared_sender
+        .send(Ok(test_auth_document()?))
+        .map_err(|prepared| {
+            drop(prepared);
+            std::io::Error::other("prepared receiver closed")
+        })?;
+    let worker = tokio::spawn(async move {
+        let acknowledgement = acknowledgement_receiver
+            .await
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        finished_sender
+            .send(())
+            .map_err(|()| std::io::Error::other("completion receiver closed"))?;
+        Ok::<_, std::io::Error>(acknowledgement)
+    });
+
+    let result = server
+        .block_until_done_with_commit(|| {
+            Err(LoginError::Storage {
+                kind: LoginStorageFailureKind::Coordination,
+                reason: "named-account publication failed".to_owned(),
+            })
+        })
+        .await;
+    let acknowledgement = worker
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))??;
+
+    assert!(matches!(result, Err(LoginError::Storage { .. })));
+    assert_eq!(acknowledgement, CommitAcknowledgement::Canceled);
     Ok(())
 }
 

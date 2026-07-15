@@ -8,6 +8,7 @@ pub mod model_aliases;
 pub mod overrides;
 pub mod paths;
 pub mod profile_loader;
+mod provider_auth;
 pub mod provider_selection;
 pub mod rules;
 
@@ -25,5 +26,6 @@ pub use overrides::{
 };
 pub use paths::session_data_dir;
 pub use profile_loader::{resolve_profile, resolve_profile_with_origin};
+pub(crate) use provider_auth::{ResolvedProviderAuth, resolve_provider_auth};
 pub use provider_selection::{ProviderSelection, resolve_provider_selection};
 pub use rules::load_rule_engine;

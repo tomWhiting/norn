@@ -8,7 +8,8 @@ use serde::Deserialize;
 
 use crate::config::loader::load_settings_at_launch_root;
 use crate::config::{
-    NornSettings, merge_settings, validate_settings, validate_working_directory_authority,
+    NornSettings, ProviderAuthMode, merge_settings, validate_settings,
+    validate_working_directory_authority,
 };
 use crate::context::ContextLoader;
 use crate::context::scanner::scan_rule_dirs_with_origins;
@@ -67,6 +68,10 @@ pub struct ProviderSettingsResolved {
     pub max_retries: Option<u32>,
     /// Provider-specific options passed through verbatim.
     pub provider_options: Option<serde_json::Value>,
+    /// Explicit authentication mode, when configured.
+    pub auth: Option<ProviderAuthMode>,
+    /// Name of the environment variable holding an API key.
+    pub api_key_env: Option<String>,
     /// Directory for provider debug dumps.
     pub debug_dump_dir: Option<PathBuf>,
     /// Requests-per-minute rate limit.
@@ -93,6 +98,8 @@ impl std::fmt::Debug for ProviderSettingsResolved {
             .field("request_timeout", &self.request_timeout)
             .field("max_retries", &self.max_retries)
             .field("provider_options_present", &self.provider_options.is_some())
+            .field("auth", &self.auth)
+            .field("api_key_env_present", &self.api_key_env.is_some())
             .field("debug_dump_dir_present", &self.debug_dump_dir.is_some())
             .field("rate_limit", &self.rate_limit)
             .field("rate_limit_interval", &self.rate_limit_interval)
@@ -208,6 +215,8 @@ pub fn provider_settings_from_settings(
     }
     resolved.max_retries = provider.max_retries;
     resolved.provider_options.clone_from(&provider.options);
+    resolved.auth = provider.auth;
+    resolved.api_key_env.clone_from(&provider.api_key_env);
     resolved.debug_dump_dir = provider.debug_dump_dir.as_deref().map(PathBuf::from);
     resolved.rate_limit = provider.rate_limit;
     if let Some(interval) = provider.rate_limit_interval.as_deref() {
@@ -1184,6 +1193,8 @@ mod tests {
     fn provider_settings_resolve_maps_rate_and_retry_knobs() {
         let settings = NornSettings {
             provider: Some(ProviderSettings {
+                auth: Some(ProviderAuthMode::ApiKey),
+                api_key_env: Some("OPENAI_API_KEY".to_owned()),
                 rate_limit: Some(120),
                 rate_limit_interval: Some("90s".to_owned()),
                 retry_backoff: Some("500ms".to_owned()),
@@ -1193,6 +1204,8 @@ mod tests {
             ..NornSettings::default()
         };
         let resolved = provider_settings_from_settings(&settings).expect("valid settings");
+        assert_eq!(resolved.auth, Some(ProviderAuthMode::ApiKey));
+        assert_eq!(resolved.api_key_env.as_deref(), Some("OPENAI_API_KEY"));
         assert_eq!(resolved.rate_limit, Some(120));
         assert_eq!(resolved.rate_limit_interval, Some(Duration::from_secs(90)));
         assert_eq!(resolved.retry_backoff, Some(Duration::from_millis(500)));

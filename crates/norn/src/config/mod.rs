@@ -57,7 +57,7 @@ pub(crate) use provider_security::validate_working_directory_authority;
 pub use types::{
     AgentSettings, AutoCompactReserve, ContextSettings, HookEntry, HookSettings,
     LengthOverrideEntry, McpServerSettings, ModelAliasSelection, ModelAliasSettings, NornSettings,
-    PermissionSettings, ProviderProfileSettings, ProviderSettings, RetrySettings, SessionSettings,
-    SkillToolSettings, SkillsSettings, ToolSettings, WriteToolSettings,
+    PermissionSettings, ProviderAuthMode, ProviderProfileSettings, ProviderSettings, RetrySettings,
+    SessionSettings, SkillToolSettings, SkillsSettings, ToolSettings, WriteToolSettings,
 };
 pub use validate::validate_settings;

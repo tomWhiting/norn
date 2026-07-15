@@ -4,11 +4,14 @@
 //! PKCE browser login, Norn-owned credential storage, proactive refresh,
 //! revocation, and status/JWT helpers.
 
+mod account_catalog;
 mod auth_root;
 mod browser;
 mod code_exchange;
 mod credential_decode;
 mod credential_lock_timing;
+mod credential_recovery;
+mod credential_revision;
 mod credential_state;
 mod credential_transaction;
 mod credential_validation;
@@ -30,6 +33,14 @@ mod foreign_home_test_support;
 #[path = "oauth_chain_tests.rs"]
 mod chain_tests;
 
+pub(crate) use account_catalog::prepare_named_account_logout;
+pub use account_catalog::{
+    AccountAlias, AccountCatalogError, AccountLogoutTarget, AccountSummary,
+    AllAccountLogoutReservation, DEFAULT_ACCOUNT_ALIAS, DefaultLoginReservation,
+    NamedLoginPreparation, NamedLoginReservation, list_accounts, prepare_all_account_logout,
+    prepare_default_login, prepare_named_login, resolve_account_root, use_account,
+    validate_default_login_identity,
+};
 pub use auth_root::{NornAuthRoot, NornAuthRootError, NornAuthRootSource, resolve_norn_auth_root};
 pub use credential_state::{
     CredentialInspectionError, LocalCredentialState, MalformedCredentialReason,
@@ -45,6 +56,7 @@ pub use options::OAuthHttpOptions;
 pub use revoke::{
     LocalLogoutError, LogoutError, LogoutReport, RemoteRevokeOutcome, logout_with_revoke,
 };
+pub(crate) use revoke::{complete_prepared_logout, prepare_local_logout};
 pub use storage::{
     AUTH_JSON_FILE, AuthCredentialsStoreMode, DeleteAuthOutcome, StorageError, load_auth_dot_json,
 };

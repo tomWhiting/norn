@@ -184,6 +184,12 @@ pub struct Cli {
     #[arg(long, requires = "session_id")]
     pub resume_if_exists: bool,
 
+    /// OAuth account for this agent run. Resumed, forked, and
+    /// open-or-resume runs require an explicit account to avoid silently
+    /// changing credential affinity; use `default` for the compatibility slot.
+    #[arg(long, value_name = "ALIAS|default")]
+    pub account: Option<String>,
+
     /// Provider backend selection.
     #[arg(long, value_name = "PROVIDER", value_enum, conflicts_with_all = ["api_shape", "provider_profile"])]
     pub provider: Option<ProviderKind>,
@@ -214,6 +220,19 @@ pub struct Cli {
     /// Subcommand. When omitted, the agent path runs (REPL or print).
     #[command(subcommand)]
     pub command: Option<Command>,
+}
+
+impl Cli {
+    /// Return whether this agent run may attach to existing session state.
+    ///
+    /// Pre-P5 session records do not persist account affinity. Resuming,
+    /// forking, or conditionally opening an existing session therefore
+    /// requires an explicit selection instead of consulting mutable active
+    /// account state.
+    #[must_use]
+    pub const fn agent_run_may_reuse_session(&self) -> bool {
+        self.resume.is_some() || self.fork.is_some() || self.resume_if_exists
+    }
 }
 
 /// Reasoning-effort levels accepted by `--reasoning-effort` and threaded
@@ -436,11 +455,34 @@ pub enum SessionExportFormat {
 #[derive(Subcommand, Debug)]
 pub enum AuthCmd {
     /// OAuth PKCE login flow (opens browser).
-    Login,
+    Login {
+        /// Publish the login as a named Norn-owned account.
+        #[arg(long, value_name = "ALIAS")]
+        name: Option<String>,
+    },
     /// Clear stored credentials.
-    Logout,
-    /// Show auth state: logged in, token expiry, account ID.
-    Status,
+    Logout {
+        /// Named account to remove; omit for the compatibility slot.
+        #[arg(value_name = "ALIAS")]
+        name: Option<String>,
+        /// Remove the compatibility slot and every named account.
+        #[arg(long, conflicts_with = "name")]
+        all: bool,
+    },
+    /// Show side-effect-free local credential state without account identity.
+    Status {
+        /// Named account to inspect; omit for the compatibility slot.
+        #[arg(value_name = "ALIAS")]
+        name: Option<String>,
+    },
+    /// List the compatibility slot and published named accounts.
+    List,
+    /// Select an account for subsequently constructed providers.
+    Use {
+        /// Named alias or `default` compatibility slot.
+        #[arg(value_name = "ALIAS|default")]
+        name: String,
+    },
 }
 
 /// Arguments for the `completion` subcommand (NC17).
@@ -543,9 +585,30 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Command::Auth {
-                command: AuthCmd::Login,
+                command: AuthCmd::Login { name: None },
             })
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn named_auth_commands_and_logout_exclusion_parse() -> Result<(), clap::Error> {
+        let login = Cli::try_parse_from(["norn", "auth", "login", "--name", "work"])?;
+        assert!(matches!(
+            login.command,
+            Some(Command::Auth {
+                command: AuthCmd::Login { name: Some(ref name) },
+            }) if name == "work"
+        ));
+
+        let use_account = Cli::try_parse_from(["norn", "auth", "use", "work"])?;
+        assert!(matches!(
+            use_account.command,
+            Some(Command::Auth {
+                command: AuthCmd::Use { ref name },
+            }) if name == "work"
+        ));
+        assert!(Cli::try_parse_from(["norn", "auth", "logout", "work", "--all"]).is_err());
         Ok(())
     }
 

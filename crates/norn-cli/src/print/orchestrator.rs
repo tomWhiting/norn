@@ -196,6 +196,7 @@ fn fail_before_assembly(cli: &Cli, err: PrintError) -> PrintError {
 /// [`PrintError::Argument`] / [`PrintError::Auth`] when resolution,
 /// provider construction, or `build()` reject the invocation.
 pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<PrintAssembly, PrintError> {
+    let oauth_account = cli.account.as_deref();
     let resolved = resolve_invocation(cli)?;
     let index_lock_deadline = resolved.index_lock_deadline;
 
@@ -215,13 +216,18 @@ pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<PrintAssembly, Pri
         provider_overrides.debug_dump_file = Some(dir.join(format!("{hint}.jsonl")));
     }
 
-    let built_provider =
-        build_provider(resolved.provider_kind, &provider_overrides, &resolved.model)
-            .await
-            .map_err(|err| match err.exit_code() {
-                ExitCode::AuthError => PrintError::Auth(err.to_string()),
-                _ => PrintError::Agent(err.to_string()),
-            })?;
+    let built_provider = build_provider(
+        resolved.provider_kind,
+        &provider_overrides,
+        &resolved.model,
+        oauth_account,
+        cli.agent_run_may_reuse_session(),
+    )
+    .await
+    .map_err(|err| match err.exit_code() {
+        ExitCode::AuthError => PrintError::Auth(err.to_string()),
+        _ => PrintError::Agent(err.to_string()),
+    })?;
 
     let mcp = connect_mcp_runtime(&resolved.project_root, &resolved.mcp_servers)
         .await

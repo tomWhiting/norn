@@ -7,13 +7,15 @@ use super::{
     AccountIdentity, AuthManager, CachedAuthState, RefreshAttempt, RefreshLineage,
     RefreshTokenError,
 };
+use crate::provider::openai_oauth::credential_recovery::{
+    RecoveryJournalError, RecoveryReconciliation,
+};
 use crate::provider::openai_oauth::credential_state::{
     LocalCredentialState, evaluate_chatgpt_credential,
 };
 use crate::provider::openai_oauth::credential_transaction::{
     CredentialDocument, CredentialSnapshot, CredentialTransaction, CredentialTransactionError,
 };
-use crate::provider::openai_oauth::refresh::{RefreshError, refresh_auth};
 use crate::provider::openai_oauth::types::{AuthDotJson, CodexAuth};
 
 impl AuthManager {
@@ -156,13 +158,30 @@ impl AuthManager {
             .snapshot()
             .map_err(|error| map_transaction_coordination(&error))?;
         let current = self.auth.lock().await.clone();
+        if let CachedAuthState::PendingPersistence {
+            refreshed,
+            expected_revision,
+            ..
+        } = current
+        {
+            return self
+                .persist_pending(&transaction, &snapshot, refreshed, expected_revision)
+                .await;
+        }
+        if self
+            .reconcile_recovery_before_attempt(&transaction, &snapshot)
+            .await?
+        {
+            return Ok(());
+        }
+        let current = self.auth.lock().await.clone();
         match current {
             CachedAuthState::PendingPersistence {
                 refreshed,
                 expected_revision,
                 ..
             } => {
-                self.persist_pending(&transaction, refreshed, expected_revision)
+                self.persist_pending(&transaction, &snapshot, refreshed, expected_revision)
                     .await
             }
             CachedAuthState::Indeterminate {
@@ -216,108 +235,6 @@ impl AuthManager {
         }
     }
 
-    async fn refresh_and_persist(
-        &self,
-        transaction: &CredentialTransaction,
-        current: Box<AuthDotJson>,
-        expected_revision: Option<
-            crate::provider::openai_oauth::credential_transaction::CredentialRevision,
-        >,
-    ) -> Result<(), RefreshTokenError> {
-        let pinned_identity = self.account_identity.as_ref().ok_or_else(|| {
-            RefreshTokenError::Permanent("OAuth credential has no pinned account owner".to_owned())
-        })?;
-        if &account_identity(&current)? != pinned_identity {
-            return Err(RefreshTokenError::Conflict(
-                "OAuth account identity no longer matches its manager".to_owned(),
-            ));
-        }
-        let observed_lineage = refresh_lineage(&current)?;
-        let provisional_error = RefreshTokenError::Indeterminate(
-            "OAuth refresh ended before its authority outcome was recorded".to_owned(),
-        );
-        *self.auth.lock().await = CachedAuthState::Indeterminate {
-            observed_revision: expected_revision.clone(),
-            observed_lineage: observed_lineage.clone(),
-            error: provisional_error,
-        };
-        let refreshed = match refresh_auth(&current, &self.token_url, &self.client).await {
-            Ok(refreshed) => Box::new(refreshed),
-            Err(RefreshError::Indeterminate(message)) => {
-                let error = RefreshTokenError::Indeterminate(message);
-                *self.auth.lock().await = CachedAuthState::Indeterminate {
-                    observed_revision: expected_revision,
-                    observed_lineage,
-                    error: error.clone(),
-                };
-                return Err(error);
-            }
-            Err(error) => {
-                let refresh_error = map_refresh_error(error);
-                *self.auth.lock().await = ready_file(current, expected_revision);
-                return Err(refresh_error);
-            }
-        };
-        match transaction.save_if_revision(expected_revision.as_ref(), &refreshed) {
-            Ok(revision) => {
-                *self.auth.lock().await = CachedAuthState::Ready {
-                    auth: CodexAuth::ChatGpt(refreshed),
-                    revision: Some(revision),
-                };
-                Ok(())
-            }
-            Err(error) => {
-                let refresh_error = map_post_refresh_commit_error(&error);
-                *self.auth.lock().await = CachedAuthState::PendingPersistence {
-                    refreshed,
-                    expected_revision,
-                    error: refresh_error.clone(),
-                };
-                Err(refresh_error)
-            }
-        }
-    }
-
-    async fn persist_pending(
-        &self,
-        transaction: &CredentialTransaction,
-        refreshed: Box<AuthDotJson>,
-        expected_revision: Option<
-            crate::provider::openai_oauth::credential_transaction::CredentialRevision,
-        >,
-    ) -> Result<(), RefreshTokenError> {
-        let proposed_identity = account_identity(&refreshed)?;
-        if self.account_identity.as_ref() != Some(&proposed_identity) {
-            let error = RefreshTokenError::Conflict(
-                "rotated OAuth credential no longer matches its manager".to_owned(),
-            );
-            *self.auth.lock().await = CachedAuthState::PendingPersistence {
-                refreshed,
-                expected_revision,
-                error: error.clone(),
-            };
-            return Err(error);
-        }
-        match transaction.save_if_revision(expected_revision.as_ref(), &refreshed) {
-            Ok(revision) => {
-                *self.auth.lock().await = CachedAuthState::Ready {
-                    auth: CodexAuth::ChatGpt(refreshed),
-                    revision: Some(revision),
-                };
-                Ok(())
-            }
-            Err(error) => {
-                let refresh_error = map_post_refresh_commit_error(&error);
-                *self.auth.lock().await = CachedAuthState::PendingPersistence {
-                    refreshed,
-                    expected_revision,
-                    error: refresh_error.clone(),
-                };
-                Err(refresh_error)
-            }
-        }
-    }
-
     async fn recover_indeterminate(
         &self,
         snapshot: CredentialSnapshot,
@@ -366,6 +283,47 @@ impl AuthManager {
                 ))
             })?
             .map_err(|error| map_transaction_coordination(&error))
+    }
+
+    async fn reconcile_recovery_before_attempt(
+        &self,
+        transaction: &CredentialTransaction,
+        snapshot: &CredentialSnapshot,
+    ) -> Result<bool, RefreshTokenError> {
+        let reconciliation = transaction
+            .reconcile_refresh_recovery(snapshot)
+            .map_err(|error| map_recovery_error(&error))?;
+        match reconciliation {
+            RecoveryReconciliation::Clean => return Ok(false),
+            RecoveryReconciliation::CommitCompleted => {
+                let CredentialDocument::Parsed(auth) = &snapshot.document else {
+                    return Err(recovery_required_error());
+                };
+                let pinned_identity = self.account_identity.as_ref().ok_or_else(|| {
+                    RefreshTokenError::Permanent(
+                        "OAuth credential has no pinned account owner".to_owned(),
+                    )
+                })?;
+                if &account_identity(auth)? != pinned_identity {
+                    return Err(RefreshTokenError::Conflict(
+                        "OAuth account identity changed after refresh commit".to_owned(),
+                    ));
+                }
+                *self.auth.lock().await = ready_file(auth.clone(), snapshot.revision.clone());
+                return Ok(true);
+            }
+            RecoveryReconciliation::RecoveryRequired => {}
+        }
+        let CredentialDocument::Parsed(auth) = &snapshot.document else {
+            return Err(recovery_required_error());
+        };
+        let error = recovery_required_error();
+        *self.auth.lock().await = CachedAuthState::Indeterminate {
+            observed_revision: snapshot.revision.clone(),
+            observed_lineage: refresh_lineage(auth)?,
+            error: error.clone(),
+        };
+        Err(error)
     }
 }
 
@@ -422,14 +380,6 @@ fn refresh_lineage(auth: &AuthDotJson) -> Result<RefreshLineage, RefreshTokenErr
     })
 }
 
-fn map_refresh_error(error: RefreshError) -> RefreshTokenError {
-    match error {
-        RefreshError::Transient(message) => RefreshTokenError::Transient(message),
-        RefreshError::Permanent(message) => RefreshTokenError::Permanent(message),
-        RefreshError::Indeterminate(message) => RefreshTokenError::Indeterminate(message),
-    }
-}
-
 fn map_transaction_coordination(error: &CredentialTransactionError) -> RefreshTokenError {
     match error {
         CredentialTransactionError::Conflict
@@ -452,22 +402,24 @@ fn map_transaction_coordination(error: &CredentialTransactionError) -> RefreshTo
     }
 }
 
-fn map_post_refresh_commit_error(error: &CredentialTransactionError) -> RefreshTokenError {
+fn recovery_required_error() -> RefreshTokenError {
+    RefreshTokenError::Indeterminate(
+        "OAuth refresh recovery is required; the prior refresh token was not replayed".to_owned(),
+    )
+}
+
+fn map_recovery_error(error: &RecoveryJournalError) -> RefreshTokenError {
     match error {
-        CredentialTransactionError::Conflict
-        | CredentialTransactionError::VerificationConflict
-        | CredentialTransactionError::RecoveryIncomplete(_) => RefreshTokenError::Conflict(
-            "rotated OAuth credential conflicted with another writer".to_owned(),
+        RecoveryJournalError::Invalid => recovery_required_error(),
+        RecoveryJournalError::Changed => RefreshTokenError::Conflict(
+            "OAuth refresh recovery state changed during reconciliation".to_owned(),
         ),
-        CredentialTransactionError::DescriptorAdmission(_)
-        | CredentialTransactionError::OpenRoot(_)
-        | CredentialTransactionError::OpenLock(_)
-        | CredentialTransactionError::LockTimeout { .. }
-        | CredentialTransactionError::Lock(_)
-        | CredentialTransactionError::Storage(_)
-        | CredentialTransactionError::PublishedButUndurable { .. }
-        | CredentialTransactionError::DeletedButUndurable(_) => RefreshTokenError::Undurable(
-            format!("rotated OAuth credential was not durably accepted: {error}"),
+        RecoveryJournalError::EntropyUnavailable
+        | RecoveryJournalError::Serialization(_)
+        | RecoveryJournalError::Io(_)
+        | RecoveryJournalError::PublishedButUndurable(_)
+        | RecoveryJournalError::DeletedButUndurable(_) => RefreshTokenError::Coordination(
+            "OAuth refresh recovery state could not be durably reconciled".to_owned(),
         ),
     }
 }

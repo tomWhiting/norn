@@ -39,6 +39,12 @@ pub enum LocalLogoutError {
     /// Locking, descriptor admission, or private filesystem I/O failed.
     #[error("local OAuth credential removal could not be coordinated")]
     Coordination,
+    /// Credential removal committed, but exact catalog retirement did not.
+    #[error("local OAuth credential was removed but account catalog retirement was not durable")]
+    CatalogRetirement,
+    /// Credential and catalog removal committed, but the empty slot remained.
+    #[error("local OAuth credential was removed but account slot cleanup failed")]
+    SlotCleanup,
 }
 
 /// Remote revocation result, reported separately from local credential removal.
@@ -77,6 +83,35 @@ enum PendingRemoteRevoke {
     NotApplicable,
     RefreshToken(String),
     LoadFailed(LogoutError),
+}
+
+pub(crate) struct PreparedLogout {
+    local: Result<DeleteAuthOutcome, LocalLogoutError>,
+    pending_remote: PendingRemoteRevoke,
+    remote_permitted: bool,
+}
+
+impl PreparedLogout {
+    pub(crate) fn coordination_failure() -> Self {
+        Self {
+            local: Err(LocalLogoutError::Coordination),
+            pending_remote: PendingRemoteRevoke::LoadFailed(LogoutError::LocalRemovalIncomplete),
+            remote_permitted: false,
+        }
+    }
+
+    pub(crate) fn local_succeeded(&self) -> bool {
+        self.local.is_ok()
+    }
+
+    pub(crate) fn catalog_retirement_failed(&mut self) {
+        self.local = Err(LocalLogoutError::CatalogRetirement);
+        self.remote_permitted = false;
+    }
+
+    pub(crate) fn slot_cleanup_failed(&mut self) {
+        self.local = Err(LocalLogoutError::SlotCleanup);
+    }
 }
 
 /// Durably removes `auth.json` locally, then reports remote revocation
@@ -120,46 +155,52 @@ where
         prepare_local_logout(&root, mode, credential_lock_timing)
     })
     .await;
-    let (local, pending_remote) = match prepared {
+    let prepared = match prepared {
         Ok(prepared) => prepared,
         Err(error) => {
             tracing::warn!(%error, "local OAuth logout task failed");
-            (
-                Err(LocalLogoutError::Coordination),
-                PendingRemoteRevoke::LoadFailed(LogoutError::LocalRemovalIncomplete),
-            )
+            PreparedLogout {
+                local: Err(LocalLogoutError::Coordination),
+                pending_remote: PendingRemoteRevoke::LoadFailed(
+                    LogoutError::LocalRemovalIncomplete,
+                ),
+                remote_permitted: false,
+            }
         }
     };
-    complete_logout(local, pending_remote, revoke).await
+    complete_prepared_with_revoker(prepared, revoke).await
 }
 
-fn prepare_local_logout(
+pub(crate) fn prepare_local_logout(
     auth_root: &NornAuthRoot,
     mode: AuthCredentialsStoreMode,
     timing: CredentialLockTiming,
-) -> (
-    Result<DeleteAuthOutcome, LocalLogoutError>,
-    PendingRemoteRevoke,
-) {
+) -> PreparedLogout {
     match mode {
         AuthCredentialsStoreMode::File => {}
     }
     let transaction = match CredentialTransaction::acquire(auth_root, timing) {
         Ok(transaction) => transaction,
         Err(error) => {
-            return (
-                Err(map_local_logout_error(&error)),
-                PendingRemoteRevoke::LoadFailed(LogoutError::LocalRemovalIncomplete),
-            );
+            return PreparedLogout {
+                local: Err(map_local_logout_error(&error)),
+                pending_remote: PendingRemoteRevoke::LoadFailed(
+                    LogoutError::LocalRemovalIncomplete,
+                ),
+                remote_permitted: false,
+            };
         }
     };
     let snapshot = match transaction.snapshot() {
         Ok(snapshot) => snapshot,
         Err(error) => {
-            return (
-                Err(map_local_logout_error(&error)),
-                PendingRemoteRevoke::LoadFailed(LogoutError::LocalRemovalIncomplete),
-            );
+            return PreparedLogout {
+                local: Err(map_local_logout_error(&error)),
+                pending_remote: PendingRemoteRevoke::LoadFailed(
+                    LogoutError::LocalRemovalIncomplete,
+                ),
+                remote_permitted: false,
+            };
         }
     };
     let pending_remote = match snapshot.document {
@@ -178,10 +219,38 @@ fn prepare_local_logout(
                 })
         }
     };
+    let recovery_revision = transaction.recovery_revision_for_logout();
     let local = transaction
         .delete_if_revision(snapshot.revision.as_ref())
         .map_err(|error| map_local_logout_error(&error));
-    (local, pending_remote)
+    if local.is_ok() {
+        match recovery_revision {
+            Ok(expected) => {
+                if let Err(error) = transaction.clear_recovery_after_logout(expected.as_ref()) {
+                    tracing::warn!(%error, "local OAuth logout could not clear recovery state");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "local OAuth logout could not inspect recovery state");
+            }
+        }
+    }
+    let remote_permitted = local.is_ok();
+    PreparedLogout {
+        local,
+        pending_remote,
+        remote_permitted,
+    }
+}
+
+pub(crate) async fn complete_prepared_logout(
+    prepared: PreparedLogout,
+    http: OAuthHttpOptions,
+) -> LogoutReport {
+    complete_prepared_with_revoker(prepared, move |refresh_token| async move {
+        revoke_refresh_token(&refresh_token, http).await
+    })
+    .await
 }
 
 fn invalid_lock_timing_report(error: CredentialLockTimingError) -> LogoutReport {
@@ -210,6 +279,7 @@ fn map_local_logout_error(error: &CredentialTransactionError) -> LocalLogoutErro
     }
 }
 
+#[cfg(test)]
 async fn complete_logout<F, Fut>(
     local: Result<DeleteAuthOutcome, LocalLogoutError>,
     pending_remote: PendingRemoteRevoke,
@@ -219,7 +289,29 @@ where
     F: FnOnce(String) -> Fut,
     Fut: Future<Output = Result<(), LogoutError>>,
 {
-    if local.is_err() {
+    let remote_permitted = local.is_ok();
+    complete_prepared_with_revoker(
+        PreparedLogout {
+            local,
+            pending_remote,
+            remote_permitted,
+        },
+        revoke,
+    )
+    .await
+}
+
+async fn complete_prepared_with_revoker<F, Fut>(prepared: PreparedLogout, revoke: F) -> LogoutReport
+where
+    F: FnOnce(String) -> Fut,
+    Fut: Future<Output = Result<(), LogoutError>>,
+{
+    let PreparedLogout {
+        local,
+        pending_remote,
+        remote_permitted,
+    } = prepared;
+    if !remote_permitted {
         let remote = match pending_remote {
             PendingRemoteRevoke::NotApplicable => RemoteRevokeOutcome::NotApplicable,
             PendingRemoteRevoke::RefreshToken(refresh_token) => {

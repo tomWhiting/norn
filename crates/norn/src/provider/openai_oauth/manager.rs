@@ -15,6 +15,8 @@ use crate::provider::startup_trace;
 
 #[path = "manager_attempt.rs"]
 mod attempt;
+#[path = "manager_commit.rs"]
+mod commit;
 #[path = "manager_refresh.rs"]
 mod refresh_flow;
 #[path = "manager_registry.rs"]
@@ -281,18 +283,23 @@ impl AuthManager {
 
         let load_started = startup_trace::start("oauth_auth_manager_load_auth_start");
         let transaction_root = auth_root.clone();
-        let snapshot = tokio::task::spawn_blocking(move || {
+        let (snapshot, recovery) = tokio::task::spawn_blocking(move || {
             let transaction = super::credential_transaction::CredentialTransaction::acquire(
                 &transaction_root,
                 lock_timing,
             )?;
-            transaction.snapshot()
+            let snapshot = transaction.snapshot()?;
+            let recovery = transaction.reconcile_refresh_recovery(&snapshot);
+            Ok::<_, super::credential_transaction::CredentialTransactionError>((snapshot, recovery))
         })
         .await
         .map_err(|error| AuthManagerBuildError::CredentialCoordination {
             reason: format!("credential inspection task failed: {error}"),
         })?
         .map_err(map_transaction_build_error)?;
+        let recovery = recovery.map_err(|error| AuthManagerBuildError::CredentialCoordination {
+            reason: error.to_string(),
+        })?;
         let (auth, account_identity) = match snapshot.document {
             super::credential_transaction::CredentialDocument::Missing => {
                 (CachedAuthState::Missing, None)
@@ -303,13 +310,29 @@ impl AuthManager {
                         reason: MalformedCredentialReason::MissingAccountId,
                     },
                 )?;
-                (
+                let state = if recovery
+                    == super::credential_recovery::RecoveryReconciliation::RecoveryRequired
+                {
+                    let observed_lineage = RefreshLineage::from_auth(&auth).ok_or(
+                        AuthManagerBuildError::MalformedCredential {
+                            reason: MalformedCredentialReason::InvalidRefreshToken,
+                        },
+                    )?;
+                    CachedAuthState::Indeterminate {
+                        observed_revision: snapshot.revision,
+                        observed_lineage,
+                        error: RefreshTokenError::Indeterminate(
+                            "OAuth refresh recovery is required before this credential can rotate"
+                                .to_owned(),
+                        ),
+                    }
+                } else {
                     CachedAuthState::Ready {
                         auth: CodexAuth::ChatGpt(auth),
                         revision: snapshot.revision,
-                    },
-                    Some(account_identity),
-                )
+                    }
+                };
+                (state, Some(account_identity))
             }
             super::credential_transaction::CredentialDocument::Malformed(reason) => {
                 return Err(AuthManagerBuildError::MalformedCredential { reason });

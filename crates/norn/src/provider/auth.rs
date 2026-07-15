@@ -5,6 +5,7 @@
 //! - [`OAuthAuthProvider`] — primary path. OAuth 2.0 Authorization Code
 //!   with PKCE against `auth.openai.com`.
 //!   Tokens persist in Norn-owned storage at
+//!   the active Norn-owned account. The compatibility slot remains at
 //!   `$NORN_HOME/auth/auth.json` (default `~/.norn/auth/auth.json`).
 //! - [`ApiKeyAuthProvider`] — testing only. Used by env-gated
 //!   integration tests reading `OPENAI_TEST_KEY` and by API-key based
@@ -16,9 +17,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::openai_oauth::{
-    AuthCredentialsStoreMode, AuthManager, AuthManagerBuildError, CLIENT_ID, LoginError,
-    LoginStorageFailureKind, LogoutReport, NornAuthRoot, NornAuthRootError, OAuthHttpOptions,
-    RefreshTokenError, ServerOptions, resolve_norn_auth_root,
+    AuthCredentialsStoreMode, AuthManager, AuthManagerBuildError, LoginError,
+    LoginStorageFailureKind, LogoutReport, NornAuthRoot, OAuthHttpOptions, RefreshTokenError,
+    resolve_norn_auth_root,
 };
 use super::startup_trace;
 use async_trait::async_trait;
@@ -28,8 +29,13 @@ use crate::error::{
     ConfigError, NornError, OAuthCredentialFailureKind, ProviderError, TransientKind,
 };
 
+mod accounts;
 mod static_codex;
 
+pub use accounts::{
+    command_account_root, list_auth_accounts, login_named, logout_all_auth_accounts, logout_named,
+    provider_account_root, use_auth_account,
+};
 pub(crate) use static_codex::StaticCodexAuthProvider;
 pub use static_codex::StaticCodexCredential;
 
@@ -43,7 +49,8 @@ pub enum AuthSource {
     /// Norn-owned storage.
     OAuth {
         /// Optional absolute override for the Norn OAuth credential root.
-        /// `None` resolves to `$NORN_HOME/auth` (default `~/.norn/auth`).
+        /// `None` resolves the active named account, falling back to
+        /// `$NORN_HOME/auth` (default `~/.norn/auth`).
         /// Supplying a path declares it Norn-owned; this is not a Codex import
         /// surface and must not point at a foreign credential directory.
         auth_root: Option<PathBuf>,
@@ -57,7 +64,7 @@ pub enum AuthSource {
 }
 
 impl AuthSource {
-    /// Returns the default OAuth construction with no auth-root override.
+    /// Returns OAuth construction using the active/default Norn account.
     #[must_use]
     pub const fn oauth_default() -> Self {
         Self::OAuth { auth_root: None }
@@ -127,7 +134,7 @@ impl OAuthAuthProvider {
     /// cannot be built.
     pub async fn new(auth_root: Option<PathBuf>) -> Result<Self, ProviderError> {
         let provider_started = startup_trace::start("oauth_auth_provider_new_start");
-        let auth_root = provider_norn_auth_root(auth_root)?;
+        let auth_root = accounts::provider_root_from_override(auth_root)?;
         startup_trace::elapsed("oauth_auth_root_resolved", provider_started);
         let manager_started = startup_trace::start("oauth_auth_manager_shared_start");
         let manager = AuthManager::shared(
@@ -325,21 +332,7 @@ pub struct LoginConfig {
 /// root, or unavailable browser launcher. Callback transport, authority, and
 /// credential-lifecycle failures retain their structural provider error type.
 pub async fn login(config: LoginConfig) -> Result<(), NornError> {
-    if config.device_code {
-        return Err(NornError::Config(ConfigError::InvalidConfig {
-            reason: "device code login is not yet supported; use the browser PKCE flow".to_string(),
-        }));
-    }
-    let auth_root = command_norn_auth_root(config.auth_root)?;
-    let opts = ServerOptions::new(
-        auth_root,
-        CLIENT_ID.to_string(),
-        AuthCredentialsStoreMode::File,
-        OAuthHttpOptions::default(),
-    );
-    let server = super::openai_oauth::run_login_server(opts).map_err(map_login_error)?;
-    server.block_until_done().await.map_err(map_login_error)?;
-    Ok(())
+    accounts::login_account(config, None).await
 }
 
 /// Clears local auth storage before attempting remote token revocation and
@@ -349,16 +342,18 @@ pub async fn login(config: LoginConfig) -> Result<(), NornError> {
 ///
 /// Returns [`NornError::Config`] when the trusted auth root cannot be resolved.
 pub async fn logout(config: LoginConfig) -> Result<LogoutReport, NornError> {
-    let auth_root = command_norn_auth_root(config.auth_root)?;
+    let base_root = command_norn_auth_root(config.auth_root)?;
     Ok(super::openai_oauth::logout_with_revoke(
-        &auth_root,
+        &base_root,
         AuthCredentialsStoreMode::File,
         OAuthHttpOptions::default(),
     )
     .await)
 }
 
-fn command_norn_auth_root(override_path: Option<PathBuf>) -> Result<NornAuthRoot, NornError> {
+pub(super) fn command_norn_auth_root(
+    override_path: Option<PathBuf>,
+) -> Result<NornAuthRoot, NornError> {
     resolve_norn_auth_root(override_path).map_err(|error| {
         NornError::Config(ConfigError::InvalidConfig {
             reason: error.to_string(),
@@ -366,7 +361,7 @@ fn command_norn_auth_root(override_path: Option<PathBuf>) -> Result<NornAuthRoot
     })
 }
 
-fn map_login_error(error: LoginError) -> NornError {
+pub(super) fn map_login_error(error: LoginError) -> NornError {
     match error {
         LoginError::DescriptorAdmission(error) => {
             NornError::Provider(ProviderError::DescriptorAdmission(error))
@@ -407,16 +402,6 @@ fn map_login_error(error: LoginError) -> NornError {
                 })
             }
         },
-    }
-}
-
-fn provider_norn_auth_root(override_path: Option<PathBuf>) -> Result<NornAuthRoot, ProviderError> {
-    resolve_norn_auth_root(override_path).map_err(norn_auth_root_error)
-}
-
-fn norn_auth_root_error(error: NornAuthRootError) -> ProviderError {
-    ProviderError::AuthenticationFailed {
-        reason: error.to_string(),
     }
 }
 

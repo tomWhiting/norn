@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use norn::error::{ErrorClass, ProviderError};
 use norn::integration::{ClaudeRunnerAdapter, ClaudeRunnerConfig};
-use norn::provider::auth::AuthSource;
+use norn::provider::auth::{AuthSource, provider_account_root};
 use norn::provider::openai::OpenAiProvider;
 use norn::provider::openai_compatible::OpenAiCompatibleProvider;
 use norn::provider::request::{ProviderConfig, SecretString};
@@ -33,7 +33,7 @@ use norn::provider::traits::Provider;
 
 use crate::cli::ExitCode;
 use crate::cli::ProviderKind;
-use crate::config::ProviderConfigOverrides;
+use crate::config::{ProviderConfigOverrides, ResolvedProviderAuth, resolve_provider_auth};
 use crate::print::provider_trace;
 
 /// Default HTTP request timeout when neither `settings.provider.timeout`
@@ -57,7 +57,6 @@ const DEFAULT_MAX_RETRIES: u32 = 2;
 /// `PATH`. Kept explicit so the settings override and the fallback are
 /// visible in one place.
 const DEFAULT_RUNNER_PATH: &str = "claude";
-const DEFAULT_OPENAI_COMPAT_API_KEY_ENV: &str = "NORN_OPENAI_COMPAT_API_KEY";
 
 /// Concrete provider returned by [`build_provider`]. Holds the backend
 /// behind an [`Arc`] so the caller can both hand a `&dyn Provider` to
@@ -148,18 +147,31 @@ pub async fn build_provider(
     kind: ProviderKind,
     overrides: &ProviderConfigOverrides,
     model: &str,
+    oauth_account: Option<&str>,
+    may_reuse_session: bool,
 ) -> Result<BuiltProvider, ProviderBuildError> {
+    let resolved_auth = resolve_provider_auth(kind, overrides).map_err(|error| {
+        ProviderBuildError::Provider(format!(
+            "invalid provider authentication configuration: {error}",
+        ))
+    })?;
+    let oauth_account = validate_account_request(&resolved_auth, oauth_account, may_reuse_session)?;
     let provider_build_started = provider_trace::provider_build_start(kind, model);
     match kind {
         ProviderKind::Openai => {
-            let auth_source = match overrides.api_key_env.as_deref() {
-                Some(api_key_env) => AuthSource::ApiKey {
+            let auth_source = match resolved_auth {
+                ResolvedProviderAuth::OAuth => AuthSource::OAuth {
+                    auth_root: Some(provider_account_root(oauth_account)?),
+                },
+                ResolvedProviderAuth::ApiKeyEnv(api_key_env) => AuthSource::ApiKey {
                     key: SecretString::new(read_required_api_key(
-                        api_key_env,
+                        &api_key_env,
                         "--api-shape openai-responses",
                     )?),
                 },
-                None => AuthSource::OAuth { auth_root: None },
+                ResolvedProviderAuth::None => {
+                    return Err(inconsistent_auth_resolution(kind));
+                }
             };
             provider_trace::openai_auth_source_resolved(provider_build_started, &auth_source);
             let config = ProviderConfig {
@@ -189,15 +201,14 @@ pub async fn build_provider(
                         .to_string(),
                 )
             })?;
-            let api_key_env = overrides
-                .api_key_env
-                .as_deref()
-                .unwrap_or(DEFAULT_OPENAI_COMPAT_API_KEY_ENV);
+            let ResolvedProviderAuth::ApiKeyEnv(api_key_env) = resolved_auth else {
+                return Err(inconsistent_auth_resolution(kind));
+            };
             provider_trace::openai_compatible_api_key_env_resolved(
                 provider_build_started,
-                api_key_env,
+                &api_key_env,
             );
-            let api_key = read_required_api_key(api_key_env, "--provider openai-compatible")?;
+            let api_key = read_required_api_key(&api_key_env, "--provider openai-compatible")?;
             let config = ProviderConfig {
                 auth_source: AuthSource::ApiKey {
                     key: SecretString::new(api_key),
@@ -218,6 +229,9 @@ pub async fn build_provider(
             Ok(BuiltProvider::OpenAiCompatible(Arc::new(provider)))
         }
         ProviderKind::ClaudeRunner => {
+            if resolved_auth != ResolvedProviderAuth::None {
+                return Err(inconsistent_auth_resolution(kind));
+            }
             // `settings.provider.runner_path` overrides the documented
             // default lookup of `"claude"` on PATH; the default applies
             // only when the setting is unset.
@@ -241,12 +255,44 @@ pub async fn build_provider(
     }
 }
 
+fn validate_account_request<'a>(
+    resolved_auth: &ResolvedProviderAuth,
+    account: Option<&'a str>,
+    may_reuse_session: bool,
+) -> Result<Option<&'a str>, ProviderBuildError> {
+    match (resolved_auth, account, may_reuse_session) {
+        (ResolvedProviderAuth::OAuth, None, true) => Err(ProviderBuildError::Auth(
+            "resuming, forking, or opening an existing OAuth session requires --account <alias|default>"
+                .to_owned(),
+        )),
+        (ResolvedProviderAuth::OAuth, account, _) => Ok(account),
+        (_, Some(_), _) => Err(ProviderBuildError::Provider(
+            "--account is only valid for OpenAI OAuth authentication".to_owned(),
+        )),
+        (_, None, _) => Ok(None),
+    }
+}
+
+fn inconsistent_auth_resolution(kind: ProviderKind) -> ProviderBuildError {
+    ProviderBuildError::Provider(format!(
+        "internal authentication resolution mismatch for provider {kind:?}",
+    ))
+}
+
 fn read_required_api_key(api_key_env: &str, selector: &str) -> Result<String, ProviderBuildError> {
-    let api_key = std::env::var(api_key_env).map_err(|err| {
-        ProviderBuildError::Auth(format!(
-            "{selector} requires API key env var {api_key_env}: {err}",
-        ))
-    })?;
+    let api_key = match std::env::var(api_key_env) {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => {
+            return Err(ProviderBuildError::Auth(format!(
+                "{selector} requires API key env var {api_key_env}: variable is not set",
+            )));
+        }
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(ProviderBuildError::Auth(format!(
+                "{selector} requires API key env var {api_key_env}: value is not valid Unicode",
+            )));
+        }
+    };
     if api_key.trim().is_empty() {
         return Err(ProviderBuildError::Auth(format!(
             "{selector} requires non-empty API key env var {api_key_env}",
