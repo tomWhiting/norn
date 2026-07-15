@@ -838,9 +838,12 @@ acceptance remains pending.
 - **Local status does not claim remote usability.** The side-effect-free state
   model is missing, malformed, access-expired, refresh-candidate, locally-valid,
   or unknown. Refresh conflict and undurable persistence are typed operation
-  outcomes unless D9 separately approves a durable recovery journal. Doctor may
-  perform a separately authorized active probe, reported separately from local
-  classification.
+  outcomes unless D9 separately approves a durable recovery journal. An
+  ambiguously dispatched refresh is not retried by the same live manager until
+  durable state changes, but another process or a restarted manager can still
+  retry it; process/restart protection remains an open D9 journal decision.
+  Doctor may perform a separately authorized active probe, reported separately
+  from local classification.
 - **Automatic rotation is not a P2 feature.** It remains `ROUTE-01`, owned by
   P6 after the P3 transcript and P5 turn-state decisions. The current
   [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/) prohibit
