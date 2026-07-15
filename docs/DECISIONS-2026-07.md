@@ -790,19 +790,16 @@ The two Gate A timing claims cannot be repaired retroactively; P0 cannot receive
 explicit P0-only process exception. Whole-phase Gate D has not occurred, and P0
 acceptance remains pending.
 
-## 8. OAuth multi-account direction (2026-07-11)
+## 8. OAuth multi-account direction (2026-07-11, closed 2026-07-16)
 
-- **Explicit named accounts are a conditional P2 objective.** The owner wants to
+- **Explicit named accounts are the selected P2 branch.** The owner wants to
   sign in to multiple ChatGPT/Codex accounts and select one without overwriting
-  another. D9 Gate A selects one branch. The supported branch requires an
-  owner-approved live validity experiment before implementation. If independently
-  stored credentials remain valid, P2 designs Norn-owned named storage plus
-  explicit login, list, use, status, and logout. Invalidation returns D9 to Gate
-  A for the unsupported-branch decision. If live approval/evidence is unavailable,
-  the owner may select the unsupported branch directly: Norn removes the named
-  surface and returns a typed documented unsupported outcome without claiming
-  that the provider technically invalidates isolated credentials. Norn does not
-  use `--codex-home` or `CODEX_HOME` as a credential-root selector.
+  another. P2 implements Norn-owned named storage plus explicit login, list,
+  use, status, and logout. The redacted live A/B/A refresh experiment remains an
+  acceptance requirement, not an implementation prerequisite. A failed validity
+  experiment blocks P2 acceptance and returns the supported claim for owner
+  disposition; it does not justify silently falling back to shared Codex storage.
+  Norn does not use `--codex-home` or `CODEX_HOME` as a credential-root selector.
 - **Simultaneous token validity is evidence, not an assumption.** The Codex CLI
   presents one cached login, and the owner reports that logging into another
   account can invalidate prior tokens. Norn no longer shares that writable
@@ -820,30 +817,48 @@ acceptance remains pending.
   session cannot silently switch identity. Until P5 binds an opaque identity to
   persisted session state, every resume requires an explicit trusted account
   choice and may not consume an active-account default.
-- **Norn owns one canonical writable credential.** The current single-account
+- **Named storage is Norn-owned and alias-safe.** The legacy
+  `$NORN_HOME/auth/auth.json` remains the `default` compatibility slot. A private
+  versioned catalog maps shell-safe ASCII aliases matching
+  `[A-Za-z0-9][A-Za-z0-9._-]*` to opaque random storage identifiers below
+  `$NORN_HOME/auth/accounts/`; aliases are case-insensitively unique and never
+  become path components. Successful named login becomes active for new
+  providers. `auth use` affects new providers only. Removing the active account
+  clears active selection and never chooses a replacement implicitly.
+- **Norn owns one canonical writable default credential.** The legacy default
   Norn credential is `$NORN_HOME/auth/auth.json`, or the equivalent trusted-home
   default returned by the typed Norn resolver. Default login, refresh, status,
   and logout operate on that Norn-owned path. Ambient `$CODEX_HOME` is a foreign,
   non-authoritative source: it cannot redirect Norn's root, and the default
   CLI/provider paths never mutate, lock, permission-harden, or delete its
   `auth.json`. A trusted library caller supplying an explicit root declares that
-  root Norn-owned; it is not a foreign-file import surface. Explicit import and
-  migration semantics remain open and must not be inferred from path discovery.
-- **The foreign Codex source may not be file-backed.** Current Codex can
+  root Norn-owned; it is not a foreign-file import surface. P2 has no explicit
+  or implicit import/migration surface; adding one later requires a new owner
+  decision and must not be inferred from path discovery.
+- **Foreign import and OS-keyring integration are out of P2.** Current Codex can
   alternatively
-  [store credentials in the OS credential store](https://learn.chatgpt.com/docs/auth#credential-storage);
-  D9 must select a safe library interface before Norn claims keyring support,
-  otherwise it remains out of P2 scope. Norn never scrapes or shells out to
-  recover keyring secrets.
+  [store credentials in the OS credential store](https://learn.chatgpt.com/docs/auth#credential-storage),
+  but P2 exposes no import, migration, scraping, shell-out, or keyring interface.
+  Ambient Codex credentials remain foreign and observationally irrelevant to
+  Norn-owned named storage.
 - **Local status does not claim remote usability.** The side-effect-free state
   model is missing, malformed, access-expired, refresh-candidate, locally-valid,
   or unknown. Refresh conflict and undurable persistence are typed operation
-  outcomes unless D9 separately approves a durable recovery journal. An
-  ambiguously dispatched refresh is not retried by the same live manager until
-  durable state changes, but another process or a restarted manager can still
-  retry it; process/restart protection remains an open D9 journal decision.
+  outcomes. D9 requires a private versioned recovery marker under the same
+  Norn-owned transaction lock. It contains no raw token, account identity,
+  endpoint, path, PID, timestamp, TTL, or retry counter. An outcome-unknown
+  same-lineage marker blocks refresh replay across processes and restarts until
+  durable state proves the proposed commit or an external lineage advancement;
+  there is no time-based escape.
   Doctor may perform a separately authorized active probe, reported separately
   from local classification.
+- **Provider authentication is typed before authority access.** Explicit
+  `provider.auth` accepts only `oauth` and `api_key`; `env`, blank, and unknown
+  values are errors. Omitted mode preserves current backend defaults. Explicit
+  OAuth forbids `api_key_env`; explicit API-key mode requires it. Compatible
+  endpoints cannot select OAuth, and Claude Runner accepts neither field. The
+  matrix is resolved before environment lookup, credential I/O, provider
+  construction, or network activity.
 - **Automatic rotation is not a P2 feature.** It remains `ROUTE-01`, owned by
   P6 after the P3 transcript and P5 turn-state decisions. The current
   [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/) prohibit
@@ -863,14 +878,13 @@ acceptance remains pending.
   acquisition only: once acquired, the transaction retains exclusive ownership
   across reload, refresh dispatch, and durable publication so a rotating
   refresh token cannot be spent concurrently by cooperating Norn processes.
-- **D9 is partially decided, not closed.** The writable single-account layout,
-  typed Norn-root authority, foreign `CODEX_HOME` non-authority, unknown-expiry
-  classification, and ownerless-static no-refresh behavior are implemented.
-  Alias-to-opaque-ID mapping, explicit foreign import/migration, keyring scope,
-  named-account support, the live-validity branch, durable recovery-journal
-  policy, accepted `provider.auth` spellings and companion fields, and final
-  named selection/resume rules still require Gate A decisions and evidence.
-  D9A's credential-lock timing policy is closed separately.
+- **D9 is closed as a design decision.** The
+  selected branch, storage/selection semantics, foreign import and keyring
+  exclusion, recovery-marker contract, provider-auth matrix, and pre-P5 resume
+  rule are fixed above. The source implementation candidate is present at
+  `4d51a36`; the live validity experiment, P1 dependency, retained gate evidence,
+  and independent P2 acceptance remain open. D9A's credential-lock timing policy
+  is closed separately.
 - **D10 remains open.** Automatic rotation requires both authoritative permission
   under the governing product/contract terms and a pre-dispatch or guaranteed
   non-execution state-machine proof. If either is absent, `ROUTE-01` closes as an

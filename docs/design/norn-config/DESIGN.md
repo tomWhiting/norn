@@ -236,14 +236,22 @@ established in NA-004.
 ### D12: Auth mode in settings, secrets in env
 
 Settings `provider.auth` selects the authentication mode (`"oauth"`,
-`"api_key"`, `"env"`). The actual secret (API key, token) is never stored
-in settings files. API keys come from environment variables. OAuth tokens
-come from Norn-owned `$NORN_HOME/auth/auth.json` storage (default
-`~/.norn/auth/auth.json`).
+`"api_key"`); no aliases are accepted. The actual secret (API key, token) is
+never stored in settings files. API keys come from the environment variable
+named by `provider.api_key_env`. OAuth tokens come from Norn-owned
+`$NORN_HOME/auth/auth.json` storage (default `~/.norn/auth/auth.json`).
+
+`auth` and `api_key_env` form one precedence unit. A higher-precedence explicit
+`auth: "oauth"` clears an inherited lower-layer API-key source. An OAuth mode
+and API-key source supplied by the same or a higher layer remain together so
+runtime validation rejects the contradictory configuration. Explicit
+`auth: "api_key"` retains the effective `api_key_env` left by lower layers;
+it does not resurrect a source already cleared by an intervening OAuth layer.
+There is no blank-value clearing syntax.
 
 ### D13: Existing `-c` overrides as highest-precedence CLI layer
 
-The 14-key `-c key=value` system in `assembly.rs` is preserved. It provides
+The 23-key `-c key=value` system in `assembly.rs` is preserved. It provides
 per-invocation overrides that sit above all settings layers. Settings files
 provide defaults; `-c` provides the escape hatch. This matches the Claude
 Code model where CLI flags override settings.json.
@@ -260,7 +268,7 @@ directly under `~/.norn/`, not in a config subdirectory.
 G1. `~/.norn/settings.json` is loaded, parsed, validated, and merged with
 project-level settings before the runtime is assembled.
 
-G2. All 14 existing `-c key=value` overrides can be expressed as settings
+G2. All 23 existing `-c key=value` overrides can be expressed as settings
 file fields instead of CLI flags, with CLI flags taking precedence.
 
 G3. Tool permissions (consent boundary) are configurable via settings files
@@ -348,7 +356,7 @@ crates/norn-cli/
 | `profile/loader.rs:209` | `Result<(&str, &str), ConfigError>` | `ConfigError::InvalidConfig` |
 | `rules/parser.rs:53` | `Result<(String, String), RulesError>` | `RulesError::ParseFailed` |
 
-### ConfigOverrides Keys (14, to become settings fields)
+### ConfigOverrides Keys (23, with settings-field equivalents)
 
 | Key | Settings Path | Type |
 |-----|--------------|------|
@@ -356,14 +364,23 @@ crates/norn-cli/
 | `max_turns` | `agent.max_turns` | u32 |
 | `schema_budget` | `agent.schema_budget` | u32 |
 | `context_window` | `agent.context_window` | u64 |
-| `compact_threshold` | `agent.compact_threshold` | f64 |
+| `auto_compact_reserve_tokens` | `agent.auto_compact_reserve_tokens` | u64 or `off` |
 | `compact_keep_turns` | `agent.compact_keep_turns` | usize |
+| `delegation_depth` | `agent.delegation_depth` | u32 |
+| `conversation_state` | `agent.conversation_state` | enum |
+| `server_compaction_threshold_tokens` | `agent.server_compaction_threshold_tokens` | u64 |
+| `index_lock_deadline_ms` | `agent.index_lock_deadline_ms` | u64 |
 | `base_url` | `provider.base_url` | string |
 | `max_retries` | `provider.max_retries` | u32 |
 | `request_timeout` | `provider.timeout` | duration |
+| `rate_limit_interval` | `provider.rate_limit_interval` | duration |
+| `retry_backoff` | `provider.retry_backoff` | duration |
+| `retry_after_ceiling` | `provider.retry_after_ceiling` | duration |
 | `retry_max` | `retry.max_retries` | u32 |
 | `retry_base_delay` | `retry.base_delay` | duration |
 | `provider_options` | `provider.options` | JSON object |
+| `api_key_env` | `provider.api_key_env` | environment variable name |
+| `auth` | `provider.auth` | `oauth` or `api_key` |
 | `write.max_code_lines` | `tools.write.max_code_lines` | usize |
 | `debug_api` | `provider.debug_dump_dir` | path |
 
