@@ -1180,6 +1180,22 @@ process-local deadline passes and 20/20 two-process refresh-convergence passes
 against source commit `455990a`. Except for that retained D9A distribution,
 these are implementation checks, not retained Gate C evidence.
 
+The decision-independent lifecycle fixture slice committed at `5c9d434` adds
+sanitized login/refresh-to-durable-reload-to-final-header chains, recursive
+final-state foreign-`CODEX_HOME` sentinels for login commit, refresh, status,
+doctor, provider auth, and logout, and a real-file status/doctor matrix. The
+matrix covers every top-level local state, all 11 malformed reasons reachable
+from file-backed ChatGPT classification, both refresh-candidate reasons, and
+both unknown-expiry reasons; the reserved `MixedCredentialKinds` reason is not
+fabricated because this classifier cannot emit it. Exact-source working-state
+validation used the repository's normal `target/`: OAuth tests passed 181/181,
+`norn-cli` library tests passed 465/465, strict workspace/all-target Clippy and
+fmt passed, the scoped forbidden-pattern scan returned no match, and all 12
+changed Rust files are below 500 physical lines (largest 464). An independent
+read-only source audit found no blocker or major issue after its proof-scope,
+target-gating, disclosure-sentinel, and matrix-inventory findings were fixed.
+These remain implementation checks, not retained Gate C or P2 acceptance.
+
 ### What this phase fixes
 
 The original implementation read the account ID from the wrong JWT shape, hid
@@ -1313,7 +1329,10 @@ are not pass claims.
 - [ ] Redacted real-shape JWT fixtures cover namespaced and supported fallback
   claim sources through login, any approved import, refresh, and final header
   application without storing a usable token. (Namespaced/fallback/conflict and
-  provider-header fixtures are present; import and the full chain remain open.)
+  provider-header fixtures are present. Source `5c9d434` adds sanitized
+  namespaced login-response and refresh chains through durable reload and final
+  headers, plus non-disclosing decoder conflicts. No import branch is approved,
+  and fallback/import end-to-end chains plus retained execution remain open.)
 - [ ] Two separately constructed providers in one process share a coordinator
   and cannot refresh the same lineage twice. (Registry and single-flight
   fixtures are present; retained candidate execution is pending.)
@@ -1323,10 +1342,13 @@ are not pass claims.
 - [ ] A scripted lock-ignoring writer replacing Norn's `auth.json` during
   exchange is detected without overwrite, and mutation sentinels prove
   `$CODEX_HOME/auth.json` bytes, metadata, and surrounding files remain
-  unchanged across login, refresh, status, and logout. (The Norn conflict,
-  resolver non-authority, and status/doctor/provider/logout convergence
-  fixtures are present; login/refresh coverage and the retained full
-  foreign-file mutation sentinel remain open.)
+  unchanged across login, refresh, status, and logout. (The Norn conflict and
+  resolver non-authority fixtures are present. Source `5c9d434` adds recursive
+  final-state inventory, byte, symlink-target, timestamp, permission, and Unix
+  identity sentinels after login commit and refresh, and after each CLI
+  status/doctor/provider/logout checkpoint. The sentinels prove no artifacts
+  remain, not absence of transient access; retained candidate execution and the
+  structural foreign-path inventory remain open.)
 - [ ] Successful exchange followed by save, rename, fsync, permission, or owner
   sink failure is not returned as ordinary success. (Persistence and ownerless
   static failure fixtures are present; the complete fault matrix and retained
@@ -1365,8 +1387,11 @@ are not pass claims.
   named registry/selector is exposed and the typed result explains the limit.
 - [ ] Status and doctor produce the same local classification for every fixture;
   any doctor active-probe result is reported as separate remote evidence. (Both
-  use the same library evaluator and one default-root convergence fixture is
-  present; the complete cross-command retained state matrix is pending.)
+  use the same library evaluator. Source `5c9d434` adds a real-file
+  cross-command matrix covering every top-level state, all 11 reachable
+  file-backed malformed reasons, both refresh reasons, both unknown-expiry
+  reasons, symlink/non-regular/unreadable entries, and observational mode
+  preservation. Retained candidate execution is pending.)
 - [ ] Resume tests prove no pre-P5 session consumes an implicit active-account
   default after account selection changes.
 - [ ] The typed auth/source/account matrix rejects every invalid combination
@@ -1942,7 +1967,7 @@ ledger prematurely.
 |---|---|---|---|
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
 | P1 | Gate A complete at base `2917c8e`; Gate B foundation not yet implemented | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A `READY` | Implement and independently review the executable foundation, complete and verify P1, then resolve D0 before acceptance |
-| P2 | Interim correction through source `455990a`: single-account Norn-owned OAuth lifecycle, typed state, supervised refresh attempts, owner-approved bounded coordination, durable login/logout, and foreign `CODEX_HOME` non-authority are present in source | Correction review `7536436` is `READY`; retained D9A distributions are 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete P2 candidate gate bundle | Close the remaining D9 import/named/keyring/journal/config decisions; implement the selected named or unsupported branch; complete fault and configuration matrices; run Gate C and whole-phase independent review |
+| P2 | Interim correction through source `455990a`, plus decision-independent lifecycle fixtures at `5c9d434`: single-account Norn-owned OAuth lifecycle, typed state, supervised refresh attempts, owner-approved bounded coordination, durable login/logout, foreign `CODEX_HOME` non-authority, durable-to-header chains, final-state foreign sentinels, and the exhaustive reachable status/doctor reason matrix are present in source | Correction review `7536436` is `READY`; retained D9A distributions are 20/20 for the process-local deadline and 20/20 for two-process convergence; exact-source fixture checks are 181/181 OAuth and 465/465 CLI with strict Clippy/fmt; no complete P2 candidate gate bundle | Close the remaining D9 import/named/keyring/journal/config decisions; implement the selected named or unsupported branch; complete fault and configuration matrices; run Gate C and whole-phase independent review |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|
