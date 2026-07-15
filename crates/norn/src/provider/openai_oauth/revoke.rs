@@ -5,6 +5,7 @@ use std::future::Future;
 
 use super::CLIENT_ID;
 use super::auth_root::NornAuthRoot;
+use super::credential_lock_timing::{CredentialLockTiming, CredentialLockTimingError};
 use super::credential_transaction::{
     CredentialDocument, CredentialTransaction, CredentialTransactionError,
 };
@@ -94,19 +95,20 @@ pub async fn logout_with_revoke(
     mode: AuthCredentialsStoreMode,
     http: OAuthHttpOptions,
 ) -> LogoutReport {
-    logout_with_revoker(
-        auth_root,
-        mode,
-        http.credential_lock_timeout,
-        move |refresh_token| async move { revoke_refresh_token(&refresh_token, http).await },
-    )
+    let timing = match http.credential_lock_timing() {
+        Ok(timing) => timing,
+        Err(error) => return invalid_lock_timing_report(error),
+    };
+    logout_with_revoker(auth_root, mode, timing, move |refresh_token| async move {
+        revoke_refresh_token(&refresh_token, http).await
+    })
     .await
 }
 
 async fn logout_with_revoker<F, Fut>(
     auth_root: &NornAuthRoot,
     mode: AuthCredentialsStoreMode,
-    credential_lock_timeout: std::time::Duration,
+    credential_lock_timing: CredentialLockTiming,
     revoke: F,
 ) -> LogoutReport
 where
@@ -115,7 +117,7 @@ where
 {
     let root = auth_root.clone();
     let prepared = tokio::task::spawn_blocking(move || {
-        prepare_local_logout(&root, mode, credential_lock_timeout)
+        prepare_local_logout(&root, mode, credential_lock_timing)
     })
     .await;
     let (local, pending_remote) = match prepared {
@@ -134,7 +136,7 @@ where
 fn prepare_local_logout(
     auth_root: &NornAuthRoot,
     mode: AuthCredentialsStoreMode,
-    deadline: std::time::Duration,
+    timing: CredentialLockTiming,
 ) -> (
     Result<DeleteAuthOutcome, LocalLogoutError>,
     PendingRemoteRevoke,
@@ -142,7 +144,7 @@ fn prepare_local_logout(
     match mode {
         AuthCredentialsStoreMode::File => {}
     }
-    let transaction = match CredentialTransaction::acquire(auth_root, deadline) {
+    let transaction = match CredentialTransaction::acquire(auth_root, timing) {
         Ok(transaction) => transaction,
         Err(error) => {
             return (
@@ -180,6 +182,14 @@ fn prepare_local_logout(
         .delete_if_revision(snapshot.revision.as_ref())
         .map_err(|error| map_local_logout_error(&error));
     (local, pending_remote)
+}
+
+fn invalid_lock_timing_report(error: CredentialLockTimingError) -> LogoutReport {
+    tracing::warn!(%error, "local OAuth logout timing configuration was rejected");
+    LogoutReport {
+        local: Err(LocalLogoutError::Coordination),
+        remote: RemoteRevokeOutcome::Failed(LogoutError::LocalRemovalIncomplete),
+    }
 }
 
 fn map_local_logout_error(error: &CredentialTransactionError) -> LocalLogoutError {

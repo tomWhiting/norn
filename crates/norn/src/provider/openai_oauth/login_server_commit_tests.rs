@@ -1,3 +1,4 @@
+use super::super::credential_lock_timing::CredentialLockTimingError;
 use super::super::types::CodexAuth;
 use super::*;
 
@@ -8,6 +9,10 @@ fn test_auth_document() -> Result<AuthDotJson, std::io::Error> {
             "dummy ChatGPT credential returned an API key",
         )),
     }
+}
+
+fn lock_timing(deadline: Duration) -> Result<CredentialLockTiming, Box<dyn std::error::Error>> {
+    CredentialLockTiming::new(deadline, Duration::from_millis(1)).map_err(Into::into)
 }
 
 #[test]
@@ -71,6 +76,50 @@ fn credential_transaction_failures_map_to_structural_storage_kinds()
 }
 
 #[test]
+fn invalid_lock_timing_fails_before_login_credential_access()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let cases = [
+        (
+            OAuthHttpOptions {
+                credential_lock_timeout: Duration::ZERO,
+                ..OAuthHttpOptions::default()
+            },
+            CredentialLockTimingError::ZeroDeadline,
+        ),
+        (
+            OAuthHttpOptions {
+                credential_lock_poll_interval: Duration::ZERO,
+                ..OAuthHttpOptions::default()
+            },
+            CredentialLockTimingError::ZeroPollInterval,
+        ),
+    ];
+
+    for (index, (http, expected_error)) in cases.into_iter().enumerate() {
+        let root_path = directory.path().join(format!("invalid-{index}"));
+        std::fs::write(&root_path, b"not a credential directory")?;
+        let auth_root = NornAuthRoot::try_from(root_path.as_path())?;
+        let result = run_login_server(ServerOptions::new(
+            auth_root,
+            "test-client".to_owned(),
+            AuthCredentialsStoreMode::File,
+            http,
+        ));
+
+        assert!(matches!(
+            result,
+            Err(LoginError::Storage {
+                kind: LoginStorageFailureKind::Coordination,
+                reason,
+            }) if reason == expected_error.to_string()
+        ));
+        assert_eq!(std::fs::read(&root_path)?, b"not a credential directory");
+    }
+    Ok(())
+}
+
+#[test]
 fn dropping_login_server_cancels_a_waiting_callback_worker()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
@@ -86,7 +135,7 @@ fn dropping_login_server_cancels_a_waiting_callback_worker()
         auth_root,
         expected_revision: None,
         mode: AuthCredentialsStoreMode::File,
-        credential_lock_timeout: OAuthHttpOptions::DEFAULT_CREDENTIAL_LOCK_TIMEOUT,
+        credential_lock_timing: OAuthHttpOptions::default().credential_lock_timing()?,
         lifecycle: Arc::clone(&lifecycle),
     };
     drop(server);
@@ -116,7 +165,7 @@ async fn dropping_completion_before_commit_never_persists_prepared_auth()
         auth_root,
         expected_revision: None,
         mode: AuthCredentialsStoreMode::File,
-        credential_lock_timeout: OAuthHttpOptions::DEFAULT_CREDENTIAL_LOCK_TIMEOUT,
+        credential_lock_timing: OAuthHttpOptions::default().credential_lock_timing()?,
         lifecycle,
     };
     prepared_sender
@@ -148,7 +197,8 @@ async fn dropping_completion_during_transaction_acquisition_never_commits()
     let directory = tempfile::tempdir()?;
     let auth_path = directory.path().join("auth.json");
     let auth_root = NornAuthRoot::try_from(directory.path())?;
-    let held_transaction = CredentialTransaction::acquire(&auth_root, DRAIN_ACQUIRE_TIMEOUT)?;
+    let held_transaction =
+        CredentialTransaction::acquire(&auth_root, lock_timing(DRAIN_ACQUIRE_TIMEOUT)?)?;
     let (prepared_sender, prepared) = oneshot::channel();
     let (acknowledgement, acknowledgement_receiver) = oneshot::channel();
     let (finished_sender, finished) = oneshot::channel();
@@ -160,7 +210,7 @@ async fn dropping_completion_during_transaction_acquisition_never_commits()
         auth_root: auth_root.clone(),
         expected_revision: None,
         mode: AuthCredentialsStoreMode::File,
-        credential_lock_timeout: PENDING_ACQUIRE_TIMEOUT,
+        credential_lock_timing: lock_timing(PENDING_ACQUIRE_TIMEOUT)?,
         lifecycle: Arc::clone(&lifecycle),
     };
     prepared_sender
@@ -194,8 +244,9 @@ async fn dropping_completion_during_transaction_acquisition_never_commits()
 
     drop(held_transaction);
     let drain_root = auth_root;
+    let drain_timing = lock_timing(DRAIN_ACQUIRE_TIMEOUT)?;
     let drain_guard = tokio::task::spawn_blocking(move || {
-        CredentialTransaction::acquire(&drain_root, DRAIN_ACQUIRE_TIMEOUT)
+        CredentialTransaction::acquire(&drain_root, drain_timing)
     })
     .await
     .map_err(|error| std::io::Error::other(format!("drain task failed: {error}")))??;
@@ -226,7 +277,7 @@ async fn durable_save_precedes_commit_acknowledgement() -> Result<(), Box<dyn st
         auth_root,
         expected_revision: None,
         mode: AuthCredentialsStoreMode::File,
-        credential_lock_timeout: OAuthHttpOptions::DEFAULT_CREDENTIAL_LOCK_TIMEOUT,
+        credential_lock_timing: OAuthHttpOptions::default().credential_lock_timing()?,
         lifecycle,
     };
     prepared_sender
@@ -273,7 +324,7 @@ async fn storage_failure_sends_cancel_acknowledgement() -> Result<(), Box<dyn st
         auth_root,
         expected_revision: None,
         mode: AuthCredentialsStoreMode::File,
-        credential_lock_timeout: OAuthHttpOptions::DEFAULT_CREDENTIAL_LOCK_TIMEOUT,
+        credential_lock_timing: OAuthHttpOptions::default().credential_lock_timing()?,
         lifecycle,
     };
     prepared_sender

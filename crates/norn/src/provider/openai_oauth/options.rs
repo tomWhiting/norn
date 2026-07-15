@@ -1,16 +1,17 @@
-//! HTTP options for the OAuth stack.
+//! Network and credential-coordination timing for the OAuth stack.
 
 use std::time::Duration;
 
-/// HTTP timeouts applied across the OAuth stack (token refresh, token
-/// revocation, the browser-login authorization-code exchange, and the
-/// local login-callback wait).
+use super::credential_lock_timing::{CredentialLockTiming, CredentialLockTimingError};
+
+/// Timing options applied across OAuth network exchanges and credential
+/// coordination.
 ///
 /// Threaded explicitly through [`AuthManager`], [`ServerOptions`], and
-/// [`logout_with_revoke`] so embedders control every network deadline in
-/// the credential lifecycle. The [`Default`] preserves the existing network
-/// deadlines and gives credential-lock contention the same bounded ten-second
-/// operational budget.
+/// [`logout_with_revoke`] so embedders control every network and lock-wait
+/// deadline in the credential lifecycle. The [`Default`] preserves the
+/// existing network deadlines and applies the owner-approved credential-lock
+/// timing policy.
 ///
 /// [`AuthManager`]: super::manager::AuthManager
 /// [`ServerOptions`]: super::login_server::ServerOptions
@@ -30,6 +31,9 @@ pub struct OAuthHttpOptions {
     /// transaction. This does not coordinate lock-ignoring foreign writers;
     /// raw revision checks detect observed foreign changes instead.
     pub credential_lock_timeout: Duration,
+    /// Delay between inter-process lock probes while another process owns the
+    /// credential transaction. Process-local waiters use notifications.
+    pub credential_lock_poll_interval: Duration,
 }
 
 impl OAuthHttpOptions {
@@ -39,8 +43,19 @@ impl OAuthHttpOptions {
     /// Documented, owner-approved default (pre-existing hardcoded value)
     /// for [`OAuthHttpOptions::callback_timeout`]: 5 minutes.
     pub const DEFAULT_CALLBACK_TIMEOUT: Duration = Duration::from_mins(5);
-    /// Default bounded wait for one credential transaction.
-    pub const DEFAULT_CREDENTIAL_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
+    /// Owner-approved bounded wait for one credential transaction: 30 seconds.
+    pub const DEFAULT_CREDENTIAL_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
+    /// Owner-approved inter-process lock polling cadence: 25 milliseconds.
+    pub const DEFAULT_CREDENTIAL_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+    pub(crate) fn credential_lock_timing(
+        self,
+    ) -> Result<CredentialLockTiming, CredentialLockTimingError> {
+        CredentialLockTiming::new(
+            self.credential_lock_timeout,
+            self.credential_lock_poll_interval,
+        )
+    }
 }
 
 impl Default for OAuthHttpOptions {
@@ -49,6 +64,39 @@ impl Default for OAuthHttpOptions {
             request_timeout: Self::DEFAULT_REQUEST_TIMEOUT,
             callback_timeout: Self::DEFAULT_CALLBACK_TIMEOUT,
             credential_lock_timeout: Self::DEFAULT_CREDENTIAL_LOCK_TIMEOUT,
+            credential_lock_poll_interval: Self::DEFAULT_CREDENTIAL_LOCK_POLL_INTERVAL,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_use_owner_approved_credential_lock_timing() {
+        let options = OAuthHttpOptions::default();
+
+        assert_eq!(options.credential_lock_timeout, Duration::from_secs(30));
+        assert_eq!(
+            options.credential_lock_poll_interval,
+            Duration::from_millis(25)
+        );
+        assert!(options.credential_lock_timing().is_ok());
+    }
+
+    #[test]
+    fn credential_lock_timing_preserves_programmatic_overrides()
+    -> Result<(), CredentialLockTimingError> {
+        let options = OAuthHttpOptions {
+            credential_lock_timeout: Duration::from_secs(7),
+            credential_lock_poll_interval: Duration::from_millis(13),
+            ..OAuthHttpOptions::default()
+        };
+
+        let timing = options.credential_lock_timing()?;
+        assert_eq!(timing.deadline(), Duration::from_secs(7));
+        assert_eq!(timing.poll_interval(), Duration::from_millis(13));
+        Ok(())
     }
 }

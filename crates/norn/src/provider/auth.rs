@@ -315,7 +315,9 @@ pub struct LoginConfig {
 ///
 /// Opens a browser, runs a local callback server, and persists tokens
 /// to `auth.json` on success. Uses the documented default
-/// [`OAuthHttpOptions`] (10s exchange deadline, 5-minute callback wait).
+/// [`OAuthHttpOptions`] (10-second exchange deadline, 5-minute callback wait,
+/// 30-second credential-lock acquisition deadline, and 25-millisecond
+/// inter-process lock polling cadence).
 ///
 /// # Errors
 ///

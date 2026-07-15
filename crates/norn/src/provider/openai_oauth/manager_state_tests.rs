@@ -6,6 +6,7 @@ use base64::Engine as _;
 
 use super::super::auth_root::NornAuthRoot;
 use super::super::credential_decode::MalformedCredentialReason;
+use super::super::credential_lock_timing::CredentialLockTiming;
 use super::super::credential_transaction::{CredentialRevision, CredentialTransaction};
 use super::super::storage::{AuthCredentialsStoreMode, auth_json_path, save_auth_dot_json};
 use super::super::types::{AuthDotJson, CodexAuth, IdTokenInfo};
@@ -137,7 +138,8 @@ async fn pending_persistence_replays_exact_proposed_bytes() -> TestResult {
     let expected_revision = ready_revision(&manager).await?;
     let proposed = auth_document("account-a", "access-b", "refresh-b")?;
 
-    let transaction = CredentialTransaction::acquire(&root, Duration::from_secs(1))?;
+    let timing = CredentialLockTiming::new(Duration::from_secs(1), Duration::from_millis(1))?;
+    let transaction = CredentialTransaction::acquire(&root, timing)?;
     let published_revision = transaction.save_if_revision(Some(&expected_revision), &proposed)?;
     drop(transaction);
     set_pending(&manager, proposed.clone(), expected_revision).await;

@@ -398,6 +398,20 @@ async fn file_manager_registry_shares_one_owner_and_reclaims_dead_entries() -> T
         .await,
         Err(AuthManagerBuildError::ConfigurationConflict)
     ));
+    let cadence_conflicting = OAuthHttpOptions {
+        credential_lock_poll_interval: std::time::Duration::from_millis(50),
+        ..OAuthHttpOptions::default()
+    };
+    assert!(matches!(
+        AuthManager::shared_for_tests_with_options(
+            root.clone(),
+            AuthCredentialsStoreMode::File,
+            server.uri(),
+            cadence_conflicting,
+        )
+        .await,
+        Err(AuthManagerBuildError::ConfigurationConflict)
+    ));
 
     let old = Arc::downgrade(&first);
     drop(first);

@@ -8,6 +8,7 @@ mod auth_root;
 mod browser;
 mod code_exchange;
 mod credential_decode;
+mod credential_lock_timing;
 mod credential_state;
 mod credential_transaction;
 mod credential_validation;

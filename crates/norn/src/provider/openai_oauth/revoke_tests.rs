@@ -29,6 +29,35 @@ fn auth_root(home: &tempfile::TempDir) -> Result<NornAuthRoot, super::super::Nor
 }
 
 #[tokio::test]
+async fn invalid_lock_timing_fails_before_logout_credential_access() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let cases = [
+        OAuthHttpOptions {
+            credential_lock_timeout: std::time::Duration::ZERO,
+            ..OAuthHttpOptions::default()
+        },
+        OAuthHttpOptions {
+            credential_lock_poll_interval: std::time::Duration::ZERO,
+            ..OAuthHttpOptions::default()
+        },
+    ];
+
+    for (index, http) in cases.into_iter().enumerate() {
+        let root_path = directory.path().join(format!("invalid-{index}"));
+        let root = NornAuthRoot::try_from(root_path.as_path())?;
+        let report = logout_with_revoke(&root, AuthCredentialsStoreMode::File, http).await;
+
+        assert!(matches!(report.local, Err(LocalLogoutError::Coordination)));
+        assert!(matches!(
+            report.remote,
+            RemoteRevokeOutcome::Failed(LogoutError::LocalRemovalIncomplete)
+        ));
+        assert!(!root_path.exists());
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn revoke_failure_still_removes_local_credential() -> TestResult {
     let home = tempfile::tempdir()?;
     let root = auth_root(&home)?;
@@ -37,7 +66,7 @@ async fn revoke_failure_still_removes_local_credential() -> TestResult {
     let report = logout_with_revoker(
         &root,
         AuthCredentialsStoreMode::File,
-        OAuthHttpOptions::DEFAULT_CREDENTIAL_LOCK_TIMEOUT,
+        OAuthHttpOptions::default().credential_lock_timing()?,
         |refresh_token| async move {
             drop(refresh_token);
             Err(LogoutError::Revoke("authority unavailable".to_owned()))
@@ -68,7 +97,7 @@ async fn access_only_logout_does_not_attempt_remote_revoke() -> TestResult {
     let report = logout_with_revoker(
         &root,
         AuthCredentialsStoreMode::File,
-        OAuthHttpOptions::DEFAULT_CREDENTIAL_LOCK_TIMEOUT,
+        OAuthHttpOptions::default().credential_lock_timing()?,
         move |refresh_token| async move {
             drop(refresh_token);
             revoke_started_in_callback.store(true, Ordering::SeqCst);
@@ -96,7 +125,7 @@ async fn malformed_credential_is_removed_when_revoke_cannot_start() -> TestResul
     let report = logout_with_revoker(
         &root,
         AuthCredentialsStoreMode::File,
-        OAuthHttpOptions::DEFAULT_CREDENTIAL_LOCK_TIMEOUT,
+        OAuthHttpOptions::default().credential_lock_timing()?,
         |refresh_token: String| async move {
             drop(refresh_token);
             Ok(())
@@ -124,7 +153,7 @@ async fn cancellation_during_remote_revoke_cannot_restore_local_credential() -> 
         let logout = logout_with_revoker(
             &root,
             AuthCredentialsStoreMode::File,
-            OAuthHttpOptions::DEFAULT_CREDENTIAL_LOCK_TIMEOUT,
+            OAuthHttpOptions::default().credential_lock_timing()?,
             move |refresh_token| async move {
                 if refresh_token != "refresh-token" {
                     return Err(LogoutError::Revoke(
@@ -173,7 +202,7 @@ async fn replacement_written_during_remote_revoke_survives_old_logout() -> TestR
     let report = logout_with_revoker(
         &root,
         AuthCredentialsStoreMode::File,
-        OAuthHttpOptions::DEFAULT_CREDENTIAL_LOCK_TIMEOUT,
+        OAuthHttpOptions::default().credential_lock_timing()?,
         move |refresh_token| async move {
             if refresh_token != "refresh-token" {
                 return Err(LogoutError::Revoke(

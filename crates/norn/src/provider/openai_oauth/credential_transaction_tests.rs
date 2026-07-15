@@ -23,6 +23,10 @@ fn root(directory: &tempfile::TempDir) -> Result<NornAuthRoot, Box<dyn Error>> {
     resolve_norn_auth_root(Some(directory.path().join("auth"))).map_err(Into::into)
 }
 
+fn lock_timing(deadline: Duration) -> Result<CredentialLockTiming, Box<dyn Error>> {
+    CredentialLockTiming::new(deadline, Duration::from_millis(1)).map_err(Into::into)
+}
+
 fn require_revision(
     revision: Option<CredentialRevision>,
 ) -> Result<CredentialRevision, std::io::Error> {
@@ -42,7 +46,7 @@ fn parsed_auth(snapshot: CredentialSnapshot) -> Result<AuthDotJson, std::io::Err
 fn compare_before_save_rejects_lock_ignoring_foreign_write() -> TestResult {
     let directory = tempfile::tempdir()?;
     let root = root(&directory)?;
-    let transaction = CredentialTransaction::acquire(&root, Duration::from_secs(1))?;
+    let transaction = CredentialTransaction::acquire(&root, lock_timing(Duration::from_secs(1))?)?;
     let first = auth_document("first");
     let first_revision = transaction.save_if_revision(None, &first)?;
 
@@ -62,7 +66,7 @@ fn compare_before_save_rejects_lock_ignoring_foreign_write() -> TestResult {
 fn replay_of_already_published_bytes_converges() -> TestResult {
     let directory = tempfile::tempdir()?;
     let root = root(&directory)?;
-    let transaction = CredentialTransaction::acquire(&root, Duration::from_secs(1))?;
+    let transaction = CredentialTransaction::acquire(&root, lock_timing(Duration::from_secs(1))?)?;
     let first_revision = transaction.save_if_revision(None, &auth_document("first"))?;
     let proposed = auth_document("proposed");
     let published = transaction.save_if_revision(Some(&first_revision), &proposed)?;
@@ -78,7 +82,7 @@ fn replay_of_already_published_bytes_converges() -> TestResult {
 fn missing_already_published_bytes_are_a_verification_conflict() -> TestResult {
     let directory = tempfile::tempdir()?;
     let root = root(&directory)?;
-    let transaction = CredentialTransaction::acquire(&root, Duration::from_secs(1))?;
+    let transaction = CredentialTransaction::acquire(&root, lock_timing(Duration::from_secs(1))?)?;
     let published = transaction.save_if_revision(None, &auth_document("published"))?;
     std::fs::remove_file(root.as_path().join(AUTH_JSON_FILE))?;
 
@@ -95,7 +99,7 @@ fn missing_already_published_bytes_are_a_verification_conflict() -> TestResult {
 fn delete_rejects_a_replacement_after_snapshot() -> TestResult {
     let directory = tempfile::tempdir()?;
     let root = root(&directory)?;
-    let transaction = CredentialTransaction::acquire(&root, Duration::from_secs(1))?;
+    let transaction = CredentialTransaction::acquire(&root, lock_timing(Duration::from_secs(1))?)?;
     let first = auth_document("first");
     transaction.save_if_revision(None, &first)?;
     let observed = require_revision(transaction.snapshot()?.revision)?;
@@ -116,7 +120,7 @@ fn delete_rejects_a_replacement_after_snapshot() -> TestResult {
 fn delete_never_replaces_a_crash_retained_quarantine() -> TestResult {
     let directory = tempfile::tempdir()?;
     let root = root(&directory)?;
-    let transaction = CredentialTransaction::acquire(&root, Duration::from_secs(1))?;
+    let transaction = CredentialTransaction::acquire(&root, lock_timing(Duration::from_secs(1))?)?;
     let first = auth_document("first");
     transaction.save_if_revision(None, &first)?;
     let observed = require_revision(transaction.snapshot()?.revision)?;
@@ -139,11 +143,12 @@ fn delete_never_replaces_a_crash_retained_quarantine() -> TestResult {
 fn process_gate_honors_the_caller_deadline() -> TestResult {
     let directory = tempfile::tempdir()?;
     let root = root(&directory)?;
-    let held = CredentialTransaction::acquire(&root, Duration::from_secs(1))?;
+    let held = CredentialTransaction::acquire(&root, lock_timing(Duration::from_secs(1))?)?;
     let contender_root = root;
+    let contender_timing = lock_timing(Duration::from_millis(20))?;
     let (sender, receiver) = mpsc::channel();
     let contender = std::thread::spawn(move || {
-        let result = CredentialTransaction::acquire(&contender_root, Duration::from_millis(20));
+        let result = CredentialTransaction::acquire(&contender_root, contender_timing);
         let send_result = sender.send(result);
         drop(send_result);
     });
@@ -165,7 +170,7 @@ fn process_gate_honors_the_caller_deadline() -> TestResult {
 fn revisions_track_raw_bytes_not_only_decoded_values() -> TestResult {
     let directory = tempfile::tempdir()?;
     let root = root(&directory)?;
-    let transaction = CredentialTransaction::acquire(&root, Duration::from_secs(1))?;
+    let transaction = CredentialTransaction::acquire(&root, lock_timing(Duration::from_secs(1))?)?;
     let document = auth_document("first");
     transaction.save_if_revision(None, &document)?;
     let first = require_revision(transaction.snapshot()?.revision)?;
@@ -184,7 +189,7 @@ fn revisions_track_raw_bytes_not_only_decoded_values() -> TestResult {
 fn malformed_document_retains_its_raw_revision() -> TestResult {
     let directory = tempfile::tempdir()?;
     let root = root(&directory)?;
-    let transaction = CredentialTransaction::acquire(&root, Duration::from_secs(1))?;
+    let transaction = CredentialTransaction::acquire(&root, lock_timing(Duration::from_secs(1))?)?;
     std::fs::write(root.as_path().join(AUTH_JSON_FILE), b"{malformed")?;
 
     let snapshot = transaction.snapshot()?;
@@ -201,7 +206,7 @@ fn malformed_document_retains_its_raw_revision() -> TestResult {
 fn semantic_malformed_document_retains_reason_and_revision() -> TestResult {
     let directory = tempfile::tempdir()?;
     let root = root(&directory)?;
-    let transaction = CredentialTransaction::acquire(&root, Duration::from_secs(1))?;
+    let transaction = CredentialTransaction::acquire(&root, lock_timing(Duration::from_secs(1))?)?;
     let id_token = IdTokenInfo::create_for_testing("account-a");
     let raw = serde_json::to_vec(&serde_json::json!({
         "auth_mode": "chatgpt",

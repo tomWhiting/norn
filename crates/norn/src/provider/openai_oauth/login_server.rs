@@ -12,6 +12,7 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 
 use super::auth_root::NornAuthRoot;
+use super::credential_lock_timing::CredentialLockTiming;
 use super::credential_transaction::{
     CredentialRevision, CredentialTransaction, CredentialTransactionError,
 };
@@ -79,7 +80,7 @@ pub struct LoginServer {
     auth_root: NornAuthRoot,
     expected_revision: Option<CredentialRevision>,
     mode: AuthCredentialsStoreMode,
-    credential_lock_timeout: Duration,
+    credential_lock_timing: CredentialLockTiming,
     lifecycle: Arc<AtomicU8>,
 }
 
@@ -160,6 +161,12 @@ pub fn run_login_server(opts: ServerOptions) -> Result<LoginServer, LoginError> 
         mode,
         http,
     } = opts;
+    let credential_lock_timing =
+        http.credential_lock_timing()
+            .map_err(|error| LoginError::Storage {
+                kind: LoginStorageFailureKind::Coordination,
+                reason: error.to_string(),
+            })?;
     let expected_revision = CredentialTransaction::inspect(&auth_root)
         .map_err(map_credential_transaction_error)?
         .revision;
@@ -184,7 +191,6 @@ pub fn run_login_server(opts: ServerOptions) -> Result<LoginServer, LoginError> 
     let (finished_tx, finished_rx) = oneshot::channel();
     let lifecycle = Arc::new(AtomicU8::new(LOGIN_WAITING));
     let worker_lifecycle = Arc::clone(&lifecycle);
-    let credential_lock_timeout = http.credential_lock_timeout;
     std::thread::Builder::new()
         .name("norn-openai-oauth-login".to_string())
         .spawn(move || {
@@ -216,7 +222,7 @@ pub fn run_login_server(opts: ServerOptions) -> Result<LoginServer, LoginError> 
         auth_root,
         expected_revision,
         mode,
-        credential_lock_timeout,
+        credential_lock_timing,
         lifecycle,
     })
 }
@@ -278,9 +284,9 @@ impl LoginServer {
         };
 
         let root = self.auth_root.clone();
-        let deadline = self.credential_lock_timeout;
+        let timing = self.credential_lock_timing;
         let transaction =
-            tokio::task::spawn_blocking(move || CredentialTransaction::acquire(&root, deadline))
+            tokio::task::spawn_blocking(move || CredentialTransaction::acquire(&root, timing))
                 .await
                 .map_err(|error| LoginError::Storage {
                     kind: LoginStorageFailureKind::Coordination,

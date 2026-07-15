@@ -13,13 +13,13 @@ use sha2::{Digest as _, Sha256};
 
 use super::auth_root::NornAuthRoot;
 use super::credential_decode::{MalformedCredentialReason, decode_auth_dot_json};
+use super::credential_lock_timing::CredentialLockTiming;
 use super::storage::{AUTH_JSON_FILE, DeleteAuthOutcome, StorageError};
 use super::types::AuthDotJson;
 use crate::resource::DescriptorPermit;
 use crate::util::PrivateRoot;
 
 const CREDENTIAL_LOCK_FILE: &str = ".norn-auth.lock";
-const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 static PROCESS_GATES: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
@@ -176,9 +176,10 @@ impl CredentialTransaction {
     /// Acquire the process-local gate and stable inter-process lock.
     pub(crate) fn acquire(
         auth_root: &NornAuthRoot,
-        deadline: Duration,
+        timing: CredentialLockTiming,
     ) -> Result<Self, CredentialTransactionError> {
         let started = Instant::now();
+        let deadline = timing.deadline();
         let identity = auth_root.as_path().join(CREDENTIAL_LOCK_FILE);
         let process_guard = lock_process_gate(&identity, deadline, started)?;
         let descriptor_permit = crate::resource::acquire_private_fs()
@@ -189,7 +190,7 @@ impl CredentialTransaction {
         let file = root
             .open_lock(Path::new(CREDENTIAL_LOCK_FILE))
             .map_err(CredentialTransactionError::OpenLock)?;
-        lock_file(&file, deadline, started)?;
+        lock_file(&file, timing, started)?;
         Ok(Self {
             file,
             root,
@@ -463,9 +464,10 @@ fn lock_process_gate(
 
 fn lock_file(
     file: &File,
-    deadline: Duration,
+    timing: CredentialLockTiming,
     started: Instant,
 ) -> Result<(), CredentialTransactionError> {
+    let deadline = timing.deadline();
     loop {
         if started.elapsed() >= deadline {
             return Err(CredentialTransactionError::LockTimeout { waited: deadline });
@@ -476,7 +478,7 @@ fn lock_file(
                 let Some(remaining) = deadline.checked_sub(started.elapsed()) else {
                     return Err(CredentialTransactionError::LockTimeout { waited: deadline });
                 };
-                std::thread::sleep(remaining.min(LOCK_POLL_INTERVAL));
+                std::thread::sleep(remaining.min(timing.poll_interval()));
             }
             Err(TryLockError::Error(error)) => {
                 return Err(CredentialTransactionError::Lock(error));

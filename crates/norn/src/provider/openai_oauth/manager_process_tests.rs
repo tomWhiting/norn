@@ -28,6 +28,34 @@ const ACCOUNT_ID: &str = "process-fixture-account";
 const ROTATED_ACCESS: &str = "process-fixture-rotated-access";
 const ROTATED_REFRESH: &str = "process-fixture-rotated-refresh";
 
+#[tokio::test]
+async fn invalid_lock_timing_fails_before_manager_credential_access() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let cases = [
+        OAuthHttpOptions {
+            credential_lock_timeout: Duration::ZERO,
+            ..OAuthHttpOptions::default()
+        },
+        OAuthHttpOptions {
+            credential_lock_poll_interval: Duration::ZERO,
+            ..OAuthHttpOptions::default()
+        },
+    ];
+
+    for (index, http) in cases.into_iter().enumerate() {
+        let root_path = directory.path().join(format!("invalid-{index}"));
+        let root = NornAuthRoot::try_from(root_path.as_path())?;
+        let result = AuthManager::shared(root, AuthCredentialsStoreMode::File, http).await;
+
+        assert!(matches!(
+            result,
+            Err(AuthManagerBuildError::CredentialCoordination { .. })
+        ));
+        assert!(!root_path.exists());
+    }
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_process_refresh_converges_with_one_authority_exchange() -> TestResult {
     if std::env::var_os(CHILD_MODE).is_some() {

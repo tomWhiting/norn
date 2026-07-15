@@ -354,8 +354,11 @@ impl AuthManager {
         let root = self.auth_root.clone().ok_or_else(|| {
             RefreshTokenError::Permanent("credential has no file-backed owner".to_owned())
         })?;
-        let deadline = self.http.credential_lock_timeout;
-        tokio::task::spawn_blocking(move || CredentialTransaction::acquire(&root, deadline))
+        let timing = self
+            .http
+            .credential_lock_timing()
+            .map_err(|error| RefreshTokenError::Coordination(error.to_string()))?;
+        tokio::task::spawn_blocking(move || CredentialTransaction::acquire(&root, timing))
             .await
             .map_err(|error| {
                 RefreshTokenError::Coordination(format!(

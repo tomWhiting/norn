@@ -269,6 +269,11 @@ impl AuthManager {
         token_url: String,
         http: OAuthHttpOptions,
     ) -> Result<Arc<Self>, AuthManagerBuildError> {
+        let lock_timing = http.credential_lock_timing().map_err(|error| {
+            AuthManagerBuildError::CredentialCoordination {
+                reason: error.to_string(),
+            }
+        })?;
         let client = build_client(http)?;
         let shared_started = startup_trace::start("oauth_auth_manager_shared_with_token_url_start");
         tokio::task::yield_now().await;
@@ -279,7 +284,7 @@ impl AuthManager {
         let snapshot = tokio::task::spawn_blocking(move || {
             let transaction = super::credential_transaction::CredentialTransaction::acquire(
                 &transaction_root,
-                http.credential_lock_timeout,
+                lock_timing,
             )?;
             transaction.snapshot()
         })
