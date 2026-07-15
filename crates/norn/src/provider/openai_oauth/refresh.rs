@@ -19,8 +19,9 @@ pub enum RefreshError {
     /// Credential is permanently invalid and the user must log in again.
     #[error("permanent refresh failure: {0}")]
     Permanent(String),
-    /// The authority accepted the refresh request, but the returned lineage
-    /// could not be safely accepted. Retrying the old token is unsafe.
+    /// The request may have reached the authority, or the authority returned a
+    /// lineage that could not be safely accepted. Retrying the old token in
+    /// the active manager is unsafe.
     #[error("indeterminate rotated OAuth lineage: {0}")]
     Indeterminate(String),
 }
@@ -70,8 +71,9 @@ struct ErrorBody {
 ///
 /// Returns [`RefreshError::Permanent`] for dead credentials,
 /// [`RefreshError::Transient`] for failures known to precede acceptance, and
-/// [`RefreshError::Indeterminate`] when a successful authority response cannot
-/// be accepted safely and the old refresh-token lineage must not be retried.
+/// [`RefreshError::Indeterminate`] when the request outcome is unknown or a
+/// successful authority response cannot be accepted safely. The active manager
+/// must not retry the old refresh-token lineage until durable state changes.
 pub async fn refresh_auth(
     auth: &AuthDotJson,
     token_url: &str,
@@ -96,7 +98,7 @@ pub async fn refresh_auth(
         })
         .send()
         .await
-        .map_err(|err| RefreshError::Transient(err.to_string()))?;
+        .map_err(|error| classify_send_error(&error))?;
 
     if response.status() == StatusCode::UNAUTHORIZED {
         let body = response.json::<ErrorResponse>().await.map_err(|error| {
@@ -112,9 +114,7 @@ pub async fn refresh_auth(
     }
     if !response.status().is_success() {
         let status = response.status();
-        return Err(RefreshError::Transient(format!(
-            "token endpoint returned HTTP {status}"
-        )));
+        return Err(classify_error_status(status));
     }
 
     let refreshed = response.json::<RefreshResponse>().await.map_err(|error| {
@@ -131,6 +131,33 @@ pub async fn refresh_auth(
     updated.tokens = Some(new_tokens);
     updated.last_refresh = Some(chrono::Utc::now());
     Ok(updated)
+}
+
+fn classify_error_status(status: StatusCode) -> RefreshError {
+    let message = format!("token endpoint returned HTTP {status}");
+    match status {
+        StatusCode::REQUEST_TIMEOUT | StatusCode::TOO_EARLY => RefreshError::Transient(message),
+        status if status.is_client_error() && status != StatusCode::TOO_MANY_REQUESTS => {
+            RefreshError::Permanent(message)
+        }
+        _ => RefreshError::Indeterminate(format!(
+            "{message}; this manager will not retry the prior refresh token until durable storage changes"
+        )),
+    }
+}
+
+fn classify_send_error(error: &reqwest::Error) -> RefreshError {
+    tracing::debug!(
+        %error,
+        "token authority request failed before a response was available"
+    );
+    if error.is_builder() || error.is_connect() {
+        RefreshError::Transient("could not connect to the token authority".to_owned())
+    } else {
+        RefreshError::Indeterminate(
+            "token authority request outcome is unknown; this manager will not retry the prior refresh token until durable storage changes".to_owned(),
+        )
+    }
 }
 
 fn refreshed_tokens(
@@ -334,6 +361,7 @@ mod security_tests {
         let Err(second_error) = second else {
             return Err(std::io::Error::other("500 refresh unexpectedly succeeded").into());
         };
+        assert!(matches!(second_error, RefreshError::Indeterminate(_)));
         let rendered = format!("{first_error} {second_error}");
 
         assert!(!rendered.contains("echoed-refresh-token-secret"));

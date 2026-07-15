@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use crate::error::ConfigError;
 
 /// Root directory: `~/.norn/`.
-const DOT_DIR: &str = ".norn";
+pub(crate) const DEFAULT_NORN_DIRECTORY: &str = ".norn";
 
 /// Subdirectory of `~/.norn/` containing named profile files.
 const PROFILES_SUBDIR: &str = "profiles";
@@ -63,7 +63,7 @@ pub fn norn_dir() -> Option<PathBuf> {
         }
         tracing::warn!("ignoring relative NORN_HOME; the override must be absolute");
     }
-    trusted_home_dir().map(|home| home.join(DOT_DIR))
+    trusted_home_dir().map(|home| home.join(DEFAULT_NORN_DIRECTORY))
 }
 
 /// Returns the operating-system home directory only when it is absolute.

@@ -6,8 +6,9 @@ use std::path::{Component, Path, PathBuf};
 
 use thiserror::Error;
 
+use crate::config::paths::DEFAULT_NORN_DIRECTORY;
+
 const NORN_HOME: &str = "NORN_HOME";
-const DEFAULT_NORN_DIRECTORY: &str = ".norn";
 const AUTH_DIRECTORY: &str = "auth";
 
 /// Validated absolute root containing Norn-owned OAuth credentials.

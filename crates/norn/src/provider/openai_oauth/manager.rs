@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use sha2::{Digest as _, Sha256};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::Mutex;
 
 use super::auth_root::NornAuthRoot;
 use super::credential_decode::MalformedCredentialReason;
@@ -13,10 +13,14 @@ use super::storage::{AuthCredentialsStoreMode, StorageError};
 use super::types::{AuthDotJson, CodexAuth};
 use crate::provider::startup_trace;
 
+#[path = "manager_attempt.rs"]
+mod attempt;
 #[path = "manager_refresh.rs"]
 mod refresh_flow;
 #[path = "manager_registry.rs"]
 mod registry;
+
+use attempt::RefreshAttempt;
 
 /// Refresh result classification expected by auth.rs.
 #[derive(Clone, Debug, thiserror::Error)]
@@ -24,7 +28,7 @@ pub enum RefreshTokenError {
     /// Credential is dead; user must log in again.
     #[error("{0}")]
     Permanent(String),
-    /// Network/server issue; caller may retry later.
+    /// Failure proven to precede token acceptance; caller may retry later.
     #[error("{0}")]
     Transient(String),
     /// The authority rotated the credential, but its owner did not durably
@@ -34,8 +38,8 @@ pub enum RefreshTokenError {
     /// The credential changed while the operation was in flight.
     #[error("{0}")]
     Conflict(String),
-    /// A success response may have rotated the credential, but returned no
-    /// lineage that can be accepted safely.
+    /// Dispatch or task termination left the authority outcome unknown, or a
+    /// success response returned no lineage that can be accepted safely.
     #[error("{0}")]
     Indeterminate(String),
     /// Local or inter-process credential coordination could not complete.
@@ -148,39 +152,6 @@ enum CachedAuthState {
         observed_lineage: RefreshLineage,
         error: RefreshTokenError,
     },
-}
-
-#[derive(Debug)]
-struct RefreshAttempt {
-    result: Mutex<Option<Result<(), RefreshTokenError>>>,
-    completed: Notify,
-}
-
-impl RefreshAttempt {
-    fn new() -> Self {
-        Self {
-            result: Mutex::new(None),
-            completed: Notify::new(),
-        }
-    }
-
-    async fn wait(&self) -> Result<(), RefreshTokenError> {
-        loop {
-            let completed = self.completed.notified();
-            if let Some(result) = self.result.lock().await.clone() {
-                return result;
-            }
-            completed.await;
-        }
-    }
-
-    async fn record(&self, result: Result<(), RefreshTokenError>) {
-        *self.result.lock().await = Some(result);
-    }
-
-    fn notify_waiters(&self) {
-        self.completed.notify_waiters();
-    }
 }
 
 /// Small credential manager compatible with norn's OAuth auth-provider use.
@@ -478,3 +449,7 @@ mod state_tests;
 #[cfg(test)]
 #[path = "manager_process_tests.rs"]
 mod process_tests;
+
+#[cfg(test)]
+#[path = "manager_supervision_tests.rs"]
+mod supervision_tests;

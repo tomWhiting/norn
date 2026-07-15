@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use super::attempt::supervise_refresh_worker;
 use super::{
     AccountIdentity, AuthManager, CachedAuthState, RefreshAttempt, RefreshLineage,
     RefreshTokenError,
@@ -19,9 +20,7 @@ impl AuthManager {
     /// Return cached credentials after reconciling file-backed state and
     /// proactively refreshing a known-expired access token.
     pub async fn auth(self: &Arc<Self>) -> Result<Option<CodexAuth>, RefreshTokenError> {
-        if let Some(attempt) = self.refresh_attempt.lock().await.clone() {
-            attempt.wait().await?;
-        }
+        self.join_registered_attempt().await?;
         if self.auth_root.is_some() {
             self.synchronize_file_state().await?;
         }
@@ -97,34 +96,32 @@ impl AuthManager {
     pub async fn refresh_token_from_authority(self: &Arc<Self>) -> Result<(), RefreshTokenError> {
         let (attempt, start) = {
             let mut registered = self.refresh_attempt.lock().await;
-            if let Some(attempt) = registered.as_ref() {
-                (Arc::clone(attempt), false)
+            if let Some(attempt) = registered.as_ref().filter(|attempt| !attempt.is_terminal()) {
+                (Arc::clone(attempt), None)
             } else {
-                let attempt = Arc::new(RefreshAttempt::new());
+                let (attempt, completion) = RefreshAttempt::new();
                 *registered = Some(Arc::clone(&attempt));
-                (attempt, true)
+                (attempt, Some(completion))
             }
         };
 
-        if start {
-            let manager = Arc::clone(self);
-            let owned_attempt = Arc::clone(&attempt);
+        if let Some(completion) = start {
+            let worker_manager = Arc::clone(self);
+            let worker =
+                tokio::spawn(async move { worker_manager.perform_refresh_attempt().await });
+            let supervisor_manager = Arc::clone(self);
+            let supervised_attempt = Arc::clone(&attempt);
             std::mem::drop(tokio::spawn(async move {
-                let result = manager.perform_refresh_attempt().await;
-                owned_attempt.record(result).await;
-                let mut registered = manager.refresh_attempt.lock().await;
-                if registered
-                    .as_ref()
-                    .is_some_and(|current| Arc::ptr_eq(current, &owned_attempt))
-                {
-                    *registered = None;
-                }
-                drop(registered);
-                owned_attempt.notify_waiters();
+                supervise_refresh_worker(worker, completion).await;
+                supervisor_manager
+                    .clear_attempt_if_current(&supervised_attempt)
+                    .await;
             }));
         }
 
-        attempt.wait().await
+        let result = attempt.wait().await;
+        self.clear_attempt_if_current(&attempt).await;
+        result
     }
 
     async fn synchronize_file_state(&self) -> Result<(), RefreshTokenError> {
@@ -148,7 +145,7 @@ impl AuthManager {
         }
     }
 
-    async fn perform_refresh_attempt(&self) -> Result<(), RefreshTokenError> {
+    pub(super) async fn perform_refresh_attempt(&self) -> Result<(), RefreshTokenError> {
         if self.auth_root.is_none() {
             return Err(RefreshTokenError::Permanent(
                 "OAuth refresh requires a file-backed credential owner".to_owned(),
@@ -236,6 +233,14 @@ impl AuthManager {
             ));
         }
         let observed_lineage = refresh_lineage(&current)?;
+        let provisional_error = RefreshTokenError::Indeterminate(
+            "OAuth refresh ended before its authority outcome was recorded".to_owned(),
+        );
+        *self.auth.lock().await = CachedAuthState::Indeterminate {
+            observed_revision: expected_revision.clone(),
+            observed_lineage: observed_lineage.clone(),
+            error: provisional_error,
+        };
         let refreshed = match refresh_auth(&current, &self.token_url, &self.client).await {
             Ok(refreshed) => Box::new(refreshed),
             Err(RefreshError::Indeterminate(message)) => {
@@ -247,7 +252,11 @@ impl AuthManager {
                 };
                 return Err(error);
             }
-            Err(error) => return Err(map_refresh_error(error)),
+            Err(error) => {
+                let refresh_error = map_refresh_error(error);
+                *self.auth.lock().await = ready_file(current, expected_revision);
+                return Err(refresh_error);
+            }
         };
         match transaction.save_if_revision(expected_revision.as_ref(), &refreshed) {
             Ok(revision) => {

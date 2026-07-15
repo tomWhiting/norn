@@ -17,6 +17,8 @@ use super::{
     map_browser_launch_error,
 };
 
+const LOGIN_FAILURE_BODY: &str = "Login failed. Return to norn for details.";
+
 pub(super) fn run_callback_worker(
     args: CallbackServerArgs<'_>,
     prepared: oneshot::Sender<Result<AuthDotJson, LoginError>>,
@@ -143,7 +145,7 @@ pub(super) fn wait_for_callback(
             Err(error) => return Err(LoginError::Server(error.to_string())),
         };
         configure_accepted_stream(&stream)?;
-        let Some(target) = read_request_target(&mut stream, remaining, lifecycle)? else {
+        let Some(target) = read_accepted_request_target(&mut stream, remaining, lifecycle)? else {
             continue;
         };
         let callback_url = format!("http://localhost{target}");
@@ -157,7 +159,7 @@ pub(super) fn wait_for_callback(
                 }
             }
             CallbackDisposition::Ours(Ok(code)) => {
-                claim_callback(lifecycle)?;
+                claim_accepted_callback(lifecycle, &mut stream)?;
                 drop(listener);
                 drop(listener_permit);
                 return Ok(PendingCallback {
@@ -167,20 +169,44 @@ pub(super) fn wait_for_callback(
                 });
             }
             CallbackDisposition::Ours(Err(flow_err)) => {
-                claim_callback(lifecycle)?;
-                if let Err(err) = write_response(
-                    &mut stream,
-                    400,
-                    "Login failed. Return to norn for details.",
-                ) {
-                    tracing::warn!(
-                        error = %err,
-                        "failed to answer failed OAuth callback on the login port"
-                    );
-                }
+                claim_accepted_callback(lifecycle, &mut stream)?;
+                write_failure_page(&mut stream);
                 return Err(flow_err);
             }
         }
+    }
+}
+
+pub(super) fn read_accepted_request_target(
+    stream: &mut TcpStream,
+    remaining: Duration,
+    lifecycle: &AtomicU8,
+) -> Result<Option<String>, LoginError> {
+    let result = read_request_target(stream, remaining, lifecycle);
+    respond_to_cancellation(result, stream)
+}
+
+pub(super) fn claim_accepted_callback(
+    lifecycle: &AtomicU8,
+    stream: &mut TcpStream,
+) -> Result<(), LoginError> {
+    let result = claim_callback(lifecycle);
+    respond_to_cancellation(result, stream)
+}
+
+fn respond_to_cancellation<T>(
+    result: Result<T, LoginError>,
+    stream: &mut TcpStream,
+) -> Result<T, LoginError> {
+    if matches!(&result, Err(LoginError::Canceled)) {
+        write_failure_page(stream);
+    }
+    result
+}
+
+fn write_failure_page(stream: &mut TcpStream) {
+    if let Err(error) = write_response(stream, 400, LOGIN_FAILURE_BODY) {
+        tracing::warn!(%error, "failed to send the failed OAuth login page");
     }
 }
 
@@ -210,12 +236,6 @@ impl PendingCallback {
             descriptor_weight = self.permit.weight(),
             "responding to canceled OAuth callback"
         );
-        if let Err(error) = write_response(
-            &mut self.stream,
-            400,
-            "Login failed. Return to norn for details.",
-        ) {
-            tracing::warn!(%error, "failed to send the failed OAuth login page");
-        }
+        write_failure_page(&mut self.stream);
     }
 }

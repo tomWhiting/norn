@@ -6,6 +6,38 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::*;
 
+#[test]
+fn error_status_classification_requires_proof_before_retry() {
+    assert!(matches!(
+        classify_error_status(StatusCode::BAD_REQUEST),
+        RefreshError::Permanent(_)
+    ));
+    assert!(matches!(
+        classify_error_status(StatusCode::FORBIDDEN),
+        RefreshError::Permanent(_)
+    ));
+    assert!(matches!(
+        classify_error_status(StatusCode::REQUEST_TIMEOUT),
+        RefreshError::Transient(_)
+    ));
+    assert!(matches!(
+        classify_error_status(StatusCode::TOO_EARLY),
+        RefreshError::Transient(_)
+    ));
+    for status in [
+        StatusCode::TOO_MANY_REQUESTS,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::BAD_GATEWAY,
+        StatusCode::SERVICE_UNAVAILABLE,
+        StatusCode::GATEWAY_TIMEOUT,
+    ] {
+        assert!(matches!(
+            classify_error_status(status),
+            RefreshError::Indeterminate(_)
+        ));
+    }
+}
+
 fn fixture_jwt(claims: &serde_json::Value) -> String {
     let header =
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"none","typ":"JWT"}"#);

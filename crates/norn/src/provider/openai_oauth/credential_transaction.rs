@@ -4,10 +4,11 @@ use std::collections::HashSet;
 use std::fs::{File, TryLockError};
 use std::io::{ErrorKind, Read as _, Write as _};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Condvar, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
+use parking_lot::{Condvar, Mutex};
 use sha2::{Digest as _, Sha256};
 
 use super::auth_root::NornAuthRoot;
@@ -106,10 +107,7 @@ struct ProcessGuard {
 
 impl Drop for ProcessGuard {
     fn drop(&mut self) {
-        let mut active = match PROCESS_GATES.lock() {
-            Ok(active) => active,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let mut active = PROCESS_GATES.lock();
         active.remove(&self.identity);
         PROCESS_GATE_CHANGED.notify_all();
     }
@@ -442,10 +440,7 @@ fn lock_process_gate(
     deadline: Duration,
     started: Instant,
 ) -> Result<ProcessGuard, CredentialTransactionError> {
-    let mut active = match PROCESS_GATES.lock() {
-        Ok(active) => active,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let mut active = PROCESS_GATES.lock();
     loop {
         if started.elapsed() >= deadline {
             return Err(CredentialTransactionError::LockTimeout { waited: deadline });
@@ -459,11 +454,7 @@ fn lock_process_gate(
         let Some(remaining) = deadline.checked_sub(started.elapsed()) else {
             return Err(CredentialTransactionError::LockTimeout { waited: deadline });
         };
-        let (next, timeout) = match PROCESS_GATE_CHANGED.wait_timeout(active, remaining) {
-            Ok(result) => result,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        active = next;
+        let timeout = PROCESS_GATE_CHANGED.wait_for(&mut active, remaining);
         if timeout.timed_out() && active.contains(identity) {
             return Err(CredentialTransactionError::LockTimeout { waited: deadline });
         }

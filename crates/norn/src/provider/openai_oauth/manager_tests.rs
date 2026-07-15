@@ -222,10 +222,42 @@ async fn canceled_waiter_does_not_cancel_owned_refresh_attempt() -> TestResult {
 }
 
 #[tokio::test]
-async fn concurrent_failure_is_shared_and_does_not_poison_later_attempts() -> TestResult {
+async fn concurrent_ambiguous_failure_is_shared_and_blocks_replay() -> TestResult {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(500).set_delay(std::time::Duration::from_millis(100)))
+        .mount(&server)
+        .await;
+
+    let (_directory, manager) = seeded_manager(&server).await?;
+    let (first, overlapping) = tokio::join!(
+        manager.refresh_token_from_authority(),
+        manager.refresh_token_from_authority(),
+    );
+    assert!(
+        matches!(first, Err(RefreshTokenError::Indeterminate(_))),
+        "expected indeterminate failure from HTTP 500, got {first:?}"
+    );
+    assert!(
+        matches!(overlapping, Err(RefreshTokenError::Indeterminate(_))),
+        "overlapping waiter must receive the same failure: {overlapping:?}"
+    );
+
+    let later = manager.refresh_token_from_authority().await;
+    assert!(matches!(later, Err(RefreshTokenError::Indeterminate(_))));
+    assert_eq!(
+        received_request_count(&server).await?,
+        1,
+        "an ambiguous response must not replay the prior refresh lineage"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn concurrent_request_timeout_is_shared_without_poisoning_later_attempts() -> TestResult {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(408).set_delay(std::time::Duration::from_millis(100)))
         .up_to_n_times(1)
         .with_priority(1)
         .mount(&server)
@@ -241,22 +273,12 @@ async fn concurrent_failure_is_shared_and_does_not_poison_later_attempts() -> Te
         manager.refresh_token_from_authority(),
         manager.refresh_token_from_authority(),
     );
-    assert!(
-        matches!(first, Err(RefreshTokenError::Transient(_))),
-        "expected transient failure from HTTP 500, got {first:?}"
-    );
-    assert!(
-        matches!(overlapping, Err(RefreshTokenError::Transient(_))),
-        "overlapping waiter must receive the same failure: {overlapping:?}"
-    );
+    assert!(matches!(first, Err(RefreshTokenError::Transient(_))));
+    assert!(matches!(overlapping, Err(RefreshTokenError::Transient(_))));
 
     manager.refresh_token_from_authority().await?;
     assert_eq!(access_token(&manager).await?, "new-access-token");
-    assert_eq!(
-        received_request_count(&server).await?,
-        2,
-        "one failed and one later exchange expected"
-    );
+    assert_eq!(received_request_count(&server).await?, 2);
     Ok(())
 }
 

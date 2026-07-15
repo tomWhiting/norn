@@ -9,7 +9,9 @@ use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::super::auth_root::NornAuthRoot;
-use super::super::storage::{AuthCredentialsStoreMode, load_auth_dot_json, save_auth_dot_json};
+use super::super::storage::{
+    AUTH_JSON_FILE, AuthCredentialsStoreMode, load_auth_dot_json, save_auth_dot_json,
+};
 use super::super::types::{AuthDotJson, CodexAuth};
 use super::*;
 
@@ -115,6 +117,57 @@ async fn two_process_refresh_converges_with_one_authority_exchange() -> TestResu
         &load_auth_dot_json(&auth_root, AuthCredentialsStoreMode::File)?
             .ok_or_else(|| std::io::Error::other("durable credential is missing"))?,
     )?;
+    Ok(())
+}
+
+#[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
+#[tokio::test]
+async fn symlink_auth_root_fails_before_authority_request_without_mutating_target() -> TestResult {
+    use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+    let server = MockServer::start().await;
+    let directory = tempfile::tempdir()?;
+    let real_root = directory.path().join("real-auth");
+    let linked_root = directory.path().join("linked-auth");
+    save_auth_dot_json(&real_root, &expired_auth()?)?;
+    symlink(&real_root, &linked_root)?;
+
+    let auth_path = real_root.join(AUTH_JSON_FILE);
+    let original_auth = std::fs::read(&auth_path)?;
+    let original_root_mode = std::fs::metadata(&real_root)?.permissions().mode();
+    let original_auth_mode = std::fs::metadata(&auth_path)?.permissions().mode();
+    let root = NornAuthRoot::try_from(linked_root.as_path())?;
+
+    let result =
+        AuthManager::shared_for_tests(root, AuthCredentialsStoreMode::File, server.uri()).await;
+
+    assert!(matches!(
+        result,
+        Err(AuthManagerBuildError::CredentialCoordination { .. })
+    ));
+    let requests = server
+        .received_requests()
+        .await
+        .ok_or_else(|| std::io::Error::other("authority request recording is unavailable"))?;
+    assert!(
+        requests.is_empty(),
+        "a rejected symlink root must not reach the token authority"
+    );
+    assert_eq!(std::fs::read(&auth_path)?, original_auth);
+    assert_eq!(
+        std::fs::metadata(&real_root)?.permissions().mode(),
+        original_root_mode
+    );
+    assert_eq!(
+        std::fs::metadata(&auth_path)?.permissions().mode(),
+        original_auth_mode
+    );
+    assert!(!real_root.join(".norn-auth.lock").exists());
+    assert!(
+        std::fs::symlink_metadata(linked_root)?
+            .file_type()
+            .is_symlink()
+    );
     Ok(())
 }
 

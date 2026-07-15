@@ -349,35 +349,61 @@ fn cancellation_releases_callback_listener_without_waiting_for_deadline()
 }
 
 #[test]
-fn cancellation_interrupts_partial_callback_request() -> Result<(), Box<dyn std::error::Error>> {
-    let (listener, port, listener_permit, accepted_permit) = test_server()?;
+fn cancellation_with_partial_callback_request_returns_failure_page()
+-> Result<(), Box<dyn std::error::Error>> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    let mut browser = TcpStream::connect(("127.0.0.1", port))?;
+    let (mut accepted, _peer) = listener.accept()?;
+    configure_accepted_stream(&accepted)?;
     let lifecycle = waiting_lifecycle();
     let worker_lifecycle = Arc::clone(&lifecycle);
-    let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
-    let waiter = std::thread::spawn(move || {
-        let result = wait_for_callback(
-            listener,
-            listener_permit,
-            accepted_permit,
-            "expected-state",
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+    let reader = std::thread::spawn(move || {
+        ready_tx.send(()).map_err(|error| {
+            LoginError::Server(format!("callback reader barrier closed: {error}"))
+        })?;
+        super::callback_worker::read_accepted_request_target(
+            &mut accepted,
             Duration::from_secs(10),
-            None,
             &worker_lifecycle,
-        );
-        let _ignored = result_tx.send(result);
+        )
     });
 
-    let socket = TcpStream::connect(("127.0.0.1", port))?;
-    std::thread::sleep(Duration::from_millis(50));
+    ready_rx.recv()?;
+    browser.write_all(b"GET /auth/callback")?;
     cancel_waiting_login(&lifecycle);
-    let result = result_rx
-        .recv_timeout(Duration::from_secs(1))
-        .map_err(|error| std::io::Error::other(format!("cancellation timed out: {error}")))?;
-    assert!(matches!(result, Err(LoginError::Canceled)));
-    waiter
+    let result = reader
         .join()
-        .map_err(|error| std::io::Error::other(format!("waiter thread panicked: {error:?}")))?;
-    drop(socket);
+        .map_err(|error| std::io::Error::other(format!("reader thread panicked: {error:?}")))?;
+    assert!(matches!(result, Err(LoginError::Canceled)));
+
+    let mut response = String::new();
+    browser.read_to_string(&mut response)?;
+    assert!(response.starts_with("HTTP/1.1 400"), "response: {response}");
+    assert!(response.contains("Login failed. Return to norn for details."));
+    assert!(!response.contains("Login complete"));
+    Ok(())
+}
+
+#[test]
+fn cancellation_between_classification_and_claim_returns_failure_page()
+-> Result<(), Box<dyn std::error::Error>> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    let mut browser = TcpStream::connect(("127.0.0.1", port))?;
+    let (mut accepted, _peer) = listener.accept()?;
+    let lifecycle = AtomicU8::new(LOGIN_CANCELED);
+
+    let result = super::callback_worker::claim_accepted_callback(&lifecycle, &mut accepted);
+    assert!(matches!(result, Err(LoginError::Canceled)));
+    drop(accepted);
+
+    let mut response = String::new();
+    browser.read_to_string(&mut response)?;
+    assert!(response.starts_with("HTTP/1.1 400"), "response: {response}");
+    assert!(response.contains("Login failed. Return to norn for details."));
+    assert!(!response.contains("Login complete"));
     Ok(())
 }
 
