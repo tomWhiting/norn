@@ -391,7 +391,7 @@ artifacts to the same clean head with zero errors.
 |---|---|---|
 | P0. Credential and workspace authority containment | [x] Accepted by focused Gate D review `7ce29d7` on 2026-07-15 | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] Gate A complete at base `2917c8e`; Gate B foundation next; D0 remote enforcement deferred to exit | The program has executable contracts and protected quality gates. |
-| P2. OAuth lifecycle correctness | [ ] Interim correction candidate through `455990a`; D9A closed; remaining D9 decisions open; correction review pending | Login, refresh, storage, and logout fail safely; named-account selection is either evidence-backed or explicitly unsupported. |
+| P2. OAuth lifecycle correctness | [ ] Interim correction `READY` at review `7536436`; D9A closed; remaining D9 decisions open | Login, refresh, storage, and logout fail safely; named-account selection is either evidence-backed or explicitly unsupported. |
 | P3. Canonical ordered transcript | [ ] | Responses items survive stream, persistence, resume, and replay in order. |
 | P4. Streaming and replay conformance | [ ] | Supported events/items are complete, reconciled, and fail closed. |
 | P5. Conversation and Codex turn semantics | [ ] | Local/provider history and turn-scoped state have explicit lifetimes. |
@@ -1145,6 +1145,11 @@ rotation is not in P2.
 The independent interim review committed at `86d95aa` reviewed source head
 `289d841`. These dispositions describe the correction working state; they are
 not phase acceptance or retained candidate evidence.
+
+The independent correction review committed at `7536436` returned `READY` for
+the complete correction range through source `455990a`. That verdict closes
+the seven interim findings and D9A only; it is not P2 acceptance and does not
+close the remaining D9 decisions, P1 dependency, phase evidence, or exit gates.
 
 - [x] `P2-1` and `P2-2`: D9A records owner-approved defaults of 30 seconds for
   lock acquisition and 25 milliseconds for inter-process polling. Both are
@@ -1937,7 +1942,7 @@ ledger prematurely.
 |---|---|---|---|
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
 | P1 | Gate A complete at base `2917c8e`; Gate B foundation not yet implemented | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A `READY` | Implement and independently review the executable foundation, complete and verify P1, then resolve D0 before acceptance |
-| P2 | Interim correction candidate through `455990a`: single-account Norn-owned OAuth lifecycle, typed state, supervised refresh attempts, owner-approved bounded coordination, durable login/logout, and foreign `CODEX_HOME` non-authority are present in source | Interim review `86d95aa`; retained D9A distributions are 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete P2 candidate gate bundle | Close the remaining D9 import/named/keyring/journal/config decisions; implement the selected named or unsupported branch; complete fault and configuration matrices; run Gate C and independent review |
+| P2 | Interim correction through source `455990a`: single-account Norn-owned OAuth lifecycle, typed state, supervised refresh attempts, owner-approved bounded coordination, durable login/logout, and foreign `CODEX_HOME` non-authority are present in source | Correction review `7536436` is `READY`; retained D9A distributions are 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete P2 candidate gate bundle | Close the remaining D9 import/named/keyring/journal/config decisions; implement the selected named or unsupported branch; complete fault and configuration matrices; run Gate C and whole-phase independent review |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|
