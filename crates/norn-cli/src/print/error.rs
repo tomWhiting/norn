@@ -1,6 +1,6 @@
 //! Typed failures emitted by print-mode execution.
 
-use norn::error::{NornError, ProviderError};
+use norn::error::{ErrorClass, NornError};
 
 use crate::cli::{BuildError, ExitCode};
 use crate::session::SessionPersistError;
@@ -91,7 +91,7 @@ impl From<SessionPersistError> for PrintError {
 impl From<NornError> for PrintError {
     fn from(err: NornError) -> Self {
         if let NornError::Provider(ref provider_err) = err
-            && matches!(provider_err, ProviderError::AuthenticationFailed { .. })
+            && provider_err.class() == ErrorClass::Auth
         {
             return Self::Auth(err.to_string());
         }

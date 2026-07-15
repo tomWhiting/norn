@@ -119,6 +119,52 @@ pub(super) fn rename_relative_file(
     Err(unsupported())
 }
 
+#[cfg(any(target_vendor = "apple", target_os = "linux", target_os = "android"))]
+pub(super) fn rename_new_relative_file(
+    root: &PrivateRoot,
+    from: &Path,
+    to: &Path,
+) -> io::Result<()> {
+    rename_new_relative_file_with_hooks(root, from, to, || {})
+}
+
+#[cfg(any(target_vendor = "apple", target_os = "linux", target_os = "android"))]
+pub(super) fn rename_new_relative_file_with_hooks(
+    root: &PrivateRoot,
+    from: &Path,
+    to: &Path,
+    before_mutation: impl FnOnce(),
+) -> io::Result<()> {
+    use rustix::fs::{RenameFlags, renameat_with};
+
+    let (from_parent_path, from_name) = split_file_path(from)?;
+    let (to_parent_path, to_name) = split_file_path(to)?;
+    let from_parent = open_relative_directory(root, &from_parent_path)?;
+    let to_parent = open_relative_directory(root, &to_parent_path)?;
+    drop(open_file_at(&from_parent, from_name, FileAccess::Read)?);
+    before_mutation();
+    renameat_with(
+        &from_parent,
+        from_name,
+        &to_parent,
+        to_name,
+        RenameFlags::NOREPLACE,
+    )
+    .map_err(io::Error::from)
+}
+
+#[cfg(not(any(target_vendor = "apple", target_os = "linux", target_os = "android")))]
+pub(super) fn rename_new_relative_file(
+    _root: &PrivateRoot,
+    _from: &Path,
+    _to: &Path,
+) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "atomic no-replace rename is unavailable on this target",
+    ))
+}
+
 #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
 pub(super) fn publish_new_relative_file(
     root: &PrivateRoot,

@@ -1,11 +1,16 @@
 //! Self-contained `OpenAI` `ChatGPT` OAuth support.
 //!
-//! This module implements the subset of Codex CLI-compatible OAuth used by
-//! norn: PKCE browser login, `~/.codex/auth.json` storage, proactive refresh,
+//! This module implements the subset of Codex-compatible OAuth used by norn:
+//! PKCE browser login, Norn-owned credential storage, proactive refresh,
 //! revocation, and status/JWT helpers.
 
+mod auth_root;
 mod browser;
 mod code_exchange;
+mod credential_decode;
+mod credential_state;
+mod credential_transaction;
+mod credential_validation;
 mod endpoints;
 pub mod jwt;
 mod login_server;
@@ -17,10 +22,22 @@ mod revoke;
 mod storage;
 mod types;
 
+pub use auth_root::{NornAuthRoot, NornAuthRootError, NornAuthRootSource, resolve_norn_auth_root};
+pub use credential_state::{
+    CredentialInspectionError, LocalCredentialState, MalformedCredentialReason,
+    RefreshCandidateReason, UnknownExpiryReason, evaluate_chatgpt_credential,
+    inspect_file_credential,
+};
 pub use endpoints::CLIENT_ID;
-pub use login_server::{LoginServer, ServerOptions, run_login_server};
+pub use login_server::{
+    LoginError, LoginServer, LoginStorageFailureKind, ServerOptions, run_login_server,
+};
 pub use manager::{AuthManager, AuthManagerBuildError, RefreshTokenError};
 pub use options::OAuthHttpOptions;
-pub use revoke::logout_with_revoke;
-pub use storage::{AUTH_JSON_FILE, AuthCredentialsStoreMode, load_auth_dot_json};
+pub use revoke::{
+    LocalLogoutError, LogoutError, LogoutReport, RemoteRevokeOutcome, logout_with_revoke,
+};
+pub use storage::{
+    AUTH_JSON_FILE, AuthCredentialsStoreMode, DeleteAuthOutcome, StorageError, load_auth_dot_json,
+};
 pub use types::{AuthDotJson, ChatGptTokens, CodexAuth, IdTokenInfo};

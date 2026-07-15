@@ -1,23 +1,68 @@
 //! OAuth token revocation and logout.
 
-use std::path::Path;
-
 use serde::Serialize;
+use std::future::Future;
 
 use super::CLIENT_ID;
+use super::auth_root::NornAuthRoot;
+use super::credential_transaction::{
+    CredentialDocument, CredentialTransaction, CredentialTransactionError,
+};
 use super::endpoints::REVOKE_URL;
 use super::options::OAuthHttpOptions;
-use super::storage::{AuthCredentialsStoreMode, delete_auth_dot_json, load_auth_dot_json};
+use super::storage::{AuthCredentialsStoreMode, DeleteAuthOutcome};
 
 /// Errors from logout/revoke.
 #[derive(Debug, thiserror::Error)]
 pub enum LogoutError {
-    /// Storage I/O failed.
-    #[error("auth storage failed: {0}")]
-    Storage(#[from] std::io::Error),
     /// HTTP client construction or request failed.
     #[error("token revoke failed: {0}")]
     Revoke(String),
+    /// Remote revocation was not started because local removal did not commit.
+    #[error("remote token revocation was not attempted because durable local removal failed")]
+    LocalRemovalIncomplete,
+    /// Credential bytes existed but could not be decoded for revocation.
+    #[error("stored OAuth credential is malformed")]
+    MalformedCredential,
+}
+
+/// Failure to complete the local half of logout.
+#[derive(Debug, thiserror::Error)]
+pub enum LocalLogoutError {
+    /// The intended credential changed before local removal committed.
+    #[error("local OAuth credential changed during logout and was not removed")]
+    Conflict,
+    /// Local removal occurred but directory durability was not confirmed.
+    #[error("local OAuth credential removal occurred but durability was not confirmed")]
+    Undurable,
+    /// Locking, descriptor admission, or private filesystem I/O failed.
+    #[error("local OAuth credential removal could not be coordinated")]
+    Coordination,
+}
+
+/// Remote revocation result, reported separately from local credential removal.
+#[derive(Debug)]
+pub enum RemoteRevokeOutcome {
+    /// No stored refresh token was available to revoke.
+    NotApplicable,
+    /// The authority accepted the refresh-token revocation request.
+    Revoked,
+    /// Loading the token, satisfying the local-first precondition, or
+    /// contacting the revoke authority failed.
+    Failed(LogoutError),
+}
+
+/// Complete logout result.
+///
+/// Local removal is always attempted before remote revocation, including when
+/// credential loading fails.
+#[must_use = "logout reports contain independent local-removal and remote-revocation outcomes"]
+#[derive(Debug)]
+pub struct LogoutReport {
+    /// Durable local credential removal result.
+    pub local: Result<DeleteAuthOutcome, LocalLogoutError>,
+    /// Independent remote revocation result.
+    pub remote: RemoteRevokeOutcome,
 }
 
 #[derive(Serialize)]
@@ -27,28 +72,164 @@ struct RevokeRequest<'a> {
     client_id: &'a str,
 }
 
-/// Best-effort revokes the stored refresh token and deletes `auth.json` on
-/// success.
+enum PendingRemoteRevoke {
+    NotApplicable,
+    RefreshToken(String),
+    LoadFailed(LogoutError),
+}
+
+/// Durably removes `auth.json` locally, then reports remote revocation
+/// independently for the refresh token captured from that removed credential.
 ///
 /// `http` supplies the whole-request deadline for the revoke exchange
 /// (see [`OAuthHttpOptions::request_timeout`]).
 ///
-/// # Errors
+/// The remote future is not constructed or awaited until local deletion and
+/// directory synchronization succeed. Cancellation during remote revocation
+/// therefore cannot leave the removed credential installed. A credential
+/// written after remote revocation starts is not touched by this logout.
 ///
-/// Returns an error if revocation fails or the auth file cannot be deleted.
 pub async fn logout_with_revoke(
-    codex_home: &Path,
+    auth_root: &NornAuthRoot,
     mode: AuthCredentialsStoreMode,
     http: OAuthHttpOptions,
-) -> Result<(), LogoutError> {
-    let Some(auth) = load_auth_dot_json(codex_home, mode)? else {
-        return Ok(());
+) -> LogoutReport {
+    logout_with_revoker(
+        auth_root,
+        mode,
+        http.credential_lock_timeout,
+        move |refresh_token| async move { revoke_refresh_token(&refresh_token, http).await },
+    )
+    .await
+}
+
+async fn logout_with_revoker<F, Fut>(
+    auth_root: &NornAuthRoot,
+    mode: AuthCredentialsStoreMode,
+    credential_lock_timeout: std::time::Duration,
+    revoke: F,
+) -> LogoutReport
+where
+    F: FnOnce(String) -> Fut,
+    Fut: Future<Output = Result<(), LogoutError>>,
+{
+    let root = auth_root.clone();
+    let prepared = tokio::task::spawn_blocking(move || {
+        prepare_local_logout(&root, mode, credential_lock_timeout)
+    })
+    .await;
+    let (local, pending_remote) = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            tracing::warn!(%error, "local OAuth logout task failed");
+            (
+                Err(LocalLogoutError::Coordination),
+                PendingRemoteRevoke::LoadFailed(LogoutError::LocalRemovalIncomplete),
+            )
+        }
     };
-    if let Some(tokens) = auth.tokens.as_ref() {
-        revoke_refresh_token(&tokens.refresh_token, http).await?;
+    complete_logout(local, pending_remote, revoke).await
+}
+
+fn prepare_local_logout(
+    auth_root: &NornAuthRoot,
+    mode: AuthCredentialsStoreMode,
+    deadline: std::time::Duration,
+) -> (
+    Result<DeleteAuthOutcome, LocalLogoutError>,
+    PendingRemoteRevoke,
+) {
+    match mode {
+        AuthCredentialsStoreMode::File => {}
     }
-    delete_auth_dot_json(codex_home)?;
-    Ok(())
+    let transaction = match CredentialTransaction::acquire(auth_root, deadline) {
+        Ok(transaction) => transaction,
+        Err(error) => {
+            return (
+                Err(map_local_logout_error(&error)),
+                PendingRemoteRevoke::LoadFailed(LogoutError::LocalRemovalIncomplete),
+            );
+        }
+    };
+    let snapshot = match transaction.snapshot() {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            return (
+                Err(map_local_logout_error(&error)),
+                PendingRemoteRevoke::LoadFailed(LogoutError::LocalRemovalIncomplete),
+            );
+        }
+    };
+    let pending_remote = match snapshot.document {
+        CredentialDocument::Missing => PendingRemoteRevoke::NotApplicable,
+        CredentialDocument::Malformed(_) => {
+            PendingRemoteRevoke::LoadFailed(LogoutError::MalformedCredential)
+        }
+        CredentialDocument::Parsed(auth) => {
+            auth.tokens
+                .map_or(PendingRemoteRevoke::NotApplicable, |tokens| {
+                    if tokens.refresh_token.is_empty() {
+                        PendingRemoteRevoke::NotApplicable
+                    } else {
+                        PendingRemoteRevoke::RefreshToken(tokens.refresh_token)
+                    }
+                })
+        }
+    };
+    let local = transaction
+        .delete_if_revision(snapshot.revision.as_ref())
+        .map_err(|error| map_local_logout_error(&error));
+    (local, pending_remote)
+}
+
+fn map_local_logout_error(error: &CredentialTransactionError) -> LocalLogoutError {
+    match error {
+        CredentialTransactionError::Conflict
+        | CredentialTransactionError::VerificationConflict
+        | CredentialTransactionError::RecoveryIncomplete(_) => LocalLogoutError::Conflict,
+        CredentialTransactionError::DeletedButUndurable(_) => LocalLogoutError::Undurable,
+        CredentialTransactionError::DescriptorAdmission(_)
+        | CredentialTransactionError::OpenRoot(_)
+        | CredentialTransactionError::OpenLock(_)
+        | CredentialTransactionError::LockTimeout { .. }
+        | CredentialTransactionError::Lock(_)
+        | CredentialTransactionError::Storage(_)
+        | CredentialTransactionError::PublishedButUndurable { .. } => {
+            LocalLogoutError::Coordination
+        }
+    }
+}
+
+async fn complete_logout<F, Fut>(
+    local: Result<DeleteAuthOutcome, LocalLogoutError>,
+    pending_remote: PendingRemoteRevoke,
+    revoke: F,
+) -> LogoutReport
+where
+    F: FnOnce(String) -> Fut,
+    Fut: Future<Output = Result<(), LogoutError>>,
+{
+    if local.is_err() {
+        let remote = match pending_remote {
+            PendingRemoteRevoke::NotApplicable => RemoteRevokeOutcome::NotApplicable,
+            PendingRemoteRevoke::RefreshToken(refresh_token) => {
+                drop(refresh_token);
+                RemoteRevokeOutcome::Failed(LogoutError::LocalRemovalIncomplete)
+            }
+            PendingRemoteRevoke::LoadFailed(error) => RemoteRevokeOutcome::Failed(error),
+        };
+        return LogoutReport { local, remote };
+    }
+
+    let remote = match pending_remote {
+        PendingRemoteRevoke::NotApplicable => RemoteRevokeOutcome::NotApplicable,
+        PendingRemoteRevoke::RefreshToken(refresh_token) => match revoke(refresh_token).await {
+            Ok(()) => RemoteRevokeOutcome::Revoked,
+            Err(error) => RemoteRevokeOutcome::Failed(error),
+        },
+        PendingRemoteRevoke::LoadFailed(error) => RemoteRevokeOutcome::Failed(error),
+    };
+    LogoutReport { local, remote }
 }
 
 /// Revokes the refresh token at the compiled revoke endpoint.
@@ -86,3 +267,7 @@ async fn revoke_refresh_token(
         )))
     }
 }
+
+#[cfg(test)]
+#[path = "revoke_tests.rs"]
+mod tests;

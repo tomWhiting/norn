@@ -75,20 +75,20 @@ impl OpenAiProvider {
     }
 
     /// Constructs a Codex subscription provider from a validated in-memory
-    /// credential without reading or writing the shared Codex credential
+    /// credential without reading or writing Norn's file-backed credential
     /// store.
     ///
     /// This path is deliberately non-refreshing. A `401 Unauthorized`
     /// response is surfaced as an authentication error so the credential
     /// owner can replace the dispatch-scoped credential; Norn never spends or
     /// persists the credential's refresh token. The provider configuration
-    /// must select OAuth with no Codex-home path, and backend resolution pins
+    /// must select OAuth with no auth-root override, and backend resolution pins
     /// the request destination to the compiled `ChatGPT` Codex endpoint.
     ///
     /// # Errors
     ///
     /// Returns [`ProviderError::InvalidRequest`] when `config` selects an API
-    /// key, a Codex-home path, or a non-canonical destination. Returns
+    /// key, an auth-root override, or a non-canonical destination. Returns
     /// [`ProviderError::ConnectionFailed`] when the HTTP client cannot be
     /// built.
     pub fn with_static_codex_credential(
@@ -96,13 +96,12 @@ impl OpenAiProvider {
         credential: StaticCodexCredential,
     ) -> Result<Self, ProviderError> {
         match &config.auth_source {
-            AuthSource::OAuth { codex_home: None } => {}
-            AuthSource::OAuth {
-                codex_home: Some(_),
-            } => {
+            AuthSource::OAuth { auth_root: None } => {}
+            AuthSource::OAuth { auth_root: Some(_) } => {
                 return Err(ProviderError::InvalidRequest {
-                    message: "static Codex credentials cannot be combined with a Codex-home path"
-                        .to_owned(),
+                    message:
+                        "static Codex credentials cannot be combined with an auth-root override"
+                            .to_owned(),
                 });
             }
             AuthSource::ApiKey { .. } => {
@@ -255,7 +254,7 @@ mod security_tests {
 
     fn oauth_config(base_url: Option<&str>) -> ProviderConfig {
         ProviderConfig {
-            auth_source: AuthSource::OAuth { codex_home: None },
+            auth_source: AuthSource::OAuth { auth_root: None },
             base_url: base_url.map(str::to_owned),
             timeout: Duration::from_secs(5),
             max_retries: 0,
@@ -447,6 +446,26 @@ mod security_tests {
         assert!(!rendered.contains("config-secret"));
         assert!(!rendered.contains("dispatch-secret"));
         assert!(!rendered.contains("attacker.example"));
+        Ok(())
+    }
+
+    #[test]
+    fn static_codex_constructor_rejects_auth_root_override_without_path_disclosure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let credential = static_credential("dispatch-secret", None)?;
+        let config = ProviderConfig {
+            auth_source: AuthSource::OAuth {
+                auth_root: Some(std::path::PathBuf::from("/norn-auth-root-sentinel")),
+            },
+            ..oauth_config(None)
+        };
+        let error = OpenAiProvider::with_static_codex_credential(config, credential)
+            .err()
+            .ok_or_else(|| std::io::Error::other("static Codex auth accepted an auth root"))?;
+        let rendered = error.to_string();
+        assert!(rendered.contains("auth-root override"));
+        assert!(!rendered.contains("norn-auth-root-sentinel"));
+        assert!(!rendered.contains("dispatch-secret"));
         Ok(())
     }
 
@@ -655,7 +674,7 @@ mod tests {
     #[test]
     fn chatgpt_oauth_capabilities_do_not_enable_response_threading() {
         let mut config = test_config();
-        config.auth_source = AuthSource::OAuth { codex_home: None };
+        config.auth_source = AuthSource::OAuth { auth_root: None };
         config.base_url = None;
         let mock: Arc<dyn AuthProvider> = Arc::new(MockAuthProvider::single("oauth-token"));
         let provider = OpenAiProvider::with_auth_provider(config, mock).expect("create");
@@ -697,7 +716,7 @@ mod tests {
         let mock: Arc<dyn AuthProvider> = Arc::new(MockAuthProvider::single("k"));
 
         let mut oauth_config = test_config();
-        oauth_config.auth_source = AuthSource::OAuth { codex_home: None };
+        oauth_config.auth_source = AuthSource::OAuth { auth_root: None };
         oauth_config.base_url = None;
         let oauth_provider =
             OpenAiProvider::with_auth_provider(oauth_config, Arc::clone(&mock)).expect("create");

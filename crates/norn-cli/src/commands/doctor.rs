@@ -2,9 +2,9 @@
 //!
 //! Five checks run unconditionally in order: OAuth status, provider
 //! connectivity, working-directory permissions, PATH shims, and descriptor
-//! capacity. Each emits a
-//! `[PASS]` or `[FAIL] … : <remediation>` line on stderr. The exit code
-//! is `0` if every check passes, `1` if any check fails.
+//! capacity. Each emits a `[PASS]`, non-failing `[WARN]`, or
+//! `[FAIL] … : <remediation>` line on stderr. The exit code is `0` if every
+//! check passes or warns and `1` if any check fails.
 //!
 //! Connectivity uses a plain reqwest HEAD against the public `OpenAI`
 //! API base URL. Any HTTP status (2xx, 3xx, 4xx) is treated as a
@@ -20,7 +20,10 @@ use std::time::Duration;
 
 use crate::cli::ExitCode;
 use crate::cli::ProviderKind;
-use crate::commands::auth::{auth_health, resolve_codex_home};
+use crate::commands::auth::{
+    inspect_auth_state, malformed_reason, refresh_candidate_detail, unknown_expiry_reason,
+};
+use norn::provider::openai_oauth::{LocalCredentialState, NornAuthRoot, resolve_norn_auth_root};
 
 mod descriptors;
 
@@ -60,29 +63,83 @@ pub fn run_doctor() -> ExitCode {
 // 1. Auth
 // ---------------------------------------------------------------------------
 
-fn check_auth() -> bool {
-    let codex_home = match resolve_codex_home() {
-        Ok(path) => path,
+pub(crate) fn check_auth() -> bool {
+    let auth_root = match resolve_norn_auth_root(None) {
+        Ok(root) => root,
         Err(reason) => {
             eprintln!("[FAIL] OAuth credential path is unsafe: {reason}");
             return false;
         }
     };
-    match auth_health(&codex_home) {
-        Ok(true) => {
-            eprintln!("[PASS] OAuth credentials present");
-            true
+    check_auth_at(&auth_root)
+}
+
+fn check_auth_at(auth_root: &NornAuthRoot) -> bool {
+    match inspect_auth_state(auth_root) {
+        Ok(state) => {
+            let report = auth_check_report(&state);
+            eprintln!("{}", report.message);
+            report.passed
         }
-        Ok(false) => {
-            eprintln!("[FAIL] OAuth credentials missing: Run `norn auth login` to authenticate.");
-            false
-        }
-        Err(err) => {
+        Err(error) => {
             eprintln!(
-                "[FAIL] OAuth credentials malformed ({err}): Run `norn auth login` to re-authenticate."
+                "[FAIL] OAuth credential storage could not be inspected ({error}); remote validity is unverified: Check credential permissions and storage integrity."
             );
             false
         }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct AuthCheckReport {
+    passed: bool,
+    message: String,
+}
+
+fn auth_check_report(state: &LocalCredentialState) -> AuthCheckReport {
+    match state {
+        LocalCredentialState::Missing => AuthCheckReport {
+            passed: false,
+            message: "[FAIL] OAuth credentials missing; remote validity is unverified: Run `norn auth login` to authenticate."
+                .to_owned(),
+        },
+        LocalCredentialState::Malformed { reason } => AuthCheckReport {
+            passed: false,
+            message: format!(
+                "[FAIL] OAuth credentials malformed ({}); remote validity is unverified: Run `norn auth login` to authenticate again.",
+                malformed_reason(*reason)
+            ),
+        },
+        LocalCredentialState::AccessExpired { expired_at } => AuthCheckReport {
+            passed: false,
+            message: format!(
+                "[FAIL] OAuth access token expired at {} and cannot be refreshed locally; remote validity is unverified: Run `norn auth login` to authenticate again.",
+                expired_at.format("%Y-%m-%dT%H:%M:%SZ")
+            ),
+        },
+        LocalCredentialState::RefreshCandidate { reason, expired_at } => {
+            let detail = refresh_candidate_detail(*reason, expired_at.as_ref());
+            AuthCheckReport {
+                passed: true,
+                message: format!(
+                    "[WARN] OAuth credentials require refresh before the next provider request because {detail}; remote validity is unverified."
+                ),
+            }
+        }
+        LocalCredentialState::LocallyValid { expires_at } => AuthCheckReport {
+            passed: true,
+            message: format!(
+                "[PASS] OAuth access token is locally valid until {}; remote validity is unverified.",
+                expires_at.format("%Y-%m-%dT%H:%M:%SZ")
+            ),
+        },
+        LocalCredentialState::Unknown { reason } => AuthCheckReport {
+            passed: true,
+            message: format!(
+                "[WARN] OAuth credentials are present, but access-token expiry is unknown ({}); remote validity is unverified.",
+                unknown_expiry_reason(*reason)
+            ),
+        },
     }
 }
 
@@ -176,12 +233,14 @@ fn check_dir_io(dir: &Path) -> std::io::Result<()> {
     let _descriptor_permit =
         norn::resource::acquire_filesystem_operation().map_err(std::io::Error::other)?;
     // Reading metadata fails if the directory is unreadable or missing.
-    let _ = std::fs::metadata(dir)?;
+    std::fs::metadata(dir)?;
     let scratch = dir.join(format!(".norn-doctor-write-test-{}", std::process::id()));
     let result = std::fs::File::create(&scratch).map(|_| ());
     // Best-effort cleanup; if remove fails after a successful create
     // there is nothing actionable to report — the write test passed.
-    let _ = std::fs::remove_file(&scratch);
+    if let Err(error) = std::fs::remove_file(&scratch) {
+        tracing::debug!(error = %error, "doctor scratch-file cleanup failed");
+    }
     result
 }
 
@@ -303,8 +362,8 @@ fn run_version_probe(path: &Path) -> std::io::Result<ProbeStatus> {
             return Ok(ProbeStatus::BadExit(status.code()));
         }
         if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
+            child.kill()?;
+            child.wait()?;
             return Ok(ProbeStatus::TimedOut);
         }
         thread::sleep(Duration::from_millis(20));
@@ -341,91 +400,5 @@ fn is_executable_file(path: &Path) -> std::io::Result<bool> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, unsafe_code)]
-mod tests {
-    use super::*;
-    use serial_test::serial;
-
-    #[test]
-    #[serial]
-    fn auth_check_returns_false_when_unset() {
-        let tmp = tempfile::tempdir().unwrap();
-        // SAFETY: serial test prevents concurrent observers.
-        unsafe { std::env::set_var("CODEX_HOME", tmp.path()) };
-        let ok = check_auth();
-        unsafe { std::env::remove_var("CODEX_HOME") };
-        assert!(!ok);
-    }
-
-    #[test]
-    fn check_dir_io_succeeds_on_temp_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        check_dir_io(tmp.path()).unwrap();
-    }
-
-    #[test]
-    fn check_dir_io_fails_on_missing_path() {
-        let result = check_dir_io(Path::new("/this/path/should/not/exist/norn-doctor"));
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn connectivity_for_local_provider_passes_without_network() {
-        let ok = check_connectivity(ProviderKind::ClaudeRunner);
-        assert!(ok);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    #[serial]
-    fn path_probe_flags_non_executable_first_hit() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let tmp = tempfile::tempdir().unwrap();
-        let shim = tmp.path().join("python3");
-        std::fs::write(&shim, "#!/bin/sh\nexit 0\n").unwrap();
-        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o644)).unwrap();
-        let prior = std::env::var_os("PATH");
-        unsafe { std::env::set_var("PATH", tmp.path()) };
-
-        let issues = path_executable_issues(&["python3"]);
-
-        if let Some(value) = prior {
-            unsafe { std::env::set_var("PATH", value) };
-        } else {
-            unsafe { std::env::remove_var("PATH") };
-        }
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].tool, "python3");
-        assert!(issues[0].reason.contains("not executable"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    #[serial]
-    fn path_probe_flags_exec_format_error() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let tmp = tempfile::tempdir().unwrap();
-        let shim = tmp.path().join("python3");
-        std::fs::write(&shim, "not a native executable\n").unwrap();
-        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let prior = std::env::var_os("PATH");
-        unsafe { std::env::set_var("PATH", tmp.path()) };
-
-        let issues = path_executable_issues(&["python3"]);
-
-        if let Some(value) = prior {
-            unsafe { std::env::set_var("PATH", value) };
-        } else {
-            unsafe { std::env::remove_var("PATH") };
-        }
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].tool, "python3");
-        assert!(
-            issues[0].reason.contains("cannot execute") || issues[0].reason.contains("status"),
-            "bad executable must be reported as an issue: {:?}",
-            issues[0],
-        );
-    }
-}
+#[path = "doctor_tests.rs"]
+mod tests;

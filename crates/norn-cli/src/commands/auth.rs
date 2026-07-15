@@ -7,23 +7,25 @@
 //! that supports `block_on` for the full duration is required.
 //!
 //! Token-handling rule (CO5 + DESIGN.md NC13): raw access tokens,
-//! refresh tokens, and JWT bodies MUST NEVER appear in stdout or stderr
-//! output. Only parsed metadata (expiry timestamp, account id) is
-//! surfaced from `auth status`.
+//! refresh tokens, JWT bodies, and account identities MUST NEVER appear in
+//! stdout or stderr output. `auth status` reports only side-effect-free local
+//! credential classification; it never claims remote validity.
 
-use std::path::{Path, PathBuf};
-
+use chrono::Utc;
 use norn::provider::auth::{LoginConfig, login, logout};
-use norn::provider::openai_oauth::jwt::parse_jwt_expiration;
-use norn::provider::openai_oauth::{AuthCredentialsStoreMode, AuthDotJson, load_auth_dot_json};
+use norn::provider::openai_oauth::{
+    AuthCredentialsStoreMode, CredentialInspectionError, LocalCredentialState, LogoutReport,
+    MalformedCredentialReason, NornAuthRoot, RefreshCandidateReason, RemoteRevokeOutcome,
+    UnknownExpiryReason, inspect_file_credential, resolve_norn_auth_root,
+};
 
 use crate::cli::AuthCmd;
 use crate::cli::ExitCode;
 
 /// Top-level dispatcher for `norn auth`.
-pub fn run_auth(cmd: AuthCmd) -> ExitCode {
+pub fn run_auth(cmd: &AuthCmd) -> ExitCode {
     match cmd {
-        AuthCmd::Login { codex_home } => run_login(codex_home),
+        AuthCmd::Login => run_login(),
         AuthCmd::Logout => run_logout(),
         AuthCmd::Status => run_status(),
     }
@@ -33,7 +35,7 @@ pub fn run_auth(cmd: AuthCmd) -> ExitCode {
 // R8: login
 // ---------------------------------------------------------------------------
 
-fn run_login(codex_home: Option<PathBuf>) -> ExitCode {
+fn run_login() -> ExitCode {
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(err) => {
@@ -41,11 +43,7 @@ fn run_login(codex_home: Option<PathBuf>) -> ExitCode {
             return ExitCode::AuthError;
         }
     };
-    let config = LoginConfig {
-        codex_home,
-        device_code: false,
-    };
-    match rt.block_on(login(config)) {
+    match rt.block_on(login(LoginConfig::default())) {
         Ok(()) => {
             eprintln!("Login successful.");
             ExitCode::Success
@@ -70,12 +68,39 @@ fn run_logout() -> ExitCode {
         }
     };
     match rt.block_on(logout(LoginConfig::default())) {
-        Ok(()) => {
+        Ok(report) => report_logout(report),
+        Err(err) => {
+            eprintln!("norn: logout failed: {err}");
+            ExitCode::AuthError
+        }
+    }
+}
+
+fn report_logout(report: LogoutReport) -> ExitCode {
+    match (report.local, report.remote) {
+        (Ok(_), RemoteRevokeOutcome::Revoked | RemoteRevokeOutcome::NotApplicable) => {
             eprintln!("Logged out.");
             ExitCode::Success
         }
-        Err(err) => {
-            eprintln!("norn: logout failed: {err}");
+        (Ok(_), RemoteRevokeOutcome::Failed(remote_error)) => {
+            eprintln!(
+                "Logged out locally; remote token revocation was not completed: {remote_error}"
+            );
+            ExitCode::AuthError
+        }
+        (Err(local_error), RemoteRevokeOutcome::Revoked) => {
+            eprintln!(
+                "norn: remote token revoked, but local credential removal failed: {local_error}"
+            );
+            ExitCode::AuthError
+        }
+        (Err(local_error), RemoteRevokeOutcome::NotApplicable) => {
+            eprintln!("norn: local credential removal failed: {local_error}");
+            ExitCode::AuthError
+        }
+        (Err(local_error), RemoteRevokeOutcome::Failed(remote_error)) => {
+            eprintln!("norn: remote token revocation was not completed: {remote_error}");
+            eprintln!("norn: local credential removal failed: {local_error}");
             ExitCode::AuthError
         }
     }
@@ -86,150 +111,289 @@ fn run_logout() -> ExitCode {
 // ---------------------------------------------------------------------------
 
 fn run_status() -> ExitCode {
-    let codex_home = match resolve_codex_home() {
-        Ok(path) => path,
+    let auth_root = match resolve_norn_auth_root(None) {
+        Ok(root) => root,
         Err(reason) => {
             eprintln!("norn: cannot resolve auth state: {reason}");
             return ExitCode::AuthError;
         }
     };
-    if !codex_home.join("auth.json").exists() {
-        println!("Not logged in.");
-        return ExitCode::Success;
-    }
-
-    match load_auth_dot_json(&codex_home, AuthCredentialsStoreMode::File) {
-        Ok(None) => {
-            println!("Not logged in.");
-        }
-        Ok(Some(auth)) => {
-            print_status(&auth);
-        }
-        Err(err) => {
-            // Status is informational per DESIGN.md NC13: surface the
-            // read failure on stderr but still exit 0 so consumers
-            // (shell prompts, doctor) can treat it as 'not authenticated'.
-            eprintln!("norn: failed to read auth state: {err}");
-            println!("Not logged in.");
-        }
-    }
-    ExitCode::Success
+    run_status_at(&auth_root)
 }
 
-fn print_status(auth: &AuthDotJson) {
-    let Some(tokens) = auth.tokens.as_ref() else {
-        println!("Not logged in.");
-        return;
-    };
-
-    let expiry = parse_jwt_expiration(&tokens.access_token)
-        .ok()
-        .flatten()
-        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string());
-
-    let mut line = String::from("Logged in");
-    if let Some(expiry_text) = expiry {
-        use std::fmt::Write;
-        let _ = write!(line, " (expires: {expiry_text})");
+fn run_status_at(auth_root: &NornAuthRoot) -> ExitCode {
+    match inspect_auth_state(auth_root) {
+        Ok(state) => report_status(&state),
+        Err(error) => {
+            eprintln!(
+                "norn: OAuth credential storage could not be inspected ({error}); remote validity is unverified."
+            );
+            ExitCode::AuthError
+        }
     }
-    if let Some(account_id) = tokens.account_id.as_deref() {
-        use std::fmt::Write;
-        let _ = write!(line, " as account {account_id}");
-    }
-    println!("{line}");
 }
 
-/// Resolve the Codex home directory: `$CODEX_HOME` if set and non-empty,
-/// otherwise `~/.codex`. Mirrors the private helper in
-/// `norn::provider::auth` since that one is not exported.
-pub(crate) fn resolve_codex_home() -> Result<PathBuf, &'static str> {
-    if let Ok(env_path) = std::env::var("CODEX_HOME")
-        && !env_path.is_empty()
-    {
-        let path = PathBuf::from(env_path);
-        return if path.is_absolute() {
-            Ok(path)
-        } else {
-            Err("CODEX_HOME must be an absolute path")
-        };
-    }
-    norn::config::paths::trusted_home_dir()
-        .map(|home| home.join(".codex"))
-        .ok_or("could not determine an absolute home directory for Codex credentials")
+pub(crate) fn inspect_auth_state(
+    auth_root: &NornAuthRoot,
+) -> Result<LocalCredentialState, CredentialInspectionError> {
+    inspect_file_credential(auth_root, AuthCredentialsStoreMode::File, Utc::now())
 }
 
-/// Probe helper used by `norn doctor` — checks whether `auth.json`
-/// exists at the resolved codex home and, if so, attempts to load it.
-/// Returns `Ok(true)` for "logged in with tokens", `Ok(false)` for
-/// "logged out / no credentials", and `Err(_)` for malformed storage.
-pub(crate) fn auth_health(codex_home: &Path) -> Result<bool, std::io::Error> {
-    if !codex_home.join("auth.json").exists() {
-        return Ok(false);
+fn report_status(state: &LocalCredentialState) -> ExitCode {
+    let report = status_report(state);
+    if report.exit_code == ExitCode::Success {
+        println!("{}", report.message);
+    } else {
+        eprintln!("norn: {}", report.message);
     }
-    match load_auth_dot_json(codex_home, AuthCredentialsStoreMode::File)? {
-        Some(auth) => Ok(auth.tokens.is_some()),
-        None => Ok(false),
+    report.exit_code
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct StatusReport {
+    message: String,
+    exit_code: ExitCode,
+}
+
+fn status_report(state: &LocalCredentialState) -> StatusReport {
+    match state {
+        LocalCredentialState::Missing => StatusReport {
+            message: "No local OAuth credentials found; remote validity is unverified.".to_owned(),
+            exit_code: ExitCode::Success,
+        },
+        LocalCredentialState::Malformed { reason } => StatusReport {
+            message: format!(
+                "local OAuth credentials are malformed ({}); remote validity is unverified. Run `norn auth login` to authenticate again.",
+                malformed_reason(*reason)
+            ),
+            exit_code: ExitCode::AuthError,
+        },
+        LocalCredentialState::AccessExpired { expired_at } => StatusReport {
+            message: format!(
+                "OAuth access token expired at {} and cannot be refreshed locally; remote validity is unverified. Run `norn auth login` to authenticate again.",
+                expired_at.format("%Y-%m-%dT%H:%M:%SZ")
+            ),
+            exit_code: ExitCode::AuthError,
+        },
+        LocalCredentialState::RefreshCandidate { reason, expired_at } => {
+            let detail = refresh_candidate_detail(*reason, expired_at.as_ref());
+            StatusReport {
+                message: format!(
+                    "OAuth credentials require refresh before the next provider request because {detail}; remote validity is unverified."
+                ),
+                exit_code: ExitCode::Success,
+            }
+        }
+        LocalCredentialState::LocallyValid { expires_at } => StatusReport {
+            message: format!(
+                "OAuth access token is locally valid until {}; remote validity is unverified.",
+                expires_at.format("%Y-%m-%dT%H:%M:%SZ")
+            ),
+            exit_code: ExitCode::Success,
+        },
+        LocalCredentialState::Unknown { reason } => StatusReport {
+            message: format!(
+                "OAuth credentials are present, but access-token expiry is unknown ({}); remote validity is unverified.",
+                unknown_expiry_reason(*reason)
+            ),
+            exit_code: ExitCode::Success,
+        },
+    }
+}
+
+pub(crate) const fn malformed_reason(reason: MalformedCredentialReason) -> &'static str {
+    match reason {
+        MalformedCredentialReason::InvalidJson => "invalid JSON",
+        MalformedCredentialReason::UnsupportedAuthMode => "unsupported authentication mode",
+        MalformedCredentialReason::MixedCredentialKinds => "mixed credential kinds",
+        MalformedCredentialReason::MissingTokenBundle => "missing token bundle",
+        MalformedCredentialReason::MalformedIdTokenClaims => "malformed id-token claims",
+        MalformedCredentialReason::InvalidAccessToken => "invalid access token shape",
+        MalformedCredentialReason::InvalidRefreshToken => "invalid refresh token shape",
+        MalformedCredentialReason::MissingAccountId => "missing account identity",
+        MalformedCredentialReason::InvalidAccountId => "invalid account identity",
+        MalformedCredentialReason::ConflictingAccountIds => "conflicting account identities",
+        MalformedCredentialReason::MalformedAccessTokenClaims => "malformed access-token claims",
+        MalformedCredentialReason::MissingUsableToken => "missing usable token",
+    }
+}
+
+pub(crate) fn refresh_candidate_detail(
+    reason: RefreshCandidateReason,
+    expired_at: Option<&chrono::DateTime<Utc>>,
+) -> String {
+    match reason {
+        RefreshCandidateReason::AccessExpired => expired_at.map_or_else(
+            || "the access token is expired".to_owned(),
+            |expired_at| {
+                format!(
+                    "the access token expired at {}",
+                    expired_at.format("%Y-%m-%dT%H:%M:%SZ")
+                )
+            },
+        ),
+        RefreshCandidateReason::AccessMissing => "the access token is missing".to_owned(),
+    }
+}
+
+pub(crate) const fn unknown_expiry_reason(reason: UnknownExpiryReason) -> &'static str {
+    match reason {
+        UnknownExpiryReason::OpaqueAccessToken => "opaque access token",
+        UnknownExpiryReason::MissingExpiration => "missing expiration claim",
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, unsafe_code)]
 mod tests {
     use super::*;
-    use serial_test::serial;
 
-    #[test]
-    #[serial]
-    fn resolve_codex_home_honours_env() -> Result<(), Box<dyn std::error::Error>> {
-        // SAFETY: serial test; no concurrent reader observes the mutation.
-        unsafe { std::env::set_var("CODEX_HOME", "/tmp/codex-test-home") };
-        let result = resolve_codex_home();
-        unsafe { std::env::remove_var("CODEX_HOME") };
-        let home = result.map_err(std::io::Error::other)?;
-        assert_eq!(home, PathBuf::from("/tmp/codex-test-home"));
+    const TEST_JWT: &str = concat!(
+        "eyJhbGciOiJub25lIn0.",
+        "eyJzdWIiOiJ1c2VyIiwiZXhwIjo0MTAyNDQ0ODAwLCJodHRwczovL2FwaS5vcGVu",
+        "YWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjb3VudCJ9fQ."
+    );
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn default_auth_surfaces_converge_on_norn_home_without_touching_codex_home() -> TestResult
+    {
+        use norn::provider::auth::{AuthSource, build_from_auth_source};
+        use norn::provider::openai_oauth::{DeleteAuthOutcome, RemoteRevokeOutcome};
+
+        let norn_home = tempfile::tempdir()?;
+        let codex_home = tempfile::tempdir()?;
+        let norn_auth_root = norn_home.path().join("auth");
+        std::fs::create_dir(&norn_auth_root)?;
+        std::fs::write(
+            norn_auth_root.join("auth.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "id_token": TEST_JWT,
+                    "access_token": TEST_JWT,
+                    "refresh_token": "",
+                    "account_id": "account"
+                }
+            }))?,
+        )?;
+        let foreign_auth = codex_home.path().join("auth.json");
+        let foreign_sibling = codex_home.path().join("profile-sentinel");
+        std::fs::write(&foreign_auth, b"foreign-auth-sentinel")?;
+        std::fs::write(&foreign_sibling, b"foreign-profile-sentinel")?;
+
+        temp_env::async_with_vars(
+            [
+                ("NORN_HOME", Some(norn_home.path().as_os_str())),
+                ("CODEX_HOME", Some(codex_home.path().as_os_str())),
+            ],
+            async {
+                assert_eq!(run_status(), ExitCode::Success);
+                assert!(crate::commands::doctor::check_auth());
+
+                let provider = build_from_auth_source(&AuthSource::oauth_default()).await?;
+                let request = provider
+                    .apply_auth(reqwest::Client::new().get("http://example.invalid"))
+                    .await?
+                    .build()?;
+                assert!(request.headers().contains_key("Authorization"));
+                drop(provider);
+
+                let report = logout(LoginConfig::default()).await?;
+                assert!(matches!(report.local, Ok(DeleteAuthOutcome::Removed)));
+                assert!(matches!(report.remote, RemoteRevokeOutcome::NotApplicable));
+                assert!(!norn_auth_root.join("auth.json").exists());
+                Ok::<(), Box<dyn std::error::Error>>(())
+            },
+        )
+        .await?;
+
+        assert_eq!(std::fs::read(foreign_auth)?, b"foreign-auth-sentinel");
+        assert_eq!(std::fs::read(foreign_sibling)?, b"foreign-profile-sentinel");
         Ok(())
     }
 
     #[test]
-    #[serial]
-    fn resolve_codex_home_empty_env_treated_as_unset() -> Result<(), Box<dyn std::error::Error>> {
-        // SAFETY: serial test prevents concurrent observers.
-        unsafe { std::env::set_var("CODEX_HOME", "") };
-        let result = resolve_codex_home();
-        unsafe { std::env::remove_var("CODEX_HOME") };
-        let home = result.map_err(std::io::Error::other)?;
-        let expected = norn::config::paths::trusted_home_dir()
-            .map(|home| home.join(".codex"))
-            .ok_or_else(|| std::io::Error::other("trusted home is unavailable"))?;
-        assert_eq!(home, expected);
-        Ok(())
-    }
-
-    #[test]
-    #[serial]
-    fn resolve_codex_home_rejects_relative_env() {
-        unsafe { std::env::set_var("CODEX_HOME", ".codex") };
-        let result = resolve_codex_home();
-        unsafe { std::env::remove_var("CODEX_HOME") };
-        assert_eq!(result, Err("CODEX_HOME must be an absolute path"));
-    }
-
-    #[test]
-    #[serial]
-    fn status_with_no_auth_file_succeeds() {
-        let tmp = tempfile::tempdir().unwrap();
-        // SAFETY: serial-style isolation via the env var only being set
-        // here; doctor tests are #[serial] in their own module.
-        unsafe { std::env::set_var("CODEX_HOME", tmp.path()) };
-        let code = run_status();
-        unsafe { std::env::remove_var("CODEX_HOME") };
+    fn status_with_no_auth_file_succeeds() -> TestResult {
+        let tmp = tempfile::tempdir()?;
+        let auth_root = NornAuthRoot::try_from(tmp.path())?;
+        let code = run_status_at(&auth_root);
         assert_eq!(code, ExitCode::Success);
+        Ok(())
     }
 
     #[test]
-    fn auth_health_returns_false_when_missing() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ok = auth_health(tmp.path()).unwrap();
-        assert!(!ok);
+    fn status_with_malformed_auth_file_fails() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        std::fs::write(tmp.path().join("auth.json"), b"{malformed")?;
+        let auth_root = NornAuthRoot::try_from(tmp.path())?;
+        let code = run_status_at(&auth_root);
+        assert_eq!(code, ExitCode::AuthError);
+        Ok(())
+    }
+
+    #[test]
+    fn inspection_classifies_missing_without_collapsing_to_a_boolean()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let auth_root = NornAuthRoot::try_from(tmp.path())?;
+        let state = inspect_auth_state(&auth_root)?;
+        assert_eq!(state, LocalCredentialState::Missing);
+        Ok(())
+    }
+
+    #[test]
+    fn every_present_status_disclaims_remote_validity_and_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .ok_or_else(|| std::io::Error::other("test timestamp is invalid"))?;
+        let states = [
+            LocalCredentialState::Malformed {
+                reason: MalformedCredentialReason::InvalidJson,
+            },
+            LocalCredentialState::AccessExpired {
+                expired_at: timestamp,
+            },
+            LocalCredentialState::RefreshCandidate {
+                reason: RefreshCandidateReason::AccessExpired,
+                expired_at: Some(timestamp),
+            },
+            LocalCredentialState::LocallyValid {
+                expires_at: timestamp,
+            },
+            LocalCredentialState::Unknown {
+                reason: UnknownExpiryReason::OpaqueAccessToken,
+            },
+        ];
+
+        for state in states {
+            let report = status_report(&state);
+            assert!(report.message.contains("remote validity is unverified"));
+            assert!(!report.message.contains("account"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn status_exit_codes_distinguish_unusable_from_refreshable_states()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .ok_or_else(|| std::io::Error::other("test timestamp is invalid"))?;
+        let malformed = status_report(&LocalCredentialState::Malformed {
+            reason: MalformedCredentialReason::InvalidJson,
+        });
+        let expired = status_report(&LocalCredentialState::AccessExpired {
+            expired_at: timestamp,
+        });
+        let refreshable = status_report(&LocalCredentialState::RefreshCandidate {
+            reason: RefreshCandidateReason::AccessExpired,
+            expired_at: Some(timestamp),
+        });
+
+        assert_eq!(malformed.exit_code, ExitCode::AuthError);
+        assert_eq!(expired.exit_code, ExitCode::AuthError);
+        assert_eq!(refreshable.exit_code, ExitCode::Success);
+        Ok(())
     }
 }

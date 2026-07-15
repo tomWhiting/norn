@@ -273,7 +273,7 @@ mod backend_security_tests {
     fn auto_state_is_stateless_for_an_explicit_canonical_codex_backend() -> Result<(), ProviderError>
     {
         let config = ProviderConfig {
-            auth_source: AuthSource::OAuth { codex_home: None },
+            auth_source: AuthSource::OAuth { auth_root: None },
             base_url: Some("https://chatgpt.com:443/backend-api/codex/".to_owned()),
             timeout: Duration::from_secs(5),
             max_retries: 0,

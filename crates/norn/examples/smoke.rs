@@ -52,7 +52,7 @@ async fn main() {
         Ok(p) => p,
         Err(e) => {
             eprintln!("ERROR: failed to create provider: {e}");
-            eprintln!("  Have you logged in? Run `codex login` or check ~/.codex/auth.json");
+            eprintln!("  Have you logged in? Run `norn auth login`, then `norn auth status`.");
             std::process::exit(1);
         }
     };

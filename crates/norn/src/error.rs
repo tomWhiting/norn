@@ -95,6 +95,37 @@ pub enum TransientKind {
     },
 }
 
+/// Structured failure modes for a locally managed OAuth credential.
+///
+/// These outcomes all require the credential owner to reconcile local state
+/// before the request can safely proceed, but they are deliberately distinct:
+/// callers must not mistake a persistence failure or concurrent write for an
+/// authority rejection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OAuthCredentialFailureKind {
+    /// The credential is no longer accepted and login is required.
+    Permanent,
+    /// A rotated credential was not durably accepted by its owner.
+    Undurable,
+    /// The credential changed while an operation was in flight.
+    Conflict,
+    /// The authority may have rotated the credential without returning a
+    /// lineage that can be accepted safely.
+    Indeterminate,
+}
+
+impl std::fmt::Display for OAuthCredentialFailureKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let label = match self {
+            Self::Permanent => "permanent",
+            Self::Undurable => "undurable",
+            Self::Conflict => "conflict",
+            Self::Indeterminate => "indeterminate",
+        };
+        formatter.write_str(label)
+    }
+}
+
 /// Top-level error type for the norn crate.
 #[derive(Debug, thiserror::Error)]
 pub enum NornError {
@@ -234,6 +265,20 @@ pub enum ProviderError {
     #[error("authentication failed: {reason}")]
     AuthenticationFailed {
         /// Description of the authentication failure.
+        reason: String,
+    },
+
+    /// A locally managed OAuth credential could not be used safely.
+    ///
+    /// Classification: [`ErrorClass::Auth`] because the credential owner must
+    /// reconcile or replace local state before this request can proceed. The
+    /// structured `kind` preserves the operation outcome across the provider
+    /// boundary instead of flattening it into an authentication string.
+    #[error("OAuth credential failure ({kind}): {reason}")]
+    OAuthCredentialFailure {
+        /// Credential lifecycle outcome.
+        kind: OAuthCredentialFailureKind,
+        /// Non-disclosing description of the failure.
         reason: String,
     },
 
@@ -396,7 +441,9 @@ impl ProviderError {
             Self::RateLimited { retry_after } => ErrorClass::RateLimited {
                 retry_after: *retry_after,
             },
-            Self::AuthenticationFailed { .. } => ErrorClass::Auth,
+            Self::AuthenticationFailed { .. } | Self::OAuthCredentialFailure { .. } => {
+                ErrorClass::Auth
+            }
             Self::ResponseParseError { .. }
             | Self::RequestSerializationFailed { .. }
             | Self::UnsupportedFeature { .. }
@@ -778,7 +825,6 @@ pub enum ConfigError {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
@@ -905,6 +951,24 @@ mod tests {
     }
 
     #[test]
+    fn oauth_credential_failures_preserve_kind_and_classify_auth() {
+        for kind in [
+            OAuthCredentialFailureKind::Permanent,
+            OAuthCredentialFailureKind::Undurable,
+            OAuthCredentialFailureKind::Conflict,
+            OAuthCredentialFailureKind::Indeterminate,
+        ] {
+            let err = ProviderError::OAuthCredentialFailure {
+                kind,
+                reason: "redacted lifecycle failure".to_owned(),
+            };
+            assert_eq!(err.class(), ErrorClass::Auth);
+            assert!(!err.is_retryable());
+            assert!(err.to_string().contains(&kind.to_string()));
+        }
+    }
+
+    #[test]
     fn redirect_policy_refusal_classifies_terminal() {
         let err = ProviderError::RedirectPolicyRefused {
             status: 307,
@@ -1011,7 +1075,7 @@ mod tests {
     // -- ErrorClass: serialization round-trips across boundaries ------------
 
     #[test]
-    fn error_class_serde_round_trips_every_shape() {
+    fn error_class_serde_round_trips_every_shape() -> Result<(), serde_json::Error> {
         let cases = vec![
             ErrorClass::Retryable {
                 kind: TransientKind::Timeout,
@@ -1030,23 +1094,24 @@ mod tests {
             ErrorClass::Terminal,
         ];
         for class in cases {
-            let json = serde_json::to_string(&class).expect("serialize");
-            let back: ErrorClass = serde_json::from_str(&json).expect("deserialize");
+            let json = serde_json::to_string(&class)?;
+            let back: ErrorClass = serde_json::from_str(&json)?;
             assert_eq!(back, class, "round trip failed for {json}");
         }
+        Ok(())
     }
 
     #[test]
-    fn error_class_serializes_with_stable_tag() {
+    fn error_class_serializes_with_stable_tag() -> Result<(), serde_json::Error> {
         let json = serde_json::to_value(ErrorClass::Retryable {
             kind: TransientKind::ServerError { status: 503 },
-        })
-        .expect("serialize");
+        })?;
         assert_eq!(json["class"], "retryable");
         assert_eq!(json["kind"]["kind"], "server_error");
         assert_eq!(json["kind"]["status"], 503);
 
-        let json = serde_json::to_value(ErrorClass::Terminal).expect("serialize");
+        let json = serde_json::to_value(ErrorClass::Terminal)?;
         assert_eq!(json["class"], "terminal");
+        Ok(())
     }
 }

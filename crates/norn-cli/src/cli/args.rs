@@ -436,11 +436,7 @@ pub enum SessionExportFormat {
 #[derive(Subcommand, Debug)]
 pub enum AuthCmd {
     /// OAuth PKCE login flow (opens browser).
-    Login {
-        /// Override the codex home directory.
-        #[arg(long, value_name = "DIR")]
-        codex_home: Option<PathBuf>,
-    },
+    Login,
     /// Clear stored credentials.
     Logout,
     /// Show auth state: logged in, token expiry, account ID.
@@ -542,13 +538,21 @@ mod tests {
     }
 
     #[test]
-    fn auth_login_subcommand_parses() {
-        let cli = Cli::try_parse_from(["norn", "auth", "login"]).unwrap();
-        match cli.command {
+    fn auth_login_subcommand_parses() -> Result<(), clap::Error> {
+        let cli = Cli::try_parse_from(["norn", "auth", "login"])?;
+        assert!(matches!(
+            cli.command,
             Some(Command::Auth {
-                command: AuthCmd::Login { codex_home },
-            }) => assert!(codex_home.is_none()),
-            other => panic!("expected auth login subcommand, got {other:?}"),
+                command: AuthCmd::Login,
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn auth_login_rejects_path_override_flags() {
+        for flag in ["--codex-home", "--auth-root"] {
+            assert!(Cli::try_parse_from(["norn", "auth", "login", flag, "/tmp/auth"]).is_err());
         }
     }
 

@@ -140,7 +140,7 @@ mod tests {
     use crate::provider::request::SecretString;
 
     fn oauth_source() -> AuthSource {
-        AuthSource::OAuth { codex_home: None }
+        AuthSource::OAuth { auth_root: None }
     }
 
     fn api_key_source() -> AuthSource {

@@ -8,8 +8,9 @@ use std::time::Duration;
 ///
 /// Threaded explicitly through [`AuthManager`], [`ServerOptions`], and
 /// [`logout_with_revoke`] so embedders control every network deadline in
-/// the credential lifecycle. The [`Default`] carries the documented,
-/// owner-approved values that were previously hardcoded.
+/// the credential lifecycle. The [`Default`] preserves the existing network
+/// deadlines and gives credential-lock contention the same bounded ten-second
+/// operational budget.
 ///
 /// [`AuthManager`]: super::manager::AuthManager
 /// [`ServerOptions`]: super::login_server::ServerOptions
@@ -25,6 +26,10 @@ pub struct OAuthHttpOptions {
     /// Total wait for the browser to deliver the OAuth redirect to the
     /// local login-callback server before the login flow fails.
     pub callback_timeout: Duration,
+    /// Maximum time to wait for another Norn process to finish a credential
+    /// transaction. This does not coordinate lock-ignoring foreign writers;
+    /// raw revision checks detect observed foreign changes instead.
+    pub credential_lock_timeout: Duration,
 }
 
 impl OAuthHttpOptions {
@@ -34,6 +39,8 @@ impl OAuthHttpOptions {
     /// Documented, owner-approved default (pre-existing hardcoded value)
     /// for [`OAuthHttpOptions::callback_timeout`]: 5 minutes.
     pub const DEFAULT_CALLBACK_TIMEOUT: Duration = Duration::from_mins(5);
+    /// Default bounded wait for one credential transaction.
+    pub const DEFAULT_CREDENTIAL_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 }
 
 impl Default for OAuthHttpOptions {
@@ -41,6 +48,7 @@ impl Default for OAuthHttpOptions {
         Self {
             request_timeout: Self::DEFAULT_REQUEST_TIMEOUT,
             callback_timeout: Self::DEFAULT_CALLBACK_TIMEOUT,
+            credential_lock_timeout: Self::DEFAULT_CREDENTIAL_LOCK_TIMEOUT,
         }
     }
 }

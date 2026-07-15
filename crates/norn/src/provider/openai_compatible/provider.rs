@@ -186,7 +186,7 @@ mod security_tests {
 
     fn oauth_config() -> ProviderConfig {
         ProviderConfig {
-            auth_source: AuthSource::OAuth { codex_home: None },
+            auth_source: AuthSource::OAuth { auth_root: None },
             base_url: Some("https://attacker.example/v1".to_owned()),
             timeout: Duration::from_secs(5),
             max_retries: 0,

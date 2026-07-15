@@ -11,10 +11,17 @@ use std::os::fd::OwnedFd;
 
 #[path = "private_fs_mutation.rs"]
 mod mutation;
+#[path = "private_fs_observation.rs"]
+mod observation;
 
+#[cfg(all(
+    test,
+    any(target_vendor = "apple", target_os = "linux", target_os = "android")
+))]
+use mutation::rename_new_relative_file_with_hooks;
 use mutation::{
     publish_new_relative_file, remove_relative_directory, remove_relative_file,
-    rename_relative_file,
+    rename_new_relative_file, rename_relative_file,
 };
 #[cfg(all(test, unix, not(any(target_os = "redox", target_os = "espidf"))))]
 use mutation::{
@@ -79,9 +86,19 @@ impl PrivateRoot {
         create_root(path)
     }
 
+    /// Create the root and durably publish every absolute ancestor entry.
+    pub(crate) fn create_with_durable_ancestors(path: &Path) -> io::Result<Self> {
+        create_root_with_durable_ancestors(path)
+    }
+
     /// Open an existing absolute private root and enforce mode `0700`.
     pub(crate) fn open(path: &Path) -> io::Result<Self> {
         open_root(path)
+    }
+
+    /// Observe one existing regular file without creating or changing modes.
+    pub(crate) fn open_read_observational(root: &Path, relative: &Path) -> io::Result<File> {
+        observation::open_regular_file(root, relative)
     }
 
     /// The original absolute spelling supplied by the caller.
@@ -154,6 +171,11 @@ impl PrivateRoot {
     /// Atomically rename one regular file over another within this root.
     pub(crate) fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
         rename_relative_file(self, from, to)
+    }
+
+    /// Atomically rename one regular file to an unoccupied name.
+    pub(crate) fn rename_new(&self, from: &Path, to: &Path) -> io::Result<()> {
+        rename_new_relative_file(self, from, to)
     }
 
     /// Atomically publish an existing regular file at an unoccupied name.
@@ -288,6 +310,15 @@ fn harden_directory(directory: &OwnedFd, created: bool) -> io::Result<()> {
 
 #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
 fn open_absolute(path: &Path, create_missing: bool) -> io::Result<OwnedFd> {
+    open_absolute_with_parent_sync(path, create_missing, |_| Ok(()))
+}
+
+#[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
+fn open_absolute_with_parent_sync(
+    path: &Path,
+    create_missing: bool,
+    mut sync_parent: impl FnMut(&OwnedFd) -> io::Result<()>,
+) -> io::Result<OwnedFd> {
     use rustix::fs::{Mode, mkdirat, open, openat};
     use rustix::io::Errno;
 
@@ -297,7 +328,7 @@ fn open_absolute(path: &Path, create_missing: bool) -> io::Result<OwnedFd> {
     let mut final_created = false;
     for component in &components {
         let mut created = false;
-        directory = match openat(&directory, component, directory_flags(), Mode::empty()) {
+        let child = match openat(&directory, component, directory_flags(), Mode::empty()) {
             Ok(opened) => opened,
             Err(Errno::NOENT) if create_missing => {
                 match mkdirat(&directory, component, Mode::RWXU) {
@@ -310,6 +341,8 @@ fn open_absolute(path: &Path, create_missing: bool) -> io::Result<OwnedFd> {
             }
             Err(error) => return Err(io::Error::from(error)),
         };
+        sync_parent(&directory)?;
+        directory = child;
         final_created = created;
     }
     harden_directory(&directory, final_created)?;
@@ -324,8 +357,23 @@ fn create_root(path: &Path) -> io::Result<PrivateRoot> {
     })
 }
 
+#[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
+fn create_root_with_durable_ancestors(path: &Path) -> io::Result<PrivateRoot> {
+    Ok(PrivateRoot {
+        path: path.to_path_buf(),
+        descriptor: open_absolute_with_parent_sync(path, true, |parent| {
+            rustix::fs::fsync(parent).map_err(io::Error::from)
+        })?,
+    })
+}
+
 #[cfg(any(not(unix), target_os = "redox", target_os = "espidf"))]
 fn create_root(_path: &Path) -> io::Result<PrivateRoot> {
+    Err(unsupported())
+}
+
+#[cfg(any(not(unix), target_os = "redox", target_os = "espidf"))]
+fn create_root_with_durable_ancestors(_path: &Path) -> io::Result<PrivateRoot> {
     Err(unsupported())
 }
 
@@ -513,3 +561,14 @@ fn sync_relative_directory(_root: &PrivateRoot, _relative: &Path) -> io::Result<
 #[cfg(test)]
 #[path = "private_fs_tests.rs"]
 mod tests;
+
+#[cfg(all(
+    test,
+    any(target_vendor = "apple", target_os = "linux", target_os = "android")
+))]
+#[path = "private_fs_rename_tests.rs"]
+mod rename_tests;
+
+#[cfg(all(test, unix, not(any(target_os = "redox", target_os = "espidf"))))]
+#[path = "private_fs_durability_tests.rs"]
+mod durability_tests;

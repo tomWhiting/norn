@@ -256,6 +256,11 @@ impl DescriptorPermit {
             .split(weight as usize)
             .map(|permit| Self { permit })
     }
+
+    /// Number of descriptors retained by this operation-scoped admission.
+    pub(crate) fn weight(&self) -> usize {
+        self.permit.num_permits()
+    }
 }
 
 fn initialization_error(reason: &str, snapshot: &DescriptorSnapshot) -> DescriptorAdmissionError {

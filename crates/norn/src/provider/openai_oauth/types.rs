@@ -1,15 +1,20 @@
 //! Codex CLI-compatible auth data types.
 
-use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-use super::jwt::{IdTokenClaims, parse_id_token_claims};
+use serde::Deserialize;
 
-/// Top-level `auth.json` shape shared with the Codex CLI.
-#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+use super::credential_validation::{
+    CredentialField, CredentialValueError, validate_credential_value,
+};
+use super::jwt::{IdTokenClaims, JwtError, parse_id_token_claims, reconcile_required_account_ids};
+
+/// Top-level `auth.json` shape compatible with the Codex CLI.
+#[derive(Clone, Deserialize, PartialEq, Eq)]
 pub struct AuthDotJson {
     /// Authentication mode. `ChatGPT` OAuth files use `chatgpt`.
     pub auth_mode: Option<String>,
-    /// API key slot used by older/direct-key modes.
+    /// Compatibility API-key slot that Codex may persist alongside OAuth tokens.
     #[serde(rename = "OPENAI_API_KEY")]
     pub openai_api_key: Option<String>,
     /// OAuth tokens, when logged in via `ChatGPT`.
@@ -18,20 +23,55 @@ pub struct AuthDotJson {
     pub last_refresh: Option<chrono::DateTime<chrono::Utc>>,
     /// Reserved identity field retained for serde compatibility.
     pub agent_identity: Option<serde_json::Value>,
+    /// Fields owned by newer or alternate Codex clients.
+    #[serde(default, flatten)]
+    pub additional_fields: BTreeMap<String, serde_json::Value>,
 }
 
 /// Token bundle stored under `tokens` in `auth.json`.
-#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ChatGptTokens {
     /// Raw id-token JWT string.
-    #[serde(with = "id_token_serde")]
     pub id_token: IdTokenInfo,
     /// Raw access-token JWT string.
     pub access_token: String,
     /// Opaque refresh token.
     pub refresh_token: String,
-    /// Optional `ChatGPT` account id.
+    /// Normalized `ChatGPT` account id. Decoded and newly issued bundles
+    /// always contain this; `Option` preserves the external JSON shape.
     pub account_id: Option<String>,
+    /// Token fields owned by newer or alternate Codex clients.
+    pub additional_fields: BTreeMap<String, serde_json::Value>,
+}
+
+impl ChatGptTokens {
+    /// Builds a token bundle whose request and refresh fields are usable.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CredentialValueError`] when a field cannot be used safely.
+    pub(super) fn validated(
+        id_token: IdTokenInfo,
+        access_token: String,
+        refresh_token: String,
+        account_id: String,
+    ) -> Result<Self, CredentialValueError> {
+        for (field, value) in [
+            (CredentialField::AccessToken, access_token.as_str()),
+            (CredentialField::RefreshToken, refresh_token.as_str()),
+            (CredentialField::AccountId, account_id.as_str()),
+        ] {
+            validate_credential_value(field, value)?;
+        }
+
+        Ok(Self {
+            id_token,
+            access_token,
+            refresh_token,
+            account_id: Some(account_id),
+            additional_fields: BTreeMap::new(),
+        })
+    }
 }
 
 /// Parsed id-token metadata plus the original JWT for re-serialization.
@@ -50,13 +90,15 @@ pub struct IdTokenInfo {
 }
 
 impl IdTokenInfo {
-    /// Creates id-token info from a raw JWT, parsing optional metadata on a
-    /// best-effort basis.
-    #[must_use]
-    pub fn from_raw_jwt(raw_jwt: String) -> Self {
-        let claims =
-            parse_id_token_claims(&raw_jwt).unwrap_or_else(|_err| IdTokenClaims::default());
-        Self::from_claims(raw_jwt, claims)
+    /// Creates id-token info from a raw JWT.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JwtError`] when metadata cannot be parsed or a supported
+    /// account or user identity source is invalid or conflicts with another.
+    pub fn from_raw_jwt(raw_jwt: String) -> Result<Self, JwtError> {
+        let claims = parse_id_token_claims(&raw_jwt)?;
+        Ok(Self::from_claims(raw_jwt, claims))
     }
 
     fn from_claims(raw_jwt: String, claims: IdTokenClaims) -> Self {
@@ -66,6 +108,37 @@ impl IdTokenInfo {
             chatgpt_plan_type: claims.chatgpt_plan_type,
             chatgpt_user_id: claims.chatgpt_user_id,
             chatgpt_account_id: claims.chatgpt_account_id,
+        }
+    }
+
+    /// Reconciles an account id supplied alongside the id token with its claim.
+    pub(super) fn reconcile_account_id(
+        &self,
+        account_id: Option<String>,
+    ) -> Result<String, JwtError> {
+        reconcile_required_account_ids(account_id, self.chatgpt_account_id.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn create_for_testing(account_id: &str) -> Self {
+        use base64::Engine as _;
+
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"alg":"none","typ":"JWT"}"#);
+        let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            serde_json::json!({
+                "https://api.openai.com/auth": {
+                    "chatgpt_account_id": account_id
+                }
+            })
+            .to_string(),
+        );
+        Self {
+            raw_jwt: format!("{header}.{claims}."),
+            email: None,
+            chatgpt_plan_type: None,
+            chatgpt_user_id: None,
+            chatgpt_account_id: Some(account_id.to_owned()),
         }
     }
 }
@@ -80,9 +153,13 @@ impl AuthDotJson {
             tokens: Some(tokens),
             last_refresh: Some(chrono::Utc::now()),
             agent_identity: None,
+            additional_fields: BTreeMap::new(),
         }
     }
 }
+
+#[path = "types_serde.rs"]
+mod serde_impls;
 
 /// In-memory credential wrapper used by `AuthManager`.
 #[derive(Clone, PartialEq, Eq)]
@@ -102,6 +179,7 @@ impl std::fmt::Debug for AuthDotJson {
             .field("tokens_present", &self.tokens.is_some())
             .field("last_refresh", &self.last_refresh)
             .field("agent_identity_present", &self.agent_identity.is_some())
+            .field("additional_field_count", &self.additional_fields.len())
             .finish()
     }
 }
@@ -114,6 +192,7 @@ impl std::fmt::Debug for ChatGptTokens {
             .field("access_token", &"[REDACTED]")
             .field("refresh_token", &"[REDACTED]")
             .field("account_id_present", &self.account_id.is_some())
+            .field("additional_field_count", &self.additional_fields.len())
             .finish()
     }
 }
@@ -159,10 +238,11 @@ impl CodexAuth {
     #[cfg(test)]
     pub(crate) fn create_dummy_chatgpt_auth_for_testing() -> Self {
         let tokens = ChatGptTokens {
-            id_token: IdTokenInfo::from_raw_jwt("Id Token".to_string()),
+            id_token: IdTokenInfo::create_for_testing("account_id"),
             access_token: "Access Token".to_string(),
             refresh_token: "Refresh Token".to_string(),
             account_id: Some("account_id".to_string()),
+            additional_fields: BTreeMap::new(),
         };
         Self::ChatGpt(Box::new(AuthDotJson::from_tokens(tokens)))
     }
@@ -205,29 +285,31 @@ pub enum AuthError {
 }
 
 mod id_token_serde {
-    use serde::{Deserialize, Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, de::Error as _};
 
     use super::IdTokenInfo;
-
-    pub(super) fn serialize<S>(value: &IdTokenInfo, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&value.raw_jwt)
-    }
 
     pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<IdTokenInfo, D::Error>
     where
         D: Deserializer<'de>,
     {
         let raw = String::deserialize(deserializer)?;
-        Ok(IdTokenInfo::from_raw_jwt(raw))
+        IdTokenInfo::from_raw_jwt(raw).map_err(D::Error::custom)
     }
 }
 
 #[cfg(test)]
 mod security_tests {
+    use base64::Engine as _;
+
     use super::*;
+
+    fn fixture_jwt(claims: &serde_json::Value) -> String {
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"alg":"none","typ":"JWT"}"#);
+        let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string());
+        format!("{header}.{claims}.")
+    }
 
     fn sentinel_tokens() -> ChatGptTokens {
         ChatGptTokens {
@@ -241,6 +323,10 @@ mod security_tests {
             access_token: "access-token-secret".to_owned(),
             refresh_token: "refresh-token-secret".to_owned(),
             account_id: Some("account-secret".to_owned()),
+            additional_fields: BTreeMap::from([(
+                "extension-key-secret".to_owned(),
+                serde_json::json!("extension-value-secret"),
+            )]),
         }
     }
 
@@ -253,6 +339,10 @@ mod security_tests {
             tokens: Some(tokens.clone()),
             last_refresh: None,
             agent_identity: Some(serde_json::json!({"secret": "identity-secret"})),
+            additional_fields: BTreeMap::from([(
+                "top-extension-key-secret".to_owned(),
+                serde_json::json!("top-extension-value-secret"),
+            )]),
         };
         let rendered = format!(
             "{auth:?} {tokens:?} {:?} {:?}",
@@ -271,6 +361,10 @@ mod security_tests {
             "account-secret",
             "api-key-secret",
             "identity-secret",
+            "extension-key-secret",
+            "extension-value-secret",
+            "top-extension-key-secret",
+            "top-extension-value-secret",
         ] {
             assert!(!rendered.contains(secret));
         }
@@ -283,4 +377,85 @@ mod security_tests {
         assert!(!rendered.contains("direct-key-secret"));
         assert!(rendered.contains("[REDACTED]"));
     }
+
+    #[test]
+    fn namespaced_account_claim_reaches_final_auth_account_id() -> Result<(), serde_json::Error> {
+        let id_token = fixture_jwt(&serde_json::json!({
+            "email": "fixture@example.invalid",
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "account-fixture-namespaced",
+                "chatgpt_plan_type": "fixture-plan"
+            }
+        }));
+        let auth = serde_json::from_value::<AuthDotJson>(serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": id_token,
+                "access_token": "not-an-access-token",
+                "refresh_token": "not-a-refresh-token"
+            }
+        }))?;
+        let auth = CodexAuth::ChatGpt(Box::new(auth));
+
+        assert_eq!(auth.get_account_id(), Some("account-fixture-namespaced"));
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_id_token_is_an_observable_deserialization_error() -> Result<(), std::io::Error> {
+        let result = serde_json::from_value::<AuthDotJson>(serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": "not-a-jwt",
+                "access_token": "not-an-access-token",
+                "refresh_token": "not-a-refresh-token"
+            }
+        }));
+        let Err(error) = result else {
+            return Err(std::io::Error::other(
+                "malformed id token unexpectedly produced credential metadata",
+            ));
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("JWT is missing its claims segment")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stored_and_claimed_account_id_conflict_is_rejected_without_disclosure()
+    -> Result<(), std::io::Error> {
+        let id_token = fixture_jwt(&serde_json::json!({
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "claim-account-secret"
+            }
+        }));
+        let result = serde_json::from_value::<AuthDotJson>(serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": id_token,
+                "access_token": "not-an-access-token",
+                "refresh_token": "not-a-refresh-token",
+                "account_id": "stored-account-secret"
+            }
+        }));
+        let Err(error) = result else {
+            return Err(std::io::Error::other(
+                "conflicting account identifiers unexpectedly produced credentials",
+            ));
+        };
+        let rendered = error.to_string();
+
+        assert!(rendered.contains("conflicting ChatGPT account identifiers"));
+        assert!(!rendered.contains("claim-account-secret"));
+        assert!(!rendered.contains("stored-account-secret"));
+        Ok(())
+    }
 }
+
+#[cfg(test)]
+#[path = "types_validation_tests.rs"]
+mod validation_tests;
