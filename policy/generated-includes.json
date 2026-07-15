@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "source": "crates/norn/src/model_catalog.rs",
+      "callsite": {
+        "start": 7867,
+        "end": 7932
+      },
+      "enclosing_item": {
+        "start": 7725,
+        "end": 7935
+      },
+      "invocation_digest": "fef0748bd289f55d0957b1d981a4b9c5cf673e50065d78240d5b2bb8f2f2b9aa",
+      "target": {
+        "package": "norn",
+        "package_root": "crates/norn",
+        "kind": "library",
+        "name": "norn",
+        "root": "crates/norn/src/lib.rs"
+      },
+      "generator": {
+        "path": "crates/norn/build.rs",
+        "digest": "d0ee16d0eb25ff761e3a81fc548795c554c3e073f3390caf6e3c080ebd41d610"
+      },
+      "inputs": [
+        {
+          "path": "assets/models.json",
+          "digest": "df4b628f7de522bc3d243863e2a8e2a2cbcbc4bdeb71d196332f8053fec1566d"
+        }
+      ],
+      "output_basename": "model_catalog_generated.rs"
+    }
+  ]
+}

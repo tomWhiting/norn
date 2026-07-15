@@ -1,0 +1,4 @@
+: norn-fixture-v1 {"artifact_family":"protocol_fixture","artifact_kind":"stream","dialect":"public","fixture_id":"fixture-transport-retry-after-ceiling","schema_version":1}
+event: error
+data: {"code":"norn-synthetic-generic-nf-3-rate-limit","maximum":1,"message":"norn-synthetic-prompt-nf-3-message","param":null,"retry_after":2,"sequence_number":1,"type":"error"}
+

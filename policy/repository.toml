@@ -1,0 +1,9 @@
+schema_version = 1
+
+[algorithms]
+analyzer = "norn-policy-1"
+digest = "norn-sha256-canonical-json-1"
+
+[production_loc]
+entrypoint_max = 200
+other_rust_max = 500

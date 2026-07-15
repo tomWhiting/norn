@@ -1,0 +1,53 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "request",
+  "dialect": "public",
+  "fixture_id": "fixture-cache-backend-model-experiment",
+  "payload": {
+    "requests": [
+      {
+        "input": [
+          {
+            "content": [
+              {
+                "text": "norn-synthetic-prompt-cache-01-001",
+                "type": "input_text"
+              }
+            ],
+            "role": "user",
+            "type": "message"
+          }
+        ],
+        "model": "norn-synthetic-generic-cache-01-model",
+        "prompt_cache_key": "norn-synthetic-cache-cache-01-shared"
+      },
+      {
+        "input": [
+          {
+            "content": [
+              {
+                "text": "norn-synthetic-prompt-cache-01-001",
+                "type": "input_text"
+              }
+            ],
+            "role": "user",
+            "type": "message"
+          },
+          {
+            "content": [
+              {
+                "text": "norn-synthetic-prompt-cache-01-001",
+                "type": "input_text"
+              }
+            ],
+            "role": "developer",
+            "type": "message"
+          }
+        ],
+        "model": "norn-synthetic-generic-cache-01-model",
+        "prompt_cache_key": "norn-synthetic-cache-cache-01-shared"
+      }
+    ]
+  },
+  "schema_version": 1
+}

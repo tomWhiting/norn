@@ -1,0 +1,4 @@
+: norn-fixture-v1 {"artifact_family":"protocol_fixture","artifact_kind":"stream","dialect":"public","fixture_id":"fixture-usage-cache-write","schema_version":1}
+event: response.completed
+data: {"response":{"id":"norn-synthetic-generic-cache-02-response","object":"response","output":[],"status":"completed","usage":{"input_tokens":8,"input_tokens_details":{"cache_write_tokens":3,"cached_tokens":5},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":1},"total_tokens":10}},"sequence_number":1,"type":"response.completed"}
+

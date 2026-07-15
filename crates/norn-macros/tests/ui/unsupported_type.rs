@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use norn_macros::ToolArgs;
 
 #[derive(ToolArgs)]

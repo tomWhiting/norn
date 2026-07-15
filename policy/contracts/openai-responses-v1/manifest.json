@@ -1,0 +1,86 @@
+{
+  "api_description_version": "2.3.0",
+  "extractor_version": "norn-openai-responses-contract-v1",
+  "kind": "public_responses_contract_manifest",
+  "openapi_version": "3.1.0",
+  "outputs": [
+    {
+      "bytes": 18006,
+      "path": "policy/contracts/openai-responses-v1/contract.schema.json",
+      "sha256": "52513731eb5885ef8d894e1f14390f8ad8abe7ef9f98de49b3421d166b650cf9"
+    },
+    {
+      "bytes": 13013,
+      "path": "policy/contracts/openai-responses-v1/inventories.json",
+      "sha256": "b02fa7d1a05f884bcc06f60ff0f8147422a2939c971cdb1e37ea693fe5c42547"
+    },
+    {
+      "bytes": 1550022,
+      "path": "policy/contracts/openai-responses-v1/request-graph.json",
+      "sha256": "caa5e1bd184fc7a5b79227a1f36371b1a990a2424c2484806de88be375cf7520"
+    },
+    {
+      "bytes": 2386347,
+      "path": "policy/contracts/openai-responses-v1/response-graph.json",
+      "sha256": "22e7b7b4e7941fe7f968951c8704645fa9bf59fd7b10cbc7a9a7bfa04b223fc9"
+    },
+    {
+      "bytes": 2276,
+      "path": "policy/contracts/openai-responses-v1/source-discrepancies.json",
+      "sha256": "086b2095875da350e9888ecb24c2c94804eff92426c5d6b1f1827cfcf6d877f7"
+    },
+    {
+      "bytes": 117738,
+      "path": "policy/contracts/openai-responses-v1/sse-events.json",
+      "sha256": "d10d92fa6ecc3bfa52add80d15489d39697f613fe298297fc283005883a6ff2c"
+    }
+  ],
+  "retrieved_on": "2026-07-15",
+  "schema_version": 1,
+  "sources": [
+    {
+      "arguments": {
+        "url": "https://api.openai.com/v1/responses"
+      },
+      "normalized_bytes": 49588,
+      "normalized_sha256": "5ecfc069ea7c9fd6669c88296c2eaa7855a056df7e713cebf336a6b7dc0b761b",
+      "raw_bytes": 49588,
+      "raw_sha256": "5ecfc069ea7c9fd6669c88296c2eaa7855a056df7e713cebf336a6b7dc0b761b",
+      "source_id": "create",
+      "tool": "mcp__openaiDeveloperDocs__get_openapi_spec"
+    },
+    {
+      "arguments": {
+        "url": "https://api.openai.com/v1/responses/compact"
+      },
+      "normalized_bytes": 6534,
+      "normalized_sha256": "176224ad2f7b7ed83421f5fed37c23b7318379ef5413d18865e08cfab6df5574",
+      "raw_bytes": 6534,
+      "raw_sha256": "176224ad2f7b7ed83421f5fed37c23b7318379ef5413d18865e08cfab6df5574",
+      "source_id": "compact",
+      "tool": "mcp__openaiDeveloperDocs__get_openapi_spec"
+    },
+    {
+      "arguments": {
+        "url": "https://developers.openai.com/api/reference/resources/responses/streaming-events"
+      },
+      "normalized_bytes": 14672822,
+      "normalized_sha256": "e5af6f1c56d75cb907e218166f0f588d42703f1bee992f0ff73b6681ac4e8af1",
+      "raw_bytes": 14672822,
+      "raw_sha256": "e5af6f1c56d75cb907e218166f0f588d42703f1bee992f0ff73b6681ac4e8af1",
+      "source_id": "streaming",
+      "tool": "mcp__openaiDeveloperDocs__fetch_openai_doc"
+    },
+    {
+      "arguments": {
+        "url": "https://developers.openai.com/api/reference/resources/responses/websocket-events"
+      },
+      "normalized_bytes": 16049970,
+      "normalized_sha256": "5a0778e19c67ff449c123725659495f85412083437cf10ec1a2b33b1e3cc450d",
+      "raw_bytes": 16049970,
+      "raw_sha256": "5a0778e19c67ff449c123725659495f85412083437cf10ec1a2b33b1e3cc450d",
+      "source_id": "websocket",
+      "tool": "mcp__openaiDeveloperDocs__fetch_openai_doc"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "transport",
+  "dialect": "codex",
+  "fixture_id": "fixture-oauth-ownership-durability",
+  "payload": {
+    "account_id": "norn-synthetic-account-auth-06-001",
+    "credential": "norn-synthetic-credential-auth-06-rotated",
+    "entries": [
+      {
+        "approved": true,
+        "name": "norn-synthetic-generic-auth-06-lineage"
+      },
+      {
+        "approved": true,
+        "name": "norn-synthetic-generic-auth-06-durable-owner"
+      }
+    ]
+  },
+  "schema_version": 1
+}

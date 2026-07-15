@@ -1,0 +1,25 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "transport",
+  "dialect": "codex",
+  "fixture_id": "fixture-config-account-selection",
+  "payload": {
+    "account_id": "norn-synthetic-account-config-02-001",
+    "credential": "norn-synthetic-credential-config-02-001",
+    "entries": [
+      {
+        "approved": true,
+        "name": "norn-synthetic-generic-config-02-source"
+      },
+      {
+        "approved": true,
+        "name": "norn-synthetic-generic-config-02-provenance"
+      },
+      {
+        "approved": true,
+        "name": "norn-synthetic-generic-config-02-lifetime-pin"
+      }
+    ]
+  },
+  "schema_version": 1
+}

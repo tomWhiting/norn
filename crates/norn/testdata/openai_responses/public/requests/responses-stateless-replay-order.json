@@ -1,0 +1,70 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "request",
+  "dialect": "public",
+  "fixture_id": "fixture-responses-stateless-replay-order",
+  "payload": {
+    "include": [
+      "reasoning.encrypted_content"
+    ],
+    "input": [
+      {
+        "encrypted_content": "norn-synthetic-generic-state-01-encrypted",
+        "id": "norn-synthetic-generic-state-01-reasoning",
+        "status": "completed",
+        "summary": [
+          {
+            "text": "norn-synthetic-prompt-state-01-summary",
+            "type": "summary_text"
+          }
+        ],
+        "type": "reasoning"
+      },
+      {
+        "content": [
+          {
+            "text": "norn-synthetic-prompt-state-01-001",
+            "type": "output_text"
+          }
+        ],
+        "id": "norn-synthetic-generic-state-01-message",
+        "phase": "commentary",
+        "role": "assistant",
+        "status": "completed",
+        "type": "message"
+      },
+      {
+        "arguments": {
+          "query": "norn-synthetic-prompt-state-01-argument"
+        },
+        "call_id": "norn-synthetic-generic-state-01-call",
+        "id": "norn-synthetic-generic-state-01-call-item",
+        "name": "norn-synthetic-generic-state-01-tool",
+        "status": "completed",
+        "type": "function_call"
+      },
+      {
+        "call_id": "norn-synthetic-generic-state-01-call",
+        "output": "norn-synthetic-generic-state-01-output",
+        "type": "function_call_output"
+      },
+      {
+        "content": [
+          {
+            "text": "norn-synthetic-prompt-state-01-001",
+            "type": "output_text"
+          }
+        ],
+        "id": "norn-synthetic-generic-state-01-message",
+        "phase": "final_answer",
+        "role": "assistant",
+        "status": "completed",
+        "type": "message"
+      }
+    ],
+    "model": "norn-synthetic-generic-state-01-model",
+    "store": false,
+    "stream": true
+  },
+  "schema_version": 1
+}

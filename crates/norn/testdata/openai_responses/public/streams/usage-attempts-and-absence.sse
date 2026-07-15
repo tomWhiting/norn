@@ -1,0 +1,10 @@
+: norn-fixture-v1 {"artifact_family":"protocol_fixture","artifact_kind":"stream","dialect":"public","fixture_id":"fixture-usage-attempts-and-absence","schema_version":1}
+event: response.failed
+data: {"response":{"id":"norn-synthetic-generic-usage-01-response","object":"response","output":[],"status":"failed"},"sequence_number":1,"type":"response.failed"}
+
+event: response.incomplete
+data: {"response":{"id":"norn-synthetic-generic-usage-01-response","incomplete_details":{"reason":"max_output_tokens"},"object":"response","output":[],"status":"incomplete","usage":null},"sequence_number":2,"type":"response.incomplete"}
+
+event: response.completed
+data: {"response":{"id":"norn-synthetic-generic-usage-01-response","object":"response","output":[],"status":"completed","usage":{"input_tokens":0,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":0,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":0}},"sequence_number":3,"type":"response.completed"}
+

@@ -1,0 +1,21 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "transport",
+  "dialect": "codex",
+  "fixture_id": "fixture-config-auth-source-matrix",
+  "payload": {
+    "entries": [
+      {
+        "credential": "norn-synthetic-credential-config-01-oauth",
+        "enabled": true,
+        "name": "norn-synthetic-generic-config-01-oauth"
+      },
+      {
+        "credential": "norn-synthetic-credential-config-01-api-key",
+        "enabled": true,
+        "name": "norn-synthetic-generic-config-01-api-key"
+      }
+    ]
+  },
+  "schema_version": 1
+}

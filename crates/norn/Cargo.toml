@@ -23,6 +23,7 @@ rustix.workspace = true
 lsp = { workspace = true }
 lsp-types = { workspace = true }
 norn-macros = { path = "../norn-macros" }
+norn-policy = { path = "../norn-policy" }
 parking_lot = "0.12"
 regex = { workspace = true }
 reqwest = { workspace = true, features = ["stream"] }

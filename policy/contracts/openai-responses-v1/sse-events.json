@@ -1,0 +1,3739 @@
+{
+  "events": [
+    {
+      "event": "response.created",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseCreatedEvent",
+      "optional": [],
+      "properties": {
+        "response": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCreatedEvent/properties/response",
+          "required": true,
+          "schema_type": "object",
+          "type": {
+            "ident": "Response",
+            "kind": "HttpTypeReference",
+            "oas_ref": null,
+            "ref": "(resource) responses > (model) response > (schema)",
+            "type_parameters": []
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCreatedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCreatedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseCreatedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.created"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "response",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseCreatedEvent"
+    },
+    {
+      "event": "response.in_progress",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseInProgressEvent",
+      "optional": [],
+      "properties": {
+        "response": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseInProgressEvent/properties/response",
+          "required": true,
+          "schema_type": "object",
+          "type": {
+            "ident": "Response",
+            "kind": "HttpTypeReference",
+            "oas_ref": null,
+            "ref": "(resource) responses > (model) response > (schema)",
+            "type_parameters": []
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseInProgressEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseInProgressEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseInProgressEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.in_progress"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "response",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseInProgressEvent"
+    },
+    {
+      "event": "response.completed",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseCompletedEvent",
+      "optional": [],
+      "properties": {
+        "response": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCompletedEvent/properties/response",
+          "required": true,
+          "schema_type": "object",
+          "type": {
+            "ident": "Response",
+            "kind": "HttpTypeReference",
+            "oas_ref": null,
+            "ref": "(resource) responses > (model) response > (schema)",
+            "type_parameters": []
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCompletedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCompletedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseCompletedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.completed"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "response",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseCompletedEvent"
+    },
+    {
+      "event": "response.failed",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseFailedEvent",
+      "optional": [],
+      "properties": {
+        "response": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFailedEvent/properties/response",
+          "required": true,
+          "schema_type": "object",
+          "type": {
+            "ident": "Response",
+            "kind": "HttpTypeReference",
+            "oas_ref": null,
+            "ref": "(resource) responses > (model) response > (schema)",
+            "type_parameters": []
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFailedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFailedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseFailedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.failed"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "response",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseFailedEvent"
+    },
+    {
+      "event": "response.incomplete",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseIncompleteEvent",
+      "optional": [],
+      "properties": {
+        "response": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseIncompleteEvent/properties/response",
+          "required": true,
+          "schema_type": "object",
+          "type": {
+            "ident": "Response",
+            "kind": "HttpTypeReference",
+            "oas_ref": null,
+            "ref": "(resource) responses > (model) response > (schema)",
+            "type_parameters": []
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseIncompleteEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseIncompleteEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseIncompleteEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.incomplete"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "response",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseIncompleteEvent"
+    },
+    {
+      "event": "response.output_item.added",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseOutputItemAddedEvent",
+      "optional": [],
+      "properties": {
+        "item": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseOutputItemAddedEvent/properties/item",
+          "required": true,
+          "schema_type": "union",
+          "type": {
+            "ident": "ResponseOutputItem",
+            "kind": "HttpTypeReference",
+            "oas_ref": null,
+            "ref": "(resource) responses > (model) response_output_item > (schema)",
+            "type_parameters": []
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseOutputItemAddedEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseOutputItemAddedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseOutputItemAddedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseOutputItemAddedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.output_item.added"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseOutputItemAddedEvent"
+    },
+    {
+      "event": "response.output_item.done",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseOutputItemDoneEvent",
+      "optional": [],
+      "properties": {
+        "item": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseOutputItemDoneEvent/properties/item",
+          "required": true,
+          "schema_type": "union",
+          "type": {
+            "ident": "ResponseOutputItem",
+            "kind": "HttpTypeReference",
+            "oas_ref": null,
+            "ref": "(resource) responses > (model) response_output_item > (schema)",
+            "type_parameters": []
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseOutputItemDoneEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseOutputItemDoneEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseOutputItemDoneEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseOutputItemDoneEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.output_item.done"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseOutputItemDoneEvent"
+    },
+    {
+      "event": "response.content_part.added",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseContentPartAddedEvent",
+      "optional": [],
+      "properties": {
+        "content_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseContentPartAddedEvent/properties/content_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseContentPartAddedEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseContentPartAddedEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "part": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseContentPartAddedEvent/properties/part",
+          "required": true,
+          "schema_type": "union",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseContentPartAddedEvent/properties/part",
+            "types": [
+              {
+                "ident": "ResponseOutputText",
+                "kind": "HttpTypeReference",
+                "oas_ref": null,
+                "ref": "(resource) responses > (model) response_output_text > (schema)",
+                "type_parameters": []
+              },
+              {
+                "ident": "ResponseOutputRefusal",
+                "kind": "HttpTypeReference",
+                "oas_ref": null,
+                "ref": "(resource) responses > (model) response_output_refusal > (schema)",
+                "type_parameters": []
+              },
+              {
+                "kind": "HttpTypeObject",
+                "members": [
+                  "text",
+                  "type"
+                ]
+              }
+            ]
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseContentPartAddedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseContentPartAddedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseContentPartAddedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.content_part.added"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "content_index",
+        "item_id",
+        "output_index",
+        "part",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseContentPartAddedEvent"
+    },
+    {
+      "event": "response.content_part.done",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseContentPartDoneEvent",
+      "optional": [],
+      "properties": {
+        "content_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseContentPartDoneEvent/properties/content_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseContentPartDoneEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseContentPartDoneEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "part": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseContentPartDoneEvent/properties/part",
+          "required": true,
+          "schema_type": "union",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseContentPartDoneEvent/properties/part",
+            "types": [
+              {
+                "ident": "ResponseOutputText",
+                "kind": "HttpTypeReference",
+                "oas_ref": null,
+                "ref": "(resource) responses > (model) response_output_text > (schema)",
+                "type_parameters": []
+              },
+              {
+                "ident": "ResponseOutputRefusal",
+                "kind": "HttpTypeReference",
+                "oas_ref": null,
+                "ref": "(resource) responses > (model) response_output_refusal > (schema)",
+                "type_parameters": []
+              },
+              {
+                "kind": "HttpTypeObject",
+                "members": [
+                  "text",
+                  "type"
+                ]
+              }
+            ]
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseContentPartDoneEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseContentPartDoneEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseContentPartDoneEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.content_part.done"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "content_index",
+        "item_id",
+        "output_index",
+        "part",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseContentPartDoneEvent"
+    },
+    {
+      "event": "response.output_text.delta",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseTextDeltaEvent",
+      "optional": [],
+      "properties": {
+        "content_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseTextDeltaEvent/properties/content_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "delta": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseTextDeltaEvent/properties/delta",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseTextDeltaEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "logprobs": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseTextDeltaEvent/properties/logprobs",
+          "required": true,
+          "schema_type": "array",
+          "type": {
+            "element_type": {
+              "kind": "HttpTypeObject",
+              "members": [
+                "token",
+                "logprob",
+                "top_logprobs"
+              ]
+            },
+            "kind": "HttpTypeArray",
+            "oas_ref": "#/components/schemas/ResponseTextDeltaEvent/properties/logprobs"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseTextDeltaEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseTextDeltaEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseTextDeltaEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseTextDeltaEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.output_text.delta"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "content_index",
+        "delta",
+        "item_id",
+        "logprobs",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseTextDeltaEvent"
+    },
+    {
+      "event": "response.output_text.done",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseTextDoneEvent",
+      "optional": [],
+      "properties": {
+        "content_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseTextDoneEvent/properties/content_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseTextDoneEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "logprobs": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseTextDoneEvent/properties/logprobs",
+          "required": true,
+          "schema_type": "array",
+          "type": {
+            "element_type": {
+              "kind": "HttpTypeObject",
+              "members": [
+                "token",
+                "logprob",
+                "top_logprobs"
+              ]
+            },
+            "kind": "HttpTypeArray",
+            "oas_ref": "#/components/schemas/ResponseTextDoneEvent/properties/logprobs"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseTextDoneEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseTextDoneEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "text": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseTextDoneEvent/properties/text",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseTextDoneEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseTextDoneEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.output_text.done"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "content_index",
+        "item_id",
+        "logprobs",
+        "output_index",
+        "sequence_number",
+        "text",
+        "type"
+      ],
+      "schema": "ResponseTextDoneEvent"
+    },
+    {
+      "event": "response.refusal.delta",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseRefusalDeltaEvent",
+      "optional": [],
+      "properties": {
+        "content_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseRefusalDeltaEvent/properties/content_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "delta": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseRefusalDeltaEvent/properties/delta",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseRefusalDeltaEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseRefusalDeltaEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseRefusalDeltaEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseRefusalDeltaEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseRefusalDeltaEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.refusal.delta"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "content_index",
+        "delta",
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseRefusalDeltaEvent"
+    },
+    {
+      "event": "response.refusal.done",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseRefusalDoneEvent",
+      "optional": [],
+      "properties": {
+        "content_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseRefusalDoneEvent/properties/content_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseRefusalDoneEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseRefusalDoneEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "refusal": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseRefusalDoneEvent/properties/refusal",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseRefusalDoneEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseRefusalDoneEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseRefusalDoneEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.refusal.done"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "content_index",
+        "item_id",
+        "output_index",
+        "refusal",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseRefusalDoneEvent"
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseFunctionCallArgumentsDeltaEvent",
+      "optional": [],
+      "properties": {
+        "delta": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFunctionCallArgumentsDeltaEvent/properties/delta",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFunctionCallArgumentsDeltaEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFunctionCallArgumentsDeltaEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFunctionCallArgumentsDeltaEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFunctionCallArgumentsDeltaEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseFunctionCallArgumentsDeltaEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.function_call_arguments.delta"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "delta",
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseFunctionCallArgumentsDeltaEvent"
+    },
+    {
+      "event": "response.function_call_arguments.done",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseFunctionCallArgumentsDoneEvent",
+      "optional": [],
+      "properties": {
+        "arguments": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFunctionCallArgumentsDoneEvent/properties/arguments",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFunctionCallArgumentsDoneEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "name": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFunctionCallArgumentsDoneEvent/properties/name",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFunctionCallArgumentsDoneEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFunctionCallArgumentsDoneEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFunctionCallArgumentsDoneEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseFunctionCallArgumentsDoneEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.function_call_arguments.done"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "arguments",
+        "item_id",
+        "name",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseFunctionCallArgumentsDoneEvent"
+    },
+    {
+      "event": "response.file_search_call.in_progress",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseFileSearchCallInProgressEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFileSearchCallInProgressEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFileSearchCallInProgressEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFileSearchCallInProgressEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFileSearchCallInProgressEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseFileSearchCallInProgressEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.file_search_call.in_progress"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseFileSearchCallInProgressEvent"
+    },
+    {
+      "event": "response.file_search_call.searching",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseFileSearchCallSearchingEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFileSearchCallSearchingEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFileSearchCallSearchingEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFileSearchCallSearchingEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFileSearchCallSearchingEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseFileSearchCallSearchingEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.file_search_call.searching"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseFileSearchCallSearchingEvent"
+    },
+    {
+      "event": "response.file_search_call.completed",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseFileSearchCallCompletedEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFileSearchCallCompletedEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFileSearchCallCompletedEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFileSearchCallCompletedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseFileSearchCallCompletedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseFileSearchCallCompletedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.file_search_call.completed"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseFileSearchCallCompletedEvent"
+    },
+    {
+      "event": "response.web_search_call.in_progress",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseWebSearchCallInProgressEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseWebSearchCallInProgressEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseWebSearchCallInProgressEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseWebSearchCallInProgressEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseWebSearchCallInProgressEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseWebSearchCallInProgressEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.web_search_call.in_progress"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseWebSearchCallInProgressEvent"
+    },
+    {
+      "event": "response.web_search_call.searching",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseWebSearchCallSearchingEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseWebSearchCallSearchingEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseWebSearchCallSearchingEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseWebSearchCallSearchingEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseWebSearchCallSearchingEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseWebSearchCallSearchingEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.web_search_call.searching"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseWebSearchCallSearchingEvent"
+    },
+    {
+      "event": "response.web_search_call.completed",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseWebSearchCallCompletedEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseWebSearchCallCompletedEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseWebSearchCallCompletedEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseWebSearchCallCompletedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseWebSearchCallCompletedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseWebSearchCallCompletedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.web_search_call.completed"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseWebSearchCallCompletedEvent"
+    },
+    {
+      "event": "response.reasoning_summary_part.added",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartAddedEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartAddedEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartAddedEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "part": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartAddedEvent/properties/part",
+          "required": true,
+          "schema_type": "object",
+          "type": {
+            "kind": "HttpTypeObject",
+            "members": [
+              "text",
+              "type"
+            ]
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartAddedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "summary_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartAddedEvent/properties/summary_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartAddedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartAddedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.reasoning_summary_part.added"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "part",
+        "sequence_number",
+        "summary_index",
+        "type"
+      ],
+      "schema": "ResponseReasoningSummaryPartAddedEvent"
+    },
+    {
+      "event": "response.reasoning_summary_part.done",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartDoneEvent",
+      "optional": [
+        "status"
+      ],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartDoneEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartDoneEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "part": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartDoneEvent/properties/part",
+          "required": true,
+          "schema_type": "object",
+          "type": {
+            "kind": "HttpTypeObject",
+            "members": [
+              "text",
+              "type"
+            ]
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartDoneEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "status": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartDoneEvent/properties/status",
+          "required": false,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartDoneEvent/properties/status",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "incomplete"
+              }
+            ]
+          }
+        },
+        "summary_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartDoneEvent/properties/summary_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartDoneEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseReasoningSummaryPartDoneEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.reasoning_summary_part.done"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "part",
+        "sequence_number",
+        "summary_index",
+        "type"
+      ],
+      "schema": "ResponseReasoningSummaryPartDoneEvent"
+    },
+    {
+      "event": "response.reasoning_summary_text.delta",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDeltaEvent",
+      "optional": [],
+      "properties": {
+        "delta": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDeltaEvent/properties/delta",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDeltaEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDeltaEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDeltaEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "summary_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDeltaEvent/properties/summary_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDeltaEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDeltaEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.reasoning_summary_text.delta"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "delta",
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "summary_index",
+        "type"
+      ],
+      "schema": "ResponseReasoningSummaryTextDeltaEvent"
+    },
+    {
+      "event": "response.reasoning_summary_text.done",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDoneEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDoneEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDoneEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDoneEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "summary_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDoneEvent/properties/summary_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "text": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDoneEvent/properties/text",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDoneEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseReasoningSummaryTextDoneEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.reasoning_summary_text.done"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "summary_index",
+        "text",
+        "type"
+      ],
+      "schema": "ResponseReasoningSummaryTextDoneEvent"
+    },
+    {
+      "event": "response.reasoning_text.delta",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseReasoningTextDeltaEvent",
+      "optional": [],
+      "properties": {
+        "content_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningTextDeltaEvent/properties/content_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "delta": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningTextDeltaEvent/properties/delta",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningTextDeltaEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningTextDeltaEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningTextDeltaEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningTextDeltaEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseReasoningTextDeltaEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.reasoning_text.delta"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "content_index",
+        "delta",
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseReasoningTextDeltaEvent"
+    },
+    {
+      "event": "response.reasoning_text.done",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseReasoningTextDoneEvent",
+      "optional": [],
+      "properties": {
+        "content_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningTextDoneEvent/properties/content_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningTextDoneEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningTextDoneEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningTextDoneEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "text": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningTextDoneEvent/properties/text",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseReasoningTextDoneEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseReasoningTextDoneEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.reasoning_text.done"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "content_index",
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "text",
+        "type"
+      ],
+      "schema": "ResponseReasoningTextDoneEvent"
+    },
+    {
+      "event": "response.image_generation_call.completed",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseImageGenCallCompletedEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallCompletedEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallCompletedEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallCompletedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallCompletedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseImageGenCallCompletedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.image_generation_call.completed"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseImageGenCallCompletedEvent"
+    },
+    {
+      "event": "response.image_generation_call.generating",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseImageGenCallGeneratingEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallGeneratingEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallGeneratingEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallGeneratingEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallGeneratingEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseImageGenCallGeneratingEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.image_generation_call.generating"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseImageGenCallGeneratingEvent"
+    },
+    {
+      "event": "response.image_generation_call.in_progress",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseImageGenCallInProgressEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallInProgressEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallInProgressEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallInProgressEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallInProgressEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseImageGenCallInProgressEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.image_generation_call.in_progress"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseImageGenCallInProgressEvent"
+    },
+    {
+      "event": "response.image_generation_call.partial_image",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseImageGenCallPartialImageEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallPartialImageEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallPartialImageEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "partial_image_b64": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallPartialImageEvent/properties/partial_image_b64",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "partial_image_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallPartialImageEvent/properties/partial_image_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallPartialImageEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseImageGenCallPartialImageEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseImageGenCallPartialImageEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.image_generation_call.partial_image"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "partial_image_b64",
+        "partial_image_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseImageGenCallPartialImageEvent"
+    },
+    {
+      "event": "response.mcp_call_arguments.delta",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseMCPCallArgumentsDeltaEvent",
+      "optional": [],
+      "properties": {
+        "delta": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallArgumentsDeltaEvent/properties/delta",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallArgumentsDeltaEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallArgumentsDeltaEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallArgumentsDeltaEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallArgumentsDeltaEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseMCPCallArgumentsDeltaEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.mcp_call_arguments.delta"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "delta",
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseMCPCallArgumentsDeltaEvent"
+    },
+    {
+      "event": "response.mcp_call_arguments.done",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseMCPCallArgumentsDoneEvent",
+      "optional": [],
+      "properties": {
+        "arguments": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallArgumentsDoneEvent/properties/arguments",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallArgumentsDoneEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallArgumentsDoneEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallArgumentsDoneEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallArgumentsDoneEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseMCPCallArgumentsDoneEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.mcp_call_arguments.done"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "arguments",
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseMCPCallArgumentsDoneEvent"
+    },
+    {
+      "event": "response.mcp_call.completed",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseMCPCallCompletedEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallCompletedEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallCompletedEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallCompletedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallCompletedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseMCPCallCompletedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.mcp_call.completed"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseMCPCallCompletedEvent"
+    },
+    {
+      "event": "response.mcp_call.failed",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseMCPCallFailedEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallFailedEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallFailedEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallFailedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallFailedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseMCPCallFailedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.mcp_call.failed"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseMCPCallFailedEvent"
+    },
+    {
+      "event": "response.mcp_call.in_progress",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseMCPCallInProgressEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallInProgressEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallInProgressEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallInProgressEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPCallInProgressEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseMCPCallInProgressEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.mcp_call.in_progress"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseMCPCallInProgressEvent"
+    },
+    {
+      "event": "response.mcp_list_tools.completed",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseMCPListToolsCompletedEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPListToolsCompletedEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPListToolsCompletedEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPListToolsCompletedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPListToolsCompletedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseMCPListToolsCompletedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.mcp_list_tools.completed"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseMCPListToolsCompletedEvent"
+    },
+    {
+      "event": "response.mcp_list_tools.failed",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseMCPListToolsFailedEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPListToolsFailedEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPListToolsFailedEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPListToolsFailedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPListToolsFailedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseMCPListToolsFailedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.mcp_list_tools.failed"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseMCPListToolsFailedEvent"
+    },
+    {
+      "event": "response.mcp_list_tools.in_progress",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseMCPListToolsInProgressEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPListToolsInProgressEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPListToolsInProgressEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPListToolsInProgressEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseMCPListToolsInProgressEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseMCPListToolsInProgressEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.mcp_list_tools.in_progress"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseMCPListToolsInProgressEvent"
+    },
+    {
+      "event": "response.code_interpreter_call.in_progress",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallInProgressEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallInProgressEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallInProgressEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallInProgressEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallInProgressEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallInProgressEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.code_interpreter_call.in_progress"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseCodeInterpreterCallInProgressEvent"
+    },
+    {
+      "event": "response.code_interpreter_call.interpreting",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallInterpretingEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallInterpretingEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallInterpretingEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallInterpretingEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallInterpretingEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallInterpretingEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.code_interpreter_call.interpreting"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseCodeInterpreterCallInterpretingEvent"
+    },
+    {
+      "event": "response.code_interpreter_call.completed",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCompletedEvent",
+      "optional": [],
+      "properties": {
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCompletedEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCompletedEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCompletedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCompletedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCompletedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.code_interpreter_call.completed"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseCodeInterpreterCallCompletedEvent"
+    },
+    {
+      "event": "response.code_interpreter_call_code.delta",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCodeDeltaEvent",
+      "optional": [],
+      "properties": {
+        "delta": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCodeDeltaEvent/properties/delta",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCodeDeltaEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCodeDeltaEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCodeDeltaEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCodeDeltaEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCodeDeltaEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.code_interpreter_call_code.delta"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "delta",
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseCodeInterpreterCallCodeDeltaEvent"
+    },
+    {
+      "event": "response.code_interpreter_call_code.done",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCodeDoneEvent",
+      "optional": [],
+      "properties": {
+        "code": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCodeDoneEvent/properties/code",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCodeDoneEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCodeDoneEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCodeDoneEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCodeDoneEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseCodeInterpreterCallCodeDoneEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.code_interpreter_call_code.done"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "code",
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseCodeInterpreterCallCodeDoneEvent"
+    },
+    {
+      "event": "response.output_text.annotation.added",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseOutputTextAnnotationAddedEvent",
+      "optional": [],
+      "properties": {
+        "annotation": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseOutputTextAnnotationAddedEvent/properties/annotation",
+          "required": true,
+          "schema_type": "unknown",
+          "type": {
+            "kind": "HttpTypeUnknown"
+          }
+        },
+        "annotation_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseOutputTextAnnotationAddedEvent/properties/annotation_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "content_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseOutputTextAnnotationAddedEvent/properties/content_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseOutputTextAnnotationAddedEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseOutputTextAnnotationAddedEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseOutputTextAnnotationAddedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseOutputTextAnnotationAddedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseOutputTextAnnotationAddedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.output_text.annotation.added"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "annotation",
+        "annotation_index",
+        "content_index",
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseOutputTextAnnotationAddedEvent"
+    },
+    {
+      "event": "response.queued",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseQueuedEvent",
+      "optional": [],
+      "properties": {
+        "response": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseQueuedEvent/properties/response",
+          "required": true,
+          "schema_type": "object",
+          "type": {
+            "ident": "Response",
+            "kind": "HttpTypeReference",
+            "oas_ref": null,
+            "ref": "(resource) responses > (model) response > (schema)",
+            "type_parameters": []
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseQueuedEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseQueuedEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseQueuedEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.queued"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "response",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseQueuedEvent"
+    },
+    {
+      "event": "response.custom_tool_call_input.delta",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseCustomToolCallInputDeltaEvent",
+      "optional": [],
+      "properties": {
+        "delta": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCustomToolCallInputDeltaEvent/properties/delta",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCustomToolCallInputDeltaEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCustomToolCallInputDeltaEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCustomToolCallInputDeltaEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCustomToolCallInputDeltaEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseCustomToolCallInputDeltaEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.custom_tool_call_input.delta"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "delta",
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseCustomToolCallInputDeltaEvent"
+    },
+    {
+      "event": "response.custom_tool_call_input.done",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseCustomToolCallInputDoneEvent",
+      "optional": [],
+      "properties": {
+        "input": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCustomToolCallInputDoneEvent/properties/input",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "item_id": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCustomToolCallInputDoneEvent/properties/item_id",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "output_index": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCustomToolCallInputDoneEvent/properties/output_index",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCustomToolCallInputDoneEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseCustomToolCallInputDoneEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseCustomToolCallInputDoneEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.custom_tool_call_input.done"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "input",
+        "item_id",
+        "output_index",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseCustomToolCallInputDoneEvent"
+    },
+    {
+      "event": "error",
+      "nullable": [
+        "code",
+        "param"
+      ],
+      "oas_ref": "#/components/schemas/ResponseErrorEvent",
+      "optional": [],
+      "properties": {
+        "code": {
+          "deprecated": false,
+          "nullable": true,
+          "oas_ref": "#/components/schemas/ResponseErrorEvent/properties/code",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "message": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseErrorEvent/properties/message",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "param": {
+          "deprecated": false,
+          "nullable": true,
+          "oas_ref": "#/components/schemas/ResponseErrorEvent/properties/param",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseErrorEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseErrorEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseErrorEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "error"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "param",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseErrorEvent"
+    },
+    {
+      "event": "response.audio.delta",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseAudioDeltaEvent",
+      "optional": [],
+      "properties": {
+        "delta": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseAudioDeltaEvent/properties/delta",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseAudioDeltaEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseAudioDeltaEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseAudioDeltaEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.audio.delta"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "delta",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseAudioDeltaEvent"
+    },
+    {
+      "event": "response.audio.done",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseAudioDoneEvent",
+      "optional": [],
+      "properties": {
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseAudioDoneEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseAudioDoneEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseAudioDoneEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.audio.done"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseAudioDoneEvent"
+    },
+    {
+      "event": "response.audio.transcript.delta",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseAudioTranscriptDeltaEvent",
+      "optional": [],
+      "properties": {
+        "delta": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseAudioTranscriptDeltaEvent/properties/delta",
+          "required": true,
+          "schema_type": "string",
+          "type": {
+            "kind": "HttpTypeString"
+          }
+        },
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseAudioTranscriptDeltaEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseAudioTranscriptDeltaEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseAudioTranscriptDeltaEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.audio.transcript.delta"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "delta",
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseAudioTranscriptDeltaEvent"
+    },
+    {
+      "event": "response.audio.transcript.done",
+      "nullable": [],
+      "oas_ref": "#/components/schemas/ResponseAudioTranscriptDoneEvent",
+      "optional": [],
+      "properties": {
+        "sequence_number": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseAudioTranscriptDoneEvent/properties/sequence_number",
+          "required": true,
+          "schema_type": "integer",
+          "type": {
+            "kind": "HttpTypeNumber"
+          }
+        },
+        "type": {
+          "deprecated": false,
+          "nullable": false,
+          "oas_ref": "#/components/schemas/ResponseAudioTranscriptDoneEvent/properties/type",
+          "required": true,
+          "schema_type": "enum",
+          "type": {
+            "kind": "HttpTypeUnion",
+            "oas_ref": "#/components/schemas/ResponseAudioTranscriptDoneEvent/properties/type",
+            "types": [
+              {
+                "kind": "HttpTypeLiteral",
+                "literal": "response.audio.transcript.done"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "sequence_number",
+        "type"
+      ],
+      "schema": "ResponseAudioTranscriptDoneEvent"
+    }
+  ],
+  "kind": "public_responses_sse_events",
+  "schema_version": 1
+}

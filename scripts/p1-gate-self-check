@@ -1,0 +1,412 @@
+#!/bin/sh
+""":"
+set -e
+umask 077
+python=
+for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+    if [ -x "$candidate" ] && "$candidate" -I -c \
+        'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
+        >/dev/null 2>&1; then
+        python=$candidate
+        break
+    fi
+done
+if [ -z "$python" ]; then
+    printf '%s\n' '{"code":"p1_gate_self_check_interpreter_unavailable"}' >&2
+    exit 2
+fi
+exec /usr/bin/env -i \
+    CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS-}" \
+    CARGO_HOME="${CARGO_HOME-}" \
+    CARGO_INCREMENTAL="${CARGO_INCREMENTAL-}" \
+    CARGO_NET_OFFLINE="${CARGO_NET_OFFLINE-}" \
+    CARGO_TARGET_DIR="${CARGO_TARGET_DIR-}" \
+    CARGO_TERM_COLOR="${CARGO_TERM_COLOR-}" \
+    GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL-}" \
+    GIT_CONFIG_NOSYSTEM="${GIT_CONFIG_NOSYSTEM-}" \
+    GIT_CONFIG_SYSTEM="${GIT_CONFIG_SYSTEM-}" \
+    GIT_PAGER="${GIT_PAGER-}" \
+    GIT_TERMINAL_PROMPT="${GIT_TERMINAL_PROMPT-}" \
+    HOME="${HOME-}" LANG="${LANG-}" LC_ALL="${LC_ALL-}" \
+    NO_COLOR="${NO_COLOR-}" PAGER="${PAGER-}" \
+    PATH="${PATH-}" PYTHONDONTWRITEBYTECODE=1 \
+    RUST_BACKTRACE="${RUST_BACKTRACE-}" RUSTC="${RUSTC-}" \
+    RUSTDOC="${RUSTDOC-}" SDKROOT="${SDKROOT-}" TERM="${TERM-}" \
+    TMPDIR="${TMPDIR-}" TZ="${TZ-}" \
+    "$python" -I -B "$0" "$@"
+":"""
+
+"""Closed Python, inventory, and manifest self-check for the P1 gate."""
+
+import ast
+import importlib.util
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+from pathlib import Path
+from types import ModuleType
+
+BASE_COMMIT = "2917c8ed10e7a2ec7ac9c4d7283bafbea7f6577d"
+ROOT = Path(__file__).resolve().parent.parent
+GIT = Path("/usr/bin/git")
+MANIFEST_PATH = ROOT / "policy/gate-commands.json"
+PATH_POLICY = ROOT / "crates/norn-policy/src/redaction/path_policy.rs"
+SCHEMA_PATH = "policy/evidence-schemas/gate-run.schema.json"
+ENTRYPOINT_PATH = "scripts/p1-gate"
+IMPLEMENTATION_PATH = "scripts/p1_gate.py"
+CONTRACT_PATH = ROOT / "scripts/p1_gate_contract.py"
+CONST = re.compile(
+    r"pub\(crate\) const (?P<name>[A-Z_]+): &\[&str\] = &\[\n"
+    r"(?P<body>.*?)\n\];",
+    re.DOTALL,
+)
+ROW = re.compile(r'^\s*("(?:[^"\\]|\\.)*"),\s*$')
+TEST_RESULT = re.compile(rb"Ran ([1-9][0-9]*) tests? in [^\r\n]+")
+PYTHON_SUPPORTS = {
+    "scripts/p1-added-line-audit",
+    "scripts/p1-distributions",
+    "scripts/p1-gate-self-check",
+    "scripts/p1-redaction-check",
+}
+EXPECTED_ENVIRONMENT = {
+    "CARGO_BUILD_JOBS",
+    "CARGO_HOME",
+    "CARGO_INCREMENTAL",
+    "CARGO_NET_OFFLINE",
+    "CARGO_TARGET_DIR",
+    "CARGO_TERM_COLOR",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_PAGER",
+    "GIT_TERMINAL_PROMPT",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "NO_COLOR",
+    "PAGER",
+    "PATH",
+    "PYTHONDONTWRITEBYTECODE",
+    "RUST_BACKTRACE",
+    "RUSTC",
+    "RUSTDOC",
+    "SDKROOT",
+    "TERM",
+    "TMPDIR",
+    "TZ",
+}
+
+
+class SelfCheckError(Exception):
+    """A checked self-test, inventory, or manifest relation failed."""
+
+
+def strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, child in pairs:
+        if key in value:
+            raise SelfCheckError("duplicate JSON field")
+        value[key] = child
+    return value
+
+
+def reject_constant(_value: str) -> object:
+    raise SelfCheckError("non-finite JSON number")
+
+
+def load_json(path: Path) -> dict[str, object]:
+    try:
+        value = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=strict_object,
+            parse_constant=reject_constant,
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise SelfCheckError("checked JSON is invalid") from error
+    if not isinstance(value, dict):
+        raise SelfCheckError("checked JSON is not an object")
+    return value
+
+
+def load_contract() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("norn_p1_self_contract", CONTRACT_PATH)
+    if spec is None or spec.loader is None:
+        raise SelfCheckError("gate contract cannot be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def closed_git_environment() -> dict[str, str]:
+    return {
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+        "GIT_PAGER": "cat",
+        "GIT_TERMINAL_PROMPT": "0",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": "/usr/bin:/bin",
+        "TZ": "UTC",
+    }
+
+
+def git_text(*arguments: str) -> str:
+    result = subprocess.run(
+        [str(GIT), *arguments],
+        cwd=ROOT,
+        env=closed_git_environment(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SelfCheckError("git observation failed")
+    try:
+        return result.stdout.decode("utf-8", errors="strict").strip()
+    except UnicodeError as error:
+        raise SelfCheckError("git observation is not UTF-8") from error
+
+
+def validate_context(arguments: list[str]) -> None:
+    if arguments or sys.version_info < (3, 11):
+        raise SelfCheckError("invalid invocation")
+    if Path.cwd().resolve(strict=True) != ROOT:
+        raise SelfCheckError("invocation is outside the repository root")
+    if git_text("rev-parse", "--show-toplevel") != str(ROOT):
+        raise SelfCheckError("repository root differs")
+    git_text("merge-base", "--is-ancestor", BASE_COMMIT, "HEAD")
+
+
+def parse_compiled_paths(source: str) -> set[str]:
+    arrays: dict[str, list[str]] = {}
+    for match in CONST.finditer(source):
+        name = match.group("name")
+        if name not in {"GOVERNED_SCRIPT_PATHS", "GOVERNED_EVIDENCE_TOOL_PATHS"}:
+            continue
+        values: list[str] = []
+        for line in match.group("body").splitlines():
+            row = ROW.fullmatch(line)
+            if row is None:
+                raise SelfCheckError("compiled tool inventory syntax is invalid")
+            value = json.loads(row.group(1))
+            if not isinstance(value, str):
+                raise SelfCheckError("compiled tool path is invalid")
+            values.append(value)
+        if values != sorted(set(values)) or name in arrays:
+            raise SelfCheckError("compiled tool inventory order is invalid")
+        arrays[name] = values
+    if set(arrays) != {"GOVERNED_SCRIPT_PATHS", "GOVERNED_EVIDENCE_TOOL_PATHS"}:
+        raise SelfCheckError("compiled tool inventory is incomplete")
+    return set(arrays["GOVERNED_SCRIPT_PATHS"] + arrays["GOVERNED_EVIDENCE_TOOL_PATHS"])
+
+
+def is_candidate(path: str) -> bool:
+    if path.startswith("scripts/") and path.count("/") == 1:
+        name = path.removeprefix("scripts/")
+        return name.startswith(("p1-", "p1_", "test_p1_"))
+    prefix = "docs/reviews/evidence/p1/"
+    if path.startswith(prefix):
+        name = path.removeprefix(prefix)
+        return "/" not in name and name.endswith(".py")
+    return False
+
+
+def candidate_paths() -> set[str]:
+    paths: set[str] = set()
+    roots = (ROOT / "scripts", ROOT / "docs/reviews/evidence/p1")
+    for directory in roots:
+        for path in directory.iterdir():
+            relative = path.relative_to(ROOT).as_posix()
+            if not is_candidate(relative):
+                continue
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode):
+                raise SelfCheckError("governed tool candidate is not a regular file")
+            paths.add(relative)
+    return paths
+
+
+def manifest_paths(manifest: dict[str, object]) -> tuple[set[str], list[dict[str, object]]]:
+    implementation = manifest.get("implementation")
+    if not isinstance(implementation, dict):
+        raise SelfCheckError("manifest implementation is invalid")
+    rows = implementation.get("files")
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise SelfCheckError("manifest implementation files are invalid")
+    typed_rows = [row for row in rows if isinstance(row, dict)]
+    paths = [row.get("path") for row in typed_rows]
+    if not all(isinstance(path, str) for path in paths) or len(paths) != len(set(paths)):
+        raise SelfCheckError("manifest implementation paths are invalid")
+    return {path for path in paths if isinstance(path, str)}, typed_rows
+
+
+def require_active(rows: list[dict[str, object]]) -> None:
+    if any(row.get("status") != "active" for row in rows):
+        raise SelfCheckError("manifest contains a pending implementation")
+
+
+def validate_manifest_join(
+    compiled: set[str], manifest: dict[str, object], contract: ModuleType
+) -> None:
+    pins = contract.validate_manifest(manifest)
+    contract.verify_pinned_files(ROOT, pins)
+    paths, rows = manifest_paths(manifest)
+    require_active(rows)
+    if paths - compiled != {SCHEMA_PATH}:
+        raise SelfCheckError("manifest contains an ungoverned implementation path")
+    if ENTRYPOINT_PATH not in compiled or IMPLEMENTATION_PATH not in paths:
+        raise SelfCheckError("gate entrypoint relation is incomplete")
+    if compiled != candidate_paths():
+        raise SelfCheckError("governed tool inventory differs from candidates")
+
+
+def python_sources(compiled: set[str]) -> set[str]:
+    return {
+        path
+        for path in compiled
+        if path.endswith(".py") or path in PYTHON_SUPPORTS
+    }
+
+
+def validate_python_dependencies(compiled: set[str]) -> None:
+    sources = python_sources(compiled)
+    local = {Path(path).stem for path in sources if path.endswith(".py")}
+    prefixes = ("p1_", "test_p1_", "openai_contract_", "responses_fixture_")
+    for relative in sorted(sources):
+        try:
+            tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, SyntaxError) as error:
+            raise SelfCheckError("governed Python source is invalid") from error
+        for node in ast.walk(tree):
+            names: list[str] = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                if node.level != 0 or node.module is None:
+                    raise SelfCheckError("relative Python import is forbidden")
+                names = [node.module]
+            for name in names:
+                top = name.split(".", maxsplit=1)[0]
+                if top.startswith(prefixes) and top not in local:
+                    raise SelfCheckError("local Python dependency is ungoverned")
+                if top not in local and top not in sys.stdlib_module_names:
+                    raise SelfCheckError("third-party Python dependency is forbidden")
+
+
+def checked_test_paths(compiled: set[str]) -> list[str]:
+    paths = sorted(
+        path
+        for path in python_sources(compiled)
+        if Path(path).name.startswith("test_") and path.endswith(".py")
+    )
+    if not paths:
+        raise SelfCheckError("checked Python test inventory is empty")
+    return paths
+
+
+def test_environment() -> dict[str, str]:
+    expected_names = set(EXPECTED_ENVIRONMENT)
+    sdk = None
+    if os.uname().sysname == "Darwin":
+        candidates = (
+            "/Applications/Xcode.app/Contents/Developer/Platforms/"
+            "MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+            "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+        )
+        sdk = next((value for value in candidates if Path(value).is_dir()), None)
+    if set(os.environ) != expected_names or (os.environ["SDKROOT"] or None) != sdk:
+        raise SelfCheckError("caller environment is not the closed gate environment")
+    temporary_path = Path(os.environ["TMPDIR"])
+    temporary_info = temporary_path.lstat()
+    temporary = temporary_path.resolve(strict=True)
+    runtime_root = ROOT / "target/p1-gate/runtime"
+    if (
+        stat.S_ISLNK(temporary_info.st_mode)
+        or not stat.S_ISDIR(temporary_info.st_mode)
+        or stat.S_IMODE(temporary_info.st_mode) & 0o077
+        or temporary.name != "tmp"
+        or temporary.parent.parent != runtime_root
+    ):
+        raise SelfCheckError("temporary directory is outside the gate runtime")
+    home_path = temporary.parent / "home"
+    home_info = home_path.lstat()
+    home = home_path.resolve(strict=True)
+    if (
+        stat.S_ISLNK(home_info.st_mode)
+        or not stat.S_ISDIR(home_info.st_mode)
+        or stat.S_IMODE(home_info.st_mode) & 0o077
+    ):
+        raise SelfCheckError("isolated home is invalid")
+    if Path(os.environ["HOME"]).resolve(strict=True) != home:
+        raise SelfCheckError("isolated home differs from the gate runtime")
+    return {
+        "HOME": str(home),
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": "/usr/bin:/bin",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "TMPDIR": str(temporary),
+        "TZ": "UTC",
+    }
+
+
+def run_checked_tests(paths: list[str], environment: dict[str, str]) -> int:
+    interpreter = Path(sys.executable).resolve(strict=True)
+    info = interpreter.stat()
+    if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o022:
+        raise SelfCheckError("Python interpreter is invalid")
+    total = 0
+    for path in paths:
+        result = subprocess.run(
+            [str(interpreter), "-I", "-B", str(ROOT / path)],
+            cwd=ROOT,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        output = result.stdout + result.stderr
+        matches = TEST_RESULT.findall(output)
+        if result.returncode != 0 or len(matches) != 1 or b"\nOK\n" not in output:
+            raise SelfCheckError("checked Python test failed or did not execute")
+        total += int(matches[0])
+    return total
+
+
+def emit(value: dict[str, object], stream: object = sys.stdout) -> None:
+    print(json.dumps(value, sort_keys=True, separators=(",", ":")), file=stream)
+
+
+def main(arguments: list[str]) -> int:
+    try:
+        validate_context(arguments)
+        manifest = load_json(MANIFEST_PATH)
+        contract = load_contract()
+        compiled = parse_compiled_paths(PATH_POLICY.read_text(encoding="utf-8"))
+        validate_manifest_join(compiled, manifest, contract)
+        validate_python_dependencies(compiled)
+        tests = checked_test_paths(compiled)
+        executed = run_checked_tests(tests, test_environment())
+        emit(
+            {
+                "schema_version": 1,
+                "governed_tools": len(compiled),
+                "manifest_status": "active",
+                "test_modules": len(tests),
+                "tests": executed,
+            }
+        )
+        return 0
+    except Exception:
+        emit({"code": "p1_gate_self_check_failed"}, sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

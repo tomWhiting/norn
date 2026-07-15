@@ -250,6 +250,11 @@ pub(crate) struct DescriptorPermit {
 }
 
 impl DescriptorPermit {
+    /// Return the exact descriptor weight retained by this permit.
+    pub(crate) fn weight(&self) -> usize {
+        self.permit.num_permits()
+    }
+
     /// Split `weight` descriptors into an independently owned lifetime.
     pub(crate) fn split(&mut self, weight: u32) -> Option<Self> {
         self.permit

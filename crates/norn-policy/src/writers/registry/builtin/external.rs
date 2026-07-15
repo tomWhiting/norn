@@ -1,0 +1,220 @@
+//! Rustix and tempfile sinks.
+
+use super::super::{ReceiverConstraint, SinkSpec};
+use super::support::{function, method};
+use crate::writers::model::{FlowClass, OperationKind as K, SinkOrigin, WriterRole as R};
+
+pub(super) fn add(specs: &mut Vec<SinkSpec>) {
+    add_rustix(specs);
+    add_tempfile(specs);
+}
+
+fn add_rustix(specs: &mut Vec<SinkSpec>) {
+    let definitions = [
+        (
+            "rustix.fs.open",
+            "rustix::fs::open",
+            K::Open,
+            R::RootOpen,
+            FlowClass::WritableHandle,
+        ),
+        (
+            "rustix.fs.openat",
+            "rustix::fs::openat",
+            K::Open,
+            R::RootOpen,
+            FlowClass::WritableHandle,
+        ),
+        (
+            "rustix.fs.mkdir",
+            "rustix::fs::mkdir",
+            K::Create,
+            R::RootOpen,
+            FlowClass::None,
+        ),
+        (
+            "rustix.fs.mkdirat",
+            "rustix::fs::mkdirat",
+            K::Create,
+            R::RootOpen,
+            FlowClass::None,
+        ),
+        (
+            "rustix.fs.rename",
+            "rustix::fs::rename",
+            K::Rename,
+            R::Publication,
+            FlowClass::None,
+        ),
+        (
+            "rustix.fs.renameat",
+            "rustix::fs::renameat",
+            K::Rename,
+            R::Publication,
+            FlowClass::None,
+        ),
+        (
+            "rustix.fs.link",
+            "rustix::fs::link",
+            K::Link,
+            R::Publication,
+            FlowClass::None,
+        ),
+        (
+            "rustix.fs.linkat",
+            "rustix::fs::linkat",
+            K::Link,
+            R::Publication,
+            FlowClass::None,
+        ),
+        (
+            "rustix.fs.unlink",
+            "rustix::fs::unlink",
+            K::Remove,
+            R::Cleanup,
+            FlowClass::None,
+        ),
+        (
+            "rustix.fs.unlinkat",
+            "rustix::fs::unlinkat",
+            K::Remove,
+            R::Cleanup,
+            FlowClass::None,
+        ),
+        (
+            "rustix.fs.fchmod",
+            "rustix::fs::fchmod",
+            K::Permissions,
+            R::Permissions,
+            FlowClass::None,
+        ),
+        (
+            "rustix.fs.fsync",
+            "rustix::fs::fsync",
+            K::Sync,
+            R::Durability,
+            FlowClass::None,
+        ),
+        (
+            "rustix.fs.fdatasync",
+            "rustix::fs::fdatasync",
+            K::Sync,
+            R::Durability,
+            FlowClass::None,
+        ),
+    ];
+    specs.extend(definitions.map(|definition| function(definition, SinkOrigin::Rustix)));
+}
+
+fn add_tempfile(specs: &mut Vec<SinkSpec>) {
+    let definitions = [
+        (
+            "tempfile.file",
+            "tempfile::tempfile",
+            K::Create,
+            R::RootOpen,
+            FlowClass::WritableHandle,
+        ),
+        (
+            "tempfile.file_in",
+            "tempfile::tempfile_in",
+            K::Create,
+            R::RootOpen,
+            FlowClass::WritableHandle,
+        ),
+        (
+            "tempfile.dir",
+            "tempfile::tempdir",
+            K::Create,
+            R::RootOpen,
+            FlowClass::None,
+        ),
+        (
+            "tempfile.dir_in",
+            "tempfile::tempdir_in",
+            K::Create,
+            R::RootOpen,
+            FlowClass::None,
+        ),
+        (
+            "tempfile.named.new",
+            "tempfile::NamedTempFile::new",
+            K::Create,
+            R::RootOpen,
+            FlowClass::TemporaryHandle,
+        ),
+        (
+            "tempfile.named.new_in",
+            "tempfile::NamedTempFile::new_in",
+            K::Create,
+            R::RootOpen,
+            FlowClass::TemporaryHandle,
+        ),
+        (
+            "tempfile.builder.new",
+            "tempfile::Builder::new",
+            K::Open,
+            R::RootOpen,
+            FlowClass::TempfileBuilder,
+        ),
+    ];
+    specs.extend(definitions.map(|definition| function(definition, SinkOrigin::Tempfile)));
+    for (definition, returns) in [
+        (
+            (
+                "tempfile.builder.tempfile",
+                "tempfile",
+                K::Create,
+                R::RootOpen,
+            ),
+            FlowClass::TemporaryHandle,
+        ),
+        (
+            (
+                "tempfile.builder.tempfile_in",
+                "tempfile_in",
+                K::Create,
+                R::RootOpen,
+            ),
+            FlowClass::TemporaryHandle,
+        ),
+        (
+            (
+                "tempfile.builder.tempdir",
+                "tempdir",
+                K::Create,
+                R::RootOpen,
+            ),
+            FlowClass::None,
+        ),
+        (
+            (
+                "tempfile.builder.tempdir_in",
+                "tempdir_in",
+                K::Create,
+                R::RootOpen,
+            ),
+            FlowClass::None,
+        ),
+        (
+            ("tempfile.persist", "persist", K::Persist, R::Publication),
+            FlowClass::None,
+        ),
+        (
+            (
+                "tempfile.persist_noclobber",
+                "persist_noclobber",
+                K::Persist,
+                R::Publication,
+            ),
+            FlowClass::None,
+        ),
+    ] {
+        let receiver = if definition.1.starts_with("tempfile") {
+            ReceiverConstraint::TempfileBuilder
+        } else {
+            ReceiverConstraint::TemporaryHandle
+        };
+        specs.push(method(definition, receiver, returns, SinkOrigin::Tempfile));
+    }
+}

@@ -1,0 +1,40 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "request",
+  "dialect": "public",
+  "fixture_id": "fixture-request-structured-output",
+  "payload": {
+    "input": [
+      {
+        "content": [
+          {
+            "text": "norn-synthetic-prompt-struct-01-001",
+            "type": "input_text"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      }
+    ],
+    "model": "norn-synthetic-generic-struct-01-model",
+    "text": {
+      "format": {
+        "name": "norn-synthetic-generic-struct-01-format",
+        "schema": {
+          "additionalProperties": false,
+          "properties": {
+            "norn-synthetic-generic-struct-01-field": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "norn-synthetic-generic-struct-01-field"
+          ],
+          "type": "object"
+        },
+        "type": "json_schema"
+      }
+    }
+  },
+  "schema_version": 1
+}

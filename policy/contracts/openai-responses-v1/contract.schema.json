@@ -1,0 +1,603 @@
+{
+  "$defs": {
+    "annotation_variant": {
+      "$ref": "#/$defs/variant"
+    },
+    "cache_controls": {
+      "additionalProperties": false,
+      "properties": {
+        "prompt_cache_breakpoint.mode": { "$ref": "#/$defs/string_list" },
+        "prompt_cache_key": { "$ref": "#/$defs/string_list" },
+        "prompt_cache_options.mode": { "$ref": "#/$defs/string_list" },
+        "prompt_cache_options.ttl": { "$ref": "#/$defs/string_list" },
+        "prompt_cache_retention": { "$ref": "#/$defs/string_list" }
+      },
+      "required": [
+        "prompt_cache_breakpoint.mode",
+        "prompt_cache_key",
+        "prompt_cache_options.mode",
+        "prompt_cache_options.ttl",
+        "prompt_cache_retention"
+      ],
+      "type": "object"
+    },
+    "constraints": {
+      "additionalProperties": false,
+      "properties": {
+        "format": { "type": "string" },
+        "maxLength": { "type": "integer" },
+        "maximum": { "type": "number" },
+        "minLength": { "type": "integer" },
+        "minimum": { "type": "number" }
+      },
+      "type": "object"
+    },
+    "declaration": {
+      "oneOf": [
+        { "$ref": "#/$defs/type_alias" },
+        { "$ref": "#/$defs/property_declaration" },
+        { "$ref": "#/$defs/reference_declaration" }
+      ]
+    },
+    "discrepancy": {
+      "additionalProperties": false,
+      "properties": {
+        "classification": {
+          "enum": [
+            "example_invalid_json",
+            "example_missing_required_field",
+            "example_only_unclassified"
+          ]
+        },
+        "event": { "type": "string" },
+        "field": { "type": ["string", "null"] },
+        "id": { "pattern": "^sse-[0-9]{2}$", "type": "string" }
+      },
+      "required": ["classification", "event", "field", "id"],
+      "type": "object"
+    },
+    "discrepancies_artifact": {
+      "additionalProperties": false,
+      "properties": {
+        "count": { "const": 10 },
+        "gate_corrections": {
+          "items": { "$ref": "#/$defs/gate_correction" },
+          "maxItems": 1,
+          "minItems": 1,
+          "type": "array"
+        },
+        "items": {
+          "items": { "$ref": "#/$defs/discrepancy" },
+          "maxItems": 10,
+          "minItems": 10,
+          "type": "array"
+        },
+        "kind": { "const": "public_responses_source_discrepancies" },
+        "schema_version": { "const": 1 }
+      },
+      "required": ["count", "gate_corrections", "items", "kind", "schema_version"],
+      "type": "object"
+    },
+    "gate_correction": {
+      "additionalProperties": false,
+      "properties": {
+        "classification": { "const": "superseded_gate_a_source_claim" },
+        "id": { "const": "gate-a-01" },
+        "oas_refs": {
+          "const": [
+            "#/components/schemas/EasyInputMessage/properties/phase",
+            "#/components/schemas/OutputMessage/properties/phase"
+          ]
+        },
+        "observed_nullable": { "const": true },
+        "observed_optional": { "const": true },
+        "source_ids": { "const": ["streaming", "websocket"] },
+        "subject": { "const": "assistant_message_phase" },
+        "superseded_claim": { "const": "optional_non_nullable" }
+      },
+      "required": [
+        "classification",
+        "id",
+        "oas_refs",
+        "observed_nullable",
+        "observed_optional",
+        "source_ids",
+        "subject",
+        "superseded_claim"
+      ],
+      "type": "object"
+    },
+    "endpoint_contract": {
+      "additionalProperties": false,
+      "properties": {
+        "components_in_endpoint_slice": { "const": false },
+        "json_response_schema_ref": { "type": "string" },
+        "method": { "const": "post" },
+        "operation_id": { "type": "string" },
+        "path": { "enum": ["/responses", "/responses/compact"] },
+        "request_schema_ref": { "type": "string" },
+        "stream_response_schema_ref": { "type": ["string", "null"] }
+      },
+      "required": [
+        "components_in_endpoint_slice",
+        "json_response_schema_ref",
+        "method",
+        "operation_id",
+        "path",
+        "request_schema_ref",
+        "stream_response_schema_ref"
+      ],
+      "type": "object"
+    },
+    "event": {
+      "additionalProperties": false,
+      "properties": {
+        "event": { "type": "string" },
+        "nullable": { "$ref": "#/$defs/string_list" },
+        "oas_ref": { "type": "string" },
+        "optional": { "$ref": "#/$defs/string_list" },
+        "properties": {
+          "additionalProperties": { "$ref": "#/$defs/event_property" },
+          "type": "object"
+        },
+        "required": { "$ref": "#/$defs/string_list" },
+        "schema": { "type": "string" }
+      },
+      "required": [
+        "event",
+        "nullable",
+        "oas_ref",
+        "optional",
+        "properties",
+        "required",
+        "schema"
+      ],
+      "type": "object"
+    },
+    "event_property": {
+      "additionalProperties": false,
+      "properties": {
+        "deprecated": { "type": "boolean" },
+        "nullable": { "type": "boolean" },
+        "oas_ref": { "type": "string" },
+        "required": { "type": "boolean" },
+        "schema_type": { "type": "string" },
+        "type": { "$ref": "#/$defs/http_type" }
+      },
+      "required": [
+        "deprecated",
+        "nullable",
+        "oas_ref",
+        "required",
+        "schema_type",
+        "type"
+      ],
+      "type": "object"
+    },
+    "graph_artifact": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "public_responses_request_graph",
+            "public_responses_response_graph"
+          ]
+        },
+        "nodes": {
+          "items": { "$ref": "#/$defs/node" },
+          "minItems": 1,
+          "type": "array"
+        },
+        "root_source_key": { "type": "string" },
+        "schema": { "type": "string" },
+        "schema_version": { "const": 1 }
+      },
+      "required": [
+        "kind",
+        "nodes",
+        "root_source_key",
+        "schema",
+        "schema_version"
+      ],
+      "type": "object"
+    },
+    "http_array": {
+      "additionalProperties": false,
+      "properties": {
+        "element_type": { "$ref": "#/$defs/http_type" },
+        "kind": { "const": "HttpTypeArray" },
+        "oas_ref": { "type": ["string", "null"] }
+      },
+      "required": ["element_type", "kind", "oas_ref"],
+      "type": "object"
+    },
+    "http_literal": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "HttpTypeLiteral" },
+        "literal": { "$ref": "#/$defs/scalar" }
+      },
+      "required": ["kind", "literal"],
+      "type": "object"
+    },
+    "http_object": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "HttpTypeObject" },
+        "members": { "$ref": "#/$defs/string_list" }
+      },
+      "required": ["kind", "members"],
+      "type": "object"
+    },
+    "http_primitive": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "HttpTypeBoolean",
+            "HttpTypeNumber",
+            "HttpTypeString",
+            "HttpTypeUnknown"
+          ]
+        }
+      },
+      "required": ["kind"],
+      "type": "object"
+    },
+    "http_reference": {
+      "additionalProperties": false,
+      "properties": {
+        "ident": { "type": ["string", "null"] },
+        "kind": { "const": "HttpTypeReference" },
+        "oas_ref": { "type": ["string", "null"] },
+        "ref": { "type": ["string", "null"] },
+        "type_parameters": {
+          "items": { "$ref": "#/$defs/http_type" },
+          "type": "array"
+        }
+      },
+      "required": ["ident", "kind", "oas_ref", "ref", "type_parameters"],
+      "type": "object"
+    },
+    "http_type": {
+      "oneOf": [
+        { "$ref": "#/$defs/http_array" },
+        { "$ref": "#/$defs/http_literal" },
+        { "$ref": "#/$defs/http_object" },
+        { "$ref": "#/$defs/http_primitive" },
+        { "$ref": "#/$defs/http_reference" },
+        { "$ref": "#/$defs/http_union" }
+      ]
+    },
+    "http_union": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "HttpTypeUnion" },
+        "oas_ref": { "type": ["string", "null"] },
+        "types": {
+          "items": { "$ref": "#/$defs/http_type" },
+          "type": "array"
+        }
+      },
+      "required": ["kind", "oas_ref", "types"],
+      "type": "object"
+    },
+    "inventories_artifact": {
+      "additionalProperties": false,
+      "properties": {
+        "annotation_variants": {
+          "items": { "$ref": "#/$defs/annotation_variant" },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "cache_controls": { "$ref": "#/$defs/cache_controls" },
+        "compaction_item": { "$ref": "#/$defs/shape" },
+        "compaction_trigger": { "$ref": "#/$defs/shape" },
+        "endpoint_contracts": {
+          "items": { "$ref": "#/$defs/endpoint_contract" },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "endpoint_examples_may_omit_cache_write_tokens": { "const": true },
+        "include_values": {
+          "items": { "type": "string" },
+          "maxItems": 8,
+          "minItems": 8,
+          "type": "array"
+        },
+        "incomplete_reasons": {
+          "items": { "type": "string" },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "input_variants": {
+          "items": { "$ref": "#/$defs/variant" },
+          "maxItems": 32,
+          "minItems": 32,
+          "type": "array"
+        },
+        "kind": { "const": "public_responses_inventories" },
+        "output_variants": {
+          "items": { "$ref": "#/$defs/variant" },
+          "maxItems": 28,
+          "minItems": 28,
+          "type": "array"
+        },
+        "reasoning_item": { "$ref": "#/$defs/shape" },
+        "response_statuses": {
+          "items": { "type": "string" },
+          "maxItems": 6,
+          "minItems": 6,
+          "type": "array"
+        },
+        "schema_version": { "const": 1 },
+        "tool_variants": {
+          "items": { "$ref": "#/$defs/variant" },
+          "maxItems": 16,
+          "minItems": 16,
+          "type": "array"
+        },
+        "usage_paths": {
+          "items": { "type": "string" },
+          "maxItems": 6,
+          "minItems": 6,
+          "type": "array"
+        },
+        "usage_schema_requires_cache_write_tokens": { "const": true }
+      },
+      "required": [
+        "annotation_variants",
+        "cache_controls",
+        "compaction_item",
+        "compaction_trigger",
+        "endpoint_contracts",
+        "endpoint_examples_may_omit_cache_write_tokens",
+        "include_values",
+        "incomplete_reasons",
+        "input_variants",
+        "kind",
+        "output_variants",
+        "reasoning_item",
+        "response_statuses",
+        "schema_version",
+        "tool_variants",
+        "usage_paths",
+        "usage_schema_requires_cache_write_tokens"
+      ],
+      "type": "object"
+    },
+    "manifest_artifact": {
+      "additionalProperties": false,
+      "properties": {
+        "api_description_version": { "const": "2.3.0" },
+        "extractor_version": { "const": "norn-openai-responses-contract-v1" },
+        "kind": { "const": "public_responses_contract_manifest" },
+        "openapi_version": { "const": "3.1.0" },
+        "outputs": {
+          "items": { "$ref": "#/$defs/output_record" },
+          "maxItems": 6,
+          "minItems": 6,
+          "type": "array"
+        },
+        "retrieved_on": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "type": "string"
+        },
+        "schema_version": { "const": 1 },
+        "sources": {
+          "items": { "$ref": "#/$defs/source_record" },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        }
+      },
+      "required": [
+        "api_description_version",
+        "extractor_version",
+        "kind",
+        "openapi_version",
+        "outputs",
+        "retrieved_on",
+        "schema_version",
+        "sources"
+      ],
+      "type": "object"
+    },
+    "node": {
+      "additionalProperties": false,
+      "properties": {
+        "declaration": { "$ref": "#/$defs/declaration" },
+        "source_key": { "type": "string" }
+      },
+      "required": ["declaration", "source_key"],
+      "type": "object"
+    },
+    "output_record": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": { "minimum": 1, "type": "integer" },
+        "path": {
+          "pattern": "^policy/contracts/openai-responses-v1/[^/]+\\.json$",
+          "type": "string"
+        },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "required": ["bytes", "path", "sha256"],
+      "type": "object"
+    },
+    "property_declaration": {
+      "additionalProperties": false,
+      "properties": {
+        "children": { "$ref": "#/$defs/string_list" },
+        "children_parent_schema": { "type": ["string", "null"] },
+        "constraints": { "$ref": "#/$defs/constraints" },
+        "default": { "$ref": "#/$defs/value" },
+        "default_present": { "type": "boolean" },
+        "deprecated": { "type": "boolean" },
+        "key": { "type": "string" },
+        "kind": { "const": "HttpDeclProperty" },
+        "nullable": { "type": "boolean" },
+        "oas_ref": { "type": "string" },
+        "optional": { "type": "boolean" },
+        "schema_type": { "type": "string" },
+        "type": { "$ref": "#/$defs/http_type" }
+      },
+      "required": [
+        "children",
+        "children_parent_schema",
+        "constraints",
+        "default",
+        "default_present",
+        "deprecated",
+        "key",
+        "kind",
+        "nullable",
+        "oas_ref",
+        "optional",
+        "schema_type",
+        "type"
+      ],
+      "type": "object"
+    },
+    "reference_declaration": {
+      "additionalProperties": false,
+      "properties": {
+        "children": { "$ref": "#/$defs/string_list" },
+        "children_parent_schema": { "type": ["string", "null"] },
+        "kind": { "const": "HttpDeclReference" },
+        "type": { "$ref": "#/$defs/http_type" }
+      },
+      "required": ["children", "children_parent_schema", "kind", "type"],
+      "type": "object"
+    },
+    "scalar": {
+      "type": ["boolean", "null", "number", "string"]
+    },
+    "sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "shape": {
+      "additionalProperties": false,
+      "properties": {
+        "nullable": { "$ref": "#/$defs/string_list" },
+        "optional": { "$ref": "#/$defs/string_list" },
+        "required": { "$ref": "#/$defs/string_list" },
+        "schema": { "type": "string" }
+      },
+      "required": ["nullable", "optional", "required", "schema"],
+      "type": "object"
+    },
+    "source_arguments": {
+      "additionalProperties": false,
+      "properties": {
+        "url": { "pattern": "^https://", "type": "string" }
+      },
+      "required": ["url"],
+      "type": "object"
+    },
+    "source_record": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": { "$ref": "#/$defs/source_arguments" },
+        "normalized_bytes": { "minimum": 1, "type": "integer" },
+        "normalized_sha256": { "$ref": "#/$defs/sha256" },
+        "raw_bytes": { "minimum": 1, "type": "integer" },
+        "raw_sha256": { "$ref": "#/$defs/sha256" },
+        "source_id": {
+          "enum": ["compact", "create", "streaming", "websocket"]
+        },
+        "tool": {
+          "enum": [
+            "mcp__openaiDeveloperDocs__fetch_openai_doc",
+            "mcp__openaiDeveloperDocs__get_openapi_spec"
+          ]
+        }
+      },
+      "required": [
+        "arguments",
+        "normalized_bytes",
+        "normalized_sha256",
+        "raw_bytes",
+        "raw_sha256",
+        "source_id",
+        "tool"
+      ],
+      "type": "object"
+    },
+    "sse_artifact": {
+      "additionalProperties": false,
+      "properties": {
+        "events": {
+          "items": { "$ref": "#/$defs/event" },
+          "maxItems": 53,
+          "minItems": 53,
+          "type": "array"
+        },
+        "kind": { "const": "public_responses_sse_events" },
+        "schema_version": { "const": 1 }
+      },
+      "required": ["events", "kind", "schema_version"],
+      "type": "object"
+    },
+    "string_list": {
+      "items": { "type": "string" },
+      "type": "array"
+    },
+    "type_alias": {
+      "additionalProperties": false,
+      "properties": {
+        "children": { "$ref": "#/$defs/string_list" },
+        "children_parent_schema": { "type": ["string", "null"] },
+        "ident": { "type": "string" },
+        "kind": { "const": "HttpDeclTypeAlias" },
+        "oas_ref": { "type": "string" },
+        "type": { "$ref": "#/$defs/http_type" }
+      },
+      "required": [
+        "children",
+        "children_parent_schema",
+        "ident",
+        "kind",
+        "oas_ref",
+        "type"
+      ],
+      "type": "object"
+    },
+    "value": {
+      "oneOf": [
+        { "$ref": "#/$defs/scalar" },
+        {
+          "items": { "$ref": "#/$defs/scalar" },
+          "type": "array"
+        }
+      ]
+    },
+    "variant": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_literals": {
+          "items": { "type": "string" },
+          "minItems": 1,
+          "type": "array"
+        },
+        "index": { "minimum": 0, "type": "integer" },
+        "schema": { "type": "string" }
+      },
+      "required": ["accepted_literals", "index", "schema"],
+      "type": "object"
+    }
+  },
+  "$id": "https://norn.invalid/policy/contracts/openai-responses-v1/contract.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    { "$ref": "#/$defs/discrepancies_artifact" },
+    { "$ref": "#/$defs/graph_artifact" },
+    { "$ref": "#/$defs/inventories_artifact" },
+    { "$ref": "#/$defs/manifest_artifact" },
+    { "$ref": "#/$defs/sse_artifact" }
+  ]
+}

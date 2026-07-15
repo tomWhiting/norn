@@ -40,8 +40,13 @@ The initial source verdict was `NOT AGREED`. Corrections added missing input and
 cache inventories, the Codex `common.rs` pin, exact nested usage fields, tool
 aliases, source discrepancies, event-correlation requirements, and known-client
 versus unproven-backend distinctions. A later schema conflict over assistant
-phase was resolved directly through the Developer Docs MCP: phase is optional,
-not nullable. The final contract preserves absent versus present values.
+phase was initially recorded here as optional but non-nullable. **Foundation
+correction (2026-07-15):** a fresh official Developer Docs MCP extraction
+reports both the input and output properties as `optional: true` and
+`nullable: true`. The earlier sentence is superseded. The executable contract
+must preserve absent, explicit `null`, `commentary`, and `final_answer`; this
+correction requires independent confirmation with the first foundation review
+before Gate A is re-closed.
 
 The final source disposition is `AGREED`. Exhaustive event payload structure is
 not overclaimed: the first foundation must produce a reviewed sanitized all-53
@@ -93,7 +98,16 @@ The correction contract now closes every reported blocker:
 - local locks/gates are explicitly tamper-evident, not tamper-resistant, until
   D0 supplies remote enforcement.
 
-The architecture correction verdict is `READY`.
+The architecture correction verdict was `READY` for the reviewed candidate.
+
+**Foundation correction (2026-07-15):** implementation showed that the
+generated-include candidate's static owner and output-schema strings were inert
+metadata rather than enforced authority. The corrected contract removes both:
+exact source/callsite/enclosing span, invocation, target, generator/input bytes,
+and output basename remain bound, while compilation validates emitted Rust.
+This avoids arbitrary labels and personal identity in the technical digest.
+The correction requires independent confirmation with the first foundation
+review before Gate A is re-closed.
 
 ### Overall Gate A
 
@@ -104,7 +118,9 @@ ownership, the new coordinator, per-candidate gate cadence, optional phase
 semantics, the exhaustive-schema handoff, and the foundation freeze boundary.
 All were corrected.
 
-The final overall verdict is `READY` with no remaining Gate A blocker.
+The historical overall verdict is `READY` for implementation entry. The Gate A
+agreement checkbox remains open until the assistant-phase and generated-include
+foundation corrections receive the required independent confirmation.
 
 ## Entry invariants
 

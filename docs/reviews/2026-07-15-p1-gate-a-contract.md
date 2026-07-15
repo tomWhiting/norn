@@ -77,11 +77,23 @@ The public contract has these important semantics:
   to the current request, and is only roughly equivalent to a developer
   message. Instructions are not inherited through `previous_response_id`.
 - Assistant `phase` is an optional public Responses field with
-  `commentary` and `final_answer` values. Manual replay preserves an original
-  phase when present and distinguishes absence from either value. The guide
+  `commentary` and `final_answer` values. The current generated schema also
+  marks the field nullable for both `EasyInputMessage` and `OutputMessage`.
+  Manual replay preserves the original state and therefore distinguishes
+  absence, explicit `null`, and either literal value. The guide
   recommends phase for long-running or tool-heavy
   GPT-5.5/GPT-5.4 flows; neither the schema nor guide implies universal model
   emission.
+
+**Foundation source correction (2026-07-15):** the Gate A review originally
+described assistant `phase` as optional but non-nullable. A fresh official
+Developer Docs MCP extraction of
+`#/components/schemas/EasyInputMessage/properties/phase` and
+`#/components/schemas/OutputMessage/properties/phase` reports
+`optional: true` and `nullable: true` for both. That earlier non-nullability
+statement is superseded. The executable contract must preserve all four wire
+states above and must not introduce a P1-only rejection that the public schema
+does not contain.
 - `previous_response_id` cannot be combined with `conversation`.
 - Stateless replay preserves every output item, encrypted reasoning requested
   with `include: ["reasoning.encrypted_content"]`, and assistant phase.
@@ -537,6 +549,12 @@ reusable turn state, raw cache keys, and unregistered opaque values. Fixtures
 use reserved synthetic identifiers, `example.invalid`, and non-reusable
 sentinels. Negative cases are assembled from harmless fragments at test runtime
 so there is no excluded unsafe-fixture directory.
+
+Captured artifacts use closed family grammars. Checked-in evidence-tool source
+is instead constrained by an exact path allowlist, UTF-8 and raw dangerous-shape
+scans, registered whole-file digests, source linting, and independent code
+review; it is not accepted as captured provider/user content and is not
+overclaimed as having a JSON/log grammar.
 
 Gate C remains exactly the strict repository gate in the plan, including:
 

@@ -1,0 +1,7 @@
+: norn-fixture-v1 {"artifact_family":"protocol_fixture","artifact_kind":"stream","dialect":"public","fixture_id":"fixture-responses-unknown-actionable","schema_version":1}
+event: norn-synthetic-generic-evt-05-event
+data: {"item_id":"norn-synthetic-generic-evt-05-event-item","sequence_number":1,"type":"norn-synthetic-generic-evt-05-event"}
+
+event: response.output_item.added
+data: {"item":{"id":"norn-synthetic-generic-evt-05-item","status":"in_progress","type":"norn-synthetic-generic-evt-05-item-type"},"output_index":0,"sequence_number":2,"type":"response.output_item.added"}
+

@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "commit": "2917c8ed10e7a2ec7ac9c4d7283bafbea7f6577d",
+  "tree": "9ae969792c53b4e1dfdc61c6d91f7fe62d3ac582",
+  "algorithm": "sha256",
+  "domain": "norn-policy-owned-snapshot-1",
+  "framing": "u128-be length; domain; entry count; sorted path, one-byte kind, exact bytes",
+  "entry_count": 1412,
+  "mode_counts": {
+    "100644": 1406,
+    "100755": 6
+  },
+  "analysis_projection": {
+    "regular_git_modes": [
+      "100644",
+      "100755"
+    ],
+    "regular_kind_tag": 0,
+    "symlink_git_mode": "120000",
+    "symlink_kind_tag": 1,
+    "other_kind_tag": 2,
+    "executable_mode_collapsed": true
+  },
+  "analysis_snapshot_identity": "a8eec47876b200b790e1f612738fc42ee80344687f4ea498d56efcb208a2c76c",
+  "git_inventory_domain": "norn-policy-p1-git-tree-inventory-1",
+  "git_inventory_identity": "882f54560663a2f4b4dbccedc738b0d91ff1ab508b30a8d2228d32a341e89d8e",
+  "generated_include_registry_domain": "norn-policy-p1-generated-include-technical-registry-1",
+  "generated_include_registry_framing": "u128-be length-framed domain and canonical JSON",
+  "generated_include_registry": {
+    "schema_version": 1,
+    "entries": [
+      {
+        "source": "crates/norn/src/model_catalog.rs",
+        "callsite": {
+          "start": 7867,
+          "end": 7932
+        },
+        "enclosing_item": {
+          "start": 7725,
+          "end": 7935
+        },
+        "invocation_digest": "fef0748bd289f55d0957b1d981a4b9c5cf673e50065d78240d5b2bb8f2f2b9aa",
+        "target": {
+          "package": "norn",
+          "package_root": "crates/norn",
+          "kind": "library",
+          "name": "norn",
+          "root": "crates/norn/src/lib.rs"
+        },
+        "generator": {
+          "path": "crates/norn/build.rs",
+          "digest": "d0ee16d0eb25ff761e3a81fc548795c554c3e073f3390caf6e3c080ebd41d610"
+        },
+        "inputs": [
+          {
+            "path": "assets/models.json",
+            "digest": "df4b628f7de522bc3d243863e2a8e2a2cbcbc4bdeb71d196332f8053fec1566d"
+          }
+        ],
+        "output_basename": "model_catalog_generated.rs"
+      }
+    ]
+  },
+  "generated_include_registry_identity": "5272fe6d23419c9bb42892c55a625bb8b3f00490f9214d19481c45923a7a2e65"
+}

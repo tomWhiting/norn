@@ -1,0 +1,52 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "request",
+  "dialect": "public",
+  "fixture_id": "fixture-request-tool-envelopes",
+  "payload": {
+    "input": [
+      {
+        "content": [
+          {
+            "text": "norn-synthetic-prompt-tool-01-001",
+            "type": "input_text"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      }
+    ],
+    "model": "norn-synthetic-generic-tool-01-model",
+    "tools": [
+      {
+        "description": "norn-synthetic-generic-tool-01-description",
+        "name": "norn-synthetic-generic-tool-01-function",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "norn-synthetic-generic-tool-01-field": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "norn-synthetic-generic-tool-01-field"
+          ],
+          "type": "object"
+        },
+        "type": "function"
+      },
+      {
+        "description": "norn-synthetic-generic-tool-01-custom-description",
+        "name": "norn-synthetic-generic-tool-01-custom",
+        "type": "custom"
+      },
+      {
+        "type": "web_search"
+      },
+      {
+        "type": "apply_patch"
+      }
+    ]
+  },
+  "schema_version": 1
+}

@@ -4,6 +4,7 @@ members = [
     "crates/norn",
     "crates/norn-cli",
     "crates/norn-macros",
+    "crates/norn-policy",
     "crates/norn-tui",
 ]
 
@@ -24,6 +25,7 @@ libyggd = { git = "https://github.com/tomWhiting/yggdrasil", package = "libyggd"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+jsonschema = "0.28"
 serde_yaml = "0.9"
 
 # CLI
@@ -63,6 +65,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 glob = "0.3"
 globset = "0.4"
 sha2 = "0.10"
+sha1 = "0.10"
 hmac = "0.12"
 regex = "1"
 tempfile = "3"

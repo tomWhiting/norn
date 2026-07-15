@@ -1,0 +1,22 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "transport",
+  "dialect": "codex",
+  "fixture_id": "fixture-route-account-affinity-contract",
+  "payload": {
+    "account_id": "norn-synthetic-account-route-01-001",
+    "enabled": false,
+    "entries": [
+      {
+        "approved": false,
+        "name": "norn-synthetic-generic-route-01-permission"
+      },
+      {
+        "approved": false,
+        "name": "norn-synthetic-generic-route-01-state-reset"
+      }
+    ],
+    "turn_state": "norn-synthetic-state-route-01-001"
+  },
+  "schema_version": 1
+}

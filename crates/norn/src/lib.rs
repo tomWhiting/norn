@@ -11,6 +11,7 @@ pub mod model_catalog;
 pub mod process;
 pub mod profile;
 pub mod provider;
+pub mod repository_snapshot;
 pub mod resource;
 pub mod rules;
 pub mod runtime_init;

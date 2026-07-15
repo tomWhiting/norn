@@ -1,0 +1,22 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "transport",
+  "dialect": "codex",
+  "fixture_id": "fixture-oauth-named-accounts",
+  "payload": {
+    "enabled": false,
+    "entries": [
+      {
+        "account_id": "norn-synthetic-account-auth-07-a",
+        "approved": true,
+        "name": "norn-synthetic-generic-auth-07-account-a"
+      },
+      {
+        "account_id": "norn-synthetic-account-auth-07-b",
+        "approved": true,
+        "name": "norn-synthetic-generic-auth-07-account-b"
+      }
+    ]
+  },
+  "schema_version": 1
+}

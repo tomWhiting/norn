@@ -1,0 +1,31 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "request",
+  "dialect": "codex",
+  "fixture_id": "fixture-cache-key-lifecycle",
+  "payload": {
+    "include": [
+      "reasoning.encrypted_content"
+    ],
+    "input": [
+      {
+        "content": [
+          {
+            "text": "norn-synthetic-prompt-cache-03-001",
+            "type": "input_text"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      }
+    ],
+    "metadata": {
+      "norn-synthetic-generic-cache-03-metadata-key": "norn-synthetic-generic-cache-03-metadata-value"
+    },
+    "model": "norn-synthetic-generic-cache-03-model",
+    "prompt_cache_key": "norn-synthetic-cache-cache-03-001",
+    "store": false,
+    "stream": true
+  },
+  "schema_version": 1
+}

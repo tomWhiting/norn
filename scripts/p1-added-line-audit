@@ -1,0 +1,278 @@
+#!/bin/sh
+""":"
+set -e
+umask 077
+python=
+for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+    if [ -x "$candidate" ] && "$candidate" -I -c \
+        'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
+        >/dev/null 2>&1; then
+        python=$candidate
+        break
+    fi
+done
+if [ -z "$python" ]; then
+    printf '%s\n' '{"code":"p1_added_line_audit_interpreter_unavailable"}' >&2
+    exit 2
+fi
+exec /usr/bin/env -i \
+    LANG=C LC_ALL=C PYTHONDONTWRITEBYTECODE=1 TZ=UTC \
+    "$python" -I -B "$0" "$@"
+":"""
+
+"""Conservative added-line backstop for the P1 repository policy."""
+
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+BASE_COMMIT = "2917c8ed10e7a2ec7ac9c4d7283bafbea7f6577d"
+ROOT = Path(__file__).resolve().parent.parent
+GIT = Path("/usr/bin/git")
+DIFF_ARGUMENTS = (
+    "diff",
+    "--no-ext-diff",
+    "--unified=0",
+    f"{BASE_COMMIT}...HEAD",
+)
+HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+class AuditError(Exception):
+    """The audit could not make one complete conservative observation."""
+
+
+def joined(*parts: str) -> str:
+    return "".join(parts)
+
+
+PATTERNS = {
+    "prohibited_calls": re.compile(
+        joined(
+            r"\.\s*(?:unw",
+            r"rap|unw",
+            r"rap_err|ex",
+            r"pect|ex",
+            r"pect_err)\s*\(",
+        )
+    ),
+    "prohibited_macros": re.compile(
+        joined(
+            r"\b(?:pa",
+            r"nic|to",
+            r"do|unimple",
+            r"mented|unreach",
+            r"able)\s*!\s*[({\[]",
+        )
+    ),
+    "lint_attributes": re.compile(
+        joined(
+            r"(?m)^\s*#\s*!?\s*\[\s*(?:al",
+            r"low|ex",
+            r"pect|de",
+            r"ny)\s*(?:\(|\])",
+        )
+    ),
+    "test_exclusions": re.compile(
+        joined(
+            r"(?m)^\s*(?:#\s*!?\s*\[\s*ig",
+            r"nore(?:\s|\]|\()|@(?:unittest\.)?sk",
+            r"ip(?:If|Unless)?\b|@pytest\.mark\.(?:sk",
+            r"ip|x",
+            r"fail)\b)",
+        )
+    ),
+    "external_suppressions": re.compile(
+        joined(
+            r"(?im)(?:#\s*no",
+            r"qa\b|#\s*type:\s*ig",
+            r"nore\b|no",
+            r"lint\b|eslint-disable\b|biome-ig",
+            r"nore\b|prettier-ig",
+            r"nore\b|pragma:\s*no\s*cover\b|rustfmt::sk",
+            r"ip\b)",
+        )
+    ),
+    "debt_markers": re.compile(
+        joined(
+            r"(?im)(?:^|\s)(?://+|/\*+|\*+|#)\s*[^\n]*\b(?:TO",
+            r"DO|FIX",
+            r"ME|HA",
+            r"CK)\b",
+        )
+    ),
+    "lint_reductions": re.compile(
+        joined(
+            r"(?im)(?:^|\s)-A(?:\s|$|clippy::|warnings)|--cap-lints\s+(?:al",
+            r"low|warn)|(?:RUSTFLAGS|CARGO_ENCODED_RUSTFLAGS)\s*=|",
+            r"(?:level|warnings)\s*=\s*[\"']al",
+            r"low[\"']",
+        )
+    ),
+    "hidden_test_forms": re.compile(
+        r"(?im)^\s*#\s*!?\s*\[\s*cfg\s*\(\s*any\s*\(\s*\)\s*\)\s*\]"
+        r"|^\s*(?:test|doctest|harness)\s*=\s*false\b"
+        r"|^\s*required-features\s*=",
+    ),
+}
+
+
+def closed_git_environment() -> dict[str, str]:
+    return {
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+        "GIT_PAGER": "cat",
+        "GIT_TERMINAL_PROMPT": "0",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": "/usr/bin:/bin",
+        "TZ": "UTC",
+    }
+
+
+def run_git(*arguments: str) -> bytes:
+    result = subprocess.run(
+        [str(GIT), *arguments],
+        cwd=ROOT,
+        env=closed_git_environment(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AuditError("git observation failed")
+    return result.stdout
+
+
+def validate_context(arguments: list[str]) -> None:
+    if arguments:
+        raise AuditError("arguments are forbidden")
+    if sys.version_info < (3, 11):
+        raise AuditError("unsupported interpreter")
+    try:
+        cwd = Path.cwd().resolve(strict=True)
+        git_info = GIT.stat()
+    except OSError as error:
+        raise AuditError("repository context is unavailable") from error
+    if cwd != ROOT or not stat.S_ISREG(git_info.st_mode) or not os.access(GIT, os.X_OK):
+        raise AuditError("repository context is invalid")
+    top = run_git("rev-parse", "--show-toplevel").decode("utf-8", errors="strict").strip()
+    if top != str(ROOT):
+        raise AuditError("repository root differs")
+    if run_git("merge-base", "--is-ancestor", BASE_COMMIT, "HEAD"):
+        raise AuditError("ancestry command produced output")
+
+
+def added_hunks(diff: bytes) -> tuple[int, list[tuple[str, str]]]:
+    try:
+        text = diff.decode("utf-8", errors="strict")
+    except UnicodeError as error:
+        raise AuditError("diff is not UTF-8") from error
+    if "GIT binary patch" in text or "Binary files " in text:
+        raise AuditError("binary additions are not auditable")
+
+    current_file: str | None = None
+    current_hunk: list[str] | None = None
+    hunks: list[tuple[str, str]] = []
+    added = 0
+    for line in text.splitlines():
+        if line.startswith("+++ "):
+            value = line[4:]
+            if value == "/dev/null":
+                current_file = None
+            elif value.startswith("b/") and '"' not in value and "\\" not in value:
+                current_file = value[2:]
+            else:
+                raise AuditError("diff path is not canonical")
+            current_hunk = None
+            continue
+        match = HUNK.match(line)
+        if match is not None:
+            if current_file is None:
+                raise AuditError("hunk has no destination path")
+            current_hunk = []
+            hunks.append((current_file, ""))
+            continue
+        if current_hunk is None:
+            continue
+        if line.startswith("+") and not line.startswith("+++ "):
+            current_hunk.append(line[1:])
+            hunks[-1] = (current_file, "\n".join(current_hunk))
+            added += 1
+        elif line.startswith("-") or line.startswith("\\ No newline"):
+            continue
+        elif line.startswith(" "):
+            continue
+        else:
+            current_hunk = None
+    return added, hunks
+
+
+def is_audited_source(path: str) -> bool:
+    suffixes = (
+        ".c",
+        ".cc",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".js",
+        ".json",
+        ".jsx",
+        ".py",
+        ".rs",
+        ".sh",
+        ".toml",
+        ".ts",
+        ".tsx",
+        ".yaml",
+        ".yml",
+    )
+    return path.startswith("scripts/") or path.endswith(suffixes)
+
+
+def scan_diff(diff: bytes) -> tuple[int, dict[str, int]]:
+    added, hunks = added_hunks(diff)
+    counts = {
+        category: sum(
+            len(tuple(pattern.finditer(hunk)))
+            for path, hunk in hunks
+            if is_audited_source(path)
+        )
+        for category, pattern in PATTERNS.items()
+    }
+    return added, counts
+
+
+def emit(value: dict[str, object], stream: object = sys.stdout) -> None:
+    print(json.dumps(value, sort_keys=True, separators=(",", ":")), file=stream)
+
+
+def main(arguments: list[str]) -> int:
+    try:
+        validate_context(arguments)
+        added, counts = scan_diff(run_git(*DIFF_ARGUMENTS))
+        result = {
+            "schema_version": 1,
+            "base_commit": BASE_COMMIT,
+            "added_lines": added,
+            "syntax_aware_policy_required": True,
+            "findings": counts,
+        }
+        emit(result)
+        if any(counts.values()):
+            emit({"code": "p1_added_line_audit_findings"}, sys.stderr)
+            return 1
+        return 0
+    except Exception:
+        emit({"code": "p1_added_line_audit_incomplete"}, sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

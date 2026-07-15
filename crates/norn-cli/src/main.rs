@@ -11,7 +11,9 @@ use std::process::ExitCode as ProcessExitCode;
 use clap::Parser;
 
 use norn_cli::cli::{Cli, Command, ExitCode, Mode, detect_mode};
-use norn_cli::commands::{run_auth, run_completion, run_doctor, run_init, run_mcp, run_session};
+use norn_cli::commands::{
+    run_auth, run_completion, run_doctor, run_init, run_mcp, run_policy, run_session,
+};
 use norn_cli::print;
 
 fn main() -> ProcessExitCode {
@@ -40,6 +42,7 @@ fn main() -> ProcessExitCode {
         Some(Command::Session { command }) => run_session(cli, command, agent_fn),
         Some(Command::Auth { command }) => run_auth(command),
         Some(Command::Mcp { command }) => run_mcp(&cli, command),
+        Some(Command::Policy { command }) => run_policy(command),
         Some(Command::Doctor) => run_doctor(),
         Some(Command::Completion(ref args)) => run_completion(args),
         Some(Command::Init { command }) => run_init(command),

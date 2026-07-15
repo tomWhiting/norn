@@ -3528,6 +3528,7 @@ dependencies = [
  "lsp",
  "lsp-types",
  "norn-macros",
+ "norn-policy",
  "nucleo-matcher",
  "parking_lot",
  "rand 0.9.4",
@@ -3576,6 +3577,7 @@ dependencies = [
  "glob",
  "humantime",
  "norn",
+ "norn-policy",
  "norn-tui",
  "parking_lot",
  "reqwest 0.12.28",
@@ -3605,6 +3607,23 @@ dependencies = [
  "serde_json",
  "syn",
  "trybuild",
+]
+
+[[package]]
+name = "norn-policy"
+version = "0.1.0"
+dependencies = [
+ "globset",
+ "jsonschema",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokei",
+ "toml 0.8.23",
+ "tree-sitter",
+ "tree-sitter-rust",
 ]
 
 [[package]]

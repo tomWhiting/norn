@@ -1,0 +1,36 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "transport",
+  "dialect": "codex",
+  "fixture_id": "fixture-oauth-failure-state",
+  "payload": {
+    "details": [
+      {
+        "name": "norn-synthetic-generic-auth-03-load",
+        "reason": "norn-synthetic-generic-auth-03-load-reason",
+        "status": "failed"
+      },
+      {
+        "name": "norn-synthetic-generic-auth-03-parse",
+        "reason": "norn-synthetic-generic-auth-03-parse-reason",
+        "status": "failed"
+      },
+      {
+        "name": "norn-synthetic-generic-auth-03-proactive-refresh",
+        "reason": "norn-synthetic-generic-auth-03-proactive-refresh-reason",
+        "status": "failed"
+      },
+      {
+        "name": "norn-synthetic-generic-auth-03-stale-token",
+        "reason": "norn-synthetic-generic-auth-03-stale-token-reason",
+        "status": "incomplete"
+      },
+      {
+        "name": "norn-synthetic-generic-auth-03-unknown-expiry",
+        "reason": "norn-synthetic-generic-auth-03-unknown-expiry-reason",
+        "status": "queued"
+      }
+    ]
+  },
+  "schema_version": 1
+}

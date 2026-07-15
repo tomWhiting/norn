@@ -1,0 +1,10 @@
+: norn-fixture-v1 {"artifact_family":"protocol_fixture","artifact_kind":"stream","dialect":"public","fixture_id":"fixture-responses-refusal","schema_version":1}
+event: response.refusal.delta
+data: {"content_index":0,"delta":"norn-synthetic-prompt-evt-01-refusal","item_id":"norn-synthetic-generic-evt-01-message","output_index":0,"sequence_number":1,"type":"response.refusal.delta"}
+
+event: response.refusal.done
+data: {"content_index":0,"item_id":"norn-synthetic-generic-evt-01-message","output_index":0,"refusal":"norn-synthetic-prompt-evt-01-refusal","sequence_number":2,"type":"response.refusal.done"}
+
+event: response.output_item.done
+data: {"item":{"content":[{"refusal":"norn-synthetic-prompt-evt-01-refusal","type":"refusal"}],"id":"norn-synthetic-generic-evt-01-message","role":"assistant","status":"completed","type":"message"},"output_index":0,"sequence_number":3,"type":"response.output_item.done"}
+

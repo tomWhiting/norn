@@ -5,9 +5,11 @@ pub mod error;
 pub mod exit;
 mod mcp_args;
 pub mod mode;
+mod policy_args;
 
 pub use args::*;
 pub use error::BuildError;
 pub use exit::ExitCode;
 pub use mcp_args::{McpCmd, McpPersistenceScope};
 pub use mode::{Mode, detect_mode};
+pub use policy_args::{PolicyCmd, PolicyOutputFormat};

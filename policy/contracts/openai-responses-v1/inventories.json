@@ -1,0 +1,679 @@
+{
+  "annotation_variants": [
+    {
+      "accepted_literals": [
+        "file_citation"
+      ],
+      "index": 0,
+      "schema": "FileCitation"
+    },
+    {
+      "accepted_literals": [
+        "url_citation"
+      ],
+      "index": 1,
+      "schema": "URLCitation"
+    },
+    {
+      "accepted_literals": [
+        "container_file_citation"
+      ],
+      "index": 2,
+      "schema": "ContainerFileCitation"
+    },
+    {
+      "accepted_literals": [
+        "file_path"
+      ],
+      "index": 3,
+      "schema": "FilePath"
+    }
+  ],
+  "cache_controls": {
+    "prompt_cache_breakpoint.mode": [
+      "explicit"
+    ],
+    "prompt_cache_key": [],
+    "prompt_cache_options.mode": [
+      "implicit",
+      "explicit"
+    ],
+    "prompt_cache_options.ttl": [
+      "30m"
+    ],
+    "prompt_cache_retention": [
+      "in_memory",
+      "24h"
+    ]
+  },
+  "compaction_item": {
+    "nullable": [],
+    "optional": [
+      "created_by"
+    ],
+    "required": [
+      "encrypted_content",
+      "id",
+      "type"
+    ],
+    "schema": "Compaction"
+  },
+  "compaction_trigger": {
+    "nullable": [],
+    "optional": [],
+    "required": [
+      "type"
+    ],
+    "schema": "CompactionTrigger"
+  },
+  "endpoint_contracts": [
+    {
+      "components_in_endpoint_slice": false,
+      "json_response_schema_ref": "#/components/schemas/Response",
+      "method": "post",
+      "operation_id": "createResponse",
+      "path": "/responses",
+      "request_schema_ref": "#/components/schemas/CreateResponse",
+      "stream_response_schema_ref": "#/components/schemas/ResponseStreamEvent"
+    },
+    {
+      "components_in_endpoint_slice": false,
+      "json_response_schema_ref": "#/components/schemas/CompactResource",
+      "method": "post",
+      "operation_id": "Compactconversation",
+      "path": "/responses/compact",
+      "request_schema_ref": "#/components/schemas/CompactResponseMethodPublicBody",
+      "stream_response_schema_ref": null
+    }
+  ],
+  "endpoint_examples_may_omit_cache_write_tokens": true,
+  "include_values": [
+    "file_search_call.results",
+    "web_search_call.results",
+    "web_search_call.action.sources",
+    "message.input_image.image_url",
+    "computer_call_output.output.image_url",
+    "code_interpreter_call.outputs",
+    "reasoning.encrypted_content",
+    "message.output_text.logprobs"
+  ],
+  "incomplete_reasons": [
+    "max_output_tokens",
+    "content_filter"
+  ],
+  "input_variants": [
+    {
+      "accepted_literals": [
+        "message"
+      ],
+      "index": 0,
+      "schema": "EasyInputMessage"
+    },
+    {
+      "accepted_literals": [
+        "message"
+      ],
+      "index": 1,
+      "schema": "Message"
+    },
+    {
+      "accepted_literals": [
+        "message"
+      ],
+      "index": 2,
+      "schema": "ResponseOutputMessage"
+    },
+    {
+      "accepted_literals": [
+        "file_search_call"
+      ],
+      "index": 3,
+      "schema": "FileSearchCall"
+    },
+    {
+      "accepted_literals": [
+        "computer_call"
+      ],
+      "index": 4,
+      "schema": "ComputerCall"
+    },
+    {
+      "accepted_literals": [
+        "computer_call_output"
+      ],
+      "index": 5,
+      "schema": "ComputerCallOutput"
+    },
+    {
+      "accepted_literals": [
+        "web_search_call"
+      ],
+      "index": 6,
+      "schema": "WebSearchCall"
+    },
+    {
+      "accepted_literals": [
+        "function_call"
+      ],
+      "index": 7,
+      "schema": "FunctionCall"
+    },
+    {
+      "accepted_literals": [
+        "function_call_output"
+      ],
+      "index": 8,
+      "schema": "FunctionCallOutput"
+    },
+    {
+      "accepted_literals": [
+        "tool_search_call"
+      ],
+      "index": 9,
+      "schema": "ToolSearchCall"
+    },
+    {
+      "accepted_literals": [
+        "tool_search_output"
+      ],
+      "index": 10,
+      "schema": "ToolSearchOutput"
+    },
+    {
+      "accepted_literals": [
+        "additional_tools"
+      ],
+      "index": 11,
+      "schema": "AdditionalTools"
+    },
+    {
+      "accepted_literals": [
+        "reasoning"
+      ],
+      "index": 12,
+      "schema": "Reasoning"
+    },
+    {
+      "accepted_literals": [
+        "compaction"
+      ],
+      "index": 13,
+      "schema": "Compaction"
+    },
+    {
+      "accepted_literals": [
+        "image_generation_call"
+      ],
+      "index": 14,
+      "schema": "ImageGenerationCall"
+    },
+    {
+      "accepted_literals": [
+        "code_interpreter_call"
+      ],
+      "index": 15,
+      "schema": "CodeInterpreterCall"
+    },
+    {
+      "accepted_literals": [
+        "local_shell_call"
+      ],
+      "index": 16,
+      "schema": "LocalShellCall"
+    },
+    {
+      "accepted_literals": [
+        "local_shell_call_output"
+      ],
+      "index": 17,
+      "schema": "LocalShellCallOutput"
+    },
+    {
+      "accepted_literals": [
+        "shell_call"
+      ],
+      "index": 18,
+      "schema": "ShellCall"
+    },
+    {
+      "accepted_literals": [
+        "shell_call_output"
+      ],
+      "index": 19,
+      "schema": "ShellCallOutput"
+    },
+    {
+      "accepted_literals": [
+        "apply_patch_call"
+      ],
+      "index": 20,
+      "schema": "ApplyPatchCall"
+    },
+    {
+      "accepted_literals": [
+        "apply_patch_call_output"
+      ],
+      "index": 21,
+      "schema": "ApplyPatchCallOutput"
+    },
+    {
+      "accepted_literals": [
+        "mcp_list_tools"
+      ],
+      "index": 22,
+      "schema": "McpListTools"
+    },
+    {
+      "accepted_literals": [
+        "mcp_approval_request"
+      ],
+      "index": 23,
+      "schema": "McpApprovalRequest"
+    },
+    {
+      "accepted_literals": [
+        "mcp_approval_response"
+      ],
+      "index": 24,
+      "schema": "McpApprovalResponse"
+    },
+    {
+      "accepted_literals": [
+        "mcp_call"
+      ],
+      "index": 25,
+      "schema": "McpCall"
+    },
+    {
+      "accepted_literals": [
+        "custom_tool_call_output"
+      ],
+      "index": 26,
+      "schema": "CustomToolCallOutput"
+    },
+    {
+      "accepted_literals": [
+        "custom_tool_call"
+      ],
+      "index": 27,
+      "schema": "CustomToolCall"
+    },
+    {
+      "accepted_literals": [
+        "compaction_trigger"
+      ],
+      "index": 28,
+      "schema": "CompactionTrigger"
+    },
+    {
+      "accepted_literals": [
+        "item_reference"
+      ],
+      "index": 29,
+      "schema": "ItemReference"
+    },
+    {
+      "accepted_literals": [
+        "program"
+      ],
+      "index": 30,
+      "schema": "Program"
+    },
+    {
+      "accepted_literals": [
+        "program_output"
+      ],
+      "index": 31,
+      "schema": "ProgramOutput"
+    }
+  ],
+  "kind": "public_responses_inventories",
+  "output_variants": [
+    {
+      "accepted_literals": [
+        "message"
+      ],
+      "index": 0,
+      "schema": "ResponseOutputMessage"
+    },
+    {
+      "accepted_literals": [
+        "file_search_call"
+      ],
+      "index": 1,
+      "schema": "FileSearchCall"
+    },
+    {
+      "accepted_literals": [
+        "function_call"
+      ],
+      "index": 2,
+      "schema": "FunctionCall"
+    },
+    {
+      "accepted_literals": [
+        "function_call_output"
+      ],
+      "index": 3,
+      "schema": "FunctionCallOutput"
+    },
+    {
+      "accepted_literals": [
+        "web_search_call"
+      ],
+      "index": 4,
+      "schema": "WebSearchCall"
+    },
+    {
+      "accepted_literals": [
+        "computer_call"
+      ],
+      "index": 5,
+      "schema": "ComputerCall"
+    },
+    {
+      "accepted_literals": [
+        "computer_call_output"
+      ],
+      "index": 6,
+      "schema": "ComputerCallOutput"
+    },
+    {
+      "accepted_literals": [
+        "reasoning"
+      ],
+      "index": 7,
+      "schema": "Reasoning"
+    },
+    {
+      "accepted_literals": [
+        "program"
+      ],
+      "index": 8,
+      "schema": "Program"
+    },
+    {
+      "accepted_literals": [
+        "program_output"
+      ],
+      "index": 9,
+      "schema": "ProgramOutput"
+    },
+    {
+      "accepted_literals": [
+        "tool_search_call"
+      ],
+      "index": 10,
+      "schema": "ToolSearchCall"
+    },
+    {
+      "accepted_literals": [
+        "tool_search_output"
+      ],
+      "index": 11,
+      "schema": "ToolSearchOutput"
+    },
+    {
+      "accepted_literals": [
+        "additional_tools"
+      ],
+      "index": 12,
+      "schema": "AdditionalTools"
+    },
+    {
+      "accepted_literals": [
+        "compaction"
+      ],
+      "index": 13,
+      "schema": "Compaction"
+    },
+    {
+      "accepted_literals": [
+        "image_generation_call"
+      ],
+      "index": 14,
+      "schema": "ImageGenerationCall"
+    },
+    {
+      "accepted_literals": [
+        "code_interpreter_call"
+      ],
+      "index": 15,
+      "schema": "CodeInterpreterCall"
+    },
+    {
+      "accepted_literals": [
+        "local_shell_call"
+      ],
+      "index": 16,
+      "schema": "LocalShellCall"
+    },
+    {
+      "accepted_literals": [
+        "local_shell_call_output"
+      ],
+      "index": 17,
+      "schema": "LocalShellCallOutput"
+    },
+    {
+      "accepted_literals": [
+        "shell_call"
+      ],
+      "index": 18,
+      "schema": "ShellCall"
+    },
+    {
+      "accepted_literals": [
+        "shell_call_output"
+      ],
+      "index": 19,
+      "schema": "ShellCallOutput"
+    },
+    {
+      "accepted_literals": [
+        "apply_patch_call"
+      ],
+      "index": 20,
+      "schema": "ApplyPatchCall"
+    },
+    {
+      "accepted_literals": [
+        "apply_patch_call_output"
+      ],
+      "index": 21,
+      "schema": "ApplyPatchCallOutput"
+    },
+    {
+      "accepted_literals": [
+        "mcp_call"
+      ],
+      "index": 22,
+      "schema": "McpCall"
+    },
+    {
+      "accepted_literals": [
+        "mcp_list_tools"
+      ],
+      "index": 23,
+      "schema": "McpListTools"
+    },
+    {
+      "accepted_literals": [
+        "mcp_approval_request"
+      ],
+      "index": 24,
+      "schema": "McpApprovalRequest"
+    },
+    {
+      "accepted_literals": [
+        "mcp_approval_response"
+      ],
+      "index": 25,
+      "schema": "McpApprovalResponse"
+    },
+    {
+      "accepted_literals": [
+        "custom_tool_call"
+      ],
+      "index": 26,
+      "schema": "CustomToolCall"
+    },
+    {
+      "accepted_literals": [
+        "custom_tool_call_output"
+      ],
+      "index": 27,
+      "schema": "CustomToolCallOutput"
+    }
+  ],
+  "reasoning_item": {
+    "nullable": [
+      "encrypted_content"
+    ],
+    "optional": [
+      "content",
+      "encrypted_content",
+      "status"
+    ],
+    "required": [
+      "id",
+      "summary",
+      "type"
+    ],
+    "schema": "Reasoning"
+  },
+  "response_statuses": [
+    "completed",
+    "failed",
+    "in_progress",
+    "cancelled",
+    "queued",
+    "incomplete"
+  ],
+  "schema_version": 1,
+  "tool_variants": [
+    {
+      "accepted_literals": [
+        "function"
+      ],
+      "index": 0,
+      "schema": "Function"
+    },
+    {
+      "accepted_literals": [
+        "file_search"
+      ],
+      "index": 1,
+      "schema": "FileSearch"
+    },
+    {
+      "accepted_literals": [
+        "computer"
+      ],
+      "index": 2,
+      "schema": "Computer"
+    },
+    {
+      "accepted_literals": [
+        "computer_use_preview"
+      ],
+      "index": 3,
+      "schema": "ComputerUsePreview"
+    },
+    {
+      "accepted_literals": [
+        "web_search",
+        "web_search_2025_08_26"
+      ],
+      "index": 4,
+      "schema": "WebSearch"
+    },
+    {
+      "accepted_literals": [
+        "mcp"
+      ],
+      "index": 5,
+      "schema": "Mcp"
+    },
+    {
+      "accepted_literals": [
+        "code_interpreter"
+      ],
+      "index": 6,
+      "schema": "CodeInterpreter"
+    },
+    {
+      "accepted_literals": [
+        "programmatic_tool_calling"
+      ],
+      "index": 7,
+      "schema": "ProgrammaticToolCalling"
+    },
+    {
+      "accepted_literals": [
+        "image_generation"
+      ],
+      "index": 8,
+      "schema": "ImageGeneration"
+    },
+    {
+      "accepted_literals": [
+        "local_shell"
+      ],
+      "index": 9,
+      "schema": "LocalShell"
+    },
+    {
+      "accepted_literals": [
+        "shell"
+      ],
+      "index": 10,
+      "schema": "Shell"
+    },
+    {
+      "accepted_literals": [
+        "custom"
+      ],
+      "index": 11,
+      "schema": "Custom"
+    },
+    {
+      "accepted_literals": [
+        "namespace"
+      ],
+      "index": 12,
+      "schema": "Namespace"
+    },
+    {
+      "accepted_literals": [
+        "tool_search"
+      ],
+      "index": 13,
+      "schema": "ToolSearch"
+    },
+    {
+      "accepted_literals": [
+        "web_search_preview",
+        "web_search_preview_2025_03_11"
+      ],
+      "index": 14,
+      "schema": "WebSearchPreview"
+    },
+    {
+      "accepted_literals": [
+        "apply_patch"
+      ],
+      "index": 15,
+      "schema": "ApplyPatch"
+    }
+  ],
+  "usage_paths": [
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "input_tokens_details.cached_tokens",
+    "input_tokens_details.cache_write_tokens",
+    "output_tokens_details.reasoning_tokens"
+  ],
+  "usage_schema_requires_cache_write_tokens": true
+}

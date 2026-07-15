@@ -1,0 +1,24 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "transport",
+  "dialect": "codex",
+  "fixture_id": "fixture-oauth-refresh-transaction",
+  "payload": {
+    "credential": "norn-synthetic-credential-auth-02-before",
+    "requests": [
+      {
+        "credential": "norn-synthetic-credential-auth-02-after",
+        "lock": true,
+        "refresh": true,
+        "reload": true,
+        "save": true
+      },
+      {
+        "credential": "norn-synthetic-credential-auth-02-foreign",
+        "foreign_write": true,
+        "status": "failed"
+      }
+    ]
+  },
+  "schema_version": 1
+}

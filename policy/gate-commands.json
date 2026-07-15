@@ -1,0 +1,182 @@
+{
+  "schema_version": 1,
+  "phase": "P1",
+  "base_commit": "2917c8ed10e7a2ec7ac9c4d7283bafbea7f6577d",
+  "implementation": {
+    "files": [
+      {
+        "id": "orchestrator",
+        "path": "scripts/p1_gate.py",
+        "sha256": "98f191a974ca19ed1047ab4a305543422048b46c10b8ad400f5d69cd894d14d0",
+        "status": "active"
+      },
+      {
+        "id": "environment",
+        "path": "scripts/p1_gate_environment.py",
+        "sha256": "6b5df7f7b735b005e2ad5271b7e5616474f07fb5612d2369659c1939c5c36c34",
+        "status": "active"
+      },
+      {
+        "id": "contract",
+        "path": "scripts/p1_gate_contract.py",
+        "sha256": "98f4044f4ba7862018eea56ec4a6246bf47b1d6691a9d87e84af71d465a26a22",
+        "status": "active"
+      },
+      {
+        "id": "evidence",
+        "path": "scripts/p1_gate_evidence.py",
+        "sha256": "57fda99f1c7ae8e5daf8fac38bb8eaf5514eac6712ef53cc9204e25e4be90fbc",
+        "status": "active"
+      },
+      {
+        "id": "runtime",
+        "path": "scripts/p1_gate_runtime.py",
+        "sha256": "ed6ddfa25f47cdf683c710bb4620550ef08f8970d9f1b474bebbfe8987668817",
+        "status": "active"
+      },
+      {
+        "id": "schema-validator",
+        "path": "scripts/p1_json_schema.py",
+        "sha256": "09c1d0ba1729f11dceb230c28694410206074a2eeba1ceb7f7a260bacfff4eb6",
+        "status": "active"
+      },
+      {
+        "id": "schema-validator-tests",
+        "path": "scripts/test_p1_json_schema.py",
+        "sha256": "7226c21a6aa5ee78907c6d6f624682d7d2b8f8f4cef2ad6a2daecf943e6aa498",
+        "status": "active"
+      },
+      {
+        "id": "environment-tests",
+        "path": "scripts/test_p1_gate_environment.py",
+        "sha256": "d6c1d674d1c52c97a6fc26f7d8615d5f39032b52f9511939d567bf34f219dc06",
+        "status": "active"
+      },
+      {
+        "id": "contract-tests",
+        "path": "scripts/test_p1_gate_contract.py",
+        "sha256": "e28296814720b532481c54d517702fbe53f38026f4c8e7e234627aedae9414b8",
+        "status": "active"
+      },
+      {
+        "id": "evidence-tests",
+        "path": "scripts/test_p1_gate_evidence.py",
+        "sha256": "ddfcf02732c62e3428ddbf20c4fa998e2daf333d513f4307354c8162178bea54",
+        "status": "active"
+      },
+      {
+        "id": "runtime-tests",
+        "path": "scripts/test_p1_gate_runtime.py",
+        "sha256": "c279efc454c9f886d53af9f028ed35feac2e288823952025f4216a80b0ad5374",
+        "status": "active"
+      },
+      {
+        "id": "evidence-schema",
+        "path": "policy/evidence-schemas/gate-run.schema.json",
+        "sha256": "c777b20a9bbb98338702ee4b281fad07d08828ece6867d31b3db8e874ca3d72d",
+        "status": "active"
+      },
+      {
+        "id": "added-line-audit",
+        "path": "scripts/p1-added-line-audit",
+        "sha256": "5cab4483e31193173c2fb94c9af1ec853951915ed27923fb1061e2df816e0e3e",
+        "status": "active"
+      },
+      {
+        "id": "redaction-check",
+        "path": "scripts/p1-redaction-check",
+        "sha256": "520117a4440e3476c9a3380d45e9096883141fb86363156e8afd8a6416f44b50",
+        "status": "active"
+      },
+      {
+        "id": "distributions",
+        "path": "scripts/p1-distributions",
+        "sha256": "53707e17c840acc30a75e74f12520386208d257f81057367bfe70c5ca27de0bf",
+        "status": "active"
+      },
+      {
+        "id": "gate-self-check",
+        "path": "scripts/p1-gate-self-check",
+        "sha256": "75a4645083e6fbba7a0ad1c0d99592d7b9a20e91dfc17c5b7bbd6a9ab0ff6e0e",
+        "status": "active"
+      }
+    ]
+  },
+  "resource_limits": {
+    "status": "owner_decision_required",
+    "command_timeout_seconds": null,
+    "per_log_max_bytes": null
+  },
+  "commands": [
+    {
+      "id": "rustc-version",
+      "kind": "metadata",
+      "argv": ["@rustc", "--version", "--verbose"]
+    },
+    {
+      "id": "cargo-version",
+      "kind": "metadata",
+      "argv": ["@cargo", "--version", "--verbose"]
+    },
+    {
+      "id": "phase-tests",
+      "kind": "phase_test",
+      "argv": ["@cargo", "test", "--locked", "-p", "norn-policy", "--all-targets"]
+    },
+    {
+      "id": "workspace-integration-tests",
+      "kind": "integration",
+      "argv": ["@cargo", "test", "--locked", "--workspace", "--tests"]
+    },
+    {
+      "id": "format",
+      "kind": "format",
+      "argv": ["@cargo", "fmt", "--all", "--", "--check"]
+    },
+    {
+      "id": "clippy",
+      "kind": "lint",
+      "argv": ["@cargo", "clippy", "--locked", "--workspace", "--all-targets", "--", "-D", "warnings"]
+    },
+    {
+      "id": "workspace-all-target-tests",
+      "kind": "test",
+      "argv": ["@cargo", "test", "--locked", "--workspace", "--all-targets"]
+    },
+    {
+      "id": "workspace-doc-tests",
+      "kind": "doc_test",
+      "argv": ["@cargo", "test", "--locked", "--workspace", "--doc"]
+    },
+    {
+      "id": "phase-diff-check",
+      "kind": "diff",
+      "argv": ["@git", "diff", "--check", "2917c8ed10e7a2ec7ac9c4d7283bafbea7f6577d...HEAD"]
+    },
+    {
+      "id": "repository-policy",
+      "kind": "policy",
+      "argv": ["@cargo", "run", "--locked", "-p", "norn-cli", "--", "policy", "check", "--format", "json"]
+    },
+    {
+      "id": "added-line-audit",
+      "kind": "audit",
+      "argv": ["@support:p1-added-line-audit"]
+    },
+    {
+      "id": "redaction-check",
+      "kind": "redaction",
+      "argv": ["@support:p1-redaction-check"]
+    },
+    {
+      "id": "distributions",
+      "kind": "distribution",
+      "argv": ["@support:p1-distributions"]
+    },
+    {
+      "id": "gate-self-check",
+      "kind": "self_check",
+      "argv": ["@support:p1-gate-self-check"]
+    }
+  ]
+}

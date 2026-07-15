@@ -1,0 +1,20 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "transport",
+  "dialect": "codex",
+  "fixture_id": "fixture-oauth-jwt-account-header",
+  "payload": {
+    "chatgpt_account_id": "norn-synthetic-account-auth-01-001",
+    "details": [
+      {
+        "account_id": "norn-synthetic-account-auth-01-001",
+        "name": "norn-synthetic-generic-auth-01-namespaced-claim"
+      },
+      {
+        "account_id": "norn-synthetic-account-auth-01-001",
+        "name": "norn-synthetic-generic-auth-01-legacy-claim"
+      }
+    ]
+  },
+  "schema_version": 1
+}

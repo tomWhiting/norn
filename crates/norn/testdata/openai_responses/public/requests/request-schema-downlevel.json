@@ -1,0 +1,46 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "request",
+  "dialect": "public",
+  "fixture_id": "fixture-request-schema-downlevel",
+  "payload": {
+    "input": [
+      {
+        "content": [
+          {
+            "text": "norn-synthetic-prompt-schema-01-001",
+            "type": "input_text"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      }
+    ],
+    "model": "norn-synthetic-generic-schema-01-model",
+    "tools": [
+      {
+        "description": "norn-synthetic-generic-schema-01-description",
+        "name": "norn-synthetic-generic-schema-01-tool",
+        "parameters": {
+          "$defs": {
+            "norn-synthetic-generic-schema-01-definition": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "properties": {
+            "norn-synthetic-generic-schema-01-definition": {
+              "$ref": "#/$defs/norn-synthetic-generic-schema-01-definition"
+            }
+          },
+          "required": [
+            "norn-synthetic-generic-schema-01-definition"
+          ],
+          "type": "object"
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "schema_version": 1
+}

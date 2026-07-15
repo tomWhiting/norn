@@ -1,0 +1,4 @@
+: norn-fixture-v1 {"artifact_family":"protocol_fixture","artifact_kind":"stream","dialect":"public","fixture_id":"fixture-transport-cancellation","schema_version":1}
+event: response.in_progress
+data: {"response":{"id":"norn-synthetic-generic-trans-01-response","object":"response","output":[],"status":"in_progress"},"sequence_number":1,"type":"response.in_progress"}
+

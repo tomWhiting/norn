@@ -1,0 +1,43 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "request",
+  "dialect": "public",
+  "fixture_id": "fixture-responses-role-authority",
+  "payload": {
+    "input": [
+      {
+        "content": [
+          {
+            "text": "norn-synthetic-prompt-role-01-001",
+            "type": "input_text"
+          }
+        ],
+        "role": "system",
+        "type": "message"
+      },
+      {
+        "content": [
+          {
+            "text": "norn-synthetic-prompt-role-01-001",
+            "type": "input_text"
+          }
+        ],
+        "role": "developer",
+        "type": "message"
+      },
+      {
+        "content": [
+          {
+            "text": "norn-synthetic-prompt-role-01-001",
+            "type": "input_text"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      }
+    ],
+    "instructions": "norn-synthetic-prompt-role-01-instructions",
+    "model": "norn-synthetic-generic-role-01-model"
+  },
+  "schema_version": 1
+}

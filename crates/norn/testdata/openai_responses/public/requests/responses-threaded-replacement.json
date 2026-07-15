@@ -1,0 +1,25 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "request",
+  "dialect": "public",
+  "fixture_id": "fixture-responses-threaded-replacement",
+  "payload": {
+    "input": [
+      {
+        "content": [
+          {
+            "text": "norn-synthetic-prompt-state-02-001",
+            "type": "input_text"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      }
+    ],
+    "instructions": "norn-synthetic-prompt-state-02-replacement",
+    "model": "norn-synthetic-generic-state-02-model",
+    "previous_response_id": "norn-synthetic-state-state-02-001",
+    "store": true
+  },
+  "schema_version": 1
+}

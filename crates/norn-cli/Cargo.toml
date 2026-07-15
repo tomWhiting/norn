@@ -30,6 +30,7 @@ dirs = { workspace = true }
 glob.workspace = true
 humantime = "2.3.0"
 norn = { path = "../norn" }
+norn-policy = { path = "../norn-policy" }
 norn-tui = { path = "../norn-tui" }
 parking_lot = "0.12.5"
 reqwest = { workspace = true, features = ["json"] }

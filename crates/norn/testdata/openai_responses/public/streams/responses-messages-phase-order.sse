@@ -1,0 +1,37 @@
+: norn-fixture-v1 {"artifact_family":"protocol_fixture","artifact_kind":"stream","dialect":"public","fixture_id":"fixture-responses-messages-phase-order","schema_version":1}
+event: response.output_item.added
+data: {"item":{"content":[],"id":"norn-synthetic-generic-evt-02-message-0","role":"assistant","status":"in_progress","type":"message"},"output_index":0,"sequence_number":1,"type":"response.output_item.added"}
+
+event: response.output_text.delta
+data: {"content_index":0,"delta":"norn-synthetic-prompt-evt-02-text-0","item_id":"norn-synthetic-generic-evt-02-message-0","logprobs":[],"output_index":0,"sequence_number":2,"type":"response.output_text.delta"}
+
+event: response.output_item.done
+data: {"item":{"content":[{"annotations":[],"text":"norn-synthetic-prompt-evt-02-text-0","type":"output_text"}],"id":"norn-synthetic-generic-evt-02-message-0","role":"assistant","status":"completed","type":"message"},"output_index":0,"sequence_number":3,"type":"response.output_item.done"}
+
+event: response.output_item.added
+data: {"item":{"content":[],"id":"norn-synthetic-generic-evt-02-message-1","phase":null,"role":"assistant","status":"in_progress","type":"message"},"output_index":1,"sequence_number":4,"type":"response.output_item.added"}
+
+event: response.output_text.delta
+data: {"content_index":0,"delta":"norn-synthetic-prompt-evt-02-text-1","item_id":"norn-synthetic-generic-evt-02-message-1","logprobs":[],"output_index":1,"sequence_number":5,"type":"response.output_text.delta"}
+
+event: response.output_item.done
+data: {"item":{"content":[{"annotations":[],"text":"norn-synthetic-prompt-evt-02-text-1","type":"output_text"}],"id":"norn-synthetic-generic-evt-02-message-1","phase":null,"role":"assistant","status":"completed","type":"message"},"output_index":1,"sequence_number":6,"type":"response.output_item.done"}
+
+event: response.output_item.added
+data: {"item":{"content":[],"id":"norn-synthetic-generic-evt-02-message-2","phase":"commentary","role":"assistant","status":"in_progress","type":"message"},"output_index":2,"sequence_number":7,"type":"response.output_item.added"}
+
+event: response.output_text.delta
+data: {"content_index":0,"delta":"norn-synthetic-prompt-evt-02-text-2","item_id":"norn-synthetic-generic-evt-02-message-2","logprobs":[],"output_index":2,"sequence_number":8,"type":"response.output_text.delta"}
+
+event: response.output_item.done
+data: {"item":{"content":[{"annotations":[],"text":"norn-synthetic-prompt-evt-02-text-2","type":"output_text"}],"id":"norn-synthetic-generic-evt-02-message-2","phase":"commentary","role":"assistant","status":"completed","type":"message"},"output_index":2,"sequence_number":9,"type":"response.output_item.done"}
+
+event: response.output_item.added
+data: {"item":{"content":[],"id":"norn-synthetic-generic-evt-02-message-3","phase":"final_answer","role":"assistant","status":"in_progress","type":"message"},"output_index":3,"sequence_number":10,"type":"response.output_item.added"}
+
+event: response.output_text.delta
+data: {"content_index":0,"delta":"norn-synthetic-prompt-evt-02-text-3","item_id":"norn-synthetic-generic-evt-02-message-3","logprobs":[],"output_index":3,"sequence_number":11,"type":"response.output_text.delta"}
+
+event: response.output_item.done
+data: {"item":{"content":[{"annotations":[],"text":"norn-synthetic-prompt-evt-02-text-3","type":"output_text"}],"id":"norn-synthetic-generic-evt-02-message-3","phase":"final_answer","role":"assistant","status":"completed","type":"message"},"output_index":3,"sequence_number":12,"type":"response.output_item.done"}
+

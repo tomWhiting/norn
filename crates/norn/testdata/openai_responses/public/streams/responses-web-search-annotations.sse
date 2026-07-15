@@ -1,0 +1,19 @@
+: norn-fixture-v1 {"artifact_family":"protocol_fixture","artifact_kind":"stream","dialect":"public","fixture_id":"fixture-responses-web-search-annotations","schema_version":1}
+event: response.web_search_call.in_progress
+data: {"item_id":"norn-synthetic-generic-evt-03-search","output_index":0,"sequence_number":1,"type":"response.web_search_call.in_progress"}
+
+event: response.web_search_call.searching
+data: {"item_id":"norn-synthetic-generic-evt-03-search","output_index":0,"sequence_number":2,"type":"response.web_search_call.searching"}
+
+event: response.web_search_call.completed
+data: {"item_id":"norn-synthetic-generic-evt-03-search","output_index":0,"sequence_number":3,"type":"response.web_search_call.completed"}
+
+event: response.output_item.done
+data: {"item":{"action":{"query":"norn-synthetic-prompt-evt-03-query","sources":[{"type":"url","url":"https://developers.openai.com/api/docs/guides/tools-web-search"}],"type":"search"},"id":"norn-synthetic-generic-evt-03-search","status":"completed","type":"web_search_call"},"output_index":0,"sequence_number":4,"type":"response.output_item.done"}
+
+event: response.output_text.annotation.added
+data: {"annotation":{"end_index":1,"start_index":0,"title":"norn-synthetic-generic-evt-03-title","type":"url_citation","url":"https://developers.openai.com/api/docs/guides/tools-web-search"},"annotation_index":0,"content_index":0,"item_id":"norn-synthetic-generic-evt-03-message","output_index":1,"sequence_number":5,"type":"response.output_text.annotation.added"}
+
+event: response.output_item.done
+data: {"item":{"content":[{"annotations":[{"end_index":1,"start_index":0,"title":"norn-synthetic-generic-evt-03-title","type":"url_citation","url":"https://developers.openai.com/api/docs/guides/tools-web-search"}],"text":"norn-synthetic-prompt-evt-03-answer","type":"output_text"}],"id":"norn-synthetic-generic-evt-03-message","role":"assistant","status":"completed","type":"message"},"output_index":1,"sequence_number":6,"type":"response.output_item.done"}
+

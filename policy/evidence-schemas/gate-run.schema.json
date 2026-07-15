@@ -1,0 +1,377 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://norn.example.invalid/policy/evidence-schemas/gate-run.schema.json",
+  "title": "Norn P1 local gate run descriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_id",
+    "phase",
+    "started_at",
+    "completed_at",
+    "outcome",
+    "failure_codes",
+    "candidate",
+    "base",
+    "gate",
+    "interpreter",
+    "environment",
+    "resource_limits",
+    "tools",
+    "repository_start",
+    "commands",
+    "repository_end"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "evidence_id": { "const": "p1-gate-local-001" },
+    "phase": { "const": "P1" },
+    "started_at": { "$ref": "#/$defs/timestamp" },
+    "completed_at": { "$ref": "#/$defs/timestamp" },
+    "outcome": { "enum": ["passed", "failed"] },
+    "failure_codes": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.:-]*$" },
+      "uniqueItems": true
+    },
+    "candidate": { "$ref": "#/$defs/gitIdentity" },
+    "base": { "$ref": "#/$defs/gitIdentity" },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entrypoint_path",
+        "entrypoint_sha256",
+        "command_manifest_path",
+        "command_manifest_sha256",
+        "pinned_files"
+      ],
+      "properties": {
+        "entrypoint_path": { "const": "scripts/p1-gate" },
+        "entrypoint_sha256": { "$ref": "#/$defs/sha256" },
+        "command_manifest_path": { "const": "policy/gate-commands.json" },
+        "command_manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "pinned_files": {
+          "type": "array",
+          "minItems": 16,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/pinnedFile" }
+        }
+      }
+    },
+    "interpreter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256", "version"],
+      "properties": {
+        "id": { "const": "python" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "caller_environment_inherited",
+        "credential_environment_inherited",
+        "cache_bridges",
+        "controlled"
+      ],
+      "properties": {
+        "caller_environment_inherited": { "const": [] },
+        "credential_environment_inherited": { "const": [] },
+        "cache_bridges": {
+          "type": "array",
+          "maxItems": 2,
+          "items": { "enum": ["cargo-git-cache", "cargo-registry-cache"] },
+          "uniqueItems": true
+        },
+        "controlled": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "CARGO_BUILD_JOBS",
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_NET_OFFLINE",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_NOSYSTEM",
+            "GIT_CONFIG_SYSTEM",
+            "GIT_PAGER",
+            "GIT_TERMINAL_PROMPT",
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "NO_COLOR",
+            "PAGER",
+            "PATH",
+            "PYTHONDONTWRITEBYTECODE",
+            "RUST_BACKTRACE",
+            "RUSTC",
+            "RUSTDOC",
+            "SDKROOT",
+            "TERM",
+            "TMPDIR",
+            "TZ"
+          ],
+          "properties": {
+            "CARGO_BUILD_JOBS": { "const": "1" },
+            "CARGO_HOME": { "$ref": "#/$defs/repositoryRelativePath" },
+            "CARGO_INCREMENTAL": { "const": "0" },
+            "CARGO_NET_OFFLINE": { "const": "true" },
+            "CARGO_TARGET_DIR": { "$ref": "#/$defs/repositoryRelativePath" },
+            "CARGO_TERM_COLOR": { "const": "never" },
+            "GIT_CONFIG_GLOBAL": { "const": "/dev/null" },
+            "GIT_CONFIG_NOSYSTEM": { "const": "1" },
+            "GIT_CONFIG_SYSTEM": { "const": "/dev/null" },
+            "GIT_PAGER": { "const": "cat" },
+            "GIT_TERMINAL_PROMPT": { "const": "0" },
+            "HOME": { "$ref": "#/$defs/repositoryRelativePath" },
+            "LANG": { "const": "C" },
+            "LC_ALL": { "const": "C" },
+            "NO_COLOR": { "const": "1" },
+            "PAGER": { "const": "cat" },
+            "PATH": {
+              "const": ["selected-rust-toolchain", "system-usr-bin", "system-bin"]
+            },
+            "PYTHONDONTWRITEBYTECODE": { "const": "1" },
+            "RUST_BACKTRACE": { "const": "0" },
+            "RUSTC": { "const": "tool:rustc" },
+            "RUSTDOC": { "const": "tool:rustdoc" },
+            "SDKROOT": {
+              "enum": ["macos-xcode-default", "macos-command-line-tools", null]
+            },
+            "TERM": { "const": "dumb" },
+            "TMPDIR": { "$ref": "#/$defs/repositoryRelativePath" },
+            "TZ": { "const": "UTC" }
+          }
+        }
+      }
+    },
+    "resource_limits": { "$ref": "#/$defs/resourceLimits" },
+    "tools": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/tool" },
+      "uniqueItems": true
+    },
+    "repository_start": { "$ref": "#/$defs/repositorySnapshot" },
+    "commands": {
+      "type": "array",
+      "maxItems": 14,
+      "items": { "$ref": "#/$defs/command" }
+    },
+    "repository_end": { "$ref": "#/$defs/repositorySnapshot" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "outcome": { "const": "passed" } } },
+      "then": {
+        "properties": {
+          "failure_codes": { "maxItems": 0 },
+          "commands": {
+            "minItems": 14,
+            "maxItems": 14,
+            "items": {
+              "allOf": [
+                { "$ref": "#/$defs/command" },
+                { "properties": { "outcome": { "const": "passed" } } }
+              ]
+            }
+          }
+        }
+      },
+      "else": { "properties": { "failure_codes": { "minItems": 1 } } }
+    }
+  ],
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$"
+    },
+    "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "repositoryRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+    },
+    "gitIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "tree"],
+      "properties": {
+        "commit": { "$ref": "#/$defs/sha1" },
+        "tree": { "$ref": "#/$defs/sha1" }
+      }
+    },
+    "repositorySnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "tree",
+        "clean",
+        "status_sha256",
+        "conflict_sha256",
+        "submodule_sha256",
+        "submodules_clean"
+      ],
+      "properties": {
+        "commit": { "$ref": "#/$defs/sha1" },
+        "tree": { "$ref": "#/$defs/sha1" },
+        "clean": { "type": "boolean" },
+        "status_sha256": { "$ref": "#/$defs/sha256" },
+        "conflict_sha256": { "$ref": "#/$defs/sha256" },
+        "submodule_sha256": { "$ref": "#/$defs/sha256" },
+        "submodules_clean": { "type": "boolean" }
+      }
+    },
+    "pinnedFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "sha256", "status"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "path": { "$ref": "#/$defs/repositoryRelativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "status": { "enum": ["active", "pending_fail_closed"] }
+      }
+    },
+    "resourceLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "command_timeout_seconds", "per_log_max_bytes"],
+      "properties": {
+        "status": { "const": "owner_decision_required" },
+        "command_timeout_seconds": { "const": null },
+        "per_log_max_bytes": { "const": null }
+      }
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "log": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "bytes", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/repositoryRelativePath" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "distribution": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["observations", "passed", "failed"],
+      "properties": {
+        "observations": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "order",
+        "id",
+        "kind",
+        "argv",
+        "tool",
+        "started_at",
+        "completed_at",
+        "process_outcome",
+        "outcome",
+        "exit_code",
+        "failure_code",
+        "test_executions",
+        "distribution",
+        "stdout",
+        "stderr"
+      ],
+      "properties": {
+        "order": { "type": "integer", "minimum": 1 },
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "kind": {
+          "enum": [
+            "metadata",
+            "phase_test",
+            "integration",
+            "format",
+            "lint",
+            "test",
+            "doc_test",
+            "diff",
+            "policy",
+            "audit",
+            "redaction",
+            "distribution",
+            "self_check"
+          ]
+        },
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "tool": { "$ref": "#/$defs/tool" },
+        "started_at": { "$ref": "#/$defs/timestamp" },
+        "completed_at": { "$ref": "#/$defs/timestamp" },
+        "process_outcome": { "enum": ["passed", "failed", "failed_to_start"] },
+        "outcome": { "enum": ["passed", "failed"] },
+        "exit_code": { "type": ["integer", "null"] },
+        "failure_code": {
+          "type": ["string", "null"],
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "test_executions": { "type": "integer", "minimum": 0 },
+        "distribution": { "$ref": "#/$defs/distribution" },
+        "stdout": { "$ref": "#/$defs/log" },
+        "stderr": { "$ref": "#/$defs/log" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "passed" } } },
+          "then": {
+            "properties": {
+              "process_outcome": { "const": "passed" },
+              "exit_code": { "const": 0 },
+              "failure_code": { "const": null }
+            }
+          }
+        },
+        {
+          "if": {
+            "allOf": [
+              { "properties": { "kind": { "const": "distribution" } } },
+              { "properties": { "outcome": { "const": "passed" } } }
+            ]
+          },
+          "then": {
+            "properties": {
+              "distribution": {
+                "type": "object",
+                "properties": {
+                  "observations": { "minimum": 20 },
+                  "failed": { "const": 0 }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

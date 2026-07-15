@@ -1,0 +1,29 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "request",
+  "dialect": "public",
+  "fixture_id": "fixture-responses-anchor-reset-reasoning",
+  "payload": {
+    "include": [
+      "reasoning.encrypted_content"
+    ],
+    "input": [
+      {
+        "encrypted_content": "norn-synthetic-generic-state-03-encrypted",
+        "id": "norn-synthetic-generic-state-03-reasoning",
+        "summary": [],
+        "type": "reasoning"
+      },
+      {
+        "encrypted_content": "norn-synthetic-generic-state-03-compacted",
+        "id": "norn-synthetic-generic-state-03-compaction",
+        "type": "compaction"
+      },
+      {
+        "type": "compaction_trigger"
+      }
+    ],
+    "model": "norn-synthetic-generic-state-03-model"
+  },
+  "schema_version": 1
+}

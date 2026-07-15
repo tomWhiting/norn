@@ -1,0 +1,107 @@
+#!/bin/sh
+set -eu
+umask 077
+
+if [ "$#" -ne 0 ]; then
+    printf '%s\n' 'p1-gate rejected: p1-gate accepts no arguments' >&2
+    exit 2
+fi
+
+case $0 in
+    */*) entry_dir=${0%/*} ;;
+    *) entry_dir=. ;;
+esac
+entry_dir=$(CDPATH= cd -P "$entry_dir" && pwd)
+repo_root=$(CDPATH= cd -P "$entry_dir/.." && pwd)
+if [ "$(pwd -P)" != "$repo_root" ]; then
+    printf '%s\n' 'p1-gate rejected: p1-gate must run from the repository root' >&2
+    exit 2
+fi
+implementation=$entry_dir/p1_gate.py
+if [ ! -f "$implementation" ] || [ -L "$implementation" ]; then
+    printf '%s\n' 'p1-gate rejected: implementation is not a regular file' >&2
+    exit 2
+fi
+
+ensure_directory() {
+    if [ -L "$1" ] || { [ -e "$1" ] && [ ! -d "$1" ]; }; then
+        printf '%s\n' "p1-gate rejected: gate directory is not a real directory: $2" >&2
+        exit 2
+    fi
+    if [ ! -d "$1" ] && ! /bin/mkdir -m 700 "$1"; then
+        printf '%s\n' "p1-gate rejected: cannot create gate directory: $2" >&2
+        exit 2
+    fi
+}
+
+ensure_directory "$repo_root/target" target
+ensure_directory "$repo_root/target/p1-gate" target/p1-gate
+ensure_directory "$repo_root/target/p1-gate/launcher-tmp" target/p1-gate/launcher-tmp
+/bin/chmod 700 "$repo_root/target/p1-gate" "$repo_root/target/p1-gate/launcher-tmp"
+
+platform=$(/usr/bin/uname -s 2>/dev/null) || {
+    printf '%s\n' 'p1-gate rejected: cannot determine the operating system' >&2
+    exit 2
+}
+sdkroot=
+if [ "$platform" = Darwin ]; then
+    for sdk in \
+        /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk \
+        /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+    do
+        if [ -d "$sdk" ]; then
+            sdkroot=$sdk
+            break
+        fi
+    done
+    if [ -z "$sdkroot" ]; then
+        printf '%s\n' 'p1-gate rejected: no approved macOS SDK is available' >&2
+        exit 2
+    fi
+fi
+
+version_probe='import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'
+python=
+for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+    if [ -x "$candidate" ] && "$candidate" -I -c "$version_probe" >/dev/null 2>&1; then
+        python=$candidate
+        break
+    fi
+done
+if [ -z "$python" ]; then
+    printf '%s\n' 'p1-gate rejected: no supported Python interpreter is available' >&2
+    exit 2
+fi
+
+override_probe='import os
+exact = {
+    "CARGO", "CARGO_ENCODED_RUSTFLAGS", "CARGO_HOME", "CARGO_INCREMENTAL",
+    "CARGO_TARGET_DIR", "CLIPPY_CONF_DIR", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CEILING_DIRECTORIES", "GIT_COMMON_DIR", "GIT_CONFIG", "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_SYSTEM", "GIT_DIFF_OPTS",
+    "GIT_DIR", "GIT_EXTERNAL_DIFF", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+    "GIT_WORK_TREE", "MAKEFLAGS", "PYTHONHOME", "PYTHONPATH", "RUSTC",
+    "RUSTC_BOOTSTRAP", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "RUSTDOC",
+    "RUSTDOCFLAGS", "RUSTFLAGS", "RUSTFMT", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN",
+    "SDKROOT",
+}
+prefixes = (
+    "CARGO_ALIAS_", "CARGO_BUILD_", "CARGO_PROFILE_", "CARGO_TARGET_",
+    "GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_", "NORN_P1_GATE_", "NORN_POLICY_",
+)
+present = any(name in exact or name.startswith(prefixes) for name in os.environ)
+raise SystemExit(1 if present else 0)'
+if ! "$python" -I -c "$override_probe" >/dev/null 2>&1; then
+    printf '%s\n' 'p1-gate rejected: forbidden launcher override environment is present' >&2
+    exit 2
+fi
+
+launcher_tmp=$repo_root/target/p1-gate/launcher-tmp
+if [ "$platform" = Darwin ]; then
+    exec /usr/bin/env -i \
+        LANG=C LC_ALL=C PYTHONDONTWRITEBYTECODE=1 TMPDIR="$launcher_tmp" TZ=UTC \
+        SDKROOT="$sdkroot" "$python" -I "$implementation"
+fi
+exec /usr/bin/env -i \
+    LANG=C LC_ALL=C PYTHONDONTWRITEBYTECODE=1 TMPDIR="$launcher_tmp" TZ=UTC \
+    "$python" -I "$implementation"

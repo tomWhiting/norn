@@ -1,0 +1,31 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "request",
+  "dialect": "public",
+  "fixture_id": "fixture-cache-typed-controls",
+  "payload": {
+    "input": [
+      {
+        "content": [
+          {
+            "prompt_cache_breakpoint": {
+              "mode": "explicit"
+            },
+            "text": "norn-synthetic-prompt-cache-05-001",
+            "type": "input_text"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      }
+    ],
+    "model": "norn-synthetic-generic-cache-05-model",
+    "prompt_cache_key": "norn-synthetic-cache-cache-05-001",
+    "prompt_cache_options": {
+      "mode": "explicit",
+      "ttl": "30m"
+    },
+    "prompt_cache_retention": "24h"
+  },
+  "schema_version": 1
+}

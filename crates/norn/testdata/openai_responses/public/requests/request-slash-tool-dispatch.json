@@ -1,0 +1,42 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "request",
+  "dialect": "public",
+  "fixture_id": "fixture-request-slash-tool-dispatch",
+  "payload": {
+    "input": [
+      {
+        "content": [
+          {
+            "text": "norn-synthetic-prompt-req-01-001",
+            "type": "input_text"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      }
+    ],
+    "model": "norn-synthetic-generic-req-01-model",
+    "tool_choice": "auto",
+    "tools": [
+      {
+        "description": "norn-synthetic-generic-req-01-description",
+        "name": "norn-synthetic-generic-req-01-tool",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "norn-synthetic-generic-req-01-field": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "norn-synthetic-generic-req-01-field"
+          ],
+          "type": "object"
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "schema_version": 1
+}

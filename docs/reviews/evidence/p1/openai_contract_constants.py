@@ -1,0 +1,190 @@
+"""Closed literals pinned by the public Responses contract extractor."""
+
+from __future__ import annotations
+
+from typing import Final
+
+
+SCHEMA_VERSION: Final = 1
+EXTRACTOR_VERSION: Final = "norn-openai-responses-contract-v1"
+EVENT_COUNT: Final = 53
+INPUT_TYPES: Final = (
+    "message",
+    "message",
+    "message",
+    "file_search_call",
+    "computer_call",
+    "computer_call_output",
+    "web_search_call",
+    "function_call",
+    "function_call_output",
+    "tool_search_call",
+    "tool_search_output",
+    "additional_tools",
+    "reasoning",
+    "compaction",
+    "image_generation_call",
+    "code_interpreter_call",
+    "local_shell_call",
+    "local_shell_call_output",
+    "shell_call",
+    "shell_call_output",
+    "apply_patch_call",
+    "apply_patch_call_output",
+    "mcp_list_tools",
+    "mcp_approval_request",
+    "mcp_approval_response",
+    "mcp_call",
+    "custom_tool_call_output",
+    "custom_tool_call",
+    "compaction_trigger",
+    "item_reference",
+    "program",
+    "program_output",
+)
+OUTPUT_TYPES: Final = (
+    "message",
+    "file_search_call",
+    "function_call",
+    "function_call_output",
+    "web_search_call",
+    "computer_call",
+    "computer_call_output",
+    "reasoning",
+    "program",
+    "program_output",
+    "tool_search_call",
+    "tool_search_output",
+    "additional_tools",
+    "compaction",
+    "image_generation_call",
+    "code_interpreter_call",
+    "local_shell_call",
+    "local_shell_call_output",
+    "shell_call",
+    "shell_call_output",
+    "apply_patch_call",
+    "apply_patch_call_output",
+    "mcp_call",
+    "mcp_list_tools",
+    "mcp_approval_request",
+    "mcp_approval_response",
+    "custom_tool_call",
+    "custom_tool_call_output",
+)
+TOOL_TYPES: Final = (
+    ("function",),
+    ("file_search",),
+    ("computer",),
+    ("computer_use_preview",),
+    ("web_search", "web_search_2025_08_26"),
+    ("mcp",),
+    ("code_interpreter",),
+    ("programmatic_tool_calling",),
+    ("image_generation",),
+    ("local_shell",),
+    ("shell",),
+    ("custom",),
+    ("namespace",),
+    ("tool_search",),
+    ("web_search_preview", "web_search_preview_2025_03_11"),
+    ("apply_patch",),
+)
+ANNOTATIONS: Final = (
+    "file_citation",
+    "url_citation",
+    "container_file_citation",
+    "file_path",
+)
+INCLUDES: Final = (
+    "file_search_call.results",
+    "web_search_call.results",
+    "web_search_call.action.sources",
+    "message.input_image.image_url",
+    "computer_call_output.output.image_url",
+    "code_interpreter_call.outputs",
+    "reasoning.encrypted_content",
+    "message.output_text.logprobs",
+)
+STATUSES: Final = (
+    "completed",
+    "failed",
+    "in_progress",
+    "cancelled",
+    "queued",
+    "incomplete",
+)
+INCOMPLETE_REASONS: Final = ("max_output_tokens", "content_filter")
+PHASE_REFS: Final = (
+    "#/components/schemas/EasyInputMessage/properties/phase",
+    "#/components/schemas/OutputMessage/properties/phase",
+)
+EXPECTED_DISCREPANCIES: Final = (
+    ("response.failed", "sequence_number", "example_missing_required_field"),
+    ("response.output_text.delta", "logprobs", "example_missing_required_field"),
+    ("response.output_text.done", "logprobs", "example_missing_required_field"),
+    ("response.function_call_arguments.delta", None, "example_invalid_json"),
+    (
+        "response.custom_tool_call_input.delta",
+        "sequence_number",
+        "example_missing_required_field",
+    ),
+    (
+        "response.custom_tool_call_input.done",
+        "sequence_number",
+        "example_missing_required_field",
+    ),
+    ("response.audio.delta", "response_id", "example_only_unclassified"),
+    ("response.audio.done", "response_id", "example_only_unclassified"),
+    ("response.audio.transcript.delta", "response_id", "example_only_unclassified"),
+    ("response.audio.transcript.done", "response_id", "example_only_unclassified"),
+)
+NODE_KEYS: Final = {
+    "HttpDeclTypeAlias": {
+        "kind",
+        "children",
+        "childrenParentSchema",
+        "docstring",
+        "ident",
+        "oasRef",
+        "type",
+    },
+    "HttpDeclProperty": {
+        "kind",
+        "children",
+        "childrenParentSchema",
+        "constraints",
+        "default",
+        "deprecated",
+        "docstring",
+        "examples",
+        "key",
+        "modelImplicit",
+        "modelPath",
+        "nullable",
+        "oasRef",
+        "optional",
+        "schemaType",
+        "title",
+        "type",
+    },
+    "HttpDeclReference": {"kind", "children", "childrenParentSchema", "type"},
+}
+TYPE_KEYS: Final = {
+    "HttpTypeObject": {"kind", "members"},
+    "HttpTypeUnion": {"kind", "oasRef", "types"},
+    "HttpTypeLiteral": {"kind", "literal"},
+    "HttpTypeBoolean": {"kind"},
+    "HttpTypeString": {"kind"},
+    "HttpTypeNumber": {"kind"},
+    "HttpTypeUnknown": {"kind"},
+    "HttpTypeArray": {"kind", "elementType", "oasRef"},
+    "HttpTypeReference": {"kind", "$ref", "ident", "oasRef", "typeParameters"},
+}
+STRIPPED_NODE_KEYS: Final = {
+    "docstring",
+    "examples",
+    "modelImplicit",
+    "modelPath",
+    "title",
+}

@@ -1,7 +1,9 @@
 # Responses API remediation plan
 
-- **Status:** Active; P0 accepted, P1 Gate A complete and Gate B foundation
-  next. The focused independent
+- **Status:** Active; P0 accepted, P1 Gate A entry review complete and Gate B
+  foundation in progress. Two implementation-foundation corrections await the
+  required independent confirmation: assistant-phase nullability and removal
+  of inert generated-include metadata. The focused independent
   correction review committed at `7ce29d7` returned `READY` for source head
   `e1bf7f2` and the full `41ea210..e1bf7f2` seam sweep. It independently
   reproduced Gate C 38/38, distributions 830/830, the full-range policy, and
@@ -211,9 +213,11 @@ files contain large inline test modules.
   baseline with an owner and remediation record. Responses-area violations are
   assigned to a phase here; unrelated debt is assigned outside this program and
   may not grow.
-- [ ] `mod.rs` contains declarations and re-exports only. `lib.rs` and `main.rs`
-  remain thin entry points and stay below the configured 200 production-LOC
-  limit.
+- [ ] `mod.rs` contains declarations and re-exports only. Exact Cargo library,
+  proc-macro, and binary target roots remain thin entry points and stay below
+  the configured 200 production-LOC limit. Examples, build scripts, integration
+  tests, benchmarks, and nested files named `lib.rs` or `main.rs` use the
+  500-line production ceiling.
 - [ ] Test code is not moved behind `#[cfg(test)]` to disguise production LOC.
 - [ ] Module splitting preserves behavior and is reviewed separately from the
   behavioral fix where practical.
@@ -251,7 +255,7 @@ the P1 base.
 - [x] The phase's owner decisions are recorded before implementation. The D0
   entry disposition permits local P1 work while remote enforcement remains an
   explicit exit blocker; it does not waive any local gate or evidence.
-- [x] Its finding IDs, invariants, production touch points, and defect-regression
+- [ ] Its finding IDs, invariants, production touch points, and defect-regression
   or measurement/design evidence method are agreed by the implementer and
   domain reviewer.
   Ratified artifacts are the
@@ -260,7 +264,11 @@ the P1 base.
   [62-row evidence preregistration](reviews/evidence/p1/finding-traceability.jsonl).
   The independent
   [`Gate A review`](reviews/2026-07-15-p1-gate-a-review.md) returned `READY` on
-  2026-07-15 without making an implementation or test claim.
+  2026-07-15 without making an implementation or test claim. Foundation
+  extraction subsequently corrected assistant `phase` from optional/non-null
+  to optional/nullable in both public message schemas. The official MCP source
+  is decisive; this one agreement box remains open until the first foundation
+  reviewer confirms the documented correction and four-state fixture contract.
 - [x] Any live credential use, external call, or billable experiment has
   separate owner approval before it runs. P1 permits official documentation
   retrieval but no live provider request or credential experiment.
@@ -1039,10 +1047,35 @@ seams, closed GD-1 through GD-18, and returned `READY`; P0 is accepted.
 
 ## P1. Contract and enforcement baseline
 
-**Status:** [ ] Gate A complete and independently `READY` at phase base
-`2917c8e`; Gate B foundation not yet implemented; **findings supported:** all;
+**Status:** [ ] Gate A was independently `READY` at phase base `2917c8e`, with
+two foundation corrections awaiting re-review: official assistant-phase
+nullability and removal of non-enforcing generated-include metadata. Gate B
+foundation is in progress; **findings supported:** all;
 **dependency state:** P0 accepted. D0 remote enforcement is owner-deferred to
 P1 exit and still blocks acceptance, not local implementation.
+
+### Current implementation ledger (2026-07-15)
+
+This is an implementation-progress ledger, not Gate B or Gate C evidence. A
+component is not marked complete merely because source exists; the broad work
+checklist below remains open until the joined behavior and required evidence
+prove its complete claim.
+
+| P1 component | Current state | Evidence or remaining boundary |
+|---|---|---|
+| Gate A source and policy contracts | Complete, correction re-review pending | Ratified at `6669b9d`; the documented assistant-phase nullability and generated-registry corrections still require the planned foundation reviewer confirmation before the universal Gate A agreement box closes. |
+| Finding traceability preregistration | Complete | The strict 62-row registry is checked in and its independent dimensions are validated without inferring severity from evidence class. |
+| Official public Responses extraction | Complete for the foundation source pin | The checked extractor has 13 passing self-tests and reproduces the checked public contract outputs byte-for-byte from the repository-local retained MCP source material. |
+| Pure repository-policy analyzers | Foundation target-verified; production adapter pending | Cargo/cfg/module reachability, production LOC and shape, prohibited debt, immutable origin, and legacy-governance components pass the complete `norn-policy --all-targets` suite and strict all-target Clippy. Production complete-snapshot acquisition and whole-workspace Gate C proof remain outstanding. |
+| Writer inventory and family authority | Analyzer target-verified; final authority pending | Built-in sink and separate family authorities, heap-backed traversal, lexical scope, exact receiver/type provenance, and narrow proof-bearing local authority-parameter propagation pass all 67 writer integration tests, including 20,000-depth regressions. The generated checked-tree inventory, final family authority, and Gate C proof remain outstanding. |
+| Evidence redaction authority | Validator target-verified; final registry pending | Closed schemas, exact path inventory, dangerous-shape checks, strict registry decoding, context-bound synthetic sentinels, and non-disclosing findings pass all 43 redaction integration tests. The final non-vacuous registry authority, complete checked-tree acquisition, and Gate C proof remain outstanding. |
+| Public plus Codex contract authority | Foundation target-verified; whole-phase integration pending | The authority binds 52 governed files, including the generated 44-file corpus, to fixed public/Codex source pins and strict control manifests. Exact bidirectional traceability covers 62 rows and 39 fixture mappings; intrinsic official-source allowlists, real-corpus acquisition, strict duplicate-key rejection, undeclared-entry rejection, and non-disclosing errors are implemented. All 19 contract tests pass inside the green all-target crate suite; final authority acquisition and Gate C proof remain outstanding. |
+| Snapshot-owned phase authority | Typed foundation target-verified; production adapter pending | Fixed-path acquisition and semantic validation exist across origin, governance, writer-family, contract, redaction, traceability, and gate authorities. Distinct complete-current and base roles now bind the ratified commit, tree, leaf modes, blob identities, and exact inventory digest; swap, mode, marker-deletion, and partial-snapshot negatives pass. Production Git/filesystem acquisition, pinned governance transition, final authorities, and a real successful checked-tree path remain outstanding. |
+| Joined repository-policy evaluator | Pure join target-verified; real-authority path pending | The absent/ready/invalid join is deterministic, preserves closed Responses traceability issue/count data, reaches redaction findings, and excludes hostile paths, identifiers, bytes, and private digests from serialized/debug failures. The full crate suite passes 32 library tests plus every integration target. Production monotonic-governance wiring, a successful final-authority path, and CLI/runtime publication enforcement remain outstanding. |
+| Sanitized protocol fixture corpus | Generated, acquired, and redaction-verified | All 44 deterministic public/Codex request, stream, transport, backend-matrix, manifest, and control artifacts are generated. Generator/extractor checks pass 44/44 files and 21/21 Python tests; the green all-target Rust suite proves strict acquisition through 19 contract tests and corpus redaction through 43 redaction tests. Final clean-checkout Gate C evidence remains outstanding. |
+| CLI/runtime staged enforcement | Not started | `norn-policy` is not yet wired into the repository command, first-party pre-publication mutation path, post-mutation/completion feedback, or shared workspace coordinator. |
+| Local Gate C entrypoint | Infrastructure only | The orchestrator, environment isolation, evidence finalization, and schema tests exist, but four support legs intentionally remain failing placeholders until their real policy/redaction/distribution/self-check commands can be pinned. |
+| Final authorities and review packet | Not started | Repository policy, origin, governance, writer families, redaction registry, phase lock, clean-checkout evidence, and the independent P1 foundation review are still outstanding. |
 
 ### What this phase fixes
 
@@ -1069,11 +1102,14 @@ campaign rules. No provider behavior changes in this phase.
 - [x] Ratify this plan and the source review's finding IDs and severity.
 - [x] Record the public Responses documentation revision and official Codex
   source commit used as the conformance contract.
-- [ ] Build sanitized fixtures for text, multiple assistant phases, encrypted
+- [x] Build sanitized fixtures for text, multiple assistant phases, encrypted
   reasoning, function/custom calls, refusal, hosted search and annotations,
   compaction, unknown reasoning parts/items, interleaved and duplicate call
   completion, malformed terminal data, `end_turn`, turn-state headers/metadata,
   failures, rate limits, incomplete streams, and cache usage.
+  The 44-file source corpus and deterministic generator pass exact regeneration,
+  strict acquisition, corpus redaction, and the joined all-target policy crate
+  suite. Final clean-checkout Gate C evidence remains a separate exit item.
 - [x] Add a traceability preregistration mapping each confirmed defect to a
   planned regression
   and each unproven/design finding to its baseline and pre-registered contract.
@@ -1093,7 +1129,7 @@ campaign rules. No provider behavior changes in this phase.
   fails on a new entry, growth, production edits, or an overdue entry. A touched
   active exception resolves only after the file is at or below 500 production
   LOC; its immutable origin record remains as audit history.
-- [ ] Add a checked-in evidence-redaction validator for fixtures and evidence.
+- [x] Add a checked-in evidence-redaction validator for fixtures and evidence.
 - [ ] Wire every Gate C command, the policy checker, and the redaction validator
   into one checked-in local gate running from a clean checkout. The eventual
   D0-selected remote mechanism must invoke that same entrypoint without weaker
@@ -1837,7 +1873,7 @@ ledger prematurely.
 | Phase | Current implementation | Retained candidate evidence | Work still required before acceptance |
 |---|---|---|---|
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
-| P1 | Gate A complete at base `2917c8e`; Gate B foundation not yet implemented | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A `READY` | Implement and independently review the executable foundation, complete and verify P1, then resolve D0 before acceptance |
+| P1 | Gate A correction re-review and Gate B foundation in progress at base `2917c8e` | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A entry `READY`; 44-file fixture corpus and pure evaluator source-complete; authority-boundary audit corrections and joined verification active | Independently confirm Gate A corrections; finish typed Git/snapshot binding, bidirectional traceability, real authority acquisition, generated authorities, runtime enforcement, and Gate C; then resolve D0 before acceptance |
 | P2 | Not started | None | P1 acceptance and D9 |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |

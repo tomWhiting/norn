@@ -1,0 +1,71 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "backend_state_matrix",
+  "dialect": "corpus",
+  "fixture_id": "openai-responses-backend-state-matrix-v1",
+  "payload": {
+    "entries": [
+      {
+        "codex_overlay": "norn-synthetic-codex-overlay-001",
+        "concern": "request_authority",
+        "p1_treatment": "norn-synthetic-p1-treatment-001",
+        "public_contract": "norn-synthetic-public-contract-001"
+      },
+      {
+        "codex_overlay": "norn-synthetic-codex-overlay-002",
+        "concern": "stored_continuation",
+        "p1_treatment": "norn-synthetic-p1-treatment-002",
+        "public_contract": "norn-synthetic-public-contract-002"
+      },
+      {
+        "codex_overlay": "norn-synthetic-codex-overlay-003",
+        "concern": "stateless_continuation",
+        "p1_treatment": "norn-synthetic-p1-treatment-003",
+        "public_contract": "norn-synthetic-public-contract-003"
+      },
+      {
+        "codex_overlay": "norn-synthetic-codex-overlay-004",
+        "concern": "assistant_phase",
+        "p1_treatment": "norn-synthetic-p1-treatment-004",
+        "public_contract": "norn-synthetic-public-contract-004"
+      },
+      {
+        "codex_overlay": "norn-synthetic-codex-overlay-005",
+        "concern": "turn_state",
+        "p1_treatment": "norn-synthetic-p1-treatment-005",
+        "public_contract": "norn-synthetic-public-contract-005"
+      },
+      {
+        "codex_overlay": "norn-synthetic-codex-overlay-006",
+        "concern": "completion",
+        "p1_treatment": "norn-synthetic-p1-treatment-006",
+        "public_contract": "norn-synthetic-public-contract-006"
+      },
+      {
+        "codex_overlay": "norn-synthetic-codex-overlay-007",
+        "concern": "metadata",
+        "p1_treatment": "norn-synthetic-p1-treatment-007",
+        "public_contract": "norn-synthetic-public-contract-007"
+      },
+      {
+        "codex_overlay": "norn-synthetic-codex-overlay-008",
+        "concern": "compaction",
+        "p1_treatment": "norn-synthetic-p1-treatment-008",
+        "public_contract": "norn-synthetic-public-contract-008"
+      },
+      {
+        "codex_overlay": "norn-synthetic-codex-overlay-009",
+        "concern": "error_retry_semantics",
+        "p1_treatment": "norn-synthetic-p1-treatment-009",
+        "public_contract": "norn-synthetic-public-contract-009"
+      },
+      {
+        "codex_overlay": "norn-synthetic-codex-overlay-010",
+        "concern": "cache_reporting",
+        "p1_treatment": "norn-synthetic-p1-treatment-010",
+        "public_contract": "norn-synthetic-public-contract-010"
+      }
+    ]
+  },
+  "schema_version": 1
+}

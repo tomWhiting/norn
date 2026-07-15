@@ -1,0 +1,85 @@
+{
+  "count": 10,
+  "gate_corrections": [
+    {
+      "classification": "superseded_gate_a_source_claim",
+      "id": "gate-a-01",
+      "oas_refs": [
+        "#/components/schemas/EasyInputMessage/properties/phase",
+        "#/components/schemas/OutputMessage/properties/phase"
+      ],
+      "observed_nullable": true,
+      "observed_optional": true,
+      "source_ids": [
+        "streaming",
+        "websocket"
+      ],
+      "subject": "assistant_message_phase",
+      "superseded_claim": "optional_non_nullable"
+    }
+  ],
+  "items": [
+    {
+      "classification": "example_missing_required_field",
+      "event": "response.failed",
+      "field": "sequence_number",
+      "id": "sse-01"
+    },
+    {
+      "classification": "example_missing_required_field",
+      "event": "response.output_text.delta",
+      "field": "logprobs",
+      "id": "sse-02"
+    },
+    {
+      "classification": "example_missing_required_field",
+      "event": "response.output_text.done",
+      "field": "logprobs",
+      "id": "sse-03"
+    },
+    {
+      "classification": "example_invalid_json",
+      "event": "response.function_call_arguments.delta",
+      "field": null,
+      "id": "sse-04"
+    },
+    {
+      "classification": "example_missing_required_field",
+      "event": "response.custom_tool_call_input.delta",
+      "field": "sequence_number",
+      "id": "sse-05"
+    },
+    {
+      "classification": "example_missing_required_field",
+      "event": "response.custom_tool_call_input.done",
+      "field": "sequence_number",
+      "id": "sse-06"
+    },
+    {
+      "classification": "example_only_unclassified",
+      "event": "response.audio.delta",
+      "field": "response_id",
+      "id": "sse-07"
+    },
+    {
+      "classification": "example_only_unclassified",
+      "event": "response.audio.done",
+      "field": "response_id",
+      "id": "sse-08"
+    },
+    {
+      "classification": "example_only_unclassified",
+      "event": "response.audio.transcript.delta",
+      "field": "response_id",
+      "id": "sse-09"
+    },
+    {
+      "classification": "example_only_unclassified",
+      "event": "response.audio.transcript.done",
+      "field": "response_id",
+      "id": "sse-10"
+    }
+  ],
+  "kind": "public_responses_source_discrepancies",
+  "schema_version": 1
+}

@@ -1,0 +1,19 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "index",
+  "dialect": "corpus",
+  "fixture_id": "openai-responses-index-v1",
+  "payload": {
+    "codex_manifest": {
+      "bytes": 11225,
+      "path": "crates/norn/testdata/openai_responses/codex/manifest.json",
+      "sha256": "4dba6909e8b6bc7647714ed14a56069f0946139c0b9b63d5e790e6927a9f8a5f"
+    },
+    "public_manifest": {
+      "bytes": 19514,
+      "path": "crates/norn/testdata/openai_responses/public/manifest.json",
+      "sha256": "d995c6483e53647b9be225aebc5e22a49638efd0dd4e276b6a75df70bd27fa52"
+    }
+  },
+  "schema_version": 1
+}

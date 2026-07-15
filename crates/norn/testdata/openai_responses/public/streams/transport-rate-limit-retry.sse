@@ -1,0 +1,4 @@
+: norn-fixture-v1 {"artifact_family":"protocol_fixture","artifact_kind":"stream","dialect":"public","fixture_id":"fixture-transport-rate-limit-retry","schema_version":1}
+event: error
+data: {"code":"norn-synthetic-generic-trans-02-rate-limit","message":"norn-synthetic-prompt-trans-02-message","param":null,"sequence_number":1,"type":"error"}
+

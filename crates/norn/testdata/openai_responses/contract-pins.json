@@ -1,0 +1,41 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "contract_pins",
+  "dialect": "corpus",
+  "fixture_id": "openai-responses-contract-pins-v1",
+  "payload": {
+    "codex_source": {
+      "commit": "0396f99cf1a27fc87dd12d23403b25e840b6ecbd",
+      "sources": [
+        {
+          "blob": "f5896595c6fe1ec1b477096e5a41548039f673c7",
+          "path": "codex-rs/core/src/client.rs"
+        },
+        {
+          "blob": "70f96cb855005d577c57fd768062d035cc919b12",
+          "path": "codex-rs/codex-api/src/sse/responses.rs"
+        },
+        {
+          "blob": "e4600e26aab62a8495248346cd78ab3cb52b7191",
+          "path": "codex-rs/codex-api/src/common.rs"
+        },
+        {
+          "blob": "91fd42a5558a3836343ffb94ffef3a7f4050b332",
+          "path": "codex-rs/protocol/src/models.rs"
+        },
+        {
+          "blob": "804d05434e231049ffa63709728a5ed8b004e247",
+          "path": "codex-rs/login/src/server.rs"
+        }
+      ]
+    },
+    "public_contract": {
+      "manifest": {
+        "bytes": 3246,
+        "path": "policy/contracts/openai-responses-v1/manifest.json",
+        "sha256": "b430fa4c864b68c99b8b0dd3fe1e31c60ec68142cc92aa72ca2e1696f956e98d"
+      }
+    }
+  },
+  "schema_version": 1
+}

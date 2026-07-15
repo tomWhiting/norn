@@ -1,0 +1,30 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "transport",
+  "dialect": "codex",
+  "fixture_id": "fixture-codex-turn-state",
+  "payload": {
+    "requests": [
+      {
+        "turn_state": "norn-synthetic-state-codex-02-001"
+      },
+      {
+        "turn_state": "norn-synthetic-state-codex-02-001"
+      },
+      {
+        "turn_state": null
+      }
+    ],
+    "transport": [
+      {
+        "turn_state": "norn-synthetic-state-codex-02-001",
+        "type": "response.metadata"
+      },
+      {
+        "turn_state": null,
+        "type": "response.metadata"
+      }
+    ]
+  },
+  "schema_version": 1
+}

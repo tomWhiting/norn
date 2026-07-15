@@ -1,0 +1,20 @@
+{
+  "artifact_family": "protocol_fixture",
+  "artifact_kind": "transport",
+  "dialect": "codex",
+  "fixture_id": "fixture-oauth-logout-revoke",
+  "payload": {
+    "credential": "norn-synthetic-credential-auth-05-001",
+    "entries": [
+      {
+        "name": "norn-synthetic-generic-auth-05-local-delete",
+        "status": "completed"
+      },
+      {
+        "name": "norn-synthetic-generic-auth-05-remote-revoke",
+        "status": "failed"
+      }
+    ]
+  },
+  "schema_version": 1
+}

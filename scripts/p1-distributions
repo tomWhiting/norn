@@ -1,0 +1,313 @@
+#!/bin/sh
+""":"
+set -e
+umask 077
+python=
+for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+    if [ -x "$candidate" ] && "$candidate" -I -c \
+        'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
+        >/dev/null 2>&1; then
+        python=$candidate
+        break
+    fi
+done
+if [ -z "$python" ]; then
+    printf '%s\n' '{"code":"p1_distributions_interpreter_unavailable"}' >&2
+    exit 2
+fi
+exec /usr/bin/env -i \
+    CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS-}" \
+    CARGO_HOME="${CARGO_HOME-}" \
+    CARGO_INCREMENTAL="${CARGO_INCREMENTAL-}" \
+    CARGO_NET_OFFLINE="${CARGO_NET_OFFLINE-}" \
+    CARGO_TARGET_DIR="${CARGO_TARGET_DIR-}" \
+    CARGO_TERM_COLOR="${CARGO_TERM_COLOR-}" \
+    GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL-}" \
+    GIT_CONFIG_NOSYSTEM="${GIT_CONFIG_NOSYSTEM-}" \
+    GIT_CONFIG_SYSTEM="${GIT_CONFIG_SYSTEM-}" \
+    GIT_PAGER="${GIT_PAGER-}" \
+    GIT_TERMINAL_PROMPT="${GIT_TERMINAL_PROMPT-}" \
+    HOME="${HOME-}" LANG="${LANG-}" LC_ALL="${LC_ALL-}" \
+    NO_COLOR="${NO_COLOR-}" PAGER="${PAGER-}" \
+    PATH="${PATH-}" PYTHONDONTWRITEBYTECODE=1 \
+    RUST_BACKTRACE="${RUST_BACKTRACE-}" RUSTC="${RUSTC-}" \
+    RUSTDOC="${RUSTDOC-}" SDKROOT="${SDKROOT-}" TERM="${TERM-}" \
+    TMPDIR="${TMPDIR-}" TZ="${TZ-}" \
+    "$python" -I -B "$0" "$@"
+":"""
+
+"""Repeated exact repository-snapshot revalidation regression."""
+
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+BASE_COMMIT = "2917c8ed10e7a2ec7ac9c4d7283bafbea7f6577d"
+ROOT = Path(__file__).resolve().parent.parent
+GIT = Path("/usr/bin/git")
+OBSERVATIONS = 20
+TEST_NAME = (
+    "repository_snapshot::tests::"
+    "revalidation_detects_content_and_inventory_changes_without_retrying"
+)
+RESULT = re.compile(
+    r"test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; "
+    r"\d+ filtered out; finished in [^\r\n]+"
+)
+CASE = re.compile(rf"(?m)^test {re.escape(TEST_NAME)} \.\.\. ok$")
+EXPECTED_ENVIRONMENT = {
+    "CARGO_BUILD_JOBS",
+    "CARGO_HOME",
+    "CARGO_INCREMENTAL",
+    "CARGO_NET_OFFLINE",
+    "CARGO_TARGET_DIR",
+    "CARGO_TERM_COLOR",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_PAGER",
+    "GIT_TERMINAL_PROMPT",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "NO_COLOR",
+    "PAGER",
+    "PATH",
+    "PYTHONDONTWRITEBYTECODE",
+    "RUST_BACKTRACE",
+    "RUSTC",
+    "RUSTDOC",
+    "SDKROOT",
+    "TERM",
+    "TMPDIR",
+    "TZ",
+}
+
+
+class DistributionError(Exception):
+    """The distribution could not make complete independent observations."""
+
+
+def closed_git_environment() -> dict[str, str]:
+    return {
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+        "GIT_PAGER": "cat",
+        "GIT_TERMINAL_PROMPT": "0",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": "/usr/bin:/bin",
+        "TZ": "UTC",
+    }
+
+
+def git_text(*arguments: str) -> str:
+    result = subprocess.run(
+        [str(GIT), *arguments],
+        cwd=ROOT,
+        env=closed_git_environment(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise DistributionError("git observation failed")
+    try:
+        return result.stdout.decode("utf-8", errors="strict").strip()
+    except UnicodeError as error:
+        raise DistributionError("git observation is not UTF-8") from error
+
+
+def private_directory(path: Path, expected_parent: Path | None = None) -> Path:
+    try:
+        link_info = path.lstat()
+        resolved = path.resolve(strict=True)
+        info = resolved.stat()
+    except OSError as error:
+        raise DistributionError("controlled directory is unavailable") from error
+    if (
+        stat.S_ISLNK(link_info.st_mode)
+        or not stat.S_ISDIR(link_info.st_mode)
+        or not stat.S_ISDIR(info.st_mode)
+        or stat.S_IMODE(info.st_mode) & 0o077
+        or (expected_parent is not None and resolved.parent != expected_parent)
+    ):
+        raise DistributionError("controlled directory is invalid")
+    return resolved
+
+
+def regular_executable(path: Path) -> Path:
+    try:
+        resolved = path.resolve(strict=True)
+        info = resolved.stat()
+    except OSError as error:
+        raise DistributionError("controlled executable is unavailable") from error
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_IMODE(info.st_mode) & 0o022
+        or not os.access(resolved, os.X_OK)
+    ):
+        raise DistributionError("controlled executable is invalid")
+    return resolved
+
+
+def selected_sdk() -> str | None:
+    if os.uname().sysname != "Darwin":
+        return None
+    candidates = (
+        "/Applications/Xcode.app/Contents/Developer/Platforms/"
+        "MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+    )
+    return next((value for value in candidates if Path(value).is_dir()), None)
+
+
+def controlled_cargo_environment() -> tuple[Path, dict[str, str]]:
+    expected_names = set(EXPECTED_ENVIRONMENT)
+    sdk = selected_sdk()
+    if set(os.environ) != expected_names:
+        raise DistributionError("caller environment is not the closed gate environment")
+
+    fixed = {
+        "CARGO_BUILD_JOBS": "1",
+        "CARGO_HOME": str(ROOT / "target/p1-gate/cargo-home"),
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_NET_OFFLINE": "true",
+        "CARGO_TARGET_DIR": str(ROOT / "target/p1-gate/cargo-target"),
+        "CARGO_TERM_COLOR": "never",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+        "GIT_PAGER": "cat",
+        "GIT_TERMINAL_PROMPT": "0",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "NO_COLOR": "1",
+        "PAGER": "cat",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "RUST_BACKTRACE": "0",
+        "TERM": "dumb",
+        "TZ": "UTC",
+    }
+    for key, expected in fixed.items():
+        if os.environ.get(key) != expected:
+            raise DistributionError("closed gate environment value differs")
+
+    runtime_root = ROOT / "target/p1-gate/runtime"
+    temporary = private_directory(Path(os.environ["TMPDIR"]))
+    if temporary.name != "tmp" or temporary.parent.parent != runtime_root:
+        raise DistributionError("temporary directory is outside the gate runtime")
+    home = private_directory(temporary.parent / "home", temporary.parent)
+    if Path(os.environ["HOME"]).resolve(strict=True) != home:
+        raise DistributionError("isolated home differs from the gate runtime")
+    private_directory(ROOT / "target/p1-gate/cargo-home")
+    private_directory(ROOT / "target/p1-gate/cargo-target")
+
+    rustc = regular_executable(Path(os.environ["RUSTC"]))
+    toolchain = rustc.parent
+    rustdoc = regular_executable(toolchain / "rustdoc")
+    cargo = regular_executable(toolchain / "cargo")
+    if Path(os.environ["RUSTDOC"]).resolve(strict=True) != rustdoc:
+        raise DistributionError("rustdoc differs from the selected toolchain")
+    if os.environ["PATH"] != f"{toolchain}:/usr/bin:/bin":
+        raise DistributionError("tool path differs from the selected toolchain")
+    if (os.environ["SDKROOT"] or None) != sdk:
+        raise DistributionError("SDK selection differs from the gate")
+
+    environment = {
+        **fixed,
+        "HOME": str(home),
+        "PATH": f"{toolchain}:/usr/bin:/bin",
+        "RUSTC": str(rustc),
+        "RUSTDOC": str(rustdoc),
+        "TMPDIR": str(temporary),
+    }
+    if sdk is not None:
+        environment["SDKROOT"] = sdk
+    return cargo, environment
+
+
+def validate_context(arguments: list[str]) -> None:
+    if arguments or sys.version_info < (3, 11):
+        raise DistributionError("invalid invocation")
+    if Path.cwd().resolve(strict=True) != ROOT:
+        raise DistributionError("invocation is outside the repository root")
+    if git_text("rev-parse", "--show-toplevel") != str(ROOT):
+        raise DistributionError("repository root differs")
+    git_text("merge-base", "--is-ancestor", BASE_COMMIT, "HEAD")
+
+
+def observation_passed(result: subprocess.CompletedProcess[bytes]) -> bool:
+    if result.returncode != 0:
+        return False
+    try:
+        output = result.stdout.decode("utf-8", errors="strict")
+        output += result.stderr.decode("utf-8", errors="strict")
+    except UnicodeError:
+        return False
+    return len(CASE.findall(output)) == 1 and len(RESULT.findall(output)) == 1
+
+
+def distribution(cargo: Path, environment: dict[str, str]) -> dict[str, int]:
+    passed = 0
+    failed = 0
+    for _observation in range(OBSERVATIONS):
+        result = subprocess.run(
+            [
+                str(cargo),
+                "test",
+                "--locked",
+                "-p",
+                "norn",
+                "--lib",
+                "--",
+                TEST_NAME,
+                "--exact",
+                "--test-threads=1",
+            ],
+            cwd=ROOT,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if observation_passed(result):
+            passed += 1
+        else:
+            failed += 1
+    return {"observations": OBSERVATIONS, "passed": passed, "failed": failed}
+
+
+def emit(value: dict[str, object], stream: object = sys.stdout) -> None:
+    print(json.dumps(value, sort_keys=True, separators=(",", ":")), file=stream)
+
+
+def main(arguments: list[str]) -> int:
+    try:
+        validate_context(arguments)
+        cargo, environment = controlled_cargo_environment()
+        counts = distribution(cargo, environment)
+        emit({"schema_version": 1, **counts})
+        if counts != {
+            "observations": OBSERVATIONS,
+            "passed": OBSERVATIONS,
+            "failed": 0,
+        }:
+            emit({"code": "p1_distribution_failed"}, sys.stderr)
+            return 1
+        return 0
+    except Exception:
+        emit({"schema_version": 1, "observations": 0, "passed": 0, "failed": 0})
+        emit({"code": "p1_distribution_incomplete"}, sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
