@@ -8,7 +8,8 @@ use serde::Deserialize;
 
 use crate::config::loader::load_settings_at_launch_root;
 use crate::config::{
-    NornSettings, ProviderAuthMode, merge_settings, validate_settings,
+    NornSettings, ProviderAuthBackend, ProviderAuthConfigError, ProviderAuthMode,
+    ResolvedProviderAuth, merge_settings, resolve_provider_auth, validate_settings,
     validate_working_directory_authority,
 };
 use crate::context::ContextLoader;
@@ -106,6 +107,25 @@ impl std::fmt::Debug for ProviderSettingsResolved {
             .field("retry_backoff", &self.retry_backoff)
             .field("retry_after_ceiling", &self.retry_after_ceiling)
             .finish()
+    }
+}
+
+impl ProviderSettingsResolved {
+    /// Resolve the merged authentication fields for a concrete provider family.
+    ///
+    /// This is the canonical library path for embedders. It validates the full
+    /// mode/companion matrix before the caller reads an environment variable,
+    /// opens credential storage, or constructs a provider.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderAuthConfigError`] when the configured mode and API-key
+    /// source are incompatible with `backend`.
+    pub fn resolve_auth(
+        &self,
+        backend: ProviderAuthBackend,
+    ) -> Result<ResolvedProviderAuth, ProviderAuthConfigError> {
+        resolve_provider_auth(backend, self.auth, self.api_key_env.as_deref())
     }
 }
 

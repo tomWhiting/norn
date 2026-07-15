@@ -34,6 +34,7 @@ mod mcp_workspace_write;
 pub(crate) mod merge;
 pub mod paths;
 pub mod permissions;
+mod provider_auth;
 mod provider_security;
 pub mod types;
 pub mod validate;
@@ -53,6 +54,9 @@ pub use mcp_state_types::{
 };
 pub(crate) use merge::merge_settings;
 pub use permissions::{PermissionDecision, PermissionPolicy};
+pub use provider_auth::{
+    ProviderAuthBackend, ProviderAuthConfigError, ResolvedProviderAuth, resolve_provider_auth,
+};
 pub(crate) use provider_security::validate_working_directory_authority;
 pub use types::{
     AgentSettings, AutoCompactReserve, ContextSettings, HookEntry, HookSettings,
