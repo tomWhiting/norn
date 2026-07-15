@@ -391,7 +391,7 @@ artifacts to the same clean head with zero errors.
 |---|---|---|
 | P0. Credential and workspace authority containment | [x] Accepted by focused Gate D review `7ce29d7` on 2026-07-15 | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] Gate A complete at base `2917c8e`; Gate B foundation next; D0 remote enforcement deferred to exit | The program has executable contracts and protected quality gates. |
-| P2. OAuth lifecycle correctness | [ ] Interim review `86d95aa`; correction in progress; timing policy still awaiting D9A | Login, refresh, storage, and logout fail safely; named-account selection is either evidence-backed or explicitly unsupported. |
+| P2. OAuth lifecycle correctness | [ ] Interim correction candidate through `455990a`; D9A closed; remaining D9 decisions open; correction review pending | Login, refresh, storage, and logout fail safely; named-account selection is either evidence-backed or explicitly unsupported. |
 | P3. Canonical ordered transcript | [ ] | Responses items survive stream, persistence, resume, and replay in order. |
 | P4. Streaming and replay conformance | [ ] | Supported events/items are complete, reconciled, and fail closed. |
 | P5. Conversation and Codex turn semantics | [ ] | Local/provider history and turn-scoped state have explicit lifetimes. |
@@ -438,7 +438,7 @@ blocks phase acceptance and cannot be represented as implemented evidence.
 | D7 | Approve credentials, spending, redaction, and retention for final live Codex and public Responses conformance. Without approval P9 is blocked, not passed by a skipped test. | P9 | [ ] Open |
 | D8 | Ratify the source-to-wire-role matrix for product System policy, trusted operator Developer policy, repository `NORN.md`/rules/profiles, user input, and compatible backends that cannot preserve Developer. | P5 | [ ] Open |
 | D9 | OAuth credential ownership and explicit named-account policy: Norn-managed storage; file-backed foreign `$CODEX_HOME/auth.json`; import/migration semantics; OS-keyring scope; static/embedder ownership; trusted selection; unknown expiry; durable recovery-journal policy; accepted `provider.auth` spellings and required/forbidden companion fields; and isolated-account validity. | P2 | [ ] Partially decided 2026-07-15. Norn has one canonical writable single-account credential at `$NORN_HOME/auth/auth.json` (or the trusted-home default selected by the typed Norn resolver). Ambient `$CODEX_HOME` is non-authoritative: it never redirects default Norn storage, and the default CLI/provider paths do not mutate, lock, permission-harden, or delete its `auth.json`. A trusted library caller supplying an explicit root declares that root Norn-owned; this is not a foreign-file import surface. A provider pins one credential identity for its lifetime, and repository or model input cannot select an account. One live manager refuses to replay an ambiguously dispatched refresh lineage until durable state changes; preventing replay after process restart or through another process remains an open recovery-journal decision. Still open at Gate A: whether and how an explicit import copies foreign credentials into Norn ownership; named-account layout and the supported/unsupported branch; the owner-approved live two-account validity experiment; OS-keyring scope; durable recovery-journal policy; accepted auth spellings and companion fields; and the remaining named selection/resume rules. |
-| D9A | Credential-transaction timing policy: the default acquisition deadline and the positive polling cadence used by portable timed file-lock acquisition. Both must have explicit owner-approved values, and the cadence must become programmatically overridable like the deadline. | P2 | [ ] Open. Interim-review findings P2-1 and P2-2 rejected the provisional values as unsourced. No replacement or ratification is recorded until the owner supplies or approves both values. |
+| D9A | Credential-transaction timing policy: the default acquisition deadline and the positive polling cadence used by portable timed file-lock acquisition. Both must have explicit owner-approved values, and the cadence must become programmatically overridable like the deadline. | P2 | [x] Decided and implemented 2026-07-15. The default acquisition deadline is 30 seconds and the inter-process polling cadence is 25 milliseconds; both are programmatically overridable. Both must be positive and are rejected before credential filesystem access when invalid. The deadline bounds acquisition only, not the duration of a transaction after the lock is held. Source commit `455990a`; retained 20-iteration deadline and two-process convergence distributions are recorded in `docs/reviews/evidence/2026-07-15-p2-credential-lock.json`. |
 | D10 | Automatic account rotation policy: applicable product/contract permission, eligible exhaustion signals, trusted candidate allowlist, pre-request rejection proof, turn/session affinity, state reset, cache-isolation handoff, and resume authorization. | P6 | [ ] Open until authoritative current terms/product guidance permits the behavior and P3/P5 establish transcript replay, account-scoped state, and turn affinity. The current [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/) prohibit circumventing rate limits or restrictions, so exhaustion-triggered rotation is unsupported unless OpenAI or the governing contract explicitly establishes that this use is permitted. Even then, switching occurs only before dispatch or after a typed provider outcome proving no execution or state mutation; absence of observed output is insufficient. P6 otherwise keeps `ROUTE-01` unsupported. |
 
 ## Accepted boundary and operator guidance
@@ -1146,10 +1146,11 @@ The independent interim review committed at `86d95aa` reviewed source head
 `289d841`. These dispositions describe the correction working state; they are
 not phase acceptance or retained candidate evidence.
 
-- [ ] `P2-1` and `P2-2`: D9A still requires explicit owner-approved values for
-  the credential-lock acquisition deadline and polling cadence, plus a
-  programmatic cadence override. The provisional constants are not accepted
-  evidence.
+- [x] `P2-1` and `P2-2`: D9A records owner-approved defaults of 30 seconds for
+  lock acquisition and 25 milliseconds for inter-process polling. Both are
+  programmatically overridable; zero values fail before credential filesystem
+  access. The acquisition deadline does not cap a transaction after lock
+  ownership is established.
 - [x] `P2-3`: an owned worker is observed by a structural supervisor; panic,
   abort, or completion-channel loss wakes every waiter with a typed
   `Indeterminate` outcome. Ambiguous dispatch blocks replay only in the live
@@ -1166,10 +1167,13 @@ not phase acceptance or retained candidate evidence.
 
 Focused working-state validation on 2026-07-15 used the repository's normal
 `target/`: `cargo fmt --all -- --check` passed; strict workspace/all-target
-Clippy with `-D warnings` passed; the OAuth library slice passed 168/168; the
+Clippy with `-D warnings` passed; the OAuth library slice passed 175/175; the
 added-line policy scan found no lint suppression or prohibited panic/unwrap
-calls; and every changed Rust file in this correction is at or below 490
-physical lines. These are implementation checks, not retained Gate C evidence.
+calls; and every changed Rust file in this correction is at or below 492
+physical lines. The checked-in D9A runner additionally recorded 20/20
+process-local deadline passes and 20/20 two-process refresh-convergence passes
+against source commit `455990a`. Except for that retained D9A distribution,
+these are implementation checks, not retained Gate C evidence.
 
 ### What this phase fixes
 
@@ -1230,7 +1234,7 @@ automatic-rotation claim.
 - [x] Implement the per-credential reload-lock-refresh-save transaction for
   cooperating Norn processes with atomic durable storage, a caller-overridable
   acquisition deadline, and explicit lock failure behavior.
-- [ ] Close D9A by recording owner-approved positive defaults for the bounded
+- [x] Close D9A by recording owner-approved positive defaults for the bounded
   lock acquisition deadline and its portable polling cadence, expose the
   cadence programmatically, and reject zero values before filesystem access.
 - [x] Detect a lock-ignoring writer changing the Norn-owned credential during
@@ -1933,7 +1937,7 @@ ledger prematurely.
 |---|---|---|---|
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
 | P1 | Gate A complete at base `2917c8e`; Gate B foundation not yet implemented | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A `READY` | Implement and independently review the executable foundation, complete and verify P1, then resolve D0 before acceptance |
-| P2 | Implementation and interim-review correction in progress: single-account Norn-owned OAuth lifecycle, typed state, supervised refresh attempts, bounded coordination, durable login/logout, and foreign `CODEX_HOME` non-authority are present in source | Interim review `86d95aa`; no retained P2 candidate gate bundle; focused unit and OS-child fixtures are present but not promoted to acceptance evidence | Close D9 and D9A, including import/named/keyring/journal/config and owner-approved lock timing; implement the selected named or unsupported branch; complete fault and configuration matrices; run Gate C and independent review |
+| P2 | Interim correction candidate through `455990a`: single-account Norn-owned OAuth lifecycle, typed state, supervised refresh attempts, owner-approved bounded coordination, durable login/logout, and foreign `CODEX_HOME` non-authority are present in source | Interim review `86d95aa`; retained D9A distributions are 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete P2 candidate gate bundle | Close the remaining D9 import/named/keyring/journal/config decisions; implement the selected named or unsupported branch; complete fault and configuration matrices; run Gate C and independent review |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|

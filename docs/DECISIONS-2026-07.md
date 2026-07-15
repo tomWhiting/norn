@@ -854,6 +854,15 @@ acceptance remains pending.
   mutation; absence of observed output is insufficient. It also requires a
   trusted allowlist, clean account-scoped state, cache isolation, and explicit
   resume rules.
+- **Credential-lock timing is explicit and overridable.** The default maximum
+  wait to acquire a Norn-owned credential transaction is 30 seconds. The
+  default cadence for probing an inter-process file lock is 25 milliseconds;
+  process-local contenders use notifications rather than polling. Both values
+  are programmatically overridable and must be positive. Invalid timing is
+  rejected before credential filesystem access. The 30-second deadline bounds
+  acquisition only: once acquired, the transaction retains exclusive ownership
+  across reload, refresh dispatch, and durable publication so a rotating
+  refresh token cannot be spent concurrently by cooperating Norn processes.
 - **D9 is partially decided, not closed.** The writable single-account layout,
   typed Norn-root authority, foreign `CODEX_HOME` non-authority, unknown-expiry
   classification, and ownerless-static no-refresh behavior are implemented.
@@ -861,6 +870,7 @@ acceptance remains pending.
   named-account support, the live-validity branch, durable recovery-journal
   policy, accepted `provider.auth` spellings and companion fields, and final
   named selection/resume rules still require Gate A decisions and evidence.
+  D9A's credential-lock timing policy is closed separately.
 - **D10 remains open.** Automatic rotation requires both authoritative permission
   under the governing product/contract terms and a pre-dispatch or guaranteed
   non-execution state-machine proof. If either is absent, `ROUTE-01` closes as an
