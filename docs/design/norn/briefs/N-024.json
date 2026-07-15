@@ -6,8 +6,8 @@
   "blocked_by": [],
   "checklist": [],
   "stories": ["S35"],
-  "purpose": "The OpenAI provider currently authenticates via an API key (SecretString in ProviderConfig). Tom's directive: OAuth is the primary auth path, no API keys. Codex uses OAuth 2.0 Authorization Code with PKCE against auth.openai.com, storing tokens at ~/.codex/auth.json. The codex-login crate (Apache-2.0) implements the full flow. This brief integrates codex-login as a dependency and replaces the API key auth path with OAuth token management.",
-  "task": "Add codex-login as a path dependency. Create an AuthProvider trait abstracting token acquisition. Implement OAuthAuthProvider wrapping codex-login's AuthManager — handles login flow, token storage, proactive refresh, 401 recovery. Replace ProviderConfig's api_key with an AuthSource enum (OAuth or LegacyApiKey for testing). OpenAI provider's request pipeline calls auth_provider.apply_auth() before every HTTP request. Test with mock auth provider. Remove API key as the default path.",
+  "purpose": "The OpenAI provider originally authenticated via an API key (SecretString in ProviderConfig). Tom's directive made OAuth the primary auth path. Codex uses OAuth 2.0 Authorization Code with PKCE against auth.openai.com and stores its own credential at ~/.codex/auth.json. Norn implements the compatible flow but owns its credential lifecycle and persists a compatible document at $NORN_HOME/auth/auth.json (default ~/.norn/auth/auth.json). This brief replaces the API key default with OAuth token management.",
+  "task": "Create an AuthProvider trait abstracting token acquisition. Implement OAuthAuthProvider around Norn's Codex-compatible OAuth manager — handles login flow, Norn-owned token storage, proactive refresh, and 401 recovery. Replace ProviderConfig's api_key with an AuthSource enum (OAuth or LegacyApiKey for testing). OpenAI provider's request pipeline calls auth_provider.apply_auth() before every HTTP request. Test with mock auth provider. Remove API key as the default path.",
   "requirements": [
     {
       "id": "R1",
@@ -16,7 +16,7 @@
       "acceptance": [
         "AuthProvider trait in crates/norn/src/provider/auth.rs: async fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder, ProviderError>",
         "AuthProvider trait requires Send + Sync for Arc sharing",
-        "AuthSource enum: OAuth { codex_home: Option<PathBuf> }, ApiKey { key: SecretString }",
+        "AuthSource enum: OAuth { auth_root: Option<PathBuf> }, ApiKey { key: SecretString }",
         "AuthSource::OAuth is the default construction path",
         "AuthSource::ApiKey exists for env-gated integration tests only, NOT as a production path",
         "ProviderConfig replaces api_key: SecretString with auth_source: AuthSource",
@@ -28,15 +28,15 @@
     },
     {
       "id": "R2",
-      "title": "OAuthAuthProvider wrapping codex-login",
-      "spec": "OAuthAuthProvider SHALL use the codex-login crate's AuthManager to acquire, cache, and refresh OAuth tokens. It reads from ~/.codex/auth.json (shared with Codex CLI — single login works for both).",
+      "title": "OAuthAuthProvider with Norn-owned storage",
+      "spec": "OAuthAuthProvider SHALL use Norn's OAuth AuthManager to acquire, cache, and refresh OAuth tokens. It reads and writes Norn-owned $NORN_HOME/auth/auth.json (default ~/.norn/auth/auth.json). The document remains Codex-compatible, but Norn does not use the Codex CLI's writable credential as its default or fallback.",
       "acceptance": [
-        "Cargo.toml adds codex-login as a path dependency: codex-login = { path = '../../tools/codex/codex-rs/login' } (or appropriate relative path)",
-        "OAuthAuthProvider wraps codex-login's AuthManager",
+        "The self-contained OAuth implementation lives under provider/openai_oauth/",
+        "OAuthAuthProvider wraps Norn's AuthManager",
         "apply_auth sets Authorization: Bearer {access_token} header",
         "apply_auth sets ChatGPT-Account-ID header when account_id is present",
         "Proactive token refresh: checks JWT exp before each request, refreshes if expired",
-        "Token storage: reads from ~/.codex/auth.json or $CODEX_HOME/auth.json",
+        "Token storage: reads and writes $NORN_HOME/auth/auth.json (default ~/.norn/auth/auth.json)",
         "If no stored token exists, returns a clear error directing the user to run login",
         "Test: mock AuthManager returns token, verify Bearer header set correctly"
       ],
@@ -47,11 +47,11 @@
     {
       "id": "R3",
       "title": "Login flow integration",
-      "spec": "Norn SHALL expose a login function that triggers the OAuth PKCE flow via codex-login. This is called by the CLI/orchestrator when no stored token exists.",
+      "spec": "Norn SHALL expose a login function that triggers its OAuth PKCE flow. This is called by the CLI/orchestrator when no stored token exists.",
       "acceptance": [
-        "pub async fn login(config: LoginConfig) -> Result<(), NornError> wraps codex-login's run_login_server or device code flow",
-        "LoginConfig struct: codex_home (Option<PathBuf>), device_code (bool for headless)",
-        "On success, tokens are persisted to auth.json (compatible with Codex CLI)",
+        "pub async fn login(config: LoginConfig) -> Result<(), NornError> wraps Norn's run_login_server or device code flow",
+        "LoginConfig struct: auth_root (Option<PathBuf>), device_code (bool for headless)",
+        "On success, tokens are persisted to Norn-owned $NORN_HOME/auth/auth.json by default, using a Codex-compatible document shape",
         "On failure, returns NornError with clear message (browser failed to open, user cancelled, etc.)",
         "pub async fn logout(config: LoginConfig) -> Result<(), NornError> revokes tokens and clears storage",
         "Test: verify LoginConfig construction with defaults"
@@ -83,7 +83,7 @@
       "spec": "When the OpenAI provider receives a 401 response, it SHALL attempt token refresh via the AuthProvider before failing.",
       "acceptance": [
         "AuthProvider trait gains: async fn on_unauthorized(&self) -> Result<bool, ProviderError> — returns true if token was refreshed",
-        "OAuthAuthProvider::on_unauthorized triggers codex-login's refresh flow",
+        "OAuthAuthProvider::on_unauthorized triggers Norn's OAuth refresh flow",
         "On successful refresh, the original request is retried once with the new token",
         "On failed refresh (expired refresh token, revoked), returns ProviderError::AuthenticationFailed with message directing user to re-login",
         "ApiKeyAuthProvider::on_unauthorized always returns false (no refresh possible)",
@@ -95,8 +95,8 @@
     }
   ],
   "boundaries": [
-    "SHALL NOT reimplement OAuth — use the codex-login crate",
-    "SHALL NOT modify the codex-login crate source",
+    "SHALL keep token-authority endpoints fixed to the supported Codex-compatible OAuth flow",
+    "SHALL NOT use the Codex CLI's writable credential store as Norn's default or fallback",
     "SHALL NOT store API keys in auth.json — OAuth tokens only",
     "SHALL NOT remove the API key code path entirely (needed for testing) but SHALL NOT expose it as a default or recommended configuration",
     "SHALL NOT implement the device code flow in this brief — login via browser PKCE only (device code can be a follow-up)",

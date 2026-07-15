@@ -801,13 +801,12 @@ acceptance remains pending.
   A for the unsupported-branch decision. If live approval/evidence is unavailable,
   the owner may select the unsupported branch directly: Norn removes the named
   surface and returns a typed documented unsupported outcome without claiming
-  that the provider technically invalidates isolated credentials. The existing
-  `--codex-home`/`CODEX_HOME` mechanism is only a low-level isolated-path
-  primitive, not the final account model.
-- **Simultaneous token validity is evidence, not an assumption.** The current
-  Norn/Codex shared-file integration represents one cached login, and the owner
-  reports that logging into another account can invalidate prior tokens. An
-  opt-in, redacted
+  that the provider technically invalidates isolated credentials. Norn does not
+  use `--codex-home` or `CODEX_HOME` as a credential-root selector.
+- **Simultaneous token validity is evidence, not an assumption.** The Codex CLI
+  presents one cached login, and the owner reports that logging into another
+  account can invalidate prior tokens. Norn no longer shares that writable
+  credential file, but an opt-in, redacted
   two-account live experiment must establish whether independently stored
   credentials remain refreshable before Norn claims concurrent named-account
   support or rotation.
@@ -821,8 +820,17 @@ acceptance remains pending.
   session cannot silently switch identity. Until P5 binds an opaque identity to
   persisted session state, every resume requires an explicit trusted account
   choice and may not consume an active-account default.
-- **The Codex-shared source is specifically file-backed.** P2's foreign-writer
-  contract applies to `$CODEX_HOME/auth.json`. Current Codex can alternatively
+- **Norn owns one canonical writable credential.** The current single-account
+  Norn credential is `$NORN_HOME/auth/auth.json`, or the equivalent trusted-home
+  default returned by the typed Norn resolver. Default login, refresh, status,
+  and logout operate on that Norn-owned path. Ambient `$CODEX_HOME` is a foreign,
+  non-authoritative source: it cannot redirect Norn's root, and the default
+  CLI/provider paths never mutate, lock, permission-harden, or delete its
+  `auth.json`. A trusted library caller supplying an explicit root declares that
+  root Norn-owned; it is not a foreign-file import surface. Explicit import and
+  migration semantics remain open and must not be inferred from path discovery.
+- **The foreign Codex source may not be file-backed.** Current Codex can
+  alternatively
   [store credentials in the OS credential store](https://learn.chatgpt.com/docs/auth#credential-storage);
   D9 must select a safe library interface before Norn claims keyring support,
   otherwise it remains out of P2 scope. Norn never scrapes or shells out to
@@ -843,11 +851,13 @@ acceptance remains pending.
   mutation; absence of observed output is insufficient. It also requires a
   trusted allowlist, clean account-scoped state, cache isolation, and explicit
   resume rules.
-- **D9 remains open.** Storage layout, alias-to-opaque-ID mapping, migration of
-  the file-backed foreign Codex source, keyring scope, unknown-expiry policy,
-  static/embedder refresh ownership, accepted `provider.auth` spellings and
-  companion fields, and the live-validity branch require Gate A decisions and
-  evidence before implementation.
+- **D9 is partially decided, not closed.** The writable single-account layout,
+  typed Norn-root authority, foreign `CODEX_HOME` non-authority, unknown-expiry
+  classification, and ownerless-static no-refresh behavior are implemented.
+  Alias-to-opaque-ID mapping, explicit foreign import/migration, keyring scope,
+  named-account support, the live-validity branch, durable recovery-journal
+  policy, accepted `provider.auth` spellings and companion fields, and final
+  named selection/resume rules still require Gate A decisions and evidence.
 - **D10 remains open.** Automatic rotation requires both authoritative permission
   under the governing product/contract terms and a pre-dispatch or guaranteed
   non-execution state-machine proof. If either is absent, `ROUTE-01` closes as an

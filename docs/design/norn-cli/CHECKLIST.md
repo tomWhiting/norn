@@ -118,8 +118,8 @@
 
 - [ ] **C82** — norn auth login triggers OAuth PKCE flow via norn::provider::auth::login()
 - [ ] **C83** — norn auth logout clears credentials via norn::provider::auth::logout()
-- [ ] **C84** — norn auth status reports login state, token expiry, and account ID without exposing tokens
-- [ ] **C85** — --codex-home flag on auth login overrides the codex home directory
+- [ ] **C84** — norn auth status reports typed local state and known expiry without exposing tokens or account identity
+- [ ] **C85** — all auth surfaces use Norn-owned `$NORN_HOME/auth/auth.json`; login exposes no path override
 
 ## Session Subcommands
 

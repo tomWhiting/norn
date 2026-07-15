@@ -90,7 +90,7 @@
 
 **S39.** As a new user, I want `norn auth login` to open a browser for OAuth so that I can authenticate without manually managing API keys.
 
-**S40.** As a new user, I want `norn auth status` to tell me whether I'm logged in and when my token expires so that I know if authentication is working.
+**S40.** As a new user, I want `norn auth status` to explain my local credential state and known expiry without claiming remote validity.
 
 **S41.** As a new user, I want `norn doctor` to check my setup (auth, provider connectivity, permissions) so that I can diagnose problems before trying to use the agent.
 

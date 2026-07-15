@@ -210,13 +210,18 @@ Per-event schemas from the profile's `event_schemas` section are loaded into `Ev
 ### NC13: Auth subcommand
 
 ```
-norn auth login [--codex-home <DIR>]    OAuth PKCE login (opens browser)
-norn auth logout                         Clear stored credentials
-norn auth status                         Show auth state: logged in,
-                                         token expiry, account ID
+norn auth login     OAuth PKCE login (opens browser)
+norn auth logout    Clear stored credentials
+norn auth status    Show local credential state and known token expiry
 ```
 
-Delegates to Norn's existing `login()` and `logout()` functions from `provider::auth`. Status reads `~/.codex/auth.json` and reports without exposing tokens.
+Delegates to Norn's existing `login()` and `logout()` functions from
+`provider::auth`. Login, logout, status, doctor, and provider construction use
+the same Norn-owned `$NORN_HOME/auth/auth.json` credential file (default
+`~/.norn/auth/auth.json`). The CLI exposes no login-only auth-root override.
+Status reports missing, malformed, expired, refresh-candidate, locally valid,
+or unknown local state without exposing tokens or account identity. It always
+labels remote validity as unverified.
 
 ### NC14: Session subcommands
 
@@ -249,7 +254,7 @@ norn doctor
 ```
 
 Checks:
-- OAuth status (logged in, token validity)
+- OAuth local credential state (remote validity is not inferred)
 - Provider connectivity (can reach the API endpoint)
 - Profile validity (if a default profile exists)
 - Working directory permissions

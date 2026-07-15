@@ -100,7 +100,7 @@ Without these, a stuck step has no cap (except HTTP timeouts on individual API c
 | Events | ClaudeEvent JSONL from stdout | ProviderEvent on broadcast channel |
 | Cancel | Process kill (SIGTERM) | CancellationToken (cooperative, within 1 iteration) |
 | Profile format | claude-runner YAML | Norn markdown/TOML |
-| Auth | SharedTokenPool (Claude OAuth) | codex-login (~/.codex/auth.json) |
+| Auth | SharedTokenPool (Claude OAuth) | Norn-owned Codex-compatible OAuth (`$NORN_HOME/auth/auth.json`) |
 | Startup latency | ~300ms (process spawn) | ~0ms (function call) |
 | State sharing | None (process boundary) | Shared Provider connection pool |
 

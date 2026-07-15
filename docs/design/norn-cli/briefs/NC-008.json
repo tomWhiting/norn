@@ -7,7 +7,7 @@
   "checklist": ["C82", "C83", "C84", "C85", "C86", "C87", "C88", "C89", "C90", "C91", "C92", "C93", "C94", "C95", "C96", "C97", "C98", "C99", "C100"],
   "stories": ["S11", "S12", "S14", "S33", "S39", "S40", "S41", "S42", "S43"],
   "purpose": "The CLI's subcommands provide essential non-conversational operations: session management (list, show, resume, fork, export, remove), authentication (login, logout, status), MCP server mode, system health checks, and shell completion generation. Without these, users cannot manage sessions outside the REPL, authenticate, expose Norn as an MCP server, diagnose setup problems, or generate shell completions. Each subcommand is a thin handler that delegates to libnorn APIs.",
-  "task": "Replace the stub subcommand handlers from NC-001 with real implementations, organized as a folder module at crates/norn-cli/src/commands/ with session.rs, auth.rs, mcp.rs, doctor.rs, and completion.rs. Session subcommands read and manipulate the JSONL session store (from NC-002). Auth subcommands delegate to norn::provider::auth::login(), logout(), and read ~/.codex/auth.json for status. MCP serve delegates to norn::integration::mcp_server::McpServer::serve_stdio() with the full tool registry. MCP connect performs an initialize handshake and tools/list against an external server. Doctor checks auth status, provider connectivity, and working directory permissions. Completion uses clap_complete to generate scripts for bash, zsh, and fish.",
+  "task": "Replace the stub subcommand handlers from NC-001 with real implementations, organized as a folder module at crates/norn-cli/src/commands/ with session.rs, auth.rs, mcp.rs, doctor.rs, and completion.rs. Session subcommands read and manipulate the JSONL session store (from NC-002). Auth subcommands delegate to norn::provider::auth::login() and logout(), and inspect Norn-owned $NORN_HOME/auth/auth.json (default ~/.norn/auth/auth.json) for status. MCP serve delegates to norn::integration::mcp_server::McpServer::serve_stdio() with the full tool registry. MCP connect performs an initialize handshake and tools/list against an external server. Doctor checks auth status, provider connectivity, and working directory permissions. Completion uses clap_complete to generate scripts for bash, zsh, and fish.",
   "requirements": [
     {
       "id": "R1",
@@ -149,10 +149,10 @@
     {
       "id": "R8",
       "title": "Auth login subcommand",
-      "spec": "WHEN the user runs 'norn auth login', the system SHALL invoke norn::provider::auth::login() with a LoginConfig constructed from CLI flags. IF --codex-home is set, the system SHALL pass it to LoginConfig::codex_home. The login flow opens the system browser for OAuth PKCE authentication. On success, the system SHALL print 'Login successful.' to stderr. On failure, the system SHALL print the error and exit with code 3.",
+      "spec": "WHEN the user runs 'norn auth login', the system SHALL invoke norn::provider::auth::login() with LoginConfig::default(). The login flow and every other CLI auth surface SHALL resolve the same Norn-owned credential root through NORN_HOME; the login command SHALL NOT accept a path override. The login flow opens the system browser for OAuth PKCE authentication. On success, the system SHALL print 'Login successful.' to stderr. On failure, the system SHALL print the error and exit with code 3.",
       "acceptance": [
         "'norn auth login' triggers the OAuth PKCE flow (browser opens)",
-        "'norn auth login --codex-home /tmp/test' uses the custom codex home directory",
+        "'norn auth login --codex-home /tmp/test' and 'norn auth login --auth-root /tmp/test' are rejected",
         "Successful login prints 'Login successful.' to stderr and exits with code 0",
         "Failed login prints error details and exits with code 3"
       ],
@@ -167,11 +167,12 @@
     {
       "id": "R9",
       "title": "Auth logout subcommand",
-      "spec": "WHEN the user runs 'norn auth logout', the system SHALL invoke norn::provider::auth::logout() with the default LoginConfig. The system SHALL print 'Logged out.' to stderr on success. On failure, the system SHALL print the error and exit with code 3.",
+      "spec": "WHEN the user runs 'norn auth logout', the system SHALL invoke norn::provider::auth::logout() with the default LoginConfig. Local credential removal SHALL be attempted and durably completed before remote revocation starts. The system SHALL report local removal and remote revocation independently; a remote failure after local success SHALL state that the user is logged out locally and exit with code 3.",
       "acceptance": [
         "'norn auth logout' clears stored credentials",
         "'Logged out.' is printed to stderr on success",
-        "Failed logout prints error details and exits with code 3"
+        "Remote revoke failure does not restore the local credential and exits with code 3",
+        "Local removal failure is reported independently and exits with code 3"
       ],
       "files": {
         "modify": [
@@ -184,12 +185,13 @@
     {
       "id": "R10",
       "title": "Auth status subcommand",
-      "spec": "WHEN the user runs 'norn auth status', the system SHALL read the auth.json file from the codex home directory (~/.codex/auth.json or $CODEX_HOME/auth.json) and report the authentication state: whether the user is logged in, the token expiry time (if available), and the account ID (if available). The system SHALL NOT display raw tokens. IF no auth.json exists, the system SHALL print 'Not logged in.' and exit with code 0.",
+      "spec": "WHEN the user runs 'norn auth status', the system SHALL inspect Norn-owned $NORN_HOME/auth/auth.json (default ~/.norn/auth/auth.json) without mutating it and report one typed local state: missing, malformed, access-expired, refresh-candidate, locally-valid, or unknown. Known expiry MAY be shown. The system SHALL NOT display raw tokens or account identity and SHALL label remote validity as unverified.",
       "acceptance": [
-        "'norn auth status' when logged in shows 'Logged in' with expiry and account ID",
-        "'norn auth status' when not logged in shows 'Not logged in.'",
-        "Raw access/refresh tokens are never displayed",
-        "Exit code is 0 in both cases (status check is informational)"
+        "Missing credentials are reported as a non-error local state",
+        "Malformed or unusable credentials exit with code 3 and actionable remediation",
+        "Refreshable, locally-valid, and unknown-expiry credentials retain distinct reports",
+        "Raw access/refresh tokens and account identity are never displayed",
+        "Every state says remote validity is unverified"
       ],
       "files": {
         "modify": [
@@ -239,7 +241,7 @@
     {
       "id": "R13",
       "title": "Doctor subcommand",
-      "spec": "WHEN the user runs 'norn doctor', the system SHALL perform the following checks and report pass/fail for each with actionable remediation messages: (1) Auth status: whether OAuth credentials exist and the token is valid. (2) Provider connectivity: attempt an HTTP HEAD or lightweight request to the provider API endpoint to verify reachability. (3) Working directory permissions: verify the current directory is readable and writable. Each check SHALL print a status line to stderr in the format '[PASS] description' or '[FAIL] description: remediation'.",
+      "spec": "WHEN the user runs 'norn doctor', the system SHALL perform the following checks and report pass/fail for each with actionable remediation messages: (1) Auth status: classify local OAuth credentials without claiming remote validity. (2) Provider connectivity: attempt an HTTP HEAD or lightweight request to the provider API endpoint to verify reachability. (3) Working directory permissions: verify the current directory is readable and writable. Each check SHALL print a status line to stderr in the format '[PASS] description' or '[FAIL] description: remediation'.",
       "acceptance": [
         "'norn doctor' prints status for auth, connectivity, and permissions checks",
         "Each check shows [PASS] or [FAIL] with a clear description",

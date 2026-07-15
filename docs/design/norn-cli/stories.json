@@ -193,7 +193,7 @@
         },
         {
           "id": "S40",
-          "text": "As a new user, I want `norn auth status` to tell me whether I'm logged in and when my token expires so that I know if authentication is working."
+          "text": "As a new user, I want `norn auth status` to explain my local credential state and known expiry without claiming remote validity."
         },
         {
           "id": "S41",

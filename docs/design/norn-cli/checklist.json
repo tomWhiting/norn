@@ -476,12 +476,12 @@
         },
         {
           "id": "C84",
-          "text": "norn auth status reports login state, token expiry, and account ID without exposing tokens",
+          "text": "norn auth status reports typed local state and known expiry without exposing tokens or account identity",
           "done": false
         },
         {
           "id": "C85",
-          "text": "--codex-home flag on auth login overrides the codex home directory",
+          "text": "all auth surfaces use Norn-owned $NORN_HOME/auth/auth.json; login exposes no path override",
           "done": false
         }
       ]

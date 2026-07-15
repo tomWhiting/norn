@@ -238,7 +238,8 @@ established in NA-004.
 Settings `provider.auth` selects the authentication mode (`"oauth"`,
 `"api_key"`, `"env"`). The actual secret (API key, token) is never stored
 in settings files. API keys come from environment variables. OAuth tokens
-come from the codex-login storage at `$CODEX_HOME/auth.json`.
+come from Norn-owned `$NORN_HOME/auth/auth.json` storage (default
+`~/.norn/auth/auth.json`).
 
 ### D13: Existing `-c` overrides as highest-precedence CLI layer
 
@@ -413,9 +414,11 @@ source-aware validation step before project/local values merge:
 - A profile selected by model output cannot contain `prompt_commands`, even when
   the profile came from trusted user configuration. Operator/programmatic
   selection and model selection are different authority paths.
-- `HOME`, `NORN_HOME`, and `CODEX_HOME` must be absolute before they can anchor
-  trusted config/credentials. Relative user prompt/search paths are rejected
-  rather than interpreted against a repository CWD.
+- `HOME` and `NORN_HOME` must be absolute before they can anchor trusted
+  config/credentials. Relative user prompt/search paths are rejected rather
+  than interpreted against a repository CWD. A future explicitly selected,
+  read-only `$CODEX_HOME/auth.json` source must satisfy the same absolute-root
+  rule; `CODEX_HOME` is not Norn's default or fallback credential authority.
 
 These are intentional confused-deputy closures and compatibility breaks.
 Ordinary layer precedence is never repository consent.

@@ -436,7 +436,7 @@ blocks phase acceptance and cannot be represented as implemented evidence.
 | D6 | Pre-register the cache experiment: ratify or replace the proposed 20-iteration design; approve public/private backends, models, spending, warm-up, key isolation/reuse, an approximately 15 requests/minute per-key ceiling rechecked against current guidance, concurrency, retention/cooldown, service tier, output/effort controls, randomization, primary measures, and statistical treatment. | P8 | [ ] Open |
 | D7 | Approve credentials, spending, redaction, and retention for final live Codex and public Responses conformance. Without approval P9 is blocked, not passed by a skipped test. | P9 | [ ] Open |
 | D8 | Ratify the source-to-wire-role matrix for product System policy, trusted operator Developer policy, repository `NORN.md`/rules/profiles, user input, and compatible backends that cannot preserve Developer. | P5 | [ ] Open |
-| D9 | OAuth credential ownership and explicit named-account policy: Norn-managed stores; file-backed foreign `$CODEX_HOME/auth.json`; OS-keyring scope; static/embedder ownership; trusted selection; unknown expiry; accepted `provider.auth` spellings and required/forbidden companion fields; and isolated-account validity. | P2 | [ ] Open. Gate A chooses one branch. The supported branch requires an owner-approved live validity experiment before named-account implementation; success permits explicit named login/list/use/status/logout, while invalidation returns D9 to Gate A for an owner decision on the unsupported branch. If live approval/evidence is unavailable, the owner may instead select the unsupported branch at Gate A, remove the named capability and advertised surface, and return a typed/documented unsupported result without claiming technical incompatibility. A provider pins one credential identity for its lifetime, and repository or model input cannot select an account. |
+| D9 | OAuth credential ownership and explicit named-account policy: Norn-managed storage; file-backed foreign `$CODEX_HOME/auth.json`; import/migration semantics; OS-keyring scope; static/embedder ownership; trusted selection; unknown expiry; durable recovery-journal policy; accepted `provider.auth` spellings and required/forbidden companion fields; and isolated-account validity. | P2 | [ ] Partially decided 2026-07-15. Norn has one canonical writable single-account credential at `$NORN_HOME/auth/auth.json` (or the trusted-home default selected by the typed Norn resolver). Ambient `$CODEX_HOME` is non-authoritative: it never redirects default Norn storage, and the default CLI/provider paths do not mutate, lock, permission-harden, or delete its `auth.json`. A trusted library caller supplying an explicit root declares that root Norn-owned; this is not a foreign-file import surface. A provider pins one credential identity for its lifetime, and repository or model input cannot select an account. Still open at Gate A: whether and how an explicit import copies foreign credentials into Norn ownership; named-account layout and the supported/unsupported branch; the owner-approved live two-account validity experiment; OS-keyring scope; durable recovery-journal policy; accepted auth spellings and companion fields; and the remaining named selection/resume rules. |
 | D10 | Automatic account rotation policy: applicable product/contract permission, eligible exhaustion signals, trusted candidate allowlist, pre-request rejection proof, turn/session affinity, state reset, cache-isolation handoff, and resume authorization. | P6 | [ ] Open until authoritative current terms/product guidance permits the behavior and P3/P5 establish transcript replay, account-scoped state, and turn affinity. The current [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/) prohibit circumventing rate limits or restrictions, so exhaustion-triggered rotation is unsupported unless OpenAI or the governing contract explicitly establishes that this use is permitted. Even then, switching occurs only before dispatch or after a typed provider outcome proving no execution or state mutation; absence of observed output is insufficient. P6 otherwise keeps `ROUTE-01` unsupported. |
 
 ## Accepted boundary and operator guidance
@@ -1128,36 +1128,42 @@ campaign rules. No provider behavior changes in this phase.
 
 ## P2. OAuth lifecycle correctness
 
-**Status:** [ ] Not started; **findings closed:** `AUTH-01` through `AUTH-07`,
-`CONFIG-01`, `CONFIG-02`; **dependencies:** P1 and D9. Gate A selects either the
-named-account branch, whose prerequisite live-validity experiment must succeed,
-or an owner-approved unsupported branch that removes the named surface without
-making a technical-validity claim. Automatic account rotation is not in P2.
+**Status:** [ ] Implementation in progress; no P2 candidate gate or acceptance
+claim; **findings targeted:** `AUTH-01` through `AUTH-07`, `CONFIG-01`,
+`CONFIG-02`; **dependencies:** P1 and the open portions of D9. Checked work
+items below mean the implementation and focused source fixtures are present;
+they do not substitute for retained Gate C evidence or independent review. Gate
+A still selects either the named-account branch, whose prerequisite live-validity
+experiment must succeed, or an owner-approved unsupported branch that removes
+the named surface without making a technical-validity claim. Automatic account
+rotation is not in P2.
 
 ### What this phase fixes
 
-Norn's login fallback reads the account ID from the wrong JWT shape. Refresh is
-single-flight only among callers sharing one `AuthManager`; separately
-constructed providers in one process, other Norn processes, and the Codex CLI
-can still race. A successful refresh can be reported after persistence failed,
-and a static/embedder credential can rotate without returning the new lineage to
-its owner. Credential load and proactive refresh errors are hidden, browser
-success precedes durable save, revoke failure prevents local deletion, and
-status/doctor do not distinguish local credential states or remote verification.
-The file-backed `$CODEX_HOME/auth.json` model also has no trusted named-account
-selection contract; Codex OS-keyring storage is a distinct integration surface.
+The original implementation read the account ID from the wrong JWT shape, hid
+credential-state failures, coordinated only callers sharing one manager, could
+report success before durable ownership, acknowledged browser completion too
+early, and made remote revoke a prerequisite for local logout. The in-progress
+implementation now addresses those single-account Norn-owned paths. It also
+separates Norn's writable `$NORN_HOME/auth/auth.json` from foreign
+`$CODEX_HOME/auth.json`, so Norn no longer races or mutates the Codex CLI file.
+Still open are explicit foreign import/migration, named-account validity and
+layout, keyring scope, recovery-journal policy, the trusted auth/source/account
+configuration matrix, and final named selection/resume behavior.
 
 ### Difference after the phase
 
-Norn-created and imported Codex credentials produce the required account
-metadata. One coordinator owns each credential identity inside a process;
-cooperating Norn processes serialize refresh, and a non-cooperating foreign
-write is detected rather than knowingly overwritten. Corruption and unknown
-expiry are distinct local states; refresh conflict and successful-but-undurable
-refresh are distinct operation outcomes. Static credentials cannot rotate without an acknowledged owner
-sink. If the Gate A validity evidence permits, a named account can be logged in,
-listed, explicitly selected, inspected, and removed without overwriting another
-named account or the Codex CLI's current credential. Otherwise Norn reports that
+Norn-created credentials, and imported credentials if D9 later approves an
+import path, produce the required account metadata. One coordinator owns each
+credential identity inside a process; cooperating Norn processes serialize
+refresh, and a non-cooperating write to the Norn-owned file is detected rather
+than knowingly overwritten. Corruption and unknown expiry are distinct local
+states; refresh conflict and successful-but-undurable refresh are distinct
+operation outcomes. Static credentials cannot rotate without an acknowledged
+owner sink. If the Gate A validity evidence permits, a named account can be
+logged in, listed, explicitly selected, inspected, and removed without
+overwriting another named account or touching the Codex CLI's foreign
+credential. Otherwise Norn reports that
 simultaneous named credentials are unsupported rather than presenting an
 unusable selector. The selected identity is pinned when a provider
 starts; selection changes affect new providers only. Until P5 persists account
@@ -1169,34 +1175,36 @@ automatic-rotation claim.
 
 ### Work checklist
 
-- [ ] Parse the namespaced Codex auth claim and retain only provider-shape
+- [x] Parse the namespaced Codex auth claim and retain only provider-shape
   compatibility justified by sanitized fixtures; reject conflicting account
   identifiers.
-- [ ] Remove unused serialization authority from `IdTokenClaims` and stop
+- [x] Remove unused serialization authority from `IdTokenClaims` and stop
   silently converting claim-parse failures into empty metadata.
-- [ ] Resolve the existing eight-day unknown-expiry fallback under D9 using a
-  pinned provider/source fact or a typed replacement policy. Do not retain or
-  replace it through an unlabeled constant.
-- [ ] Centralize absolute trusted Codex/Norn auth-root resolution in one
-  library-owned typed resolver used by CLI and library callers.
-- [ ] Introduce typed credential ownership for a Norn-managed store, the
-  file-backed foreign `$CODEX_HOME/auth.json`, and static/embedder-owned
-  credentials. D9 explicitly decides whether Codex OS-keyring integration is
-  supported; it is out of scope unless a safe library interface is selected.
-- [ ] Share one coordinator per credential storage identity inside a process.
+- [x] Replace the existing eight-day unknown-expiry fallback with an explicit
+  typed `Unknown` local classification; `last_refresh` does not invent expiry.
+- [x] Centralize absolute trusted Norn auth-root resolution in one library-owned
+  typed resolver used by CLI and library callers. The resolver selects
+  `$NORN_HOME/auth` or the trusted-home default and ignores `$CODEX_HOME`.
+- [x] Introduce typed ownership for the Norn-managed root and make ownerless
+  static/embedder credentials non-refreshable rather than stranding rotation.
+- [ ] Decide and implement explicit foreign-file import/migration semantics and
+  Codex OS-keyring scope. `$CODEX_HOME/auth.json` remains foreign and untouched;
+  Norn never scrapes or shells out for keyring credentials.
+- [x] Share one coordinator per credential storage identity inside a process.
   Use reclaimable registry entries rather than a permanent global cache.
-- [ ] Implement a bounded per-credential reload-lock-refresh-save transaction
+- [x] Implement a bounded per-credential reload-lock-refresh-save transaction
   for cooperating Norn processes with atomic durable storage and explicit lock
   failure behavior.
-- [ ] Detect a foreign writer changing a shared credential during refresh and
-  return a typed conflict without knowingly overwriting it. Do not claim a Norn
-  lock coordinates the Codex CLI.
-- [ ] Never report refresh success when a rotated credential was not durably
+- [x] Detect a lock-ignoring writer changing the Norn-owned credential during
+  refresh and return a typed conflict without knowingly overwriting it. No Norn
+  lock is taken against the Codex CLI's foreign credential.
+- [x] Never report refresh success when a rotated credential was not durably
   accepted by its owner. Static credentials require an acknowledged persistence
   sink or have refresh disabled.
-- [ ] Preserve typed load, parse, refresh, persistence, and permission errors.
-- [ ] Define and test any stale-token use explicitly; do not silently fall back.
-- [ ] Use private no-follow regular-file credential storage with atomic
+- [x] Preserve typed load, parse, refresh, persistence, and permission errors.
+- [x] Do not silently fall back to a stale token after a required refresh or an
+  indeterminate/undurable persistence outcome.
+- [x] Use private no-follow regular-file credential storage with atomic
   replacement, file fsync, parent-directory fsync, and durable deletion.
 - [ ] On the D9 supported branch, add a versioned named-account index whose user
   alias maps to an opaque storage identifier; aliases are never filesystem paths.
@@ -1204,8 +1212,14 @@ automatic-rotation claim.
   `auth use`, `auth status [name]`, and `auth logout [name]` surfaces with
   deliberate all-account behavior. On the unsupported branch, do not create an
   index or selection surface; return and document a typed unsupported outcome.
-- [ ] Preserve `$CODEX_HOME/auth.json` as an explicitly identified foreign
-  source. Never duplicate its rotating refresh token into a named store.
+- [x] Enforce ambient `$CODEX_HOME` as foreign and non-authoritative: it cannot
+  redirect default Norn storage, and its `auth.json` is never mutated, locked,
+  permission-hardened, or deleted by the current single-account CLI/provider
+  login, refresh, status, or logout paths. A trusted explicit library root is
+  an ownership declaration, not an import or path-discovery surface.
+- [ ] If D9 approves import, define provenance and explicit-copy semantics that
+  never make the foreign Codex file a shared writable store or silently
+  duplicate a rotating refresh token.
 - [ ] Pin the selected identity for a provider/run. Before P5 adds persisted
   affinity, every resume requires explicit trusted account selection and rejects
   the Norn active-account default; it never silently chooses a replacement.
@@ -1217,41 +1231,63 @@ automatic-rotation claim.
   distinct or aliases and which companion fields each requires or forbids. Do
   not invent compatibility semantics during implementation. Validate before
   environment lookup, credential loading, provider construction, or network I/O.
-- [ ] Replace CLI status and doctor booleans with one library-owned credential
+- [x] Replace CLI status and doctor booleans with one library-owned credential
   state evaluator distinguishing missing, malformed, access-expired,
   refresh-candidate, locally-valid, and unknown states. Refresh conflict and
-  undurable persistence remain typed operation outcomes unless D9 separately
-  approves a durable recovery journal. List/status remain local,
-  side-effect-free, remotely unverified, and free of token or identity
+  undurable persistence remain typed operation outcomes. List/status remain
+  local, side-effect-free, remotely unverified, and free of token or identity
   disclosure. Doctor may add an explicit optional active probe without changing
   the local classification contract.
-- [ ] Delay browser completion until exchange, durable credential save, and any
-  named-account index update succeed. Own and join the worker outcome so
-  cancellation cannot leave a surprise credential write.
-- [ ] Always clear local credentials during logout and report remote revocation
+- [ ] Decide under D9 whether refresh conflict or undurable persistence needs a
+  durable recovery journal; do not infer a journal from the current in-memory
+  typed outcomes.
+- [x] For the current single-account flow, delay browser completion until
+  exchange and durable credential save succeed. Own and join the worker outcome
+  so cancellation cannot leave a surprise credential write.
+- [x] Always clear local credentials during logout and report remote revocation
   as an independent result; make the local deletion durable.
 
 ### Phase-specific evidence
 
+These boxes remain unchecked until a retained candidate run proves the complete
+claim. Notes in parentheses identify fixtures already present in source; they
+are not pass claims.
+
 - [ ] Redacted real-shape JWT fixtures cover namespaced and supported fallback
-  claim sources through login, import, refresh, and final header application
-  without storing a usable token.
+  claim sources through login, any approved import, refresh, and final header
+  application without storing a usable token. (Namespaced/fallback/conflict and
+  provider-header fixtures are present; import and the full chain remain open.)
 - [ ] Two separately constructed providers in one process share a coordinator
-  and cannot refresh the same lineage twice.
+  and cannot refresh the same lineage twice. (Registry and single-flight
+  fixtures are present; retained candidate execution is pending.)
 - [ ] Two real OS child processes targeting one Norn-managed identity perform
-  one effective refresh exchange and converge on identical durable state.
-- [ ] A scripted lock-ignoring foreign writer replacing file-backed
-  `$CODEX_HOME/auth.json` during exchange is detected; Norn does not knowingly
-  overwrite it.
+  one effective refresh exchange and converge on identical durable state. (The
+  child-process fixture is present; retained candidate execution is pending.)
+- [ ] A scripted lock-ignoring writer replacing Norn's `auth.json` during
+  exchange is detected without overwrite, and mutation sentinels prove
+  `$CODEX_HOME/auth.json` bytes, metadata, and surrounding files remain
+  unchanged across login, refresh, status, and logout. (The Norn conflict,
+  resolver non-authority, and status/doctor/provider/logout convergence
+  fixtures are present; login/refresh coverage and the retained full
+  foreign-file mutation sentinel remain open.)
 - [ ] Successful exchange followed by save, rename, fsync, permission, or owner
-  sink failure is not returned as ordinary success.
+  sink failure is not returned as ordinary success. (Persistence and ownerless
+  static failure fixtures are present; the complete fault matrix and retained
+  run remain open.)
 - [ ] Static credentials cannot strand a rotated refresh token: refresh is
-  rejected without an owner sink, and sink failure remains visible.
+  rejected without an owner sink, and any approved sink failure remains
+  visible. (The no-owner rejection fixture is present; no sink interface has
+  been approved.)
 - [ ] Corrupt, unreadable, partial, permission-denied, symlink, non-regular,
-  rename, fsync, and delete cases surface the correct typed state.
+  rename, fsync, and delete cases surface the correct typed state. (Focused
+  malformed, link/non-regular, conflict, and durable-delete fixtures are
+  present; the complete matrix and retained run remain open.)
 - [ ] Browser exchange/save/cancellation failures cannot render a final success
-  page or perform an unowned later write.
-- [ ] Revoke network/authority failure still deletes the local credential.
+  page or perform an unowned later write. (Commit-order, cancellation, and
+  storage-failure fixtures are present, including cancellation while
+  transaction acquisition is pending; retained candidate execution is pending.)
+- [ ] Revoke network/authority failure still deletes the local credential. (The
+  local-first revoke fixture is present; retained candidate execution is pending.)
 - [ ] On the supported branch and before named-account implementation, the
   owner-approved experiment verifies whether logging in and refreshing account B
   leaves account A authenticated and independently refreshable, not merely
@@ -1262,7 +1298,9 @@ automatic-rotation claim.
   duplicate identities fail safely. On the unsupported branch, tests prove no
   named registry/selector is exposed and the typed result explains the limit.
 - [ ] Status and doctor produce the same local classification for every fixture;
-  any doctor active-probe result is reported as separate remote evidence.
+  any doctor active-probe result is reported as separate remote evidence. (Both
+  use the same library evaluator and one default-root convergence fixture is
+  present; the complete cross-command retained state matrix is pending.)
 - [ ] Resume tests prove no pre-P5 session consumes an implicit active-account
   default after account selection changes.
 - [ ] The typed auth/source/account matrix rejects every invalid combination
@@ -1838,7 +1876,7 @@ ledger prematurely.
 |---|---|---|---|
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
 | P1 | Gate A complete at base `2917c8e`; Gate B foundation not yet implemented | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A `READY` | Implement and independently review the executable foundation, complete and verify P1, then resolve D0 before acceptance |
-| P2 | Not started | None | P1 acceptance and D9 |
+| P2 | Implementation in progress: single-account Norn-owned OAuth lifecycle, typed state, bounded coordination, durable login/logout, and foreign `CODEX_HOME` non-authority are present in source | No retained P2 candidate gate bundle; focused unit and OS-child fixtures are present but not promoted to acceptance evidence | P1 acceptance; close the open D9 import/named/keyring/journal/config decisions; implement the selected named or unsupported branch; complete fault and configuration matrices; run Gate C and independent review |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|
