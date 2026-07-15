@@ -1208,8 +1208,10 @@ matrix into the public `norn` configuration API, exposing canonical resolution
 on `ProviderSettingsResolved`, and reducing the CLI implementation to a backend
 adapter. Library matrix tests pass 3/3, the public embedder fixture passes 2/2,
 the CLI adapter tests pass 4/4, the existing early-rejection slice passes 28/28,
-and strict workspace/all-target Clippy plus fmt pass. This correction still
-requires the final retained gate and independent acceptance review.
+and strict workspace/all-target Clippy plus fmt pass. The focused correction
+review committed at `f1fcca2` returned `READY`, reproduced the updated 6/6
+library, 2/2 public-embedder, and 5/5 CLI slices, and closed the observation.
+The retained phase gate and independent P2 acceptance remain open.
 
 ### What this phase fixes
 
@@ -1988,7 +1990,7 @@ ledger prematurely.
 |---|---|---|---|
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
 | P1 | Gate A complete at base `2917c8e`; Gate B foundation not yet implemented | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A `READY` | Implement and independently review the executable foundation, complete and verify P1, then resolve D0 before acceptance |
-| P2 | Implementation candidate through `448353d`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and failure matrices are present in source | Implementation review `c4965e0` is `READY` for source `4d51a36`; retained D9A distributions are 20/20 for the process-local deadline and 20/20 for two-process convergence; current focused checks are 216/216 OAuth and 483/483 CLI plus the `448353d` library 3/3, public API 2/2, CLI adapter 4/4, and early-rejection 28/28 slices with strict workspace/all-target Clippy, fmt, diff, forbidden-addition, and source-size checks; no complete retained P2 candidate gate bundle | Independently review the library-boundary correction, resolve the P1 dependency, run the live A/B/A validity experiment, execute and retain the complete candidate gates, then obtain P2 acceptance |
+| P2 | Implementation candidate through `448353d`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and failure matrices are present in source | Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; retained D9A distributions are 20/20 for the process-local deadline and 20/20 for two-process convergence; focused checks include 216/216 OAuth, 483/483 CLI, library 6/6, public embedder 2/2, and CLI adapter 5/5 with strict workspace/all-target Clippy, fmt, diff, forbidden-addition, and source-size checks; no complete retained P2 candidate gate bundle | Resolve the P1 dependency, run the live A/B/A validity experiment, execute and retain the complete candidate gates, then obtain P2 acceptance |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|
