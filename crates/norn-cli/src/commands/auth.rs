@@ -122,8 +122,8 @@ fn run_status() -> ExitCode {
 }
 
 fn run_status_at(auth_root: &NornAuthRoot) -> ExitCode {
-    match inspect_auth_state(auth_root) {
-        Ok(state) => report_status(&state),
+    match status_report_at(auth_root) {
+        Ok(report) => emit_status_report(&report),
         Err(error) => {
             eprintln!(
                 "norn: OAuth credential storage could not be inspected ({error}); remote validity is unverified."
@@ -139,8 +139,11 @@ pub(crate) fn inspect_auth_state(
     inspect_file_credential(auth_root, AuthCredentialsStoreMode::File, Utc::now())
 }
 
-fn report_status(state: &LocalCredentialState) -> ExitCode {
-    let report = status_report(state);
+fn status_report_at(auth_root: &NornAuthRoot) -> Result<StatusReport, CredentialInspectionError> {
+    inspect_auth_state(auth_root).map(|state| status_report(&state))
+}
+
+fn emit_status_report(report: &StatusReport) -> ExitCode {
     if report.exit_code == ExitCode::Success {
         println!("{}", report.message);
     } else {
@@ -247,72 +250,7 @@ pub(crate) const fn unknown_expiry_reason(reason: UnknownExpiryReason) -> &'stat
 mod tests {
     use super::*;
 
-    const TEST_JWT: &str = concat!(
-        "eyJhbGciOiJub25lIn0.",
-        "eyJzdWIiOiJ1c2VyIiwiZXhwIjo0MTAyNDQ0ODAwLCJodHRwczovL2FwaS5vcGVu",
-        "YWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjb3VudCJ9fQ."
-    );
-
     type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn default_auth_surfaces_converge_on_norn_home_without_touching_codex_home() -> TestResult
-    {
-        use norn::provider::auth::{AuthSource, build_from_auth_source};
-        use norn::provider::openai_oauth::{DeleteAuthOutcome, RemoteRevokeOutcome};
-
-        let norn_home = tempfile::tempdir()?;
-        let codex_home = tempfile::tempdir()?;
-        let norn_auth_root = norn_home.path().join("auth");
-        std::fs::create_dir(&norn_auth_root)?;
-        std::fs::write(
-            norn_auth_root.join("auth.json"),
-            serde_json::to_vec(&serde_json::json!({
-                "auth_mode": "chatgpt",
-                "tokens": {
-                    "id_token": TEST_JWT,
-                    "access_token": TEST_JWT,
-                    "refresh_token": "",
-                    "account_id": "account"
-                }
-            }))?,
-        )?;
-        let foreign_auth = codex_home.path().join("auth.json");
-        let foreign_sibling = codex_home.path().join("profile-sentinel");
-        std::fs::write(&foreign_auth, b"foreign-auth-sentinel")?;
-        std::fs::write(&foreign_sibling, b"foreign-profile-sentinel")?;
-
-        temp_env::async_with_vars(
-            [
-                ("NORN_HOME", Some(norn_home.path().as_os_str())),
-                ("CODEX_HOME", Some(codex_home.path().as_os_str())),
-            ],
-            async {
-                assert_eq!(run_status(), ExitCode::Success);
-                assert!(crate::commands::doctor::check_auth());
-
-                let provider = build_from_auth_source(&AuthSource::oauth_default()).await?;
-                let request = provider
-                    .apply_auth(reqwest::Client::new().get("http://example.invalid"))
-                    .await?
-                    .build()?;
-                assert!(request.headers().contains_key("Authorization"));
-                drop(provider);
-
-                let report = logout(LoginConfig::default()).await?;
-                assert!(matches!(report.local, Ok(DeleteAuthOutcome::Removed)));
-                assert!(matches!(report.remote, RemoteRevokeOutcome::NotApplicable));
-                assert!(!norn_auth_root.join("auth.json").exists());
-                Ok::<(), Box<dyn std::error::Error>>(())
-            },
-        )
-        .await?;
-
-        assert_eq!(std::fs::read(foreign_auth)?, b"foreign-auth-sentinel");
-        assert_eq!(std::fs::read(foreign_sibling)?, b"foreign-profile-sentinel");
-        Ok(())
-    }
 
     #[test]
     fn status_with_no_auth_file_succeeds() -> TestResult {
@@ -397,3 +335,11 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "auth_state_matrix_tests.rs"]
+mod state_matrix_tests;
+
+#[cfg(all(test, unix, not(any(target_os = "redox", target_os = "espidf"))))]
+#[path = "auth_foreign_home_tests.rs"]
+mod foreign_home_tests;

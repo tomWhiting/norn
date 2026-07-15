@@ -74,10 +74,9 @@ pub(crate) fn check_auth() -> bool {
     check_auth_at(&auth_root)
 }
 
-fn check_auth_at(auth_root: &NornAuthRoot) -> bool {
-    match inspect_auth_state(auth_root) {
-        Ok(state) => {
-            let report = auth_check_report(&state);
+pub(super) fn check_auth_at(auth_root: &NornAuthRoot) -> bool {
+    match auth_check_report_at(auth_root) {
+        Ok(report) => {
             eprintln!("{}", report.message);
             report.passed
         }
@@ -91,9 +90,15 @@ fn check_auth_at(auth_root: &NornAuthRoot) -> bool {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct AuthCheckReport {
-    passed: bool,
-    message: String,
+pub(super) struct AuthCheckReport {
+    pub(super) passed: bool,
+    pub(super) message: String,
+}
+
+pub(super) fn auth_check_report_at(
+    auth_root: &NornAuthRoot,
+) -> Result<AuthCheckReport, norn::provider::openai_oauth::CredentialInspectionError> {
+    inspect_auth_state(auth_root).map(|state| auth_check_report(&state))
 }
 
 fn auth_check_report(state: &LocalCredentialState) -> AuthCheckReport {

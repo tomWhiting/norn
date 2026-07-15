@@ -77,6 +77,15 @@ fn auth_from_response(token_response: CodeExchangeResponse) -> Result<AuthDotJso
     Ok(AuthDotJson::from_tokens(tokens))
 }
 
+#[cfg(test)]
+pub(super) fn auth_from_response_fixture(raw: &[u8]) -> Result<AuthDotJson, LoginError> {
+    let token_response = serde_json::from_slice::<CodeExchangeResponse>(raw).map_err(|error| {
+        tracing::debug!(%error, "test token authority returned a malformed success response");
+        LoginError::TokenExchange("token endpoint returned a malformed success response".to_owned())
+    })?;
+    auth_from_response(token_response)
+}
+
 fn map_id_token_error(error: &JwtError) -> LoginError {
     let reason = match error {
         JwtError::ConflictingAccountIds => {

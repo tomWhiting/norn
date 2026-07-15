@@ -428,3 +428,7 @@ mod tests;
 #[cfg(test)]
 #[path = "login_server_commit_tests.rs"]
 mod commit_tests;
+
+#[cfg(all(test, unix, not(any(target_os = "redox", target_os = "espidf"))))]
+#[path = "login_server_foreign_home_tests.rs"]
+mod foreign_home_tests;

@@ -23,6 +23,13 @@ mod revoke;
 mod storage;
 mod types;
 
+#[cfg(all(test, unix, not(any(target_os = "redox", target_os = "espidf"))))]
+mod foreign_home_test_support;
+
+#[cfg(test)]
+#[path = "oauth_chain_tests.rs"]
+mod chain_tests;
+
 pub use auth_root::{NornAuthRoot, NornAuthRootError, NornAuthRootSource, resolve_norn_auth_root};
 pub use credential_state::{
     CredentialInspectionError, LocalCredentialState, MalformedCredentialReason,

@@ -458,3 +458,7 @@ mod process_tests;
 #[cfg(test)]
 #[path = "manager_supervision_tests.rs"]
 mod supervision_tests;
+
+#[cfg(all(test, unix, not(any(target_os = "redox", target_os = "espidf"))))]
+#[path = "manager_foreign_home_tests.rs"]
+mod foreign_home_tests;
