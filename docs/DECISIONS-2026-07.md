@@ -881,10 +881,12 @@ acceptance remains pending.
 - **D9 is closed as a design decision.** The
   selected branch, storage/selection semantics, foreign import and keyring
   exclusion, recovery-marker contract, provider-auth matrix, and pre-P5 resume
-  rule are fixed above. The source implementation candidate is present at
-  `4d51a36`; the live validity experiment, P1 dependency, retained gate evidence,
-  and independent P2 acceptance remain open. D9A's credential-lock timing policy
-  is closed separately.
+  rule are fixed above. The source implementation candidate is present through
+  `448353d`; its provider-auth matrix is one public, side-effect-free library
+  policy used by the CLI and available to embedders before secret lookup. The
+  live validity experiment, P1 dependency, retained gate evidence, and
+  independent P2 acceptance remain open. D9A's credential-lock timing policy is
+  closed separately.
 - **D10 remains open.** Automatic rotation requires both authoritative permission
   under the governing product/contract terms and a pre-dispatch or guaranteed
   non-execution state-machine proof. If either is absent, `ROUTE-01` closes as an

@@ -9,7 +9,7 @@
   its prospective base. The owner has deferred D0 remote merge enforcement to
   P1 exit; checked-in local enforcement and retained evidence remain mandatory,
   and no remote-protection claim is permitted while D0 is open. P2
-  implementation candidate is complete at source `4d51a36`; retained Gate C,
+  implementation candidate is complete through source `448353d`; retained Gate C,
   the live A/B/A experiment, the P1 dependency, and independent P2 acceptance
   remain open.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
@@ -392,7 +392,7 @@ artifacts to the same clean head with zero errors.
 |---|---|---|
 | P0. Credential and workspace authority containment | [x] Accepted by focused Gate D review `7ce29d7` on 2026-07-15 | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] Gate A complete at base `2917c8e`; Gate B foundation next; D0 remote enforcement deferred to exit | The program has executable contracts and protected quality gates. |
-| P2. OAuth lifecycle correctness | [ ] Implementation candidate `4d51a36` complete; retained Gate C, live A/B/A, P1 dependency, and independent acceptance open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
+| P2. OAuth lifecycle correctness | [ ] Implementation candidate through `448353d` complete; retained Gate C, live A/B/A, P1 dependency, and independent acceptance open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
 | P3. Canonical ordered transcript | [ ] | Responses items survive stream, persistence, resume, and replay in order. |
 | P4. Streaming and replay conformance | [ ] | Supported events/items are complete, reconciled, and fail closed. |
 | P5. Conversation and Codex turn semantics | [ ] | Local/provider history and turn-scoped state have explicit lifetimes. |
@@ -1131,7 +1131,7 @@ campaign rules. No provider behavior changes in this phase.
 
 ## P2. OAuth lifecycle correctness
 
-**Status:** [ ] Implementation candidate complete at source `4d51a36`; focused
+**Status:** [ ] Implementation candidate complete through source `448353d`; focused
 OAuth and CLI gates are green, but no retained Gate C or P2 acceptance claim;
 **findings targeted:** `AUTH-01` through `AUTH-07`, `CONFIG-01`, `CONFIG-02`;
 **dependencies:** P1; D9 and D9A are decided. Checked work items below mean the
@@ -1197,6 +1197,19 @@ changed Rust files are below 500 physical lines (largest 464). An independent
 read-only source audit found no blocker or major issue after its proof-scope,
 target-gating, disclosure-sentinel, and matrix-inventory findings were fixed.
 These remain implementation checks, not retained Gate C or P2 acceptance.
+
+The independent implementation-candidate review committed at `c4965e0`
+returned `READY` for source `4d51a36` with no blocker, major, or minor finding.
+It identified one owner-disposition observation: the provider-auth matrix lived
+in `norn-cli`, so a library embedder could miss the settings-to-auth policy even
+though concrete provider constructors still enforced their destination/auth
+invariants. Source `448353d` closes that boundary by moving the single pure
+matrix into the public `norn` configuration API, exposing canonical resolution
+on `ProviderSettingsResolved`, and reducing the CLI implementation to a backend
+adapter. Library matrix tests pass 3/3, the public embedder fixture passes 2/2,
+the CLI adapter tests pass 4/4, the existing early-rejection slice passes 28/28,
+and strict workspace/all-target Clippy plus fmt pass. This correction still
+requires the final retained gate and independent acceptance review.
 
 ### What this phase fixes
 
@@ -1296,7 +1309,7 @@ automatic-rotation claim.
 - [x] Make account selection trusted-only: explicit CLI, Norn-owned active
   selection, or trusted user configuration. Project/local settings, model
   aliases/profiles, prompts, and tools cannot select or rotate accounts.
-- [x] Close `CONFIG-01` and `CONFIG-02` with the D9-approved typed
+- [x] Close `CONFIG-01` and `CONFIG-02` with the D9-approved library-owned typed
   auth/source/account matrix, including whether `oauth`, `env`, and `api_key` are
   distinct or aliases and which companion fields each requires or forbids. Do
   not invent compatibility semantics during implementation. Validate before
@@ -1402,8 +1415,8 @@ are not pass claims.
   scenario remains open.)
 - [ ] The typed auth/source/account matrix rejects every invalid combination
   before reading an environment variable or credential. (The exhaustive pure
-  matrix and side-effect-order fixtures are present; retained candidate
-  execution remains open.)
+  library matrix, public embedder API, CLI-equivalence, and side-effect-order
+  fixtures are present; retained candidate execution remains open.)
 
 ### Review and exit gate
 
@@ -1975,7 +1988,7 @@ ledger prematurely.
 |---|---|---|---|
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
 | P1 | Gate A complete at base `2917c8e`; Gate B foundation not yet implemented | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A `READY` | Implement and independently review the executable foundation, complete and verify P1, then resolve D0 before acceptance |
-| P2 | Implementation candidate `4d51a36`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, typed provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and failure matrices are present in source | Interim correction review `7536436` is `READY`; retained D9A distributions are 20/20 for the process-local deadline and 20/20 for two-process convergence; current focused checks are 216/216 OAuth and 483/483 CLI with strict workspace/all-target Clippy, fmt, diff, forbidden-addition, and source-size checks; no complete retained P2 candidate gate bundle | Resolve the P1 dependency, run the live A/B/A validity experiment, execute and retain the complete candidate gates, then obtain independent P2 review and acceptance |
+| P2 | Implementation candidate through `448353d`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and failure matrices are present in source | Implementation review `c4965e0` is `READY` for source `4d51a36`; retained D9A distributions are 20/20 for the process-local deadline and 20/20 for two-process convergence; current focused checks are 216/216 OAuth and 483/483 CLI plus the `448353d` library 3/3, public API 2/2, CLI adapter 4/4, and early-rejection 28/28 slices with strict workspace/all-target Clippy, fmt, diff, forbidden-addition, and source-size checks; no complete retained P2 candidate gate bundle | Independently review the library-boundary correction, resolve the P1 dependency, run the live A/B/A validity experiment, execute and retain the complete candidate gates, then obtain P2 acceptance |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|

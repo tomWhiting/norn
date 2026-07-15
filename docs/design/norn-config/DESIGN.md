@@ -249,6 +249,11 @@ runtime validation rejects the contradictory configuration. Explicit
 it does not resurrect a source already cleared by an intervening OAuth layer.
 There is no blank-value clearing syntax.
 
+The complete backend/mode/companion matrix is owned by the public `norn`
+configuration API. `ProviderSettingsResolved::resolve_auth` applies it without
+reading an environment variable or credential; the CLI and library embedders
+use that same decision before constructing a provider.
+
 ### D13: Existing `-c` overrides as highest-precedence CLI layer
 
 The 23-key `-c key=value` system in `assembly.rs` is preserved. It provides
