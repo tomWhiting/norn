@@ -9,7 +9,8 @@
   its prospective base. The owner has deferred D0 remote merge enforcement to
   P1 exit; checked-in local enforcement and retained evidence remain mandatory,
   and no remote-protection claim is permitted while D0 is open. P2
-  implementation candidate is complete through source `448353d`; retained Gate C,
+  implementation candidate and fixture closure are complete through source
+  `fcd1b30`; retained Gate C,
   the live A/B/A experiment, the P1 dependency, and independent P2 acceptance
   remain open.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
@@ -401,7 +402,7 @@ artifacts to the same clean head with zero errors.
 |---|---|---|
 | P0. Credential and workspace authority containment | [x] Accepted by focused Gate D review `7ce29d7` on 2026-07-15 | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] Gate A complete at base `2917c8e`; Gate B foundation next; D0 remote enforcement deferred to exit | The program has executable contracts and protected quality gates. |
-| P2. OAuth lifecycle correctness | [ ] Implementation candidate through `448353d` complete; retained Gate C, live A/B/A, P1 dependency, and independent acceptance open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
+| P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; retained Gate C, live A/B/A, P1 dependency, and independent acceptance open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
 | P3. Canonical ordered transcript | [ ] | Responses items survive stream, persistence, resume, and replay in order. |
 | P4. Streaming and replay conformance | [ ] | Supported events/items are complete, reconciled, and fail closed. |
 | P5. Conversation and Codex turn semantics | [ ] | Local/provider history and turn-scoped state have explicit lifetimes. |
@@ -1141,8 +1142,9 @@ campaign rules. No provider behavior changes in this phase.
 
 ## P2. OAuth lifecycle correctness
 
-**Status:** [ ] Implementation candidate complete through source `448353d`; focused
-OAuth and CLI gates are green, but no retained Gate C or P2 acceptance claim;
+**Status:** [ ] Implementation candidate and fixture closure complete through
+source `fcd1b30`; focused OAuth and CLI gates are green, but no retained Gate C
+or P2 acceptance claim;
 **findings targeted:** `AUTH-01` through `AUTH-07`, `CONFIG-01`, `CONFIG-02`;
 **dependencies:** P1; D9 and D9A are decided. Checked work items below mean the
 implementation and focused source fixtures are present; they do not substitute
@@ -1222,6 +1224,26 @@ and strict workspace/all-target Clippy plus fmt pass. The focused correction
 review committed at `f1fcca2` returned `READY`, reproduced the updated 6/6
 library, 2/2 public-embedder, and 5/5 CLI slices, and closed the observation.
 The retained phase gate and independent P2 acceptance remain open.
+
+Source `fcd1b30` closes the remaining bounded fixture gaps without changing the
+accepted credential policy. It adds flat-claim login and refresh chains through
+durable reload and final request headers; replaces the coarse publication fault
+with exact temp-create, write, file-sync, rename, and parent-directory-sync
+points; covers quarantine rename, removal, and post-delete directory sync; and
+joins resume account validation to the production `build_provider` path after
+the active account changes. An internal adversarial review initially rejected
+the helper-only resume test as insufficient. The replacement makes the active
+account malformed, proves implicit construction fails, and proves explicit
+resumed construction still selects the requested account; the reviewer then
+closed the finding with no residual issue. Focused execution passed 6/6 JWT
+chains, 3/3 recovery-fault tests, 9/9 revoke tests, and the joined resume case;
+the full OAuth and CLI library slices passed 219/219 and 482/482. Strict
+workspace/all-target Clippy, fmt, diff, prohibited-bypass, and physical-size
+checks passed; the largest touched file is 499 lines. These focused
+fixture-closure checks are recorded in the handoff, but no raw hashed output
+bundle is retained and they are not a complete P2 Gate C or acceptance verdict.
+The details are in the
+[`P2 fixture-closure handoff`](reviews/2026-07-16-p2-fixture-closure-handoff.md).
 
 ### What this phase fixes
 
@@ -1358,8 +1380,10 @@ are not pass claims.
   application without storing a usable token. (Namespaced/fallback/conflict and
   provider-header fixtures are present. Source `5c9d434` adds sanitized
   namespaced login-response and refresh chains through durable reload and final
-  headers, plus non-disclosing decoder conflicts. No import branch is approved,
-  and fallback/import end-to-end chains plus retained execution remain open.)
+  headers, plus non-disclosing decoder conflicts. Source `fcd1b30` adds the
+  equivalent flat-claim login and refresh chains through durable reload and
+  final headers. No import branch is approved. Focused execution is recorded;
+  the complete retained candidate gate remains open.)
 - [ ] Two separately constructed providers in one process share a coordinator
   and cannot refresh the same lineage twice. (Registry and single-flight
   fixtures are present; retained candidate execution is pending.)
@@ -1378,8 +1402,11 @@ are not pass claims.
   structural foreign-path inventory remain open.)
 - [ ] Successful exchange followed by save, rename, fsync, permission, or owner
   sink failure is not returned as ordinary success. (Persistence and ownerless
-  static failure fixtures are present; the complete fault matrix and retained
-  run remain open.)
+  static failure fixtures are present. Source `fcd1b30` adds table-driven
+  temp-create, write, credential-file-fsync, final-rename, and
+  parent-directory-fsync faults with typed failure, cleanup, convergence, and
+  no-refresh-replay assertions. The focused matrix passes; the complete
+  retained candidate gate remains open.)
 - [ ] Static credentials cannot strand a rotated refresh token: refresh is
   rejected without an owner sink, and any approved sink failure remains
   visible. (The no-owner rejection fixture is present; no sink interface has
@@ -1388,8 +1415,12 @@ are not pass claims.
   rename, fsync, and delete cases surface the correct typed state. (Focused
   malformed, link/non-regular, conflict, and durable-delete fixtures are
   present. A manager-level symlink-root fixture proves zero authority requests,
-  zero target or mode mutation, and no lock creation; the complete matrix and
-  retained run remain open.)
+  zero target or mode mutation, and no lock creation. Source `fcd1b30` adds
+  quarantine-rename, quarantine-remove, and post-delete-directory-fsync faults
+  with exact restoration/removal and local-first revoke behavior. The existing
+  mode-000 unreadable fixture remains explicitly platform-conditional when the
+  executing identity can bypass permission bits; it is not claimed as
+  unconditional evidence. The complete retained candidate gate remains open.)
 - [ ] Browser exchange/save/cancellation failures cannot render a final success
   page or perform an unowned later write. (Commit-order, cancellation, and
   storage-failure fixtures are present, including cancellation while
@@ -1422,9 +1453,11 @@ are not pass claims.
   reasons, symlink/non-regular/unreadable entries, and observational mode
   preservation. Retained candidate execution is pending.)
 - [ ] Resume tests prove no pre-P5 session consumes an implicit active-account
-  default after account selection changes. (The explicit-account resume guard
-  and selection-change fixtures are present separately; the joined retained
-  scenario remains open.)
+  default after account selection changes. (Source `fcd1b30` joins the guard and
+  selection change through production `build_provider`: implicit resumed
+  construction is rejected, the changed active account is made unusable, and
+  explicit construction still succeeds against the requested account. Focused
+  execution passes; the complete retained candidate gate remains open.)
 - [ ] The typed auth/source/account matrix rejects every invalid combination
   before reading an environment variable or credential. (The exhaustive pure
   library matrix, public embedder API, CLI-equivalence, and side-effect-order
@@ -2015,7 +2048,7 @@ ledger prematurely.
 |---|---|---|---|
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
 | P1 | Gate A complete at base `2917c8e`; Gate B foundation not yet implemented | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A `READY` | Implement and independently review the executable foundation, complete and verify P1, then resolve D0 before acceptance |
-| P2 | Implementation candidate through `448353d`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and failure matrices are present in source | Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; retained D9A distributions are 20/20 for the process-local deadline and 20/20 for two-process convergence; focused checks include 216/216 OAuth, 483/483 CLI, library 6/6, public embedder 2/2, and CLI adapter 5/5 with strict workspace/all-target Clippy, fmt, diff, forbidden-addition, and source-size checks; no complete retained P2 candidate gate bundle | Resolve the P1 dependency, run the live A/B/A validity experiment, execute and retain the complete candidate gates, then obtain P2 acceptance |
+| P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and the bounded source fixture matrices are present | Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks; retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle | Record the historical missing-phase-base disposition, resolve the P1 dependency, run the live A/B/A validity experiment, execute and retain the complete candidate gates, then obtain P2 acceptance |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|
