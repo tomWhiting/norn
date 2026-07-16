@@ -9,6 +9,7 @@ pub mod builder;
 mod builder_setters;
 pub mod child_policy;
 pub mod fork;
+mod fork_context_filter;
 pub mod goals;
 pub mod handle;
 pub mod instance;
@@ -53,3 +54,6 @@ pub use registry::{AgentEntry, AgentRegistry, AgentStatus, AgentTombstone, Spawn
 pub use result_channel::{ChildAgentResult, ChildResultSender, frame_child_result};
 pub use resume::rebuild_action_log;
 pub use session_spec::SessionSpec;
+
+#[cfg(test)]
+mod fork_canonical_resolution_tests;

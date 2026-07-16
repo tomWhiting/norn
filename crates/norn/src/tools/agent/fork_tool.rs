@@ -700,8 +700,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::super::canonical_lifecycle_test_support::{
-        canonical_item_values, contains_contiguous_items, stateless_payload_input,
-        supported_non_audio_items, transcript_item,
+        canonical_item_values, canonical_payload_items, historical_non_audio_items,
+        stateless_payload_input, transcript_item,
     };
     use super::super::handle::AgentWakeRegistry;
     use super::super::infra::AgentToolInfra;
@@ -1080,18 +1080,21 @@ mod tests {
                         name: "read".to_string(),
                         arguments: serde_json::json!({}),
                         kind: crate::provider::request::ToolCallKind::Function,
+                        caller: crate::provider::request::ToolCallCaller::Absent,
                     },
                     ToolCallEvent {
                         call_id: "tc-search".to_string(),
                         name: "search".to_string(),
                         arguments: serde_json::json!({}),
                         kind: crate::provider::request::ToolCallKind::Function,
+                        caller: crate::provider::request::ToolCallCaller::Absent,
                     },
                     ToolCallEvent {
                         call_id: "call-1".to_string(),
                         name: "fork".to_string(),
                         arguments: serde_json::json!({}),
                         kind: crate::provider::request::ToolCallKind::Function,
+                        caller: crate::provider::request::ToolCallCaller::Absent,
                     },
                 ],
                 usage: EventUsage::default(),
@@ -1583,7 +1586,7 @@ mod tests {
         let root_id = opened.entry.id.clone();
         let parent_store = Arc::new(opened.store);
         let inherited_items =
-            supported_non_audio_items("fork_inherited", "Inherited canonical context.");
+            historical_non_audio_items("fork_inherited", "Inherited canonical context.");
         let response_items = inherited_items
             .iter()
             .cloned()
@@ -1744,9 +1747,24 @@ mod tests {
             "SessionManager::resume must retain the fork's inherited canonical history",
         );
         let replay_input = stateless_payload_input(&resumed_events)?;
-        assert!(
-            contains_contiguous_items(&replay_input, &inherited_items),
-            "the resumed fork must replay inherited items without stream coordinates or reconstruction",
+        let mut expected_replay = inherited_items;
+        expected_replay.extend([
+            json!({
+                "type": "function_call",
+                "call_id": "structured-out",
+                "name": "structured_output",
+                "arguments": "{\"response\":\"done\",\"requirements\":{}}"
+            }),
+            json!({
+                "type": "function_call_output",
+                "call_id": "structured-out",
+                "output": "accepted"
+            }),
+        ]);
+        assert_eq!(
+            canonical_payload_items(&replay_input),
+            expected_replay,
+            "the resumed fork must replay its exact inherited corpus followed only by its own structured result",
         );
         Ok(())
     }

@@ -26,6 +26,8 @@ pub(crate) mod variant_resolve;
 
 #[cfg(test)]
 mod canonical_lifecycle_test_support;
+#[cfg(test)]
+mod fork_seed_canonical_tests;
 
 pub use self::coord::{
     CloseAgentTool, SIGNAL_AGENT_TOOL_NAME, SignalAgentTool, WAKE_AGENT_TOOL_NAME, WakeAgentTool,

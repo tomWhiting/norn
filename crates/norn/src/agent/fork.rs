@@ -30,105 +30,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::provider::response_item::ResponseItem;
 use crate::session::events::{EventBase, SessionEvent};
 
-/// Filter applied to parent context events before forking.
-///
-/// Defaults preserve everything (`include_system = true`, no recency cap,
-/// no exclusion).
-#[derive(Clone, Debug)]
-pub struct ContextFilter {
-    /// If `false`, drop ambient session events (`ModelChange`,
-    /// `Compaction`, `Fork`, `Label`, `Custom`).
-    pub include_system: bool,
-    /// If set, keep only the last `n` events after other filters apply.
-    pub include_recent_n: Option<usize>,
-    /// If `true`, drop `ToolResult` events and strip `tool_calls` from
-    /// `AssistantMessage` events.
-    pub exclude_tool_calls: bool,
-}
-
-impl Default for ContextFilter {
-    fn default() -> Self {
-        Self {
-            include_system: true,
-            include_recent_n: None,
-            exclude_tool_calls: false,
-        }
-    }
-}
-
-impl ContextFilter {
-    /// Apply the filter to `events` and return a fresh `Vec` of the
-    /// retained / rewritten events.
-    #[must_use]
-    pub fn apply(&self, events: &[SessionEvent]) -> Vec<SessionEvent> {
-        let mut filtered: Vec<SessionEvent> =
-            events.iter().filter_map(|e| self.transform(e)).collect();
-
-        if let Some(n) = self.include_recent_n
-            && filtered.len() > n
-        {
-            let mut cut = filtered.len() - n;
-            // Advance past leading ToolResults whose parent
-            // AssistantMessage was dropped — the provider rejects orphan
-            // tool results without a matching tool_call.
-            while cut < filtered.len() && matches!(filtered[cut], SessionEvent::ToolResult { .. }) {
-                cut += 1;
-            }
-            filtered.drain(..cut);
-        }
-        filtered
-    }
-
-    fn transform(&self, event: &SessionEvent) -> Option<SessionEvent> {
-        match event {
-            SessionEvent::ToolResult { .. } if self.exclude_tool_calls => None,
-            SessionEvent::AssistantMessage {
-                base,
-                response_items,
-                content,
-                thinking,
-                reasoning,
-                usage,
-                stop_reason,
-                response_id,
-                ..
-            } if self.exclude_tool_calls => Some(SessionEvent::AssistantMessage {
-                response_items: response_items
-                    .iter()
-                    .filter(|item| {
-                        !matches!(
-                            item.item,
-                            ResponseItem::FunctionCall(_) | ResponseItem::CustomToolCall(_)
-                        )
-                    })
-                    .cloned()
-                    .collect(),
-                base: base.clone(),
-                content: content.clone(),
-                thinking: thinking.clone(),
-                reasoning: reasoning.clone(),
-                tool_calls: Vec::new(),
-                usage: usage.clone(),
-                stop_reason: stop_reason.clone(),
-                response_id: response_id.clone(),
-            }),
-            SessionEvent::ModelChange { .. }
-            | SessionEvent::Compaction { .. }
-            | SessionEvent::ChildBranch { .. }
-            | SessionEvent::ForkComplete { .. }
-            | SessionEvent::Label { .. }
-            | SessionEvent::Custom { .. }
-                if !self.include_system =>
-            {
-                None
-            }
-            other => Some(other.clone()),
-        }
-    }
-}
+pub use super::fork_context_filter::ContextFilter;
 
 /// One requirement in a fork's request.
 ///
@@ -503,8 +407,8 @@ pub fn inject_synthetic_fork_result(
     out
 }
 
-/// An orphan `tool_call` in the parent's latest `AssistantMessage`
-/// that has no matching `ToolResult` in the event store.
+/// An orphan `tool_call` in the parent history that has no legacy `ToolResult`
+/// or canonical function/custom call-output item.
 pub struct OrphanToolCall {
     /// Provider-assigned tool call ID.
     pub id: String,
@@ -514,37 +418,17 @@ pub struct OrphanToolCall {
 
 /// Defensive completeness check (R2).
 ///
-/// Returns every tool call in the most-recent `AssistantMessage` of `events`
-/// that lacks a matching `ToolResult`, *excluding* `fork_call_id` (which the
-/// synthetic injection covers). When the most-recent `AssistantMessage` has
-/// no tool calls or `events` is empty, the returned `Vec` is empty.
+/// Returns every tool call in `events` that lacks either supported local
+/// result representation, *excluding* `fork_call_id` (which the synthetic
+/// injection covers). An empty or complete history returns an empty `Vec`.
 #[must_use]
 pub fn verify_no_orphan_tool_calls(
     events: &[SessionEvent],
     fork_call_id: &str,
 ) -> Vec<OrphanToolCall> {
-    let Some(last_assistant_idx) = events
-        .iter()
-        .rposition(|e| matches!(e, SessionEvent::AssistantMessage { .. }))
-    else {
-        return Vec::new();
-    };
-    let Some(tool_calls) = events[last_assistant_idx].assistant_tool_calls() else {
-        return Vec::new();
-    };
-
-    let after = &events[last_assistant_idx + 1..];
-    tool_calls
+    crate::session::unresolved_local_tool_calls(events)
         .into_iter()
         .filter(|tc| tc.call_id != fork_call_id)
-        .filter(|tc| {
-            !after.iter().any(|e| {
-                matches!(
-                    e,
-                    SessionEvent::ToolResult { tool_call_id, .. } if tool_call_id == &tc.call_id
-                )
-            })
-        })
         .map(|tc| OrphanToolCall {
             id: tc.call_id,
             name: tc.name,
@@ -601,6 +485,7 @@ mod tests {
                     name: name.to_string(),
                     arguments: serde_json::json!({}),
                     kind: crate::provider::request::ToolCallKind::Function,
+                    caller: crate::provider::request::ToolCallCaller::Absent,
                 })
                 .collect(),
             usage: EventUsage::default(),

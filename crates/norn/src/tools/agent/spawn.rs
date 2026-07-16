@@ -710,8 +710,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::super::canonical_lifecycle_test_support::{
-        canonical_item_values, completed_item_event, contains_contiguous_items,
-        stateless_payload_input, supported_non_audio_items,
+        canonical_item_values, canonical_payload_items, completed_item_event,
+        spawn_non_audio_items, stateless_payload_input,
     };
     use super::super::infra::AgentToolInfra;
     use super::*;
@@ -2841,7 +2841,7 @@ mod tests {
     async fn spawn_under_persistent_parent_persists_child_timeline()
     -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let canonical_output = supported_non_audio_items("spawn_persisted", "branched child");
+        let canonical_output = spawn_non_audio_items("spawn_persisted", "branched child");
         let mut provider_events = canonical_output
             .iter()
             .cloned()
@@ -2914,9 +2914,10 @@ mod tests {
             "the spawned child's completed item must survive its production write-through path",
         );
         let replay_input = stateless_payload_input(&child_events)?;
-        assert!(
-            contains_contiguous_items(&replay_input, &canonical_output),
-            "the spawned child's persisted canonical item must replay without reconstruction",
+        assert_eq!(
+            canonical_payload_items(&replay_input),
+            canonical_output,
+            "the spawned child's persisted canonical items must be the exact replay corpus",
         );
 
         // Parent side ON DISK: the ChildBranch reservation names the child.

@@ -3,6 +3,7 @@ use std::io;
 use serde_json::Value;
 
 use crate::provider::events::ProviderEvent;
+use crate::provider::openai::response_contract::public_output_item;
 use crate::provider::request::ProviderRequest;
 use crate::provider::response_item::{
     ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
@@ -10,78 +11,12 @@ use crate::provider::response_item::{
 use crate::session::conversion::events_to_messages;
 use crate::session::events::SessionEvent;
 
-pub(super) fn supported_non_audio_items(id_suffix: &str, text: &str) -> Vec<Value> {
-    vec![
-        serde_json::json!({
-            "type": "reasoning",
-            "id": format!("rs_{id_suffix}"),
-            "summary": [{"type": "summary_text", "text": "preserve canonical order"}],
-            "content": [{"type": "reasoning_text", "text": "detail"}],
-            "encrypted_content": "opaque-reasoning",
-            "status": "completed"
-        }),
-        serde_json::json!({
-            "type": "web_search_call",
-            "id": format!("ws_{id_suffix}"),
-            "status": "completed",
-            "action": {
-                "type": "search",
-                "query": "canonical lifecycle",
-                "sources": [{"type": "url", "url": "https://example.test/lifecycle"}]
-            }
-        }),
-        serde_json::json!({
-            "type": "message",
-            "id": format!("msg_{id_suffix}"),
-            "role": "assistant",
-            "phase": "commentary",
-            "status": "completed",
-            "content": [{
-                "type": "output_text",
-                "text": text,
-                "annotations": [{
-                    "type": "url_citation",
-                    "start_index": 0,
-                    "end_index": text.len(),
-                    "url": "https://example.test/lifecycle",
-                    "title": "Lifecycle source"
-                }],
-                "logprobs": [{
-                    "token": text,
-                    "bytes": text.as_bytes(),
-                    "logprob": -0.1,
-                    "top_logprobs": []
-                }]
-            }]
-        }),
-        serde_json::json!({
-            "type": "image_generation_call",
-            "id": format!("ig_{id_suffix}"),
-            "status": "completed",
-            "result": "ZmluYWwtaW1hZ2U="
-        }),
-        serde_json::json!({
-            "type": "mcp_call",
-            "id": format!("mcp_{id_suffix}"),
-            "status": "completed",
-            "arguments": "{\"query\":\"canonical lifecycle\"}",
-            "name": "lookup",
-            "server_label": "docs",
-            "output": "structured result",
-            "error": null
-        }),
-        serde_json::json!({
-            "type": "code_interpreter_call",
-            "id": format!("ci_{id_suffix}"),
-            "container_id": format!("container_{id_suffix}"),
-            "status": "completed",
-            "code": "print('ok')",
-            "outputs": [{
-                "type": "image",
-                "url": "https://example.test/generated.png"
-            }]
-        }),
-    ]
+pub(super) fn spawn_non_audio_items(id_suffix: &str, text: &str) -> Vec<Value> {
+    crate::provider::openai::output_item_test_fixtures::spawn_lifecycle_items(id_suffix, text)
+}
+
+pub(super) fn historical_non_audio_items(id_suffix: &str, text: &str) -> Vec<Value> {
+    crate::provider::openai::output_item_test_fixtures::historical_replay_items(id_suffix, text)
 }
 
 pub(super) fn transcript_item(
@@ -145,9 +80,17 @@ pub(super) fn stateless_payload_input(
     Ok(input.clone())
 }
 
-pub(super) fn contains_contiguous_items(input: &[Value], expected: &[Value]) -> bool {
-    !expected.is_empty()
-        && input
-            .windows(expected.len())
-            .any(|window| window == expected)
+pub(super) fn canonical_payload_items(input: &[Value]) -> Vec<Value> {
+    input
+        .iter()
+        .filter(|item| {
+            let Some(item_type) = item.get("type").and_then(Value::as_str) else {
+                return false;
+            };
+            public_output_item(item_type).is_some()
+                && (item_type != "message"
+                    || item.get("role").and_then(Value::as_str) == Some("assistant"))
+        })
+        .cloned()
+        .collect()
 }

@@ -2,9 +2,10 @@
 //!
 //! Houses the R2 seeding step of the fork pipeline: copying the parent's
 //! events into the fork's child [`EventStore`] and closing every orphan
-//! `tool_call` — including the fork call itself — with a synthetic
-//! `ToolResult` so the child context never reaches the provider API with
-//! unanswered tool calls. The child store arrives sink-equipped from
+//! `tool_call` — including the fork call itself — that has neither a legacy
+//! `ToolResult` nor a canonical function/custom call-output item. It appends
+//! a synthetic `ToolResult` so the child context never reaches the provider
+//! API with unanswered tool calls. The child store arrives sink-equipped from
 //! [`SessionBinding::branch_child`](crate::session::SessionBinding::branch_child)
 //! for persistent forks, so every seeded event is written through to the
 //! fork's own on-disk timeline. Split out of the fork pipeline (now [`super::fork_context`] /
@@ -116,34 +117,18 @@ pub(super) fn seed_fork_events(
     Ok(())
 }
 
-/// Scan ALL `AssistantMessage` events for `tool_call`s without a matching
-/// `ToolResult` anywhere after them. Returns every orphan across the entire
-/// history, not just the latest turn. This is the unconditional safety net
-/// that ensures the child context never reaches the API with orphans.
+/// Scan ALL `AssistantMessage` events for `tool_call`s without either local
+/// result representation anywhere after them. Returns every orphan across the
+/// entire history, not just the latest turn. This is the unconditional safety
+/// net that ensures the child context never reaches the API with orphans.
 fn find_all_orphan_tool_calls(events: &[SessionEvent]) -> Vec<OrphanToolCall> {
-    use std::collections::HashSet;
-
-    let mut result_ids: HashSet<String> = HashSet::new();
-    for event in events {
-        if let SessionEvent::ToolResult { tool_call_id, .. } = event {
-            result_ids.insert(tool_call_id.clone());
-        }
-    }
-
-    let mut orphans = Vec::new();
-    for event in events {
-        if let Some(tool_calls) = event.assistant_tool_calls() {
-            for tc in tool_calls {
-                if !result_ids.contains(&tc.call_id) {
-                    orphans.push(OrphanToolCall {
-                        id: tc.call_id,
-                        name: tc.name,
-                    });
-                }
-            }
-        }
-    }
-    orphans
+    crate::session::unresolved_local_tool_calls(events)
+        .into_iter()
+        .map(|call| OrphanToolCall {
+            id: call.call_id,
+            name: call.name,
+        })
+        .collect()
 }
 
 #[cfg(test)]
