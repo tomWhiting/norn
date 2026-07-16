@@ -227,8 +227,9 @@ fn unsupported_executable_item_is_retained_before_typed_failure() {
     let item = json!({
         "type": "local_shell_call",
         "id": "shell_1",
+        "call_id": "call_shell_1",
         "status": "completed",
-        "action": {"command": ["pwd"]},
+        "action": {"type": "exec", "command": ["pwd"], "env": {}},
     });
     let mut mapper = ResponsesMapper::default();
     let events = mapper.map_event(&done_item(0, 0, &item));

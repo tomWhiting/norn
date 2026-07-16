@@ -32,10 +32,11 @@ fn part_event(event_type: &str, sequence: u64, item_id: &str, part: &Value) -> S
 #[test]
 fn content_part_completion_repairs_preview_and_binds_item_authority() -> TestResult {
     let annotation = json!({
-        "type": "text_annotation",
-        "text": "official open annotation example",
-        "start": 0,
-        "end": 10
+        "type": "url_citation",
+        "start_index": 0,
+        "end_index": 6,
+        "title": "Official source",
+        "url": "https://example.test/source"
     });
     let initial = output_part("", None);
     let complete = output_part("answer", Some(annotation.clone()));

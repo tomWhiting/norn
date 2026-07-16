@@ -82,6 +82,57 @@ fn content_part_events_require_the_normative_payload_shape() -> TestResult {
 }
 
 #[test]
+fn content_part_logprob_bytes_accept_numbers_and_reject_other_shapes() -> TestResult {
+    let valid = json!({
+        "type": "output_text",
+        "text": "answer",
+        "annotations": [],
+        "logprobs": [{
+            "token": "answer",
+            "bytes": [65, 1.5],
+            "logprob": -0.1,
+            "top_logprobs": [{
+                "token": "Answer",
+                "bytes": [66, 2.5],
+                "logprob": -0.2
+            }]
+        }]
+    });
+    let mut reconciler = ResponseReconciler::new();
+    reconciler.ingest(&added(1, 0, message_start("msg_numeric_bytes")))?;
+    assert_eq!(
+        reconciler.ingest(&part_event("msg_numeric_bytes", &valid))?,
+        ReconcileUpdate::Accepted
+    );
+
+    for (pointer, replacement, field) in [
+        (
+            "/logprobs/0/bytes/0",
+            json!("not-a-number"),
+            "part.logprobs[].bytes[]",
+        ),
+        (
+            "/logprobs/0/top_logprobs/0/bytes/0",
+            json!({"not": "a number"}),
+            "part.logprobs[].top_logprobs[].bytes[]",
+        ),
+    ] {
+        let mut invalid = valid.clone();
+        *invalid.pointer_mut(pointer).ok_or("missing byte fixture")? = replacement;
+        let mut reconciler = ResponseReconciler::new();
+        reconciler.ingest(&added(1, 0, message_start("msg_invalid_bytes")))?;
+        assert_eq!(
+            reconciler.ingest(&part_event("msg_invalid_bytes", &invalid)),
+            Err(ResponseReconciliationError::InvalidEnvelopeField {
+                event_type: "response.content_part.added",
+                field,
+            })
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn output_text_delta_requires_the_normative_logprob_shape() -> TestResult {
     for (fields, field) in [
         (json!({"content_index": 0, "delta": "answer"}), "logprobs"),

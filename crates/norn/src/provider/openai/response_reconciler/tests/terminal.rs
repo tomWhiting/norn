@@ -196,7 +196,18 @@ fn delta_only_and_other_unresolved_executable_items_fail_closed() -> TestResult 
     shell.ingest(&added(
         1,
         0,
-        json!({"id": "shell_a", "type": "shell_call", "status": "in_progress"}),
+        json!({
+            "id": "shell_a",
+            "type": "shell_call",
+            "call_id": "shell_call_a",
+            "status": "in_progress",
+            "action": {
+                "commands": ["printf a"],
+                "timeout_ms": 1_000,
+                "max_output_length": 4_096
+            },
+            "environment": {"type": "local"}
+        }),
     ))?;
     let error = shell
         .ingest(&event(

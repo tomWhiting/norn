@@ -47,7 +47,7 @@ fn validate_logprob(
     require_string(value, "token", event_type, "part.logprobs[].token")?;
     require_number(value, "logprob", event_type, "part.logprobs[].logprob")?;
     let bytes = require_array(value, "bytes", event_type, "part.logprobs[].bytes")?;
-    if bytes.iter().any(|byte| byte.as_u64().is_none()) {
+    if bytes.iter().any(|byte| !byte.is_number()) {
         return invalid(event_type, "part.logprobs[].bytes[]");
     }
     let top = require_array(
@@ -75,7 +75,7 @@ fn validate_logprob(
             event_type,
             "part.logprobs[].top_logprobs[].bytes",
         )?;
-        if bytes.iter().any(|byte| byte.as_u64().is_none()) {
+        if bytes.iter().any(|byte| !byte.is_number()) {
             return invalid(event_type, "part.logprobs[].top_logprobs[].bytes[]");
         }
     }

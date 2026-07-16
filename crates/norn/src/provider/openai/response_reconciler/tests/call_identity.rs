@@ -56,6 +56,98 @@ fn custom_call_id_and_name_must_match_terminal_authority() -> TestResult {
 }
 
 #[test]
+fn announced_function_and_custom_callers_must_remain_exact() -> TestResult {
+    for (announced, completed) in [
+        (
+            function_call("fc_caller", "", "in_progress"),
+            function_call("fc_caller", "{}", "completed"),
+        ),
+        (
+            custom_call("ct_caller", "", "in_progress"),
+            custom_call("ct_caller", "patch", "completed"),
+        ),
+    ] {
+        for (announced_caller, authoritative_caller) in [
+            (Some(Value::Null), None),
+            (
+                Some(json!({"type": "direct"})),
+                Some(json!({"type": "program", "caller_id": "program_a"})),
+            ),
+            (
+                Some(json!({"type": "program", "caller_id": "program_a"})),
+                Some(json!({"type": "program", "caller_id": "program_b"})),
+            ),
+        ] {
+            let mut announced = announced.clone();
+            let mut completed = completed.clone();
+            replace_optional_field(&mut announced, "caller", announced_caller)?;
+            replace_optional_field(&mut completed, "caller", authoritative_caller)?;
+            let mut reconciler = ResponseReconciler::new();
+            reconciler.ingest(&added(1, 0, announced))?;
+            assert_eq!(
+                reconciler.ingest(&done(2, 0, completed)),
+                Err(ResponseReconciliationError::AnnouncedCallCallerConflict)
+            );
+        }
+
+        for authoritative_caller in [
+            Some(Value::Null),
+            Some(json!({"type": "direct"})),
+            Some(json!({"type": "program", "caller_id": "program_late"})),
+        ] {
+            let mut refined = completed.clone();
+            replace_optional_field(&mut refined, "caller", authoritative_caller)?;
+            let mut reconciler = ResponseReconciler::new();
+            reconciler.ingest(&added(1, 0, announced.clone()))?;
+            assert!(matches!(
+                reconciler.ingest(&done(2, 0, refined))?,
+                ReconcileUpdate::CompletedItem { .. }
+            ));
+        }
+
+        let caller = json!({"type": "program", "caller_id": "program_stable"});
+        let mut announced = announced;
+        let mut completed = completed;
+        replace_optional_field(&mut announced, "caller", Some(caller.clone()))?;
+        replace_optional_field(&mut completed, "caller", Some(caller))?;
+        let mut reconciler = ResponseReconciler::new();
+        reconciler.ingest(&added(1, 0, announced))?;
+        assert!(matches!(
+            reconciler.ingest(&done(2, 0, completed))?,
+            ReconcileUpdate::CompletedItem { .. }
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn terminal_authority_must_preserve_the_announced_caller() -> TestResult {
+    let mut announced = function_call("fc_terminal_caller", "", "in_progress");
+    let mut completed = function_call("fc_terminal_caller", "{}", "completed");
+    replace_optional_field(
+        &mut announced,
+        "caller",
+        Some(json!({"type": "program", "caller_id": "program_a"})),
+    )?;
+    replace_optional_field(
+        &mut completed,
+        "caller",
+        Some(json!({"type": "program", "caller_id": "program_b"})),
+    )?;
+    let mut reconciler = ResponseReconciler::new();
+    reconciler.ingest(&added(1, 0, announced))?;
+    assert_eq!(
+        reconciler.ingest(&event(
+            "response.completed",
+            2,
+            json!({"response": {"output": [completed]}}),
+        )),
+        Err(ResponseReconciliationError::AnnouncedCallCallerConflict)
+    );
+    Ok(())
+}
+
+#[test]
 fn one_call_id_cannot_identify_two_output_items() -> TestResult {
     let first = function_call("fc_a", "", "in_progress");
     let mut second = custom_call("ct_b", "", "in_progress");
@@ -308,5 +400,21 @@ fn tool_deltas_still_require_provider_item_id() -> TestResult {
             field: "item_id",
         })
     );
+    Ok(())
+}
+
+fn replace_optional_field(
+    value: &mut Value,
+    field: &str,
+    replacement: Option<Value>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let object = value
+        .as_object_mut()
+        .ok_or("call fixture must be an object")?;
+    if let Some(replacement) = replacement {
+        object.insert(field.to_owned(), replacement);
+    } else {
+        object.remove(field);
+    }
     Ok(())
 }

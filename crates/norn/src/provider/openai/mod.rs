@@ -3,6 +3,8 @@
 mod backend;
 mod execute;
 mod opaque_discriminator;
+#[cfg(test)]
+pub(crate) mod output_item_test_fixtures;
 mod provider;
 pub mod rate_limiter;
 pub mod request;

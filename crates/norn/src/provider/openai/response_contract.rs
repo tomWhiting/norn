@@ -25,13 +25,14 @@ pub const PUBLIC_SCHEMA_SOURCES: [&str; 2] = [
 ];
 
 /// Official guides used to distinguish client-executable from inert items.
-pub const PUBLIC_ITEM_SEMANTIC_SOURCES: [&str; 6] = [
+pub const PUBLIC_ITEM_SEMANTIC_SOURCES: [&str; 7] = [
     "https://developers.openai.com/api/docs/guides/function-calling",
     "https://developers.openai.com/api/docs/guides/tools-computer-use",
     "https://developers.openai.com/api/docs/guides/tools-shell",
     "https://developers.openai.com/api/docs/guides/tools-apply-patch",
     "https://developers.openai.com/api/docs/guides/tools-connectors-mcp",
     "https://developers.openai.com/api/docs/guides/tools-programmatic-tool-calling",
+    "https://developers.openai.com/api/docs/guides/tools-tool-search",
 ];
 
 /// Immutable official Codex source revision used for the overlay.
@@ -117,6 +118,8 @@ pub enum OutputItemRepresentation {
 pub enum OutputItemActionability {
     /// The client must execute the request or provide an explicit decision.
     Executable,
+    /// Required item fields determine whether the client must act.
+    Conditional,
     /// The item is provider-owned state, content, or an already-produced output.
     Inert,
 }
@@ -203,7 +206,7 @@ impl CodexOverlayEntry {
     }
 }
 
-use OutputItemActionability::{Executable, Inert};
+use OutputItemActionability::{Conditional, Executable, Inert};
 use OutputItemRepresentation::{KnownOpaque, TypedCore};
 use StreamEventStage::{Completed, Incremental, Lifecycle, Terminal};
 
@@ -276,7 +279,7 @@ pub const PUBLIC_OUTPUT_ITEMS: [OutputItemEntry; PUBLIC_OUTPUT_ITEM_COUNT] = [
     OutputItemEntry::new("reasoning", TypedCore, Inert),
     OutputItemEntry::new("program", KnownOpaque, Inert),
     OutputItemEntry::new("program_output", KnownOpaque, Inert),
-    OutputItemEntry::new("tool_search_call", KnownOpaque, Inert),
+    OutputItemEntry::new("tool_search_call", KnownOpaque, Conditional),
     OutputItemEntry::new("tool_search_output", KnownOpaque, Inert),
     OutputItemEntry::new("additional_tools", KnownOpaque, Inert),
     OutputItemEntry::new("compaction", TypedCore, Inert),
@@ -284,7 +287,7 @@ pub const PUBLIC_OUTPUT_ITEMS: [OutputItemEntry; PUBLIC_OUTPUT_ITEM_COUNT] = [
     OutputItemEntry::new("code_interpreter_call", KnownOpaque, Inert),
     OutputItemEntry::new("local_shell_call", KnownOpaque, Executable),
     OutputItemEntry::new("local_shell_call_output", KnownOpaque, Inert),
-    OutputItemEntry::new("shell_call", KnownOpaque, Executable),
+    OutputItemEntry::new("shell_call", KnownOpaque, Conditional),
     OutputItemEntry::new("shell_call_output", KnownOpaque, Inert),
     OutputItemEntry::new("apply_patch_call", KnownOpaque, Executable),
     OutputItemEntry::new("apply_patch_call_output", KnownOpaque, Inert),
@@ -386,7 +389,7 @@ mod tests {
                     .any(|entry| entry.representation() == representation)
             );
         }
-        for actionability in [Executable, Inert] {
+        for actionability in [Executable, Conditional, Inert] {
             assert!(
                 PUBLIC_OUTPUT_ITEMS
                     .iter()
@@ -437,11 +440,14 @@ mod tests {
                 "function_call",
                 "computer_call",
                 "local_shell_call",
-                "shell_call",
                 "apply_patch_call",
                 "mcp_approval_request",
                 "custom_tool_call",
             ]
+        );
+        assert_eq!(
+            names_with_actionability(Conditional),
+            ["tool_search_call", "shell_call"]
         );
     }
 

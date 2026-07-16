@@ -170,7 +170,7 @@ impl ResponseReconciler {
         self.bind_announced_call(&identity, raw, item_type, "response.output_item.added")?;
         let added = AddedItem {
             raw: raw.clone(),
-            support: output_item_support(item_type),
+            support: output_item_support(item_type, raw)?,
         };
         if let Some(prior) = self.added.get(&identity)
             && prior != &added
@@ -275,7 +275,9 @@ impl ResponseReconciler {
                 sequence_number: Some(sequence_number),
             },
         };
-        if let Some(error) = authoritative_items_failure(std::slice::from_ref(&transcript), false) {
+        Self::validate_authoritative_item_schema(&transcript.item)?;
+        if let Some(error) = authoritative_items_failure(std::slice::from_ref(&transcript), false)?
+        {
             return Err(error);
         }
         if item_id.is_none() && !item_type_allows_missing_id(transcript.item.item_type()) {
@@ -322,9 +324,10 @@ impl ResponseReconciler {
             .and_then(Value::as_array)
             .ok_or(ResponseReconciliationError::MissingTerminalOutput)?;
         let parsed_items = parse_terminal_items(output, sequence_number)?;
+        Self::validate_authoritative_item_schemas(&parsed_items)?;
         let enforce_actionable_resolution = event.event_type != "response.failed";
         if enforce_actionable_resolution
-            && let Some(error) = authoritative_items_failure(&parsed_items, true)
+            && let Some(error) = authoritative_items_failure(&parsed_items, true)?
         {
             return Err(error);
         }
@@ -443,6 +446,11 @@ impl ResponseReconciler {
             .and_then(Value::as_str);
         if announced_type.is_some_and(|item_type| item_type != item.item_type()) {
             return Err(ResponseReconciliationError::AddedItemKindConflict);
+        }
+        if let Some(added) = self.added.get(identity)
+            && added.support != output_item_support(item.item_type(), item.raw())?
+        {
+            return Err(ResponseReconciliationError::AddedItemActionabilityConflict);
         }
         Ok(())
     }

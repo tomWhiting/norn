@@ -448,7 +448,10 @@ fn mcp_list_tools_requires_authoritative_tools_array() -> TestResult {
         valid.ingest(&done(
             4,
             0,
-            mcp_list_item("mcpl_a", Some(json!([{"name": "lookup"}]))),
+            mcp_list_item(
+                "mcpl_a",
+                Some(json!([{"name": "lookup", "input_schema": {}}])),
+            ),
         ))?,
         ReconcileUpdate::CompletedItem { .. }
     ));

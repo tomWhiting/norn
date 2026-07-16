@@ -1,4 +1,5 @@
 use super::*;
+use crate::provider::openai::output_item_test_fixtures::public_output_item_inventory;
 use crate::provider::openai::response_contract::{OutputItemActionability, PUBLIC_OUTPUT_ITEMS};
 
 fn error_from(
@@ -48,8 +49,14 @@ fn pinned_but_unsupported_executable_is_distinct_and_retained() -> TestResult {
     let shell = json!({
         "id": "shell_identity_sentinel",
         "type": "shell_call",
+        "call_id": "shell_call_sentinel",
         "status": "completed",
-        "action": {"command": "private_command_sentinel"}
+        "action": {
+            "commands": ["private_command_sentinel"],
+            "timeout_ms": 1_000,
+            "max_output_length": 4_096
+        },
+        "environment": {"type": "local"}
     });
     let mut reconciler = ResponseReconciler::new();
     reconciler.ingest(&added(1, 0, shell.clone()))?;
@@ -79,14 +86,15 @@ fn every_pinned_unsupported_executable_kind_fails_closed() -> TestResult {
         .filter(|entry| entry.actionability() == OutputItemActionability::Executable)
         .filter(|entry| !matches!(entry.name(), "function_call" | "custom_tool_call"))
         .collect();
-    assert_eq!(unsupported.len(), 5);
+    assert_eq!(unsupported.len(), 4);
 
+    let fixtures = public_output_item_inventory("unsupported", "unsupported executable");
     for entry in unsupported {
-        let raw = json!({
-            "id": format!("id_{}", entry.name()),
-            "type": entry.name(),
-            "status": "completed"
-        });
+        let raw = fixtures
+            .iter()
+            .find(|item| item.get("type").and_then(Value::as_str) == Some(entry.name()))
+            .cloned()
+            .ok_or("missing unsupported executable fixture")?;
         let mut reconciler = ResponseReconciler::new();
         let error = error_from(
             reconciler.ingest(&done(1, 0, raw.clone())),

@@ -5,9 +5,19 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 
 use super::{HostedPhase, ItemStringKind};
-use crate::provider::response_item::ResponseItem;
+use crate::provider::response_item::{ResponseItem, ResponseTranscriptItem};
 
 use super::super::{ResponseItemIdentity, ResponseReconciler, ResponseReconciliationError};
+
+mod advanced_tool_schema;
+mod client_call_schema;
+mod container_tool_schema;
+mod core_schema;
+mod hosted_schema;
+mod known_schema;
+mod schema;
+mod tool_filter_schema;
+mod tool_schema;
 
 impl ResponseReconciler {
     pub(in super::super) fn reconcile_item_channel_authority(
@@ -15,12 +25,30 @@ impl ResponseReconciler {
         identity: &ResponseItemIdentity,
         item: &ResponseItem,
     ) -> Result<(), ResponseReconciliationError> {
-        validate_required_hosted_fields(item)?;
         self.reconcile_parts(identity, item)?;
         self.reconcile_summary_parts(identity, item)?;
         self.reconcile_annotations(identity, item)?;
         self.reconcile_hosted_strings(identity, item)?;
         self.validate_hosted_lifecycle(identity, item)
+    }
+
+    pub(in super::super) fn validate_authoritative_item_schema(
+        item: &ResponseItem,
+    ) -> Result<(), ResponseReconciliationError> {
+        schema::validate_authoritative_item(item)
+    }
+
+    pub(in super::super) fn validate_authoritative_item_schemas(
+        items: &[ResponseTranscriptItem],
+    ) -> Result<(), ResponseReconciliationError> {
+        items
+            .iter()
+            .try_for_each(|item| schema::validate_authoritative_item(&item.item))
+    }
+
+    #[cfg(test)]
+    pub(in super::super) fn has_authoritative_item_validator(item_type: &str) -> bool {
+        schema::has_authoritative_validator(item_type)
     }
 
     pub(in super::super) fn validate_terminal_item_channels(
@@ -157,194 +185,6 @@ impl ResponseReconciler {
     }
 }
 
-fn validate_required_hosted_fields(item: &ResponseItem) -> Result<(), ResponseReconciliationError> {
-    match item.item_type() {
-        "file_search_call" => {
-            require_array(item, "queries")?;
-            require_status(
-                item,
-                &[
-                    "in_progress",
-                    "searching",
-                    "completed",
-                    "incomplete",
-                    "failed",
-                ],
-            )?;
-        }
-        "web_search_call" => {
-            require_object(item, "action")?;
-            require_status(item, &["in_progress", "searching", "completed", "failed"])?;
-        }
-        "image_generation_call" => {
-            require_present(item, &["result"])?;
-            require_nullable_string(item, "result")?;
-            require_status(item, &["in_progress", "completed", "generating", "failed"])?;
-        }
-        "mcp_call" => {
-            require_strings(item, &["arguments", "name", "server_label"])?;
-            require_optional_nullable_string(item, "output")?;
-            require_optional_nullable_string(item, "error")?;
-            require_optional_status(
-                item,
-                &[
-                    "in_progress",
-                    "completed",
-                    "incomplete",
-                    "calling",
-                    "failed",
-                ],
-            )?;
-        }
-        "mcp_list_tools" => {
-            require_strings(item, &["server_label"])?;
-            if item.raw().get("tools").and_then(Value::as_array).is_none() {
-                return Err(ResponseReconciliationError::MissingAuthoritativeItemField {
-                    item_type: "mcp_list_tools",
-                    field: "tools",
-                });
-            }
-            require_optional_nullable_string(item, "error")?;
-        }
-        "code_interpreter_call" => {
-            require_strings(item, &["container_id"])?;
-            require_present(item, &["code", "outputs"])?;
-            require_nullable_string(item, "code")?;
-            require_nullable_array(item, "outputs")?;
-            require_status(
-                item,
-                &[
-                    "in_progress",
-                    "completed",
-                    "incomplete",
-                    "interpreting",
-                    "failed",
-                ],
-            )?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn require_strings(
-    item: &ResponseItem,
-    fields: &[&'static str],
-) -> Result<(), ResponseReconciliationError> {
-    for field in fields {
-        if item.raw().get(*field).and_then(Value::as_str).is_none() {
-            return Err(ResponseReconciliationError::MissingAuthoritativeItemField {
-                item_type: hosted_item_type(item.item_type()),
-                field,
-            });
-        }
-    }
-    Ok(())
-}
-
-fn require_present(
-    item: &ResponseItem,
-    fields: &[&'static str],
-) -> Result<(), ResponseReconciliationError> {
-    for field in fields {
-        if item.raw().get(*field).is_none() {
-            return Err(ResponseReconciliationError::MissingAuthoritativeItemField {
-                item_type: hosted_item_type(item.item_type()),
-                field,
-            });
-        }
-    }
-    Ok(())
-}
-
-fn require_array(
-    item: &ResponseItem,
-    field: &'static str,
-) -> Result<(), ResponseReconciliationError> {
-    if item.raw().get(field).and_then(Value::as_array).is_none() {
-        return Err(missing_field(item, field));
-    }
-    Ok(())
-}
-
-fn require_object(
-    item: &ResponseItem,
-    field: &'static str,
-) -> Result<(), ResponseReconciliationError> {
-    if item.raw().get(field).and_then(Value::as_object).is_none() {
-        return Err(missing_field(item, field));
-    }
-    Ok(())
-}
-
-fn require_nullable_string(
-    item: &ResponseItem,
-    field: &'static str,
-) -> Result<(), ResponseReconciliationError> {
-    match item.raw().get(field) {
-        Some(value) if value.is_null() || value.is_string() => Ok(()),
-        Some(_) | None => Err(missing_field(item, field)),
-    }
-}
-
-fn require_optional_nullable_string(
-    item: &ResponseItem,
-    field: &'static str,
-) -> Result<(), ResponseReconciliationError> {
-    match item.raw().get(field) {
-        Some(value) if !value.is_null() && !value.is_string() => Err(missing_field(item, field)),
-        Some(_) | None => Ok(()),
-    }
-}
-
-fn require_nullable_array(
-    item: &ResponseItem,
-    field: &'static str,
-) -> Result<(), ResponseReconciliationError> {
-    match item.raw().get(field) {
-        Some(value) if value.is_null() || value.is_array() => Ok(()),
-        Some(_) | None => Err(missing_field(item, field)),
-    }
-}
-
-fn require_status(
-    item: &ResponseItem,
-    allowed: &[&str],
-) -> Result<(), ResponseReconciliationError> {
-    let Some(status) = item.raw().get("status").and_then(Value::as_str) else {
-        return Err(missing_field(item, "status"));
-    };
-    if allowed.contains(&status) {
-        Ok(())
-    } else {
-        Err(missing_field(item, "status"))
-    }
-}
-
-fn require_optional_status(
-    item: &ResponseItem,
-    allowed: &[&str],
-) -> Result<(), ResponseReconciliationError> {
-    match item.raw().get("status") {
-        None => Ok(()),
-        Some(value)
-            if value
-                .as_str()
-                .is_some_and(|status| allowed.contains(&status)) =>
-        {
-            Ok(())
-        }
-        Some(_) => Err(missing_field(item, "status")),
-    }
-}
-
-fn missing_field(item: &ResponseItem, field: &'static str) -> ResponseReconciliationError {
-    ResponseReconciliationError::MissingAuthoritativeItemField {
-        item_type: hosted_item_type(item.item_type()),
-        field,
-    }
-}
-
 fn lifecycle_status_is_consistent(phase: HostedPhase, status: &str) -> bool {
     match phase {
         HostedPhase::Completed => status == "completed",
@@ -411,17 +251,5 @@ const fn item_type_for_string(kind: ItemStringKind) -> &'static str {
     match kind {
         ItemStringKind::McpArguments => "mcp_call",
         ItemStringKind::CodeInterpreterCode => "code_interpreter_call",
-    }
-}
-
-fn hosted_item_type(value: &str) -> &'static str {
-    match value {
-        "file_search_call" => "file_search_call",
-        "web_search_call" => "web_search_call",
-        "image_generation_call" => "image_generation_call",
-        "mcp_call" => "mcp_call",
-        "mcp_list_tools" => "mcp_list_tools",
-        "code_interpreter_call" => "code_interpreter_call",
-        _ => "hosted output item",
     }
 }

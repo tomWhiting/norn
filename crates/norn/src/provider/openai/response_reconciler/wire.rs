@@ -187,17 +187,87 @@ pub(super) enum OutputItemSupport {
     Unknown,
 }
 
-pub(super) fn output_item_support(item_type: &str) -> OutputItemSupport {
+pub(super) fn output_item_support(
+    item_type: &str,
+    raw: &Value,
+) -> Result<OutputItemSupport, ResponseReconciliationError> {
     let Some(entry) = public_output_item(item_type) else {
-        return OutputItemSupport::Unknown;
+        return Ok(OutputItemSupport::Unknown);
     };
-    if entry.actionability() != OutputItemActionability::Executable {
-        return OutputItemSupport::Inert;
+    match entry.actionability() {
+        OutputItemActionability::Inert => Ok(OutputItemSupport::Inert),
+        OutputItemActionability::Conditional => conditional_output_item_support(item_type, raw),
+        OutputItemActionability::Executable
+            if matches!(item_type, "function_call" | "custom_tool_call") =>
+        {
+            Ok(OutputItemSupport::SupportedExecutable)
+        }
+        OutputItemActionability::Executable => Ok(OutputItemSupport::UnsupportedExecutable),
     }
-    if matches!(item_type, "function_call" | "custom_tool_call") {
-        OutputItemSupport::SupportedExecutable
-    } else {
-        OutputItemSupport::UnsupportedExecutable
+}
+
+fn conditional_output_item_support(
+    item_type: &str,
+    raw: &Value,
+) -> Result<OutputItemSupport, ResponseReconciliationError> {
+    match item_type {
+        "tool_search_call" => match required_actionability_string(
+            raw.get("execution"),
+            "tool_search_call",
+            "execution",
+        )? {
+            "server" => Ok(OutputItemSupport::Inert),
+            "client" => Ok(OutputItemSupport::UnsupportedExecutable),
+            _ => Err(ResponseReconciliationError::InvalidAuthoritativeItemField {
+                item_type: "tool_search_call",
+                field: "execution",
+            }),
+        },
+        "shell_call" => shell_call_support(raw),
+        _ => Ok(OutputItemSupport::UnsupportedExecutable),
+    }
+}
+
+fn shell_call_support(raw: &Value) -> Result<OutputItemSupport, ResponseReconciliationError> {
+    let environment = raw.get("environment").ok_or(
+        ResponseReconciliationError::MissingAuthoritativeItemField {
+            item_type: "shell_call",
+            field: "environment",
+        },
+    )?;
+    if environment.is_null() {
+        return Ok(OutputItemSupport::UnsupportedExecutable);
+    }
+    let environment = environment.as_object().ok_or(
+        ResponseReconciliationError::InvalidAuthoritativeItemField {
+            item_type: "shell_call",
+            field: "environment",
+        },
+    )?;
+    match required_actionability_string(environment.get("type"), "shell_call", "environment.type")?
+    {
+        "local" => Ok(OutputItemSupport::UnsupportedExecutable),
+        "container_reference" => Ok(OutputItemSupport::Inert),
+        _ => Err(ResponseReconciliationError::InvalidAuthoritativeItemField {
+            item_type: "shell_call",
+            field: "environment.type",
+        }),
+    }
+}
+
+fn required_actionability_string<'a>(
+    value: Option<&'a Value>,
+    item_type: &'static str,
+    field: &'static str,
+) -> Result<&'a str, ResponseReconciliationError> {
+    match value {
+        None => {
+            Err(ResponseReconciliationError::MissingAuthoritativeItemField { item_type, field })
+        }
+        Some(Value::String(value)) => Ok(value),
+        Some(_) => {
+            Err(ResponseReconciliationError::InvalidAuthoritativeItemField { item_type, field })
+        }
     }
 }
 
@@ -212,30 +282,34 @@ pub(super) fn item_is_explicitly_unresolved(item: &ResponseItem) -> bool {
 pub(super) fn authoritative_items_failure(
     items: &[ResponseTranscriptItem],
     reject_unresolved: bool,
-) -> Option<ResponseReconciliationError> {
+) -> Result<Option<ResponseReconciliationError>, ResponseReconciliationError> {
     for transcript in items {
-        match output_item_support(transcript.item.item_type()) {
+        match output_item_support(transcript.item.item_type(), transcript.item.raw())? {
             OutputItemSupport::Unknown => {
-                return Some(ResponseReconciliationError::UnknownOutputItemType {
+                return Ok(Some(ResponseReconciliationError::UnknownOutputItemType {
                     retained_items: items.to_vec(),
-                });
+                }));
             }
             OutputItemSupport::UnsupportedExecutable => {
-                return Some(ResponseReconciliationError::UnsupportedExecutableItem {
-                    retained_items: items.to_vec(),
-                });
+                return Ok(Some(
+                    ResponseReconciliationError::UnsupportedExecutableItem {
+                        retained_items: items.to_vec(),
+                    },
+                ));
             }
             OutputItemSupport::SupportedExecutable
                 if reject_unresolved && item_is_explicitly_unresolved(&transcript.item) =>
             {
-                return Some(ResponseReconciliationError::UnresolvedActionableItem {
-                    retained_items: items.to_vec(),
-                });
+                return Ok(Some(
+                    ResponseReconciliationError::UnresolvedActionableItem {
+                        retained_items: items.to_vec(),
+                    },
+                ));
             }
             OutputItemSupport::Inert | OutputItemSupport::SupportedExecutable => {}
         }
     }
-    None
+    Ok(None)
 }
 
 pub(super) fn parse_terminal_items(

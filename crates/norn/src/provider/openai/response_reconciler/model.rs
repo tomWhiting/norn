@@ -242,9 +242,15 @@ pub enum ResponseReconciliationError {
     /// An authoritative call changed its announced tool name.
     #[error("authoritative response call changed its announced name")]
     AnnouncedCallNameConflict,
+    /// An authoritative call changed its announced caller provenance.
+    #[error("authoritative response call changed its announced caller")]
+    AnnouncedCallCallerConflict,
     /// An authoritative item changed the family announced for its identity.
     #[error("authoritative response item changed its announced item family")]
     AddedItemKindConflict,
+    /// A conditional item changed its client-action requirement after announcement.
+    #[error("authoritative response item changed its announced actionability")]
+    AddedItemActionabilityConflict,
     /// Delta and completed-item families did not agree.
     #[error("response item completion did not match its accumulated delta family")]
     DeltaItemKindConflict,
@@ -308,9 +314,17 @@ pub enum ResponseReconciliationError {
     /// Completed item content disagreed with prior item-scoped completion.
     #[error("completed response item conflicted with item-scoped stream authority")]
     ItemScopedCompletionConflict,
-    /// A hosted completed item omitted content required by its public schema.
-    #[error("completed {item_type} omitted required {field}")]
+    /// A pinned response item omitted a field required by its public schema.
+    #[error("response {item_type} omitted required {field}")]
     MissingAuthoritativeItemField {
+        /// Pinned, non-provider-controlled item family.
+        item_type: &'static str,
+        /// Pinned, non-provider-controlled field path.
+        field: &'static str,
+    },
+    /// A pinned response item carried a field outside its public schema.
+    #[error("response {item_type} carried invalid {field}")]
+    InvalidAuthoritativeItemField {
         /// Pinned, non-provider-controlled item family.
         item_type: &'static str,
         /// Pinned, non-provider-controlled field path.
@@ -340,6 +354,9 @@ pub enum ResponseReconciliationError {
     /// An executable delta never gained an authoritative completed item.
     #[error("actionable call existed only as streamed deltas")]
     DeltaOnlyActionableCall,
+    /// A program-issued tool call did not reference an active program.
+    #[error("programmatic tool call did not reference an active program")]
+    UnmooredProgramCaller,
 }
 
 impl ResponseReconciliationError {

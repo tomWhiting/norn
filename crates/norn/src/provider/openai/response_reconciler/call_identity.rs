@@ -37,6 +37,11 @@ impl ResponseReconciler {
             if announced_name != Some(name) {
                 return Err(ResponseReconciliationError::AnnouncedCallNameConflict);
             }
+            if let Some(announced_caller) = announcement.raw.get("caller")
+                && Some(announced_caller) != raw.get("caller")
+            {
+                return Err(ResponseReconciliationError::AnnouncedCallCallerConflict);
+            }
         }
         self.bind_call_id(identity, call_id)
     }
