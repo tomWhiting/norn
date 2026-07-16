@@ -435,6 +435,7 @@ mod tests {
 
     fn assistant_event(content: &str) -> SessionEvent {
         SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: content.to_owned(),
             thinking: String::new(),
@@ -448,6 +449,7 @@ mod tests {
 
     fn message(role: MessageRole, content: &str) -> Message {
         Message {
+            response_items: Vec::new(),
             role,
             content: Some(content.to_string()),
             thinking: String::new(),

@@ -387,6 +387,7 @@ async fn provider_threaded_resume_replays_post_anchor_history() {
         .unwrap();
     store
         .append(SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(store.last_event_id()),
             content: String::new(),
             thinking: String::new(),

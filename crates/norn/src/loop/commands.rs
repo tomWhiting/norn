@@ -412,6 +412,7 @@ impl SlashCommandRegistry {
             handler: SlashCommandHandler::Custom {
                 handler: Arc::new(|_arg| {
                     Ok(vec![Message {
+                        response_items: Vec::new(),
                         role: MessageRole::User,
                         content: Some(
                             "[/compact] Summarize the session so far and discard the prior \
@@ -433,6 +434,7 @@ impl SlashCommandRegistry {
             handler: SlashCommandHandler::Custom {
                 handler: Arc::new(|_arg| {
                     Ok(vec![Message {
+                        response_items: Vec::new(),
                         role: MessageRole::User,
                         content: Some(
                             "[/help] Built-in commands: /compact, /help, /status. Custom \
@@ -454,6 +456,7 @@ impl SlashCommandRegistry {
             handler: SlashCommandHandler::Custom {
                 handler: Arc::new(|_arg| {
                     Ok(vec![Message {
+                        response_items: Vec::new(),
                         role: MessageRole::User,
                         content: Some(
                             "[/status] Report current task progress: what you have done so \
@@ -541,6 +544,7 @@ pub fn preprocess_input(
                 )
             };
             vec![Message {
+                response_items: Vec::new(),
                 role: MessageRole::User,
                 content: Some(body),
                 thinking: String::new(),
@@ -558,6 +562,7 @@ pub fn preprocess_input(
                 })
             })?;
             vec![Message {
+                response_items: Vec::new(),
                 role: MessageRole::Assistant,
                 content: None,
                 thinking: String::new(),
@@ -702,6 +707,7 @@ mod tests {
             handler: SlashCommandHandler::Custom {
                 handler: Arc::new(|arg| {
                     Ok(vec![Message {
+                        response_items: Vec::new(),
                         role: MessageRole::User,
                         content: Some(format!("custom:{arg}")),
                         thinking: String::new(),

@@ -173,6 +173,12 @@ pub enum SessionEvent {
     AssistantMessage {
         /// Common event metadata.
         base: EventBase,
+        /// Ordered completed Responses items for this turn. Empty on legacy
+        /// sessions and providers without a Responses-compatible item model.
+        /// When non-empty, this is the authoritative replay representation;
+        /// the flat fields below are compatibility projections.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        response_items: Vec<crate::provider::response_item::ResponseTranscriptItem>,
         /// The assistant's text content. Empty string when no text was produced.
         content: String,
         /// The assistant's reasoning/thinking content. Empty string when none.
@@ -566,6 +572,7 @@ mod tests {
     #[test]
     fn assistant_message_serde_roundtrip_with_thinking() {
         let event = SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: "answer".to_owned(),
             thinking: "first let me think".to_owned(),
@@ -591,6 +598,7 @@ mod tests {
     #[test]
     fn assistant_message_serde_roundtrip_empty() {
         let event = SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: String::new(),
             thinking: String::new(),
@@ -620,6 +628,7 @@ mod tests {
         // persisted after this change are byte-identical to the pre-change
         // format when reasoning is absent.
         let event = SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: "answer".to_owned(),
             thinking: String::new(),
@@ -679,6 +688,7 @@ mod tests {
             encrypted_content: Some("blob".to_owned()),
         };
         let event = SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: "answer".to_owned(),
             thinking: String::new(),
@@ -777,6 +787,7 @@ mod tests {
                 content: String::new(),
             },
             SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: base(),
                 content: String::new(),
                 thinking: String::new(),

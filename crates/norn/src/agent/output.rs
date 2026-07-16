@@ -22,7 +22,6 @@ use serde_json::Value;
 
 use crate::r#loop::config::{AgentStepResult, TruncationKind};
 use crate::provider::usage::Usage;
-use crate::session::events::SessionEvent;
 use crate::session::store::EventStore;
 
 /// Why a run stopped before completing.
@@ -119,9 +118,10 @@ impl AgentOutput {
     /// The model's final text response, read from the event store.
     ///
     /// Scans the event store newest-first for the most recent
-    /// [`SessionEvent::AssistantMessage`] with non-empty text content and
-    /// returns it. Returns `None` when no event store was retained or no
-    /// assistant text was produced (e.g. the model only emitted tool calls).
+    /// [`SessionEvent::AssistantMessage`] with non-empty authoritative text
+    /// and returns it. Canonical Responses items are projected first; the flat
+    /// field is used only for legacy/provider-neutral events. Returns `None`
+    /// when no event store was retained or no assistant text was produced.
     #[must_use]
     pub fn text(&self) -> Option<String> {
         let store = self.event_store.as_ref()?;
@@ -129,12 +129,7 @@ impl AgentOutput {
             .events()
             .into_iter()
             .rev()
-            .find_map(|event| match event {
-                SessionEvent::AssistantMessage { content, .. } if !content.is_empty() => {
-                    Some(content)
-                }
-                _ => None,
-            })
+            .find_map(|event| event.assistant_text().filter(|text| !text.is_empty()))
     }
 
     /// Accumulated token usage for the step.
@@ -315,10 +310,11 @@ impl RunOutcome {
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
-    use crate::session::events::{EventBase, EventUsage};
+    use crate::session::events::{EventBase, EventUsage, SessionEvent};
 
     fn assistant_message(content: &str) -> SessionEvent {
         SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: content.to_string(),
             thinking: String::new(),

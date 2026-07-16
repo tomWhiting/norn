@@ -171,6 +171,11 @@ fn chat_message(role: &str, content: Option<&str>) -> serde_json::Value {
 }
 
 fn serialize_assistant_message(message: &Message) -> Result<serde_json::Value, ProviderError> {
+    if !message.response_items.is_empty() {
+        return Err(ProviderError::UnsupportedFeature {
+            feature: "canonical Responses item replay on chat_completions".to_owned(),
+        });
+    }
     let mut map = serde_json::Map::new();
     map.insert("role".to_string(), serde_json::json!("assistant"));
     map.insert(
@@ -288,6 +293,7 @@ mod tests {
         ProviderRequest {
             messages: vec![
                 Message {
+                    response_items: Vec::new(),
                     reasoning: Vec::new(),
                     role: MessageRole::System,
                     content: Some("system".to_owned()),
@@ -298,6 +304,7 @@ mod tests {
                     tool_call_kind: None,
                 },
                 Message {
+                    response_items: Vec::new(),
                     reasoning: Vec::new(),
                     role: MessageRole::Developer,
                     content: Some("developer".to_owned()),
@@ -308,6 +315,7 @@ mod tests {
                     tool_call_kind: None,
                 },
                 Message {
+                    response_items: Vec::new(),
                     reasoning: Vec::new(),
                     role: MessageRole::User,
                     content: Some("hello".to_owned()),
@@ -379,6 +387,7 @@ mod tests {
     fn assistant_tool_call_and_result_use_chat_replay_shape() {
         let mut request = base_request();
         request.messages.push(Message {
+            response_items: Vec::new(),
             reasoning: Vec::new(),
             role: MessageRole::Assistant,
             content: None,
@@ -394,6 +403,7 @@ mod tests {
             tool_call_kind: None,
         });
         request.messages.push(Message {
+            response_items: Vec::new(),
             reasoning: Vec::new(),
             role: MessageRole::ToolResult,
             content: Some("contents".to_owned()),
@@ -420,6 +430,7 @@ mod tests {
     fn missing_tool_result_id_is_hard_error() {
         let mut request = base_request();
         request.messages.push(Message {
+            response_items: Vec::new(),
             reasoning: Vec::new(),
             role: MessageRole::ToolResult,
             content: Some("contents".to_owned()),
@@ -518,6 +529,7 @@ mod tests {
         use crate::provider::reasoning::{ReasoningItem, ReasoningSummaryPart};
         let mut request = base_request();
         request.messages.push(Message {
+            response_items: Vec::new(),
             role: MessageRole::Assistant,
             content: Some("answer".to_owned()),
             thinking: "summary".to_owned(),
@@ -549,5 +561,44 @@ mod tests {
         let assistant = messages.last().unwrap();
         assert_eq!(assistant["role"], "assistant");
         assert_eq!(assistant["content"], "answer");
+    }
+
+    #[test]
+    fn canonical_response_items_fail_closed_before_chat_serialization() {
+        use crate::provider::response_item::{
+            ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
+        };
+
+        let mut request = base_request();
+        request.messages.push(Message {
+            response_items: vec![ResponseTranscriptItem {
+                item: ResponseItem::from_value(serde_json::json!({
+                    "type": "future_response_item",
+                    "id": "item_1",
+                    "secret_extension": "must-not-be-flattened"
+                }))
+                .unwrap(),
+                provenance: ResponseStreamProvenance::default(),
+            }],
+            reasoning: Vec::new(),
+            role: MessageRole::Assistant,
+            content: Some("lossy projection".to_owned()),
+            thinking: String::new(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_call_kind: None,
+        });
+
+        let error = build_payload(&request).unwrap_err();
+        match error {
+            ProviderError::UnsupportedFeature { feature } => {
+                assert_eq!(
+                    feature,
+                    "canonical Responses item replay on chat_completions"
+                );
+            }
+            other => panic!("expected UnsupportedFeature, got {other:?}"),
+        }
     }
 }

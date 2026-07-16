@@ -1065,6 +1065,7 @@ mod tests {
             .expect("seed user");
         parent_store
             .append(SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(None),
                 content: "running batch".to_string(),
                 thinking: String::new(),
@@ -2167,6 +2168,7 @@ mod tests {
                 .expect("seed user");
             parent_store
                 .append(SessionEvent::AssistantMessage {
+                    response_items: Vec::new(),
                     base: EventBase::new(None),
                     content: format!("a{i}"),
                     thinking: String::new(),

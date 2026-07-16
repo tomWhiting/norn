@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::provider::response_item::ResponseItem;
 use crate::session::events::{EventBase, SessionEvent};
 
 /// Filter applied to parent context events before forking.
@@ -86,6 +87,7 @@ impl ContextFilter {
             SessionEvent::ToolResult { .. } if self.exclude_tool_calls => None,
             SessionEvent::AssistantMessage {
                 base,
+                response_items,
                 content,
                 thinking,
                 reasoning,
@@ -94,6 +96,16 @@ impl ContextFilter {
                 response_id,
                 ..
             } if self.exclude_tool_calls => Some(SessionEvent::AssistantMessage {
+                response_items: response_items
+                    .iter()
+                    .filter(|item| {
+                        !matches!(
+                            item.item,
+                            ResponseItem::FunctionCall(_) | ResponseItem::CustomToolCall(_)
+                        )
+                    })
+                    .cloned()
+                    .collect(),
                 base: base.clone(),
                 content: content.clone(),
                 thinking: thinking.clone(),
@@ -517,13 +529,13 @@ pub fn verify_no_orphan_tool_calls(
     else {
         return Vec::new();
     };
-    let SessionEvent::AssistantMessage { tool_calls, .. } = &events[last_assistant_idx] else {
+    let Some(tool_calls) = events[last_assistant_idx].assistant_tool_calls() else {
         return Vec::new();
     };
 
     let after = &events[last_assistant_idx + 1..];
     tool_calls
-        .iter()
+        .into_iter()
         .filter(|tc| tc.call_id != fork_call_id)
         .filter(|tc| {
             !after.iter().any(|e| {
@@ -534,8 +546,8 @@ pub fn verify_no_orphan_tool_calls(
             })
         })
         .map(|tc| OrphanToolCall {
-            id: tc.call_id.clone(),
-            name: tc.name.clone(),
+            id: tc.call_id,
+            name: tc.name,
         })
         .collect()
 }
@@ -577,6 +589,7 @@ mod tests {
 
     fn assistant_with_tool_calls(calls: Vec<(&str, &str)>) -> SessionEvent {
         SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: "calling tool".to_string(),
             thinking: String::new(),

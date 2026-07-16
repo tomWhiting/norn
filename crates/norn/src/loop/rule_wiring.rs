@@ -157,6 +157,7 @@ pub(super) async fn apply_rule_injections(
         match live_message {
             None => loop_context.append_system_section(injection.content),
             Some(formatted) => messages.push(Message {
+                response_items: Vec::new(),
                 role: MessageRole::User,
                 content: Some(formatted),
                 thinking: String::new(),

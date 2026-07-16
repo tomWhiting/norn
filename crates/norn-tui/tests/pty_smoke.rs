@@ -753,6 +753,7 @@ fn fixture_store(scenario: &str) -> Result<EventStore, Box<dyn std::error::Error
             content: "prior user resume question".to_string(),
         })?;
         store.append(SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: "prior assistant resume answer".to_string(),
             thinking: "**Remembering context**\n\nEarlier reasoning summary".to_string(),

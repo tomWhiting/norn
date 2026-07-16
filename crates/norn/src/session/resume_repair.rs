@@ -95,24 +95,24 @@ pub fn repair_dangling_tool_calls(store: &EventStore) -> Result<Vec<String>, Ses
 
     // Every call_id already answered by a ToolResult, anywhere in the log:
     // a call is dangling only when NO result references it.
-    let mut answered: HashSet<&str> = HashSet::new();
+    let mut answered: HashSet<String> = HashSet::new();
     for event in &events {
         if let SessionEvent::ToolResult { tool_call_id, .. } = event {
-            answered.insert(tool_call_id.as_str());
+            answered.insert(tool_call_id.clone());
         }
     }
 
     // Dangling calls in original append order, de-duplicated by call_id so a
     // reused id never receives two synthetic outputs.
-    let mut seen: HashSet<&str> = HashSet::new();
+    let mut seen: HashSet<String> = HashSet::new();
     let mut dangling: Vec<(String, String)> = Vec::new();
     for event in &events {
-        if let SessionEvent::AssistantMessage { tool_calls, .. } = event {
+        if let Some(tool_calls) = event.assistant_tool_calls() {
             for tc in tool_calls {
-                if answered.contains(tc.call_id.as_str()) || !seen.insert(tc.call_id.as_str()) {
+                if answered.contains(&tc.call_id) || !seen.insert(tc.call_id.clone()) {
                     continue;
                 }
-                dangling.push((tc.call_id.clone(), tc.name.clone()));
+                dangling.push((tc.call_id, tc.name));
             }
         }
     }
@@ -152,6 +152,7 @@ mod tests {
 
     fn assistant_with_calls(calls: &[(&str, &str)]) -> SessionEvent {
         SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: String::new(),
             thinking: String::new(),
@@ -304,6 +305,7 @@ mod tests {
             assistant_with_calls(&[("call_ok", "bash")]),
             tool_result("call_ok", "bash"),
             SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(None),
                 content: "/home/user".to_owned(),
                 thinking: String::new(),
@@ -369,6 +371,7 @@ mod tests {
         plain.append(user("hi")).unwrap();
         plain
             .append(SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(None),
                 content: "hello".to_owned(),
                 thinking: String::new(),
@@ -401,6 +404,7 @@ mod tests {
         // Assemble exactly as the loop does: a System prefix plus the
         // replayed history projected to provider messages.
         let mut messages = vec![Message {
+            response_items: Vec::new(),
             role: MessageRole::System,
             content: Some("you are helpful".to_owned()),
             thinking: String::new(),

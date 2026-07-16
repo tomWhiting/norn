@@ -118,6 +118,7 @@ async fn inject_stop_block(
     )
     .await?;
     messages.push(Message {
+        response_items: Vec::new(),
         role: MessageRole::User,
         content: Some(reason),
         thinking: String::new(),

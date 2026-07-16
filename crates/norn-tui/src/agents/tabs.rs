@@ -322,6 +322,7 @@ mod tests {
 
     fn assistant(content: &str, thinking: &str) -> SessionEvent {
         SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: base(),
             content: content.to_owned(),
             thinking: thinking.to_owned(),

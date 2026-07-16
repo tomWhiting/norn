@@ -403,8 +403,8 @@ artifacts to the same clean head with zero errors.
 | P0. Credential and workspace authority containment | [x] Accepted by focused Gate D review `7ce29d7` on 2026-07-15 | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] Gate A complete at base `2917c8e`; Gate B foundation next; D0 remote enforcement deferred to exit | The program has executable contracts and protected quality gates. |
 | P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; retained Gate C, live A/B/A, P1 dependency, and independent acceptance open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
-| P3. Canonical ordered transcript | [ ] | Responses items survive stream, persistence, resume, and replay in order. |
-| P4. Streaming and replay conformance | [ ] | Supported events/items are complete, reconciled, and fail closed. |
+| P3. Canonical ordered transcript | [ ] Implementation candidate in progress; canonical model/replay/persistence/fork paths and strict gates are green; D2, complete media fixtures, spawned-session evidence, and review remain open | Responses items survive stream, persistence, resume, and replay in order. |
+| P4. Streaming and replay conformance | [ ] Contract manifest complete; identity reconciler implementation in progress | Supported events/items are complete, reconciled, and fail closed. |
 | P5. Conversation and Codex turn semantics | [ ] | Local/provider history and turn-scoped state have explicit lifetimes. |
 | P6. Transport, retry, and usage | [ ] | Retries terminate once; observed and unknown attempt usage remain explicit. |
 | P7. Request, schema, and model controls | [ ] | Advertised capabilities match validated payload and tool behavior. |
@@ -1472,8 +1472,21 @@ are not pass claims.
 
 ## P3. Canonical ordered transcript
 
-**Status:** [ ] Not started; **foundation for:** `STATE-01`, `EVT-02`;
+**Status:** [ ] Implementation in progress; **foundation for:** `STATE-01`, `EVT-02`;
 **dependencies:** P0-P2 and D2.
+
+The implementation candidate now carries exact completed-item JSON through
+assembly, JSONL persistence, resume, fork, and `store:false` replay. The
+2026-07-16 official Developer Docs contract is pinned at 53 public stream
+events and 28 public output-item variants, with a separately pinned Codex
+overlay. D2 and the unchecked fixture/review requirements below still block
+phase acceptance.
+
+The replay normalization allowlist is empty for the pinned public contract.
+Current official conversation-state and compaction guidance requires clients
+to append every `response.output` item unchanged; Norn removes only its
+separate stream-provenance envelope, which was never part of provider item
+JSON. Any future field removal requires a new pinned contract and fixture.
 
 ### What this phase fixes
 
@@ -1491,20 +1504,20 @@ not change their order or invent missing semantics.
 
 ### Work checklist
 
-- [ ] Use the P1 production-LOC baseline to identify touched over-limit request,
+- [x] Use the P1 production-LOC baseline to identify touched over-limit request,
   assembly, and session-event files; decompose each identified file into
   cohesive named modules before adding behavior.
-- [ ] Introduce a canonical item union with typed core variants and an opaque raw
+- [x] Introduce a canonical item union with typed core variants and an opaque raw
   variant for unknown items.
 - [ ] Pin the complete public and Codex content-part/media-bearing item inventory
   used by the phase. Preserve each supported text, image, file, audio, binary,
   and structured content shape as typed provider data or an explicit private
   artifact reference under D1B; do not flatten it into display text. Variants
   absent from the pinned backend contract remain opaque and non-executable.
-- [ ] Preserve replayable item order, message phase, call/item IDs, encrypted
+- [x] Preserve replayable item order, message phase, call/item IDs, encrypted
   reasoning and opaque unknown reasoning parts, refusal, annotations, hosted
   search, and compaction data.
-- [ ] Store stream provenance such as item ID, output index, and content index
+- [x] Store stream provenance such as item ID, output index, and content index
   separately from replayable provider item JSON. Envelope coordinates must never
   leak into the next request unless the provider item schema owns that field.
 - [ ] Make normalized text, reasoning, calls, and stop reason derived views only.
@@ -1512,24 +1525,24 @@ not change their order or invent missing semantics.
   D2. A rejecting runtime must fail before mutation. An approved migration must
   be offline, atomic, idempotent, recoverable from interruption, backup-aware,
   and absent from the normal runtime read path.
-- [ ] Define the minimal documented normalization allowlist for server-only
+- [x] Define the minimal documented normalization allowlist for server-only
   fields rejected on replay; preserve everything else.
 - [ ] Update uninterrupted, persisted, resumed, spawned, and forked session paths.
 
 ### Phase-specific evidence
 
-- [ ] Golden serialize-deserialize-serialize tests preserve item count, type,
+- [x] Golden serialize-deserialize-serialize tests preserve item count, type,
   order, phase, IDs, content, annotations, and opaque JSON while keeping stream
   provenance out of replay serialization.
 - [ ] The pinned multimodal/content inventory has golden uninterrupted,
   persistence, reload, stateless-replay, spawned, and forked fixtures. Typed
   media, structured data, and artifact references round-trip without textual
   substitution, authority expansion, or private-artifact path disclosure.
-- [ ] A sequence containing reasoning, commentary, call, further reasoning, and
+- [x] A sequence containing reasoning, commentary, call, further reasoning, and
   final answer remains in that exact order after persistence and resume.
 - [ ] The second `store:false` request replays the preceding `response.output`
   sequence exactly except for the approved normalization allowlist.
-- [ ] Unknown items round-trip opaquely without becoming executable by accident.
+- [x] Unknown items round-trip opaquely without becoming executable by accident.
 - [ ] Existing-session tests cover format versioning, interrupted/repeated
   migration where selected, backup/recovery, old-binary behavior, rejection
   before mutation, and honest handling of phase/order that cannot be recovered.
@@ -1544,7 +1557,8 @@ not change their order or invent missing semantics.
 
 ## P4. Streaming and replay conformance
 
-**Status:** [ ] Not started; **findings closed:** `STATE-01`, `EVT-01` through
+**Status:** [ ] Contract manifest complete and reconciler implementation in
+progress; **findings closed:** `STATE-01`, `EVT-01` through
 `EVT-07`; **dependencies:** P3.
 
 ### What this phase fixes

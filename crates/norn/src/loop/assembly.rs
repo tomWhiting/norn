@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use crate::provider::events::{ProviderEvent, StopReason};
 use crate::provider::reasoning::ReasoningItem;
 use crate::provider::request::ToolCallKind;
+use crate::provider::response_item::{ResponseContentPart, ResponseItem, ResponseTranscriptItem};
 use crate::provider::usage::Usage;
 
 /// A tool call accumulated from streaming deltas.
@@ -32,6 +33,10 @@ pub struct AssembledToolCall {
 /// A fully assembled response from one provider turn.
 #[derive(Clone, Debug)]
 pub struct AssembledResponse {
+    /// Authoritative completed Responses items in provider order.
+    ///
+    /// Empty for providers that do not expose Responses-compatible items.
+    pub response_items: Vec<ResponseTranscriptItem>,
     /// Accumulated text content.
     pub text: String,
     /// Accumulated reasoning/thinking content.
@@ -104,6 +109,7 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
     let mut stop_reason = StopReason::EndTurn;
     let mut usage = Usage::default();
     let mut response_id = None;
+    let mut response_items = Vec::new();
     let mut saw_done = false;
 
     for event in events {
@@ -200,6 +206,15 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
             ProviderEvent::ReasoningItemDone { item } => {
                 reasoning.push(item.clone());
             }
+            ProviderEvent::ResponseItemDone { item } => {
+                project_completed_item(
+                    item,
+                    &mut reasoning,
+                    &mut tool_calls_map,
+                    &mut tool_call_order,
+                );
+                response_items.push(item.clone());
+            }
             // None of these carry assemblable content. `Error` is
             // additionally unreachable through the loop: `call_provider`
             // fails the turn with the event's typed `ProviderError`
@@ -214,6 +229,10 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
 
     if !saw_done {
         return None;
+    }
+
+    if let Some(completed_text) = completed_message_text(&response_items) {
+        text = completed_text;
     }
 
     let tool_calls: Vec<AssembledToolCall> = tool_call_order
@@ -236,6 +255,7 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
         .collect();
 
     Some(AssembledResponse {
+        response_items,
         text,
         thinking,
         reasoning,
@@ -245,6 +265,94 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
         response_id,
     })
 }
+
+fn project_completed_item(
+    transcript_item: &ResponseTranscriptItem,
+    reasoning: &mut Vec<ReasoningItem>,
+    tool_calls: &mut HashMap<String, ToolCallAccumulator>,
+    tool_call_order: &mut Vec<String>,
+) {
+    match &transcript_item.item {
+        ResponseItem::Reasoning(_) => {
+            if let Ok(legacy) = serde_json::from_value(transcript_item.item.raw().clone()) {
+                reasoning.push(legacy);
+            }
+        }
+        ResponseItem::FunctionCall(item) => record_completed_call(
+            transcript_item,
+            item.call_id(),
+            item.name(),
+            item.arguments(),
+            ToolCallKind::Function,
+            tool_calls,
+            tool_call_order,
+        ),
+        ResponseItem::CustomToolCall(item) => record_completed_call(
+            transcript_item,
+            item.call_id(),
+            item.name(),
+            item.input(),
+            ToolCallKind::Custom,
+            tool_calls,
+            tool_call_order,
+        ),
+        ResponseItem::Message(_)
+        | ResponseItem::WebSearchCall(_)
+        | ResponseItem::Compaction(_)
+        | ResponseItem::Known(_)
+        | ResponseItem::Opaque(_) => {}
+    }
+}
+
+fn record_completed_call(
+    transcript_item: &ResponseTranscriptItem,
+    call_id: &str,
+    name: &str,
+    arguments: &str,
+    kind: ToolCallKind,
+    tool_calls: &mut HashMap<String, ToolCallAccumulator>,
+    tool_call_order: &mut Vec<String>,
+) {
+    let merge_key = transcript_item
+        .provenance
+        .item_id
+        .as_deref()
+        .or_else(|| transcript_item.item.id())
+        .unwrap_or(call_id)
+        .to_owned();
+    if !tool_calls.contains_key(&merge_key) {
+        tool_call_order.push(merge_key.clone());
+    }
+    tool_calls.insert(
+        merge_key,
+        ToolCallAccumulator {
+            name: name.to_owned(),
+            arguments: arguments.to_owned(),
+            call_id: Some(call_id.to_owned()),
+            kind,
+        },
+    );
+}
+
+fn completed_message_text(items: &[ResponseTranscriptItem]) -> Option<String> {
+    let mut saw_message = false;
+    let mut text = String::new();
+    for item in items {
+        let Some(message) = item.item.as_message() else {
+            continue;
+        };
+        saw_message = true;
+        for part in message.content() {
+            if let ResponseContentPart::OutputText { text: part, .. } = part {
+                text.push_str(part);
+            }
+        }
+    }
+    saw_message.then_some(text)
+}
+
+#[cfg(test)]
+mod canonical_tests;
 
 #[cfg(test)]
 #[allow(

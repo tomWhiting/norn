@@ -80,6 +80,7 @@ fn assistant_usage(input: u64, output: u64, cache_read: u64) -> Usage {
 
 fn assistant_with_usage(input: u64, output: u64, cache_read: u64) -> SessionEvent {
     SessionEvent::AssistantMessage {
+        response_items: Vec::new(),
         base: EventBase::new(None),
         content: "ok".to_owned(),
         thinking: String::new(),
@@ -109,6 +110,7 @@ fn one_of_each() -> Vec<SessionEvent> {
     vec![
         user_msg("hello"),
         SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: "hi".to_owned(),
             thinking: String::new(),
@@ -421,6 +423,7 @@ fn round_trip_reasoning_items_through_disk() {
         encrypted_content: None,
     };
     let events = vec![SessionEvent::AssistantMessage {
+        response_items: Vec::new(),
         base: EventBase::new(None),
         content: "answer".to_owned(),
         thinking: "summary".to_owned(),
@@ -1822,6 +1825,7 @@ fn replay_fixture() -> (Vec<u8>, EventId) {
     let user = user_msg("hello");
     let superseded_id = user.base().id.clone();
     let assistant = SessionEvent::AssistantMessage {
+        response_items: Vec::new(),
         base: EventBase::new(None),
         content: String::new(),
         thinking: String::new(),

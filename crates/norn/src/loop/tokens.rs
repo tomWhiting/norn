@@ -81,6 +81,12 @@ pub fn estimate_prompt_tokens(
 /// would over-estimate every live turn by content that never reaches the
 /// wire.
 fn message_tokens(estimator: &dyn TokenEstimator, message: &Message) -> usize {
+    if !message.response_items.is_empty() {
+        return message.response_items.iter().fold(0_usize, |total, entry| {
+            total.saturating_add(estimator.estimate(&entry.item.raw().to_string()))
+        });
+    }
+
     let mut total = message
         .content
         .as_deref()
@@ -165,6 +171,7 @@ mod tests {
         let est = SimpleTokenEstimator;
         let messages = vec![
             Message {
+                response_items: Vec::new(),
                 reasoning: Vec::new(),
                 role: MessageRole::System,
                 content: Some("a".repeat(40)),
@@ -175,6 +182,7 @@ mod tests {
                 tool_call_kind: None,
             },
             Message {
+                response_items: Vec::new(),
                 reasoning: Vec::new(),
                 role: MessageRole::User,
                 content: Some("b".repeat(20)),
@@ -218,6 +226,7 @@ mod tests {
             encrypted_content: Some("e".repeat(400)),
         }];
         let with_reasoning = Message {
+            response_items: Vec::new(),
             reasoning,
             role: MessageRole::Assistant,
             content: Some("answer".to_string()),
@@ -228,6 +237,7 @@ mod tests {
             tool_call_kind: None,
         };
         let without_reasoning = Message {
+            response_items: Vec::new(),
             reasoning: Vec::new(),
             ..with_reasoning.clone()
         };
@@ -249,6 +259,7 @@ mod tests {
     fn estimate_ignores_thinking() {
         let est = SimpleTokenEstimator;
         let base = Message {
+            response_items: Vec::new(),
             reasoning: Vec::new(),
             role: MessageRole::Assistant,
             content: Some("answer".to_string()),
@@ -259,6 +270,7 @@ mod tests {
             tool_call_kind: None,
         };
         let with_thinking = Message {
+            response_items: Vec::new(),
             thinking: "t".repeat(400),
             ..base.clone()
         };
@@ -273,6 +285,7 @@ mod tests {
     fn estimate_includes_tool_call_arguments() {
         let est = SimpleTokenEstimator;
         let msg = Message {
+            response_items: Vec::new(),
             reasoning: Vec::new(),
             role: MessageRole::Assistant,
             content: Some(String::new()),
@@ -289,5 +302,79 @@ mod tests {
         };
         let n = estimate_prompt_tokens(&est, std::slice::from_ref(&msg), &[]);
         assert!(n >= 10);
+    }
+
+    struct CharacterCountEstimator;
+
+    impl TokenEstimator for CharacterCountEstimator {
+        fn estimate(&self, text: &str) -> usize {
+            text.chars().count()
+        }
+    }
+
+    #[test]
+    fn estimate_uses_only_canonical_item_json_when_present() {
+        use crate::provider::response_item::{
+            ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
+        };
+
+        let raw_items = [
+            serde_json::json!({
+                "type": "reasoning",
+                "id": "rs_1",
+                "summary": [],
+                "encrypted_content": "encrypted"
+            }),
+            serde_json::json!({
+                "type": "message",
+                "id": "msg_1",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{
+                    "type": "output_text",
+                    "text": "answer",
+                    "annotations": [],
+                    "logprobs": []
+                }]
+            }),
+        ];
+        let response_items = raw_items
+            .iter()
+            .cloned()
+            .map(|raw| ResponseTranscriptItem {
+                item: ResponseItem::from_value(raw).expect("valid response item"),
+                provenance: ResponseStreamProvenance {
+                    item_id: Some("stream provenance must not be counted".repeat(20)),
+                    output_index: Some(99),
+                    content_index: Some(88),
+                    sequence_number: Some(77),
+                },
+            })
+            .collect();
+        let message = Message {
+            response_items,
+            reasoning: Vec::new(),
+            role: MessageRole::Assistant,
+            content: Some("stale flat projection must not be counted".repeat(20)),
+            thinking: "stale thinking".repeat(20),
+            tool_calls: vec![AssistantToolCall {
+                call_id: "stale_call".to_string(),
+                name: "stale_tool".repeat(20),
+                arguments: "stale arguments".repeat(20),
+                kind: crate::provider::request::ToolCallKind::Function,
+            }],
+            tool_call_id: None,
+            tool_name: None,
+            tool_call_kind: None,
+        };
+        let expected = raw_items
+            .iter()
+            .map(|raw| raw.to_string().chars().count())
+            .sum::<usize>();
+
+        assert_eq!(
+            estimate_prompt_tokens(&CharacterCountEstimator, &[message], &[]),
+            expected,
+        );
     }
 }

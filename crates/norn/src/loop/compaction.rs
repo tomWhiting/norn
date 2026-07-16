@@ -116,11 +116,21 @@ fn estimate_event_tokens(
             // the same shape as a user message.
             SessionEvent::UserMessage { content, .. }
             | SessionEvent::RuleInjection { content, .. } => estimator.estimate(content),
-            SessionEvent::AssistantMessage { content, .. } => {
-                if content.is_empty() {
-                    0
+            SessionEvent::AssistantMessage {
+                response_items,
+                content,
+                ..
+            } => {
+                if response_items.is_empty() {
+                    if content.is_empty() {
+                        0
+                    } else {
+                        estimator.estimate(content)
+                    }
                 } else {
-                    estimator.estimate(content)
+                    response_items.iter().fold(0_usize, |total, entry| {
+                        total.saturating_add(estimator.estimate(&entry.item.raw().to_string()))
+                    })
                 }
             }
             SessionEvent::ToolResult { output, .. } => estimator.estimate(&output.to_string()),
@@ -504,6 +514,7 @@ mod tests {
 
     fn assistant(content: &str) -> SessionEvent {
         SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: content.to_owned(),
             thinking: String::new(),
@@ -517,6 +528,7 @@ mod tests {
 
     fn assistant_tool_call(call_id: &str) -> SessionEvent {
         SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: "tool".to_owned(),
             thinking: String::new(),
@@ -617,6 +629,67 @@ mod tests {
         assert_eq!(
             estimate.token_estimate_freed, 3,
             "user message, assistant text, and tool result should all be counted",
+        );
+    }
+
+    struct ByteCountEstimator;
+
+    impl TokenEstimator for ByteCountEstimator {
+        fn estimate(&self, text: &str) -> usize {
+            text.len()
+        }
+    }
+
+    #[test]
+    fn event_estimate_uses_only_canonical_item_bytes_when_present() {
+        use crate::provider::response_item::{
+            ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
+        };
+
+        let raw_items = [
+            serde_json::json!({
+                "type": "custom_tool_call",
+                "id": "ct_1",
+                "call_id": "call_1",
+                "name": "shell",
+                "input": "pwd"
+            }),
+            serde_json::json!({
+                "type": "future_output",
+                "id": "future_1",
+                "payload": {"binary_ref": "artifact-1"}
+            }),
+        ];
+        let response_items = raw_items
+            .iter()
+            .cloned()
+            .map(|raw| ResponseTranscriptItem {
+                item: ResponseItem::from_value(raw).expect("valid response item"),
+                provenance: ResponseStreamProvenance {
+                    item_id: Some("provenance is excluded".repeat(20)),
+                    ..ResponseStreamProvenance::default()
+                },
+            })
+            .collect();
+        let event = SessionEvent::AssistantMessage {
+            response_items,
+            base: EventBase::new(None),
+            content: "stale projection".repeat(50),
+            thinking: String::new(),
+            reasoning: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: EventUsage::default(),
+            stop_reason: String::new(),
+            response_id: None,
+        };
+        let expected = raw_items
+            .iter()
+            .map(|raw| raw.to_string().len())
+            .sum::<usize>();
+
+        assert_eq!(
+            estimate_event_tokens(Some(&ByteCountEstimator), &[event]),
+            expected,
         );
     }
 
@@ -1344,6 +1417,7 @@ mod tests {
         let messages = vec![
             // ~260k chars of content → ~65k blind tokens (below the 70k trigger).
             Message {
+                response_items: Vec::new(),
                 reasoning: Vec::new(),
                 role: MessageRole::User,
                 content: Some("u".repeat(260_000)),
@@ -1355,6 +1429,7 @@ mod tests {
             },
             // ~140k chars of replayed encrypted reasoning → ~35k extra tokens.
             Message {
+                response_items: Vec::new(),
                 reasoning: vec![ReasoningItem {
                     id: "rs_resumed".to_string(),
                     summary: vec![ReasoningSummaryPart::SummaryText {
@@ -1378,6 +1453,7 @@ mod tests {
             .iter()
             .cloned()
             .map(|m| Message {
+                response_items: Vec::new(),
                 reasoning: Vec::new(),
                 ..m
             })

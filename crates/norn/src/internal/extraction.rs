@@ -60,6 +60,7 @@ pub async fn extract(
     let request = ProviderRequest {
         messages: vec![
             Message {
+                response_items: Vec::new(),
                 role: MessageRole::System,
                 content: Some(system_prompt(detail).to_owned()),
                 thinking: String::new(),
@@ -70,6 +71,7 @@ pub async fn extract(
                 tool_call_kind: None,
             },
             Message {
+                response_items: Vec::new(),
                 role: MessageRole::User,
                 content: Some(build_user_message(content, questions)),
                 thinking: String::new(),

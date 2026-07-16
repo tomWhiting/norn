@@ -123,6 +123,7 @@ impl ManagedDevMessage {
     pub(super) fn attach(&mut self, content: String, messages: &mut Vec<Message>) {
         let idx = messages.len();
         messages.push(Message {
+            response_items: Vec::new(),
             role: MessageRole::Developer,
             content: Some(content),
             thinking: String::new(),
@@ -146,6 +147,7 @@ mod tests {
 
     fn message(role: MessageRole, content: &str) -> Message {
         Message {
+            response_items: Vec::new(),
             role,
             content: Some(content.to_string()),
             thinking: String::new(),

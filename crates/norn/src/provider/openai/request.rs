@@ -317,6 +317,13 @@ fn serialize_user_message(msg: &Message) -> serde_json::Value {
 
 /// Serializes an assistant message into the input array.
 ///
+/// When the assistant carries canonical Responses items, those item objects
+/// are appended unchanged and in provider order. Current `OpenAI` guidance for
+/// stateless conversation state explicitly requires preserving every item in
+/// `response.output`; this keeps encrypted reasoning and assistant phase data
+/// intact. Stream-only coordinates are stored in the surrounding transcript
+/// envelope and therefore never appear in this replay array.
+///
 /// The Responses API expects tool calls as top-level items in the input
 /// array, not nested inside an assistant message's content. Text output (if
 /// any) is emitted as a separate `output_text` content item inside an
@@ -346,6 +353,15 @@ fn serialize_user_message(msg: &Message) -> serde_json::Value {
 /// `protocol-models.rs:779-781`). Empty `call_id` is a bug, not a
 /// fallback — `tc.call_id` carries the value `assemble_response` propagated.
 fn serialize_assistant_into(input: &mut Vec<serde_json::Value>, msg: &Message) {
+    if !msg.response_items.is_empty() {
+        input.extend(
+            msg.response_items
+                .iter()
+                .map(|transcript_item| transcript_item.item.raw().clone()),
+        );
+        return;
+    }
+
     for item in &msg.reasoning {
         let Some(encrypted_content) = &item.encrypted_content else {
             continue;
@@ -428,6 +444,9 @@ fn serialize_tool_result(msg: &Message) -> Result<serde_json::Value, ProviderErr
 }
 
 #[cfg(test)]
+mod canonical_replay_tests;
+
+#[cfg(test)]
 #[allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -463,6 +482,7 @@ mod tests {
         ProviderRequest {
             messages: vec![
                 Message {
+                    response_items: Vec::new(),
                     reasoning: Vec::new(),
                     role: MessageRole::System,
                     content: Some("You are helpful.".to_string()),
@@ -473,6 +493,7 @@ mod tests {
                     tool_call_kind: None,
                 },
                 Message {
+                    response_items: Vec::new(),
                     reasoning: Vec::new(),
                     role: MessageRole::User,
                     content: Some("Hello".to_string()),
@@ -483,6 +504,7 @@ mod tests {
                     tool_call_kind: None,
                 },
                 Message {
+                    response_items: Vec::new(),
                     reasoning: Vec::new(),
                     role: MessageRole::Assistant,
                     content: Some("Hi there".to_string()),
@@ -885,6 +907,7 @@ mod tests {
         req.messages.insert(
             1,
             Message {
+                response_items: Vec::new(),
                 reasoning: Vec::new(),
                 role: MessageRole::Developer,
                 content: Some("dynamic context here".to_string()),
@@ -921,6 +944,7 @@ mod tests {
         // API.
         let req = ProviderRequest {
             messages: vec![Message {
+                response_items: Vec::new(),
                 reasoning: Vec::new(),
                 role: MessageRole::ToolResult,
                 content: Some(r#"{"ok":true}"#.to_string()),
@@ -963,6 +987,7 @@ mod tests {
         // `Some(String::new())`.
         let req = ProviderRequest {
             messages: vec![Message {
+                response_items: Vec::new(),
                 reasoning: Vec::new(),
                 role: MessageRole::ToolResult,
                 content: Some("output".to_string()),
@@ -996,6 +1021,7 @@ mod tests {
         // freeform body passes through verbatim — no JSON wrapping.
         let req = ProviderRequest {
             messages: vec![Message {
+                response_items: Vec::new(),
                 reasoning: Vec::new(),
                 role: MessageRole::Assistant,
                 content: None,
@@ -1040,6 +1066,7 @@ mod tests {
         // `input`. This proves the kind discriminator is honoured both ways.
         let req = ProviderRequest {
             messages: vec![Message {
+                response_items: Vec::new(),
                 reasoning: Vec::new(),
                 role: MessageRole::Assistant,
                 content: None,
@@ -1079,6 +1106,7 @@ mod tests {
         // `custom_tool_call_output`, mirroring the call's envelope.
         let req = ProviderRequest {
             messages: vec![Message {
+                response_items: Vec::new(),
                 reasoning: Vec::new(),
                 role: MessageRole::ToolResult,
                 content: Some("hunk applied".to_string()),
@@ -1114,6 +1142,7 @@ mod tests {
         // must still serialise as `function_call_output`.
         let req = ProviderRequest {
             messages: vec![Message {
+                response_items: Vec::new(),
                 reasoning: Vec::new(),
                 role: MessageRole::ToolResult,
                 content: Some("ok".to_string()),
@@ -1144,6 +1173,7 @@ mod tests {
     fn tool_result_with_call_id_serializes_function_call_output() {
         let req = ProviderRequest {
             messages: vec![Message {
+                response_items: Vec::new(),
                 reasoning: Vec::new(),
                 role: MessageRole::ToolResult,
                 content: Some(r#"{"lines":42}"#.to_string()),
@@ -1191,6 +1221,7 @@ mod tests {
     fn assistant_request_with_reasoning(reasoning: Vec<ReasoningItem>) -> ProviderRequest {
         ProviderRequest {
             messages: vec![Message {
+                response_items: Vec::new(),
                 role: MessageRole::Assistant,
                 content: Some("calling a tool".to_string()),
                 thinking: "summary text".to_string(),
@@ -1298,6 +1329,7 @@ mod tests {
         use crate::session::events::{EventBase, EventUsage, SessionEvent};
 
         let events = vec![SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: "calling a tool".to_owned(),
             thinking: "summary text".to_owned(),

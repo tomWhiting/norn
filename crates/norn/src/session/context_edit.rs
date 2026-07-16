@@ -13,6 +13,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use crate::error::SessionError;
+use crate::provider::response_item::{ResponseCustomToolCallItem, ResponseFunctionCallItem};
 use crate::session::events::{ContextMarkKind, EventBase, EventId, SessionEvent};
 use crate::session::store::EventStore;
 
@@ -551,15 +552,44 @@ pub fn build_compaction_digest(
     let mut prior_compactions = 0_usize;
     let mut other_events = 0_usize;
     let mut tool_calls: BTreeMap<String, usize> = BTreeMap::new();
+    let mut response_item_sequences = Vec::new();
     for event in replaced {
         match event {
             SessionEvent::UserMessage { .. } => user_messages += 1,
             SessionEvent::AssistantMessage {
-                tool_calls: calls, ..
+                base,
+                response_items,
+                tool_calls: legacy_calls,
+                ..
             } => {
                 assistant_messages += 1;
-                for call in calls {
-                    *tool_calls.entry(call.name.clone()).or_insert(0) += 1;
+                if response_items.is_empty() {
+                    for call in legacy_calls {
+                        *tool_calls.entry(call.name.clone()).or_insert(0) += 1;
+                    }
+                } else {
+                    response_item_sequences.push(serde_json::json!({
+                        "assistant_event_id": base.id.to_string(),
+                        "item_types": response_items
+                            .iter()
+                            .map(|entry| entry.item.item_type())
+                            .collect::<Vec<_>>(),
+                    }));
+                    for entry in response_items {
+                        let name = entry
+                            .item
+                            .as_function_call()
+                            .map(ResponseFunctionCallItem::name)
+                            .or_else(|| {
+                                entry
+                                    .item
+                                    .as_custom_tool_call()
+                                    .map(ResponseCustomToolCallItem::name)
+                            });
+                        if let Some(name) = name {
+                            *tool_calls.entry(name.to_string()).or_insert(0) += 1;
+                        }
+                    }
                 }
             }
             SessionEvent::ToolResult { .. } => tool_results += 1,
@@ -586,6 +616,7 @@ pub fn build_compaction_digest(
         "prior_compactions": prior_compactions,
         "other_events": other_events,
         "tool_calls": tool_calls,
+        "response_item_sequences": response_item_sequences,
         "first_timestamp": first.map(|b| b.timestamp.to_rfc3339()),
         "last_timestamp": last.map(|b| b.timestamp.to_rfc3339()),
         "turn_range": {
@@ -1000,6 +1031,7 @@ mod tests {
 
     fn assistant_msg(content: &str) -> SessionEvent {
         SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: content.to_owned(),
             thinking: String::new(),
@@ -1013,6 +1045,7 @@ mod tests {
 
     fn assistant_tool_call(call_id: &str) -> SessionEvent {
         SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: String::new(),
             thinking: String::new(),
@@ -1127,6 +1160,85 @@ mod tests {
         assert!(
             chrono::DateTime::parse_from_rfc3339(last).is_ok(),
             "last timestamp must be RFC 3339: {last}"
+        );
+    }
+
+    #[test]
+    fn digest_records_canonical_item_order_and_canonical_local_tool_names() {
+        use crate::provider::response_item::{
+            ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
+        };
+
+        let raw_items = [
+            serde_json::json!({
+                "type": "reasoning",
+                "id": "rs_1",
+                "summary": []
+            }),
+            serde_json::json!({
+                "type": "function_call",
+                "id": "fc_1",
+                "call_id": "call_1",
+                "name": "read",
+                "arguments": "{}"
+            }),
+            serde_json::json!({
+                "type": "custom_tool_call",
+                "id": "ct_1",
+                "call_id": "call_2",
+                "name": "shell",
+                "input": "pwd"
+            }),
+            serde_json::json!({
+                "type": "message",
+                "id": "msg_1",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{
+                    "type": "output_text",
+                    "text": "done",
+                    "annotations": [],
+                    "logprobs": []
+                }]
+            }),
+        ];
+        let response_items = raw_items
+            .iter()
+            .cloned()
+            .map(|raw| ResponseTranscriptItem {
+                item: ResponseItem::from_value(raw).expect("valid response item"),
+                provenance: ResponseStreamProvenance::default(),
+            })
+            .collect();
+        let event = SessionEvent::AssistantMessage {
+            base: EventBase::new(None),
+            response_items,
+            content: "stale".to_string(),
+            thinking: String::new(),
+            reasoning: Vec::new(),
+            tool_calls: vec![ToolCallEvent {
+                call_id: "stale_call".to_string(),
+                name: "stale_tool".to_string(),
+                arguments: serde_json::json!({}),
+                kind: crate::provider::request::ToolCallKind::Function,
+            }],
+            usage: EventUsage::default(),
+            stop_reason: "tool_use".to_string(),
+            response_id: None,
+        };
+        let event_id = event.base().id.to_string();
+
+        let digest = build_compaction_digest(&[event], 123);
+
+        assert_eq!(digest["tool_calls"]["read"], 1);
+        assert_eq!(digest["tool_calls"]["shell"], 1);
+        assert!(digest["tool_calls"].get("stale_tool").is_none());
+        assert_eq!(
+            digest["response_item_sequences"],
+            serde_json::json!([{
+                "assistant_event_id": event_id,
+                "item_types": ["reasoning", "function_call", "custom_tool_call", "message"]
+            }]),
         );
     }
 

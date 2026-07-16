@@ -147,6 +147,15 @@ fn render_message(message: &Message) -> String {
         block.push(')');
     }
     block.push(':');
+    if !message.response_items.is_empty() {
+        for entry in &message.response_items {
+            block.push_str("\n[response item: ");
+            block.push_str(entry.item.item_type());
+            block.push_str("]\n");
+            block.push_str(&entry.item.raw().to_string());
+        }
+        return block;
+    }
     if let Some(content) = message.content.as_deref()
         && !content.is_empty()
     {
@@ -165,6 +174,7 @@ fn render_message(message: &Message) -> String {
 
 fn text_message(role: MessageRole, content: String) -> Message {
     Message {
+        response_items: Vec::new(),
         role,
         content: Some(content),
         thinking: String::new(),
@@ -193,6 +203,7 @@ mod tests {
 
     fn assistant_with_call(content: &str) -> SessionEvent {
         SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: content.to_owned(),
             thinking: String::new(),
@@ -239,6 +250,74 @@ mod tests {
         assert!(transcript.contains("[tool call] read("), "{transcript}");
         assert!(transcript.contains("Tool result (read):"), "{transcript}");
         assert!(transcript.contains("file body"), "{transcript}");
+    }
+
+    #[test]
+    fn transcript_renders_canonical_items_in_order_without_flat_projections() {
+        use crate::provider::response_item::{
+            ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
+        };
+
+        let raw_items = [
+            serde_json::json!({
+                "type": "reasoning",
+                "id": "rs_1",
+                "summary": [{"type": "summary_text", "text": "considering"}]
+            }),
+            serde_json::json!({
+                "type": "function_call",
+                "id": "fc_1",
+                "call_id": "call_1",
+                "name": "read",
+                "arguments": "{\"path\":\"Cargo.toml\"}"
+            }),
+            serde_json::json!({
+                "type": "message",
+                "id": "msg_1",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "refusal", "refusal": "not available"}]
+            }),
+        ];
+        let response_items = raw_items
+            .iter()
+            .cloned()
+            .map(|raw| ResponseTranscriptItem {
+                item: ResponseItem::from_value(raw).expect("valid response item"),
+                provenance: ResponseStreamProvenance {
+                    item_id: Some("stream-only-id".to_string()),
+                    ..ResponseStreamProvenance::default()
+                },
+            })
+            .collect();
+        let event = SessionEvent::AssistantMessage {
+            base: EventBase::new(None),
+            response_items,
+            content: "stale flat text".to_string(),
+            thinking: "stale flat thinking".to_string(),
+            reasoning: Vec::new(),
+            tool_calls: vec![ToolCallEvent {
+                call_id: "stale_call".to_string(),
+                name: "stale_tool".to_string(),
+                arguments: serde_json::json!({}),
+                kind: crate::provider::request::ToolCallKind::Function,
+            }],
+            usage: EventUsage::default(),
+            stop_reason: "end_turn".to_string(),
+            response_id: None,
+        };
+
+        let transcript = render_transcript(&[event]);
+        let positions = raw_items.map(|raw| {
+            transcript
+                .find(&raw.to_string())
+                .expect("canonical raw item must be rendered")
+        });
+        assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(!transcript.contains("stale flat text"));
+        assert!(!transcript.contains("stale flat thinking"));
+        assert!(!transcript.contains("stale_tool"));
+        assert!(!transcript.contains("stream-only-id"));
     }
 
     #[test]

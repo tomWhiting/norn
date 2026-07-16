@@ -316,6 +316,7 @@ mod tests {
 
     fn schema_call_response(arguments: &str) -> AssembledResponse {
         AssembledResponse {
+            response_items: Vec::new(),
             text: String::new(),
             thinking: String::new(),
             reasoning: Vec::new(),

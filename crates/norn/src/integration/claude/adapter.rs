@@ -23,6 +23,8 @@ use crate::provider::traits::{Provider, ProviderStream};
 use crate::provider::usage::Usage;
 use crate::resource::DescriptorGovernor;
 
+mod validation;
+
 /// Configuration for [`ClaudeRunnerAdapter`].
 ///
 /// Note: `max_tokens` is recorded for completeness, but Claude CLI exposes
@@ -80,7 +82,11 @@ impl ClaudeRunnerAdapter {
     }
 
     /// Build the [`ClaudeCommand`] for one call.
-    pub(crate) fn build_command(&self, request: &ProviderRequest) -> ClaudeCommand {
+    pub(crate) fn build_command(
+        &self,
+        request: &ProviderRequest,
+    ) -> Result<ClaudeCommand, ProviderError> {
+        validation::reject_canonical_response_items(request)?;
         let prompt = render_prompt(&request.messages);
         let system = render_system_prompt(&request.messages);
 
@@ -100,7 +106,7 @@ impl ClaudeRunnerAdapter {
             request.model.clone()
         };
         cmd = cmd.model(Model::full(model_name));
-        cmd
+        Ok(cmd)
     }
 
     /// Execute one call against the adapter and return the consolidated
@@ -111,9 +117,15 @@ impl ClaudeRunnerAdapter {
     ///
     /// Returns [`IntegrationError::ClaudeRunnerError`] when spawning or
     /// reading the runner process fails, or when the runner reports a
-    /// terminal error result.
+    /// terminal error result. Canonical Responses items are also rejected
+    /// before the command is rendered because the Claude CLI prompt shape
+    /// cannot preserve them.
     pub fn run_step(&self, request: &ProviderRequest) -> Result<StepOutcome, IntegrationError> {
-        let cmd = self.build_command(request);
+        let cmd =
+            self.build_command(request)
+                .map_err(|error| IntegrationError::ClaudeRunnerError {
+                    reason: error.to_string(),
+                })?;
         let events = spawn_and_collect(&cmd)?;
         let outcome = consolidate_outcome(&events)?;
         Ok(outcome)
@@ -122,7 +134,7 @@ impl ClaudeRunnerAdapter {
 
 impl Provider for ClaudeRunnerAdapter {
     fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
-        let cmd = self.build_command(&request);
+        let cmd = self.build_command(&request)?;
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<ProviderEvent, ProviderError>>(64);
 
         tokio::task::spawn_blocking(move || {
@@ -525,6 +537,7 @@ mod tests {
     fn user_request(prompt: &str) -> ProviderRequest {
         ProviderRequest {
             messages: vec![Message {
+                response_items: Vec::new(),
                 reasoning: Vec::new(),
                 role: MessageRole::User,
                 content: Some(prompt.to_owned()),
@@ -547,6 +560,36 @@ mod tests {
         }
     }
 
+    fn request_with_canonical_item() -> ProviderRequest {
+        use crate::provider::response_item::{
+            ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
+        };
+
+        let mut request = user_request("new turn");
+        request.messages.insert(
+            0,
+            Message {
+                response_items: vec![ResponseTranscriptItem {
+                    item: ResponseItem::from_value(serde_json::json!({
+                        "type": "future_response_item",
+                        "id": "item_1"
+                    }))
+                    .unwrap(),
+                    provenance: ResponseStreamProvenance::default(),
+                }],
+                reasoning: Vec::new(),
+                role: MessageRole::Assistant,
+                content: Some("lossy projection".to_owned()),
+                thinking: String::new(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_call_kind: None,
+            },
+        );
+        request
+    }
+
     // R1 verification: ClaudeRunnerAdapter implements Provider -- static
     // coercion compiles only when the impl exists.
     #[test]
@@ -559,7 +602,7 @@ mod tests {
     #[test]
     fn build_command_includes_prompt_and_stream_json() {
         let adapter = ClaudeRunnerAdapter::new(config());
-        let cmd = adapter.build_command(&user_request("hello"));
+        let cmd = adapter.build_command(&user_request("hello")).unwrap();
         let args = cmd.build_args();
         let joined = args.join(" ");
         assert!(joined.contains("hello"), "args carry prompt: {joined}");
@@ -569,6 +612,37 @@ mod tests {
         );
         assert!(joined.contains("-p"), "print mode: {joined}");
         assert!(joined.contains("--model"), "model flag: {joined}");
+    }
+
+    #[test]
+    fn run_step_rejects_canonical_items_before_spawning() {
+        let adapter = ClaudeRunnerAdapter::new(config());
+        let error = adapter
+            .run_step(&request_with_canonical_item())
+            .unwrap_err();
+
+        match error {
+            IntegrationError::ClaudeRunnerError { reason } => assert_eq!(
+                reason,
+                "unsupported feature: canonical Responses item replay through Claude Runner"
+            ),
+            other => panic!("expected ClaudeRunnerError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn provider_stream_rejects_canonical_items_before_rendering() {
+        let adapter = ClaudeRunnerAdapter::new(config());
+        let result = adapter.stream(request_with_canonical_item());
+
+        match result {
+            Err(ProviderError::UnsupportedFeature { feature }) => assert_eq!(
+                feature,
+                "canonical Responses item replay through Claude Runner"
+            ),
+            Err(other) => panic!("expected UnsupportedFeature, got {other:?}"),
+            Ok(_) => panic!("canonical Responses items must fail closed"),
+        }
     }
 
     #[test]

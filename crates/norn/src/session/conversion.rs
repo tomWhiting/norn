@@ -57,9 +57,9 @@ fn events_to_messages_inner(events: &[SessionEvent], include_compactions: bool) 
 fn collect_tool_call_kinds(events: &[SessionEvent]) -> HashMap<String, ToolCallKind> {
     let mut kinds = HashMap::new();
     for event in events {
-        if let SessionEvent::AssistantMessage { tool_calls, .. } = event {
+        if let Some(tool_calls) = event.assistant_tool_calls() {
             for tc in tool_calls {
-                kinds.insert(tc.call_id.clone(), tc.kind);
+                kinds.insert(tc.call_id, tc.kind);
             }
         }
     }
@@ -73,6 +73,7 @@ fn event_to_message(
 ) -> Option<Message> {
     match event {
         SessionEvent::UserMessage { content, .. } => Some(Message {
+            response_items: Vec::new(),
             role: MessageRole::User,
             content: Some(content.clone()),
             thinking: String::new(),
@@ -84,47 +85,51 @@ fn event_to_message(
         }),
 
         SessionEvent::AssistantMessage {
-            content,
+            response_items,
             thinking,
             reasoning,
-            tool_calls,
             ..
-        } => Some(Message {
-            role: MessageRole::Assistant,
-            content: if content.is_empty() {
-                None
-            } else {
-                Some(content.clone())
-            },
-            thinking: thinking.clone(),
-            // Rebuild the assistant turn's captured reasoning items so a
-            // resumed session keeps the model's reasoning state. No filter
-            // on `encrypted_content` here: capture-everything at persist,
-            // filter-at-replay is the existing division of labour — the
-            // Responses serializer echoes only the items carrying the blob.
-            reasoning: reasoning.clone(),
-            tool_calls: tool_calls
-                .iter()
-                .map(|tc| AssistantToolCall {
-                    call_id: tc.call_id.clone(),
-                    name: tc.name.clone(),
-                    arguments: match tc.kind {
-                        // `Value`'s `Display` renders compact JSON and is
-                        // total — unlike a fallible serializer round-trip,
-                        // it can never silently collapse arguments to "".
-                        ToolCallKind::Custom => tc
-                            .arguments
-                            .as_str()
-                            .map_or_else(|| tc.arguments.to_string(), String::from),
-                        ToolCallKind::Function => tc.arguments.to_string(),
-                    },
-                    kind: tc.kind,
-                })
-                .collect(),
-            tool_call_id: None,
-            tool_name: None,
-            tool_call_kind: None,
-        }),
+        } => {
+            let tool_calls = event.assistant_tool_calls()?;
+            let content = event.assistant_text()?;
+            Some(Message {
+                response_items: response_items.clone(),
+                role: MessageRole::Assistant,
+                content: if content.is_empty() {
+                    None
+                } else {
+                    Some(content)
+                },
+                thinking: thinking.clone(),
+                // Rebuild the assistant turn's captured reasoning items so a
+                // resumed session keeps the model's reasoning state. No filter
+                // on `encrypted_content` here: capture-everything at persist,
+                // filter-at-replay is the existing division of labour — the
+                // Responses serializer echoes only the items carrying the blob.
+                reasoning: reasoning.clone(),
+                tool_calls: tool_calls
+                    .into_iter()
+                    .map(|tc| AssistantToolCall {
+                        call_id: tc.call_id,
+                        name: tc.name,
+                        arguments: match tc.kind {
+                            // `Value`'s `Display` renders compact JSON and is
+                            // total — unlike a fallible serializer round-trip,
+                            // it can never silently collapse arguments to "".
+                            ToolCallKind::Custom => tc
+                                .arguments
+                                .as_str()
+                                .map_or_else(|| tc.arguments.to_string(), String::from),
+                            ToolCallKind::Function => tc.arguments.to_string(),
+                        },
+                        kind: tc.kind,
+                    })
+                    .collect(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_call_kind: None,
+            })
+        }
 
         SessionEvent::ToolResult {
             tool_call_id,
@@ -132,6 +137,7 @@ fn event_to_message(
             output,
             ..
         } => Some(Message {
+            response_items: Vec::new(),
             role: MessageRole::ToolResult,
             content: Some(value_to_content_string(output)),
             thinking: String::new(),
@@ -147,6 +153,7 @@ fn event_to_message(
         }),
 
         SessionEvent::Compaction { summary, .. } if include_compactions => Some(Message {
+            response_items: Vec::new(),
             role: MessageRole::Developer,
             content: Some(format!("Prior conversation compaction summary:\n{summary}")),
             thinking: String::new(),
@@ -170,6 +177,7 @@ fn event_to_message(
         } => delivery
             .format_conversation_content(rule_id, content)
             .map(|formatted| Message {
+                response_items: Vec::new(),
                 role: MessageRole::User,
                 content: Some(formatted),
                 thinking: String::new(),
@@ -243,6 +251,7 @@ mod tests {
             encrypted_content: None,
         };
         let events = vec![SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: "answer".to_owned(),
             thinking: "summary".to_owned(),
@@ -267,6 +276,7 @@ mod tests {
     #[test]
     fn assistant_message_without_reasoning_rebuilds_empty() {
         let events = vec![SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: "answer".to_owned(),
             thinking: String::new(),
@@ -295,6 +305,7 @@ mod tests {
     #[test]
     fn assistant_message_converts_with_tool_calls() {
         let events = vec![SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: "the answer".to_owned(),
             thinking: String::new(),
@@ -323,6 +334,7 @@ mod tests {
     #[test]
     fn assistant_message_thinking_preserved() {
         let events = vec![SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: "the answer".to_owned(),
             thinking: "first let me reason".to_owned(),
@@ -341,6 +353,7 @@ mod tests {
     #[test]
     fn assistant_message_empty_thinking_skipped_in_serialization() {
         let events = vec![SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: "hi".to_owned(),
             thinking: String::new(),
@@ -362,6 +375,7 @@ mod tests {
     #[test]
     fn assistant_message_empty_content_becomes_none() {
         let events = vec![SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: String::new(),
             thinking: String::new(),
@@ -437,6 +451,7 @@ mod tests {
                 content: "what dir?".to_owned(),
             },
             SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(None),
                 content: "let me check".to_owned(),
                 thinking: String::new(),
@@ -460,6 +475,7 @@ mod tests {
                 duration_ms: 10,
             },
             SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(None),
                 content: "/home/user".to_owned(),
                 thinking: String::new(),
@@ -507,6 +523,7 @@ mod tests {
     fn non_string_arguments_render_full_json_never_empty() {
         let args = serde_json::json!({"nested": {"key": "value"}, "n": 7});
         let events = vec![SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: String::new(),
             thinking: String::new(),
@@ -575,6 +592,7 @@ mod tests {
     #[test]
     fn custom_tool_call_arguments_not_double_quoted() {
         let events = vec![SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: String::new(),
             thinking: String::new(),

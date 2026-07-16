@@ -828,6 +828,7 @@ mod tests {
 
     fn assistant_with_usage(input: u64, output: u64, cache_read: u64) -> SessionEvent {
         SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: "ok".to_owned(),
             thinking: String::new(),

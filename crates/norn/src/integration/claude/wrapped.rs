@@ -135,6 +135,7 @@ impl NornWrappedClaudeCode {
                         .collect();
                     let content = message.text_items().collect::<Vec<&str>>().join("\n");
                     out.push(SessionEvent::AssistantMessage {
+                        response_items: Vec::new(),
                         base: EventBase::new(None),
                         content,
                         thinking: String::new(),

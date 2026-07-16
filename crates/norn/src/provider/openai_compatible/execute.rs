@@ -70,6 +70,7 @@ mod tests {
     fn build_request() -> ProviderRequest {
         ProviderRequest {
             messages: vec![Message {
+                response_items: Vec::new(),
                 reasoning: Vec::new(),
                 role: MessageRole::User,
                 content: Some("hello".to_string()),

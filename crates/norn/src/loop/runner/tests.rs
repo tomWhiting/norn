@@ -3456,6 +3456,7 @@ async fn persisted_compaction_marks_load_once_per_loop_context() {
         .expect("seed user");
     let old_answer = store
         .append(SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: "old answer".to_string(),
             thinking: String::new(),
@@ -3592,6 +3593,7 @@ async fn mid_session_compaction_marks_survive_into_the_next_step() {
             .expect("seed user");
         store
             .append(SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(None),
                 content: format!("seed answer {i} {}", "y".repeat(200)),
                 thinking: String::new(),
@@ -4065,6 +4067,7 @@ async fn auto_compaction_applies_to_in_flight_request() {
             .expect("seed user");
         store
             .append(SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(None),
                 content: format!("seed answer {i} {}", "y".repeat(200)),
                 thinking: String::new(),
@@ -4216,6 +4219,7 @@ async fn auto_compaction_broadcasts_live_event_and_hides_summarization_stream() 
             .expect("seed user");
         store
             .append(SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(None),
                 content: format!("seed answer {i} {}", "y".repeat(200)),
                 thinking: String::new(),
@@ -4396,6 +4400,7 @@ async fn summarization_failure_falls_back_without_aborting_the_step() {
             .expect("seed user");
         store
             .append(SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(None),
                 content: format!("seed answer {i} {}", "y".repeat(200)),
                 thinking: String::new(),
@@ -4488,6 +4493,7 @@ async fn compaction_drops_response_thread_anchor() {
             .expect("seed user");
         store
             .append(SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(None),
                 content: format!("seed answer {i} {}", "y".repeat(200)),
                 thinking: String::new(),
@@ -6635,6 +6641,7 @@ async fn in_flight_compaction_leaves_one_managed_message_after_the_summary_at_th
             .expect("seed user");
         store
             .append(SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(None),
                 content: format!("seed answer {i} {}", "y".repeat(200)),
                 thinking: String::new(),

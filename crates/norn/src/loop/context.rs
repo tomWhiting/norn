@@ -151,6 +151,7 @@ mod tests {
 
     fn assistant_msg(content: &str) -> SessionEvent {
         SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: content.to_owned(),
             thinking: String::new(),
@@ -340,6 +341,7 @@ mod tests {
         let keep = store.append(user_msg("keep")).expect("append");
         let suppressed = store
             .append(SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(Some(keep)),
                 content: "reasoned answer".to_owned(),
                 thinking: String::new(),

@@ -240,6 +240,7 @@ impl StepMachine<'_> {
         .await?;
 
         self.messages.push(Message {
+            response_items: Vec::new(),
             role: MessageRole::User,
             content: Some(nudge_text),
             thinking: String::new(),

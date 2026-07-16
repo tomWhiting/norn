@@ -2,9 +2,9 @@
 //!
 //! Splits the streaming protocol surface across two files:
 //!
-//! * `sse.rs` (this file) — the raw byte-stream parser ([`SseParser`])
-//!   and the SSE-to-`ProviderEvent` dispatcher ([`map_sse_event`]). All
-//!   control flow lives here.
+//! * `sse.rs` (this file) — the raw byte-stream parser ([`SseParser`]) and
+//!   lifecycle/delta dispatcher ([`map_sse_event`]).
+//! * `super::sse_completed_item` — lossless completed-item capture.
 //! * `super::sse_types` — typed deserialization targets for
 //!   `output_item.done` / `response.failed` / `response.incomplete`
 //!   payloads, plus the `classify_failed_error` error-code classifier
@@ -15,13 +15,10 @@
 
 use serde::Deserialize;
 
-use super::sse_types::{
-    CustomToolCallItem, FunctionCallItem, ResponseFailedPayload, classify_failed_error,
-    incomplete_stop_reason,
-};
+use super::sse_completed_item::map_completed_item;
+use super::sse_types::{ResponseFailedPayload, classify_failed_error, incomplete_stop_reason};
 use crate::error::ProviderError;
 use crate::provider::events::{ProviderEvent, StopReason};
-use crate::provider::reasoning::ReasoningItem;
 use crate::provider::request::ToolCallKind;
 use crate::provider::usage::Usage;
 
@@ -259,104 +256,7 @@ pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderE
             }))
         }
 
-        "response.output_item.done" => {
-            let item = event.data.get("item").unwrap_or(&event.data);
-            let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
-
-            match item_type {
-                "function_call" => {
-                    // Typed deserialization isolates the wire shape and lets
-                    // serde enforce that `call_id` is present. A
-                    // `call_id`-less event cannot produce a usable
-                    // `ToolCallComplete` — there is no legitimate downstream
-                    // value for it — so the event is dropped with a warning
-                    // rather than padded with an empty string.
-                    let Ok(FunctionCallItem {
-                        call_id,
-                        name,
-                        arguments,
-                    }) = FunctionCallItem::deserialize(item)
-                    else {
-                        tracing::warn!(
-                            call_id_present = item.get("call_id").is_some(),
-                            name_present = item.get("name").is_some(),
-                            arguments_present = item.get("arguments").is_some(),
-                            "function_call output_item.done failed to deserialize, skipping",
-                        );
-                        return None;
-                    };
-                    Some(Ok(ProviderEvent::ToolCallComplete {
-                        call_id,
-                        name,
-                        arguments,
-                        kind: ToolCallKind::Function,
-                    }))
-                }
-                "custom_tool_call" => {
-                    // Custom tool calls carry their freeform body in an
-                    // `input` field rather than `arguments` (per
-                    // `reference/codex-rs/protocol-models.rs:815-826`). The
-                    // assembled value is plumbed through the same
-                    // `arguments` field as function calls; the `kind` marker
-                    // tells the serializer to echo back with `input` + the
-                    // `custom_tool_call_output` envelope.
-                    let Ok(CustomToolCallItem {
-                        call_id,
-                        name,
-                        input,
-                    }) = CustomToolCallItem::deserialize(item)
-                    else {
-                        tracing::warn!(
-                            call_id_present = item.get("call_id").is_some(),
-                            name_present = item.get("name").is_some(),
-                            input_present = item.get("input").is_some(),
-                            "custom_tool_call output_item.done failed to deserialize, skipping",
-                        );
-                        return None;
-                    };
-                    Some(Ok(ProviderEvent::ToolCallComplete {
-                        call_id,
-                        name,
-                        arguments: input,
-                        kind: ToolCallKind::Custom,
-                    }))
-                }
-                "reasoning" => {
-                    // The full structured item — summary parts, optional
-                    // content parts, and (when the request asked for it)
-                    // `encrypted_content` — is captured so assembly can
-                    // attach it to the assistant message and the request
-                    // serializer can replay it on stateless backends. A
-                    // malformed item is dropped with a warning: the display
-                    // text already flowed through the
-                    // `reasoning_*_text.delta` events, so nothing
-                    // user-visible is lost, and fabricating a partial item
-                    // would corrupt replay.
-                    let Ok(reasoning_item) = ReasoningItem::deserialize(item) else {
-                        tracing::warn!(
-                            summary_present = item.get("summary").is_some(),
-                            content_present = item.get("content").is_some(),
-                            encrypted_content_present = item.get("encrypted_content").is_some(),
-                            "reasoning output_item.done failed to deserialize, skipping",
-                        );
-                        return None;
-                    };
-                    Some(Ok(ProviderEvent::ReasoningItemDone {
-                        item: reasoning_item,
-                    }))
-                }
-                "compaction" | "compaction_summary" | "context_compaction" => {
-                    Some(Ok(ProviderEvent::Compaction {
-                        item_type: item_type.to_string(),
-                        encrypted_content: item
-                            .get("encrypted_content")
-                            .and_then(|v| v.as_str())
-                            .map(str::to_owned),
-                    }))
-                }
-                _ => None,
-            }
-        }
+        "response.output_item.done" => Some(map_completed_item(event)),
 
         "response.completed" => {
             let usage = extract_usage(&event.data);
@@ -584,7 +484,6 @@ mod tests {
 
     use super::*;
     use crate::error::TransientKind;
-    use crate::provider::reasoning::{ReasoningContentPart, ReasoningSummaryPart};
 
     #[test]
     fn parse_multi_frame_sse() {
@@ -675,9 +574,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     }
 
     #[test]
-    fn output_item_done_emits_tool_call_complete() {
-        // R9-1: done payload with distinct `fc_*` id and `call_*` call_id —
-        // ToolCallComplete must propagate call_id, NOT fall back to the item id.
+    fn output_item_done_captures_function_call_with_both_identities() {
         let done = SseEvent {
             event_type: "response.output_item.done".to_string(),
             data: serde_json::json!({
@@ -691,27 +588,23 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
             }),
         };
         match map_sse_event(&done) {
-            Some(Ok(ProviderEvent::ToolCallComplete {
-                call_id,
-                name,
-                arguments,
-                kind: _,
-            })) => {
-                assert_eq!(call_id, "call_xyz", "must propagate call_id");
-                assert_ne!(call_id, "fc_abc", "must NOT fall back to item id");
-                assert_eq!(name, "get_weather");
-                assert_eq!(arguments, "{\"city\": \"NYC\"}");
+            Some(Ok(ProviderEvent::ResponseItemDone { item })) => {
+                let call = item
+                    .item
+                    .as_function_call()
+                    .expect("function call is typed");
+                assert_eq!(item.provenance.item_id.as_deref(), Some("fc_abc"));
+                assert_eq!(call.call_id(), "call_xyz");
+                assert_ne!(call.call_id(), "fc_abc");
+                assert_eq!(call.name(), "get_weather");
+                assert_eq!(call.arguments(), "{\"city\": \"NYC\"}");
             }
-            other => panic!("expected ToolCallComplete, got {other:?}"),
+            other => panic!("expected canonical function call, got {other:?}"),
         }
     }
 
     #[test]
-    fn output_item_done_custom_tool_call_emits_complete_with_custom_kind() {
-        // F5: a `custom_tool_call` output_item.done event must yield a
-        // `ToolCallComplete` carrying the freeform `input` in the `arguments`
-        // slot, the `call_id` from the wire, and `kind = Custom` so the
-        // serializer picks the `custom_tool_call_output` envelope downstream.
+    fn output_item_done_captures_custom_tool_call_verbatim() {
         let done = SseEvent {
             event_type: "response.output_item.done".to_string(),
             data: serde_json::json!({
@@ -725,28 +618,25 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
             }),
         };
         match map_sse_event(&done) {
-            Some(Ok(ProviderEvent::ToolCallComplete {
-                call_id,
-                name,
-                arguments,
-                kind,
-            })) => {
-                assert_eq!(call_id, "call_custom");
-                assert_eq!(name, "apply_patch");
+            Some(Ok(ProviderEvent::ResponseItemDone { item })) => {
+                let call = item
+                    .item
+                    .as_custom_tool_call()
+                    .expect("custom tool call is typed");
+                assert_eq!(call.call_id(), "call_custom");
+                assert_eq!(call.name(), "apply_patch");
                 assert_eq!(
-                    arguments, "*** BEGIN PATCH ***\n@@\n-foo\n+bar\n*** END PATCH ***",
+                    call.input(),
+                    "*** BEGIN PATCH ***\n@@\n-foo\n+bar\n*** END PATCH ***",
                     "freeform input must pass through verbatim",
                 );
-                assert_eq!(kind, ToolCallKind::Custom);
             }
-            other => panic!("expected custom-kind ToolCallComplete, got {other:?}"),
+            other => panic!("expected canonical custom tool call, got {other:?}"),
         }
     }
 
     #[test]
-    fn output_item_done_custom_tool_call_missing_call_id_skipped() {
-        // A custom_tool_call done event lacking `call_id` must be dropped,
-        // not padded with an empty string — same rule as function_call.
+    fn output_item_done_custom_tool_call_missing_call_id_is_error() {
         let done = SseEvent {
             event_type: "response.output_item.done".to_string(),
             data: serde_json::json!({
@@ -758,7 +648,10 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
                 }
             }),
         };
-        assert!(map_sse_event(&done).is_none());
+        assert!(matches!(
+            map_sse_event(&done),
+            Some(Err(ProviderError::ResponseParseError { .. }))
+        ));
     }
 
     #[test]
@@ -781,26 +674,29 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
             }),
         };
         match map_sse_event(&done) {
-            Some(Ok(ProviderEvent::ReasoningItemDone { item })) => {
-                assert_eq!(item.id, "rs_abc");
+            Some(Ok(ProviderEvent::ResponseItemDone { item })) => {
+                let reasoning = item.item.as_reasoning().expect("reasoning is typed");
+                assert_eq!(item.item.id(), Some("rs_abc"));
                 assert_eq!(
-                    item.summary,
-                    vec![ReasoningSummaryPart::SummaryText {
-                        text: "I considered the options".to_owned(),
-                    }],
+                    reasoning.summary(),
+                    &[serde_json::json!({
+                        "type": "summary_text",
+                        "text": "I considered the options"
+                    })],
                 );
                 assert_eq!(
-                    item.content,
-                    Some(vec![ReasoningContentPart::ReasoningText {
-                        text: "raw chain of thought".to_owned(),
-                    }]),
+                    reasoning.content(),
+                    Some(
+                        [serde_json::json!({
+                            "type": "reasoning_text",
+                            "text": "raw chain of thought"
+                        })]
+                        .as_slice()
+                    ),
                 );
-                assert_eq!(
-                    item.encrypted_content.as_deref(),
-                    Some("gAAAAB-opaque-blob"),
-                );
+                assert_eq!(reasoning.encrypted_content(), Some("gAAAAB-opaque-blob"),);
             }
-            other => panic!("expected ReasoningItemDone, got {other:?}"),
+            other => panic!("expected canonical reasoning item, got {other:?}"),
         }
     }
 
@@ -820,13 +716,14 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
             }),
         };
         match map_sse_event(&done) {
-            Some(Ok(ProviderEvent::ReasoningItemDone { item })) => {
-                assert_eq!(item.id, "rs_plain");
-                assert!(item.summary.is_empty());
-                assert!(item.content.is_none());
-                assert!(item.encrypted_content.is_none());
+            Some(Ok(ProviderEvent::ResponseItemDone { item })) => {
+                let reasoning = item.item.as_reasoning().expect("reasoning is typed");
+                assert_eq!(item.item.id(), Some("rs_plain"));
+                assert!(reasoning.summary().is_empty());
+                assert!(reasoning.content().is_none());
+                assert!(reasoning.encrypted_content().is_none());
             }
-            other => panic!("expected ReasoningItemDone, got {other:?}"),
+            other => panic!("expected canonical reasoning item, got {other:?}"),
         }
     }
 
@@ -837,19 +734,17 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
             data: serde_json::json!({
                 "item": {
                     "type": "compaction",
+                    "id": "cmp_1",
                     "encrypted_content": "enc_state",
                 }
             }),
         };
         match map_sse_event(&done) {
-            Some(Ok(ProviderEvent::Compaction {
-                item_type,
-                encrypted_content,
-            })) => {
-                assert_eq!(item_type, "compaction");
-                assert_eq!(encrypted_content.as_deref(), Some("enc_state"));
+            Some(Ok(ProviderEvent::ResponseItemDone { item })) => {
+                assert_eq!(item.item.item_type(), "compaction");
+                assert_eq!(item.item.raw()["encrypted_content"], "enc_state");
             }
-            other => panic!("expected Compaction, got {other:?}"),
+            other => panic!("expected canonical compaction, got {other:?}"),
         }
     }
 
@@ -888,10 +783,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     }
 
     #[test]
-    fn output_item_done_missing_call_id_skipped() {
-        // R9-2: a `function_call` done item with no `call_id` cannot produce
-        // a usable ToolCallComplete — the event must be skipped, not emitted
-        // with an empty-string fallback.
+    fn output_item_done_missing_call_id_is_error() {
         let done = SseEvent {
             event_type: "response.output_item.done".to_string(),
             data: serde_json::json!({
@@ -903,7 +795,10 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
                 }
             }),
         };
-        assert!(map_sse_event(&done).is_none());
+        assert!(matches!(
+            map_sse_event(&done),
+            Some(Err(ProviderError::ResponseParseError { .. }))
+        ));
     }
 
     #[test]

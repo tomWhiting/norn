@@ -2,6 +2,7 @@
 
 use super::reasoning::ReasoningItem;
 use super::request::ToolCallKind;
+use super::response_item::ResponseTranscriptItem;
 use super::usage::Usage;
 use crate::error::ProviderError;
 
@@ -110,6 +111,15 @@ pub enum ProviderEvent {
     ReasoningItemDone {
         /// The captured reasoning item.
         item: ReasoningItem,
+    },
+
+    /// One authoritative completed Responses output item.
+    ///
+    /// The replayable provider JSON remains on the item; stream coordinates
+    /// are retained separately for identity-keyed reconciliation.
+    ResponseItemDone {
+        /// Lossless item plus non-replayable stream provenance.
+        item: ResponseTranscriptItem,
     },
 
     /// A fully assembled tool call from an `output_item.done` SSE event.

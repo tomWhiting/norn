@@ -10,15 +10,10 @@
 //!
 //! Three kinds of items live here:
 //!
-//! 1. Typed `output_item.done` payloads ([`FunctionCallItem`],
-//!    [`CustomToolCallItem`]) so serde enforces the presence of the
-//!    correlation `call_id`. The streaming `id` is intentionally ignored —
-//!    serde silently drops unknown fields, and no downstream consumer has a
-//!    legitimate use for it once `call_id` is the canonical key.
-//! 2. Typed `response.failed` / `response.incomplete` payloads
+//! 1. Typed `response.failed` / `response.incomplete` payloads
 //!    ([`ResponseFailedPayload`] and friends) for nested-error
 //!    deserialization without hand-walking `serde_json::Value`.
-//! 3. The classifiers — pure functions mapping typed wire payloads into
+//! 2. The classifiers — pure functions mapping typed wire payloads into
 //!    domain values: [`classify_failed_error`] (a `response.failed` error
 //!    description into a [`ProviderError`] variant),
 //!    [`incomplete_stop_reason`] (a `response.incomplete` reason into a
@@ -35,50 +30,6 @@ use crate::error::{ProviderError, TransientKind};
 use crate::provider::events::StopReason;
 
 use super::opaque_discriminator::{TerminalDiscriminator, opaque_tag};
-
-/// Typed deserialization target for the `item` payload of a
-/// `response.output_item.done` event when `item.type == "function_call"`.
-///
-/// The Responses API emits two distinct identifiers on a `function_call`
-/// item — the `fc_*` item `id` (output-stream identity, internal to the
-/// server) and the `call_*` `call_id` (the correlation key the model
-/// expects on a follow-up `function_call_output`). They are ALWAYS
-/// different values. The item `id` is intentionally absent from this
-/// struct: serde's default behaviour silently ignores unknown JSON
-/// fields, so the wire payload deserializes cleanly without the field,
-/// and no callsite has a legitimate use for the item id once `call_id`
-/// is the canonical correlation key downstream.
-#[derive(Debug, Deserialize)]
-pub(super) struct FunctionCallItem {
-    /// Required `call_*` correlation identifier echoed on
-    /// `function_call_output`.
-    pub(super) call_id: String,
-    /// Tool name to invoke.
-    pub(super) name: String,
-    /// Raw JSON arguments string (the API does not parse it for us).
-    pub(super) arguments: String,
-}
-
-/// Typed deserialization target for the `item` payload of a
-/// `response.output_item.done` event when `item.type == "custom_tool_call"`.
-///
-/// Mirrors the [`FunctionCallItem`] shape, except the freeform body is
-/// carried in the `input` field (no JSON envelope) rather than `arguments`.
-/// The upstream `id` (`ctc_*` on the wire) is ignored for the same reason as
-/// the function-call variant: `call_id` is the only identifier downstream
-/// consumers correlate on, and serde silently drops unknown fields.
-///
-/// See `reference/codex-rs/protocol-models.rs:815-826`.
-#[derive(Debug, Deserialize)]
-pub(super) struct CustomToolCallItem {
-    /// Required `call_*` correlation identifier echoed on
-    /// `custom_tool_call_output`.
-    pub(super) call_id: String,
-    /// Tool name to invoke.
-    pub(super) name: String,
-    /// Freeform input string (the API does not parse it for us).
-    pub(super) input: String,
-}
 
 /// Typed payload of a `response.failed` or `response.incomplete` SSE event.
 ///

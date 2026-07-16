@@ -2960,6 +2960,7 @@ mod tests {
         let store = EventStore::new();
         store
             .append(SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(None),
                 content: String::new(),
                 thinking: String::new(),

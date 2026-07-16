@@ -416,6 +416,7 @@ pub(crate) fn agent_event_method(agent_event: &norn::provider::AgentEvent) -> &'
             ProviderEvent::Done { .. } => "event/stop",
             ProviderEvent::Compaction { .. }
             | ProviderEvent::ReasoningItemDone { .. }
+            | ProviderEvent::ResponseItemDone { .. }
             | ProviderEvent::Error { .. } => "event/raw",
         },
         AgentEventKind::Message(_) => "event/message",
@@ -565,6 +566,10 @@ fn provider_event_to_value(event: &ProviderEvent) -> Option<Value> {
         // display text is already surfaced through the thinking events.
         ProviderEvent::ReasoningItemDone { item } => json!({
             "type": "reasoning_item",
+            "item": item,
+        }),
+        ProviderEvent::ResponseItemDone { item } => json!({
+            "type": "response_item",
             "item": item,
         }),
         ProviderEvent::Done {

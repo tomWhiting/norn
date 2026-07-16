@@ -580,6 +580,7 @@ mod security_tests {
 
     fn message(role: MessageRole, content: &str) -> Message {
         Message {
+            response_items: Vec::new(),
             role,
             content: Some(content.to_owned()),
             thinking: String::new(),
@@ -839,6 +840,7 @@ mod integration_tests {
         let provider = OpenAiProvider::new(config).await.expect("create provider");
         let request = ProviderRequest {
             messages: vec![Message {
+                response_items: Vec::new(),
                 reasoning: Vec::new(),
                 role: MessageRole::User,
                 content: Some("Say hello in exactly one word.".to_string()),

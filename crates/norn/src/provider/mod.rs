@@ -20,6 +20,12 @@ pub use self::request::{
     AssistantToolCall, Message, MessageRole, ProviderConfig, ProviderOptions, ProviderRequest,
     ReasoningEffort, ReasoningSummary, SecretString, ServiceTier, ToolDefinition,
 };
+pub use self::response_item::{
+    OpaqueResponseItem, ResponseCompactionItem, ResponseContentPart, ResponseCustomToolCallItem,
+    ResponseFunctionCallItem, ResponseItem, ResponseItemError, ResponseMessageItem,
+    ResponseNullable, ResponseReasoningItem, ResponseStreamProvenance, ResponseTranscriptItem,
+    ResponseWebSearchCallItem,
+};
 pub use self::surface::{
     ResolvedTool, ResolvedToolSurface, ToolPresentation, collect_function_definitions,
     hosted_surface_description, hosted_surface_usage, hosted_tools_prompt_section,
@@ -48,6 +54,7 @@ pub mod openai_compatible;
 pub mod openai_oauth;
 pub mod reasoning;
 pub mod request;
+pub mod response_item;
 pub(crate) mod startup_trace;
 pub mod surface;
 pub mod tools;

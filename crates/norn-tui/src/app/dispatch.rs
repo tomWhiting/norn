@@ -386,6 +386,7 @@ pub fn handle_provider_event(
         ProviderEvent::TextComplete { .. }
         | ProviderEvent::ThinkingComplete { .. }
         | ProviderEvent::ReasoningItemDone { .. }
+        | ProviderEvent::ResponseItemDone { .. }
         | ProviderEvent::Compaction { .. } => Ok(()),
     }
 }

@@ -342,6 +342,7 @@ mod tests {
 
     fn message(role: MessageRole, content: &str) -> Message {
         Message {
+            response_items: Vec::new(),
             role,
             content: Some(content.to_string()),
             thinking: String::new(),
@@ -365,6 +366,7 @@ mod tests {
         let store = EventStore::new();
         store
             .append(SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(None),
                 content: "old answer".to_string(),
                 thinking: String::new(),
@@ -423,6 +425,7 @@ mod tests {
             .unwrap();
         store
             .append(SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(None),
                 content: "old answer".to_string(),
                 thinking: String::new(),
@@ -507,6 +510,7 @@ mod tests {
         let store = EventStore::new();
         store
             .append(SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
                 base: EventBase::new(None),
                 content: "old answer".to_string(),
                 thinking: String::new(),
@@ -568,6 +572,7 @@ mod tests {
             content: "run it".to_string(),
         })?;
         store.append(SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: String::new(),
             thinking: String::new(),

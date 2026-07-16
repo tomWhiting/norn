@@ -182,7 +182,7 @@ explicitly ruled; they are not silently deferred.
 | Phase | Status | Visible outcome |
 |---|---|---|
 | NS0. Architecture and contract boundary | [ ] Drafted; review open | The stack has one documented authority map and compatible contract vocabulary. |
-| NS1. Responses transcript and event substrate | [ ] Depends on Responses P3-P4 | Norn has a lossless canonical provider transcript and complete event reconciliation. |
+| NS1. Responses transcript and event substrate | [ ] In progress through Responses P3-P4: canonical persistence/replay candidate and complete event/item manifest landed; reconciler and phase gates remain open | Norn has a lossless canonical provider transcript and complete event reconciliation. |
 | NS2. Norn semantic projection and read model | [ ] Not started | Existing session history is queryable through stable typed records and cursors. |
 | NS3. Local detachable read supervisor | [ ] Not started | A session can continue while local read clients observe, detach, and reconnect without acquiring mutation authority. |
 | NS4. Read-only Frame contribution | [ ] Not started | Norn sessions, agents, status, and timelines appear in a Frame host. |

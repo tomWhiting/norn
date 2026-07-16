@@ -152,6 +152,7 @@ impl StepMachine<'_> {
         append_and_notify(
             self.store,
             SessionEvent::AssistantMessage {
+                response_items: response.response_items.clone(),
                 base: EventBase::new(self.store.last_event_id()),
                 content,
                 thinking: thinking.clone(),
@@ -191,6 +192,7 @@ impl StepMachine<'_> {
         self.timeout_state.lock().in_flight_partial = None;
 
         self.messages.push(Message {
+            response_items: response.response_items.clone(),
             role: MessageRole::Assistant,
             content: message_content,
             thinking,

@@ -77,14 +77,17 @@ const BLOCKED_BY_PERMISSIONS_PREFIX: &str = "blocked by permissions";
 pub fn rebuild_action_log(action_log: &ActionLog, events: &[SessionEvent]) {
     // call_id → (clean tool args, tool_use_description), filled as the
     // single pass encounters each assistant tool call.
-    let mut call_meta: HashMap<&str, (serde_json::Value, String)> = HashMap::new();
+    let mut call_meta: HashMap<String, (serde_json::Value, String)> = HashMap::new();
     for event in events {
         match event {
-            SessionEvent::AssistantMessage { tool_calls, .. } => {
+            SessionEvent::AssistantMessage { .. } => {
+                let Some(tool_calls) = event.assistant_tool_calls() else {
+                    continue;
+                };
                 for tc in tool_calls {
-                    let split = split_envelope_fields(tc.arguments.clone());
+                    let split = split_envelope_fields(tc.arguments);
                     call_meta.insert(
-                        tc.call_id.as_str(),
+                        tc.call_id,
                         (split.tool_args, split.description.unwrap_or_default()),
                     );
                 }
@@ -200,6 +203,7 @@ mod tests {
 
     fn assistant_with_call(call_id: &str, name: &str, args: serde_json::Value) -> SessionEvent {
         SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: EventBase::new(None),
             content: String::new(),
             thinking: String::new(),

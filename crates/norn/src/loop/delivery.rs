@@ -175,6 +175,7 @@ pub(super) async fn inject_inbound_messages(
 
         user_event_ids.push(user_event_id);
         messages.push(Message {
+            response_items: Vec::new(),
             role: MessageRole::User,
             content: Some(formatted),
             thinking: String::new(),
@@ -486,6 +487,7 @@ async fn inject_active_inputs(
         )
         .await?;
         messages.push(Message {
+            response_items: Vec::new(),
             role: MessageRole::User,
             content: Some(content),
             thinking: String::new(),
@@ -572,6 +574,7 @@ pub(super) async fn drain_child_results(
     )
     .await?;
     messages.push(Message {
+        response_items: Vec::new(),
         role: MessageRole::User,
         content: Some(formatted),
         thinking: String::new(),

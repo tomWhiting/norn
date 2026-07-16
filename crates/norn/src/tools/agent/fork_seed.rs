@@ -132,12 +132,12 @@ fn find_all_orphan_tool_calls(events: &[SessionEvent]) -> Vec<OrphanToolCall> {
 
     let mut orphans = Vec::new();
     for event in events {
-        if let SessionEvent::AssistantMessage { tool_calls, .. } = event {
+        if let Some(tool_calls) = event.assistant_tool_calls() {
             for tc in tool_calls {
                 if !result_ids.contains(&tc.call_id) {
                     orphans.push(OrphanToolCall {
-                        id: tc.call_id.clone(),
-                        name: tc.name.clone(),
+                        id: tc.call_id,
+                        name: tc.name,
                     });
                 }
             }

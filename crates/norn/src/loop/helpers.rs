@@ -104,6 +104,7 @@ pub(super) fn build_initial_messages(
         };
     let mut messages = Vec::with_capacity(1 + history_events.len() + new_msg_count);
     messages.push(Message {
+        response_items: Vec::new(),
         role: MessageRole::System,
         content: Some(loop_context.base_system_instruction()),
         thinking: String::new(),
@@ -135,6 +136,7 @@ pub(super) fn build_initial_messages(
         messages.extend(expansion);
     } else if let Some(prompt) = user_prompt {
         messages.push(Message {
+            response_items: Vec::new(),
             role: MessageRole::User,
             content: Some(prompt.to_string()),
             thinking: String::new(),
@@ -341,6 +343,7 @@ pub(super) async fn handle_iteration_signals(
                 )
                 .await?;
                 messages.push(Message {
+                    response_items: Vec::new(),
                     role: MessageRole::User,
                     content: Some(text),
                     thinking: String::new(),
@@ -493,13 +496,15 @@ pub(super) async fn execute_tool_batch(
 pub async fn ensure_tool_results_complete(store: &EventStore) {
     let events = store.events();
 
-    let last_assistant = events.iter().rposition(|e| {
-        matches!(e, SessionEvent::AssistantMessage { tool_calls, .. } if !tool_calls.is_empty())
+    let last_assistant = events.iter().rposition(|event| {
+        event
+            .assistant_tool_calls()
+            .is_some_and(|calls| !calls.is_empty())
     });
     let Some(assistant_idx) = last_assistant else {
         return;
     };
-    let SessionEvent::AssistantMessage { tool_calls, .. } = &events[assistant_idx] else {
+    let Some(tool_calls) = events[assistant_idx].assistant_tool_calls() else {
         return;
     };
     if tool_calls.is_empty() {
@@ -514,7 +519,7 @@ pub async fn ensure_tool_results_complete(store: &EventStore) {
         })
         .collect();
 
-    for tc in tool_calls {
+    for tc in &tool_calls {
         if !results_after.contains(&tc.call_id.as_str()) {
             let event = SessionEvent::ToolResult {
                 base: EventBase::new(store.last_event_id()),

@@ -151,6 +151,13 @@ pub struct AssistantToolCall {
 /// A message in the conversation history.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
+    /// Ordered completed Responses items for an assistant turn.
+    ///
+    /// When present, the `OpenAI` Responses serializer replays this vector
+    /// directly; the normalized text, reasoning and tool-call fields below are
+    /// compatibility projections for provider-neutral consumers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub response_items: Vec<crate::provider::response_item::ResponseTranscriptItem>,
     /// The role of this message's author.
     pub role: MessageRole,
     /// Text content of the message (may be empty for tool-only messages).
@@ -485,6 +492,7 @@ mod tests {
     #[test]
     fn message_empty_reasoning_skipped_in_serialization() {
         let msg = Message {
+            response_items: Vec::new(),
             role: MessageRole::Assistant,
             content: Some("hi".to_owned()),
             thinking: String::new(),
@@ -505,6 +513,7 @@ mod tests {
     fn message_reasoning_round_trips() {
         use crate::provider::reasoning::{ReasoningItem, ReasoningSummaryPart};
         let msg = Message {
+            response_items: Vec::new(),
             role: MessageRole::Assistant,
             content: None,
             thinking: String::new(),

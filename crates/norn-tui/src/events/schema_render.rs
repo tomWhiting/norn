@@ -807,6 +807,7 @@ mod tests {
     #[test]
     fn render_event_dispatches_assistant_message_to_markdown() {
         let event = SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
             base: base(),
             content: "**bold**".to_owned(),
             thinking: String::new(),
