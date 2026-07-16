@@ -24,6 +24,9 @@ pub(crate) mod spawn_outcome;
 mod spawn_schema;
 pub(crate) mod variant_resolve;
 
+#[cfg(test)]
+mod canonical_lifecycle_test_support;
+
 pub use self::coord::{
     CloseAgentTool, SIGNAL_AGENT_TOOL_NAME, SignalAgentTool, WAKE_AGENT_TOOL_NAME, WakeAgentTool,
 };

@@ -709,6 +709,10 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
+    use super::super::canonical_lifecycle_test_support::{
+        canonical_item_values, completed_item_event, contains_contiguous_items,
+        stateless_payload_input, supported_non_audio_items,
+    };
     use super::super::infra::AgentToolInfra;
     use super::*;
     use crate::agent::child_policy::MessagingScope;
@@ -2834,14 +2838,18 @@ mod tests {
     /// reservation naming the child (parent-first ordering's durable
     /// record).
     #[tokio::test]
-    async fn spawn_under_persistent_parent_persists_child_timeline() {
+    async fn spawn_under_persistent_parent_persists_child_timeline()
+    -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![vec![
-            ProviderEvent::TextDelta {
-                text: "branched child".to_string(),
-            },
-            done_event(),
-        ]]));
+        let canonical_output = supported_non_audio_items("spawn_persisted", "branched child");
+        let mut provider_events = canonical_output
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, raw)| Ok(completed_item_event(raw, u64::try_from(index)?)?))
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+        provider_events.push(done_event());
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![provider_events]));
         let parent = Uuid::new_v4();
         let agent_registry = AgentRegistry::shared();
         let (ctx, manager, root_session_id) = persistent_parent_ctx(
@@ -2900,6 +2908,16 @@ mod tests {
             )),
             "the child's own run output must reach its on-disk timeline",
         );
+        assert_eq!(
+            canonical_item_values(&child_events),
+            canonical_output,
+            "the spawned child's completed item must survive its production write-through path",
+        );
+        let replay_input = stateless_payload_input(&child_events)?;
+        assert!(
+            contains_contiguous_items(&replay_input, &canonical_output),
+            "the spawned child's persisted canonical item must replay without reconstruction",
+        );
 
         // Parent side ON DISK: the ChildBranch reservation names the child.
         let parent_events = events_on_disk(&manager, &root_session_id);
@@ -2914,6 +2932,7 @@ mod tests {
             )),
             "the parent's file must carry the child's reservation: {parent_events:?}",
         );
+        Ok(())
     }
 
     // NH-006 R5 / C56 + C57: SubagentHook fires on launch (`start`)

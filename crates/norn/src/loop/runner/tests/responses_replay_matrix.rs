@@ -68,25 +68,13 @@ fn hosted_turn_items() -> Vec<Value> {
     ]
 }
 
-fn assert_continuation(input: &[Value], hosted: &[Value]) -> Result<(), io::Error> {
-    let Some(start) = input
-        .windows(hosted.len())
-        .position(|window| window == hosted)
-    else {
-        return Err(io::Error::other(
-            "continuation lost the canonical hosted-search item sequence",
-        ));
-    };
-    let has_result = input.iter().skip(start + hosted.len()).any(|item| {
-        item.get("type").and_then(Value::as_str) == Some("function_call_output")
-            && item.get("call_id").and_then(Value::as_str) == Some("call_runner")
-    });
-    if !has_result {
-        return Err(io::Error::other(
-            "continuation lost the correlated local tool result",
-        ));
+fn assert_exact_input(input: &[Value], expected: &[Value]) -> Result<(), io::Error> {
+    if input == expected {
+        return Ok(());
     }
-    Ok(())
+    Err(io::Error::other(format!(
+        "stateless continuation changed item order or content:\nactual={input:#?}\nexpected={expected:#?}",
+    )))
 }
 
 fn payload_input(request: &ProviderRequest) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
@@ -121,7 +109,7 @@ async fn hosted_search_survives_runner_tool_continuation_and_persisted_resume() 
     let provider = MockProvider::new(vec![
         first,
         vec![
-            transcript_event(final_item, 0)?,
+            transcript_event(final_item.clone(), 0)?,
             done_event(StopReason::EndTurn),
         ],
     ]);
@@ -152,7 +140,26 @@ async fn hosted_search_survives_runner_tool_continuation_and_persisted_resume() 
     let continuation = requests
         .get(1)
         .ok_or_else(|| io::Error::other("runner made no tool-result continuation request"))?;
-    assert_continuation(&payload_input(continuation)?, &hosted)?;
+    assert!(!continuation.store);
+    let user_item = serde_json::json!({
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "prompt"}]
+    });
+    let tool_result = serde_json::json!({
+        "type": "function_call_output",
+        "call_id": "call_runner",
+        "output": "{\"content\":\"file data\"}"
+    });
+    let mut expected_continuation = vec![user_item];
+    expected_continuation.extend(hosted.iter().cloned());
+    expected_continuation.push(tool_result);
+    expected_continuation.push(serde_json::json!({
+        "type": "message",
+        "role": "developer",
+        "content": crate::system_prompt::CollaborationMode::Default.format_section()
+    }));
+    assert_exact_input(&payload_input(continuation)?, &expected_continuation)?;
 
     store.checkpoint()?;
     drop(store);
@@ -165,6 +172,18 @@ async fn hosted_search_survives_runner_tool_continuation_and_persisted_resume() 
     resumed_request.messages = crate::session::conversion::events_to_messages(&artifacts.events);
     resumed_request.previous_response_id = None;
     resumed_request.store = false;
-    assert_continuation(&payload_input(&resumed_request)?, &hosted)?;
+    // This direct persistence/reload seam reconstructs only durable session
+    // messages. The runner regenerates its managed dynamic Developer tail per
+    // iteration, so it is expected on the live second request above but is not
+    // part of the persisted response transcript.
+    let mut expected_resume = expected_continuation;
+    let dynamic_tail = expected_resume.pop();
+    assert!(matches!(
+        dynamic_tail,
+        Some(Value::Object(ref item))
+            if item.get("role").and_then(Value::as_str) == Some("developer")
+    ));
+    expected_resume.push(final_item);
+    assert_exact_input(&payload_input(&resumed_request)?, &expected_resume)?;
     Ok(())
 }

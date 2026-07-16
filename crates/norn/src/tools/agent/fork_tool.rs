@@ -699,6 +699,10 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
+    use super::super::canonical_lifecycle_test_support::{
+        canonical_item_values, contains_contiguous_items, stateless_payload_input,
+        supported_non_audio_items, transcript_item,
+    };
     use super::super::handle::AgentWakeRegistry;
     use super::super::infra::AgentToolInfra;
     use super::*;
@@ -1557,7 +1561,8 @@ mod tests {
     /// `rel_path` + `parent_id`, and the child session resumes through the
     /// manager like any other.
     #[tokio::test]
-    async fn fork_under_persistent_parent_persists_child_timeline() {
+    async fn fork_under_persistent_parent_persists_child_timeline()
+    -> Result<(), Box<dyn std::error::Error>> {
         use crate::session::manager::{CreateSessionOptions, SessionManager};
         use crate::session::persistence::io::read_session_events_for_entry;
         use crate::session::store::DurabilityPolicy;
@@ -1577,6 +1582,26 @@ mod tests {
             .expect("create root session");
         let root_id = opened.entry.id.clone();
         let parent_store = Arc::new(opened.store);
+        let inherited_items =
+            supported_non_audio_items("fork_inherited", "Inherited canonical context.");
+        let response_items = inherited_items
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, raw)| Ok(transcript_item(raw, u64::try_from(index)?)?))
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+        parent_store.append(SessionEvent::AssistantMessage {
+            response_items,
+            base: EventBase::new(None),
+            content: "stale inherited projection".to_owned(),
+            thinking: String::new(),
+            reasoning: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: EventUsage::default(),
+            stop_reason: "end_turn".to_owned(),
+            response_id: Some("resp_fork_inherited".to_owned()),
+        })?;
+        parent_store.checkpoint()?;
         let binding = Arc::new(SessionBinding::persistent_root(
             Arc::new(SessionBrancher::new(
                 manager.clone(),
@@ -1660,6 +1685,11 @@ mod tests {
                 .any(|e| matches!(e, SessionEvent::AssistantMessage { .. })),
             "the fork's own run events reach its on-disk timeline",
         );
+        assert_eq!(
+            canonical_item_values(&child_read.events),
+            inherited_items,
+            "the real fork seed must copy canonical items exactly and in order",
+        );
 
         // Parent side, ON DISK: ChildBranch reservation (parent-first) and
         // the honest ForkComplete reference.
@@ -1707,6 +1737,18 @@ mod tests {
             .resume(&fork_id.to_string(), DurabilityPolicy::Flush)
             .expect("child resumes");
         assert!(resumed.replay.replayed_events > 0);
+        let resumed_events = resumed.store.events();
+        assert_eq!(
+            canonical_item_values(&resumed_events),
+            inherited_items,
+            "SessionManager::resume must retain the fork's inherited canonical history",
+        );
+        let replay_input = stateless_payload_input(&resumed_events)?;
+        assert!(
+            contains_contiguous_items(&replay_input, &inherited_items),
+            "the resumed fork must replay inherited items without stream coordinates or reconstruction",
+        );
+        Ok(())
     }
 
     /// R5: the helper returns a combined system instruction containing the
