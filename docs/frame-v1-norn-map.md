@@ -6,6 +6,13 @@ toward Frame v1. Norn's role in the stack: the agent runtime — every agent
 Frame's pipeline runs is a norn agent, driven by Aion through norn's driven
 mode, governed by prospekt doctrine.
 
+> **Historical snapshot.** This file records the 2026-07-05 state and retains
+> its original readiness claims for chronology. It is not the current execution
+> tracker. Use [`NORN-STACK-INTEGRATION-PLAN.md`](NORN-STACK-INTEGRATION-PLAN.md)
+> for sequencing and
+> [`design/ablative-stack-composition.md`](design/ablative-stack-composition.md)
+> for the current cross-stack contract and hot-composition direction.
+
 ## 1. What's ready (relied on as-is today)
 
 **The invocation contract Aion builds on — all verified against live use:**

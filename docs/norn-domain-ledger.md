@@ -6,6 +6,14 @@ of norn, not just the Frame v1 critical path (that map lives in
 `docs/frame-v1-norn-map.md`), plus the assets pack: what the pipeline needs
 to dispatch norn work to agents and trust the output.
 
+> **Historical inventory.** This file preserves the broad 2026-07-05 ledger and
+> its original status statements. Current sequencing lives in
+> [`NORN-STACK-INTEGRATION-PLAN.md`](NORN-STACK-INTEGRATION-PLAN.md); the shared
+> authority, event, delivery, component, browser, storage, and transport model
+> lives in
+> [`design/ablative-stack-composition.md`](design/ablative-stack-composition.md).
+> Where status differs, the current plans and accepted review evidence win.
+
 ---
 
 ## Part 1 — The full work ledger

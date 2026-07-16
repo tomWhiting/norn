@@ -6,6 +6,19 @@ title: "Norn Provider: WebSocket Transport for the OpenAI Responses API"
 
 # Norn Provider: WebSocket Transport for the OpenAI Responses API
 
+> **Status: blocked historical design input. Do not implement or dispatch the
+> briefs/checklist from this document.** The Responses remediation plan now owns
+> the prerequisite authorities. This design assumes the current lossy SSE
+> mapper can remain unchanged, assigns retry/fallback policy to the connection
+> pool, contains operational values that have not been owner-approved, and adds
+> cache prewarm before the cache experiment. It must be replaced after P3-P4
+> establish canonical items and event reconciliation, P5 establishes
+> turn/cancellation ownership, P6 establishes retry and attempt accounting, P7
+> establishes immutable request capabilities, and P8 decides cache policy. The
+> replacement must be reconciled against current official OpenAI documentation
+> and current Codex source. Provider WebSocket work may not edit the same
+> provider modules in parallel with P3/P4.
+
 ## Intention
 
 When this work is done, Norn's OpenAI provider connects to the Responses API

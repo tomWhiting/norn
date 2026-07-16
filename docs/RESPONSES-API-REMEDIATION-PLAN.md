@@ -53,6 +53,13 @@ second findings document. It turns those findings into ordered work, defines the
 observable difference expected after every phase, and prevents a phase from
 being called complete without reproducible evidence and independent review.
 
+The broader cross-stack architecture and Norn integration sequence are tracked
+separately in
+[`design/ablative-stack-composition.md`](design/ablative-stack-composition.md)
+and [`NORN-STACK-INTEGRATION-PLAN.md`](NORN-STACK-INTEGRATION-PLAN.md). Those
+documents consume this plan's canonical transcript and event results; they do
+not create a parallel Responses implementation or change finding ownership.
+
 Checkboxes have two roles. Phase work items, phase-specific evidence, and Gates
 A-C are progress records and may be checked once objective evidence is complete
 for the active candidate; checking them does not accept a phase or close a
@@ -109,8 +116,10 @@ On completion:
 
 1. P0 ships first because it closes the critical credential-exfiltration path.
    After P1 establishes the campaign gates, the dependency declarations on each
-   phase control ordering. This campaign completes and reviews P2, then stops for
-   the owner transcript decision before P3 implementation begins.
+   phase control ordering. The planned owner transcript discussion between P2
+   and P3 occurred on 2026-07-15 through 2026-07-16. That pause is satisfied;
+   P3 entry still requires its stated P0-P2 dependencies and owner decision D2,
+   and no discussion substitutes for their acceptance evidence.
 2. Every finding is owned by one phase in the traceability table. A finding may
    be supported by earlier foundation work, but it closes only in its owning
    phase.
@@ -1072,11 +1081,12 @@ campaign rules. No provider behavior changes in this phase.
 - [x] Ratify this plan and the source review's finding IDs and severity.
 - [x] Record the public Responses documentation revision and official Codex
   source commit used as the conformance contract.
-- [ ] Build sanitized fixtures for text, multiple assistant phases, encrypted
-  reasoning, function/custom calls, refusal, hosted search and annotations,
-  compaction, unknown reasoning parts/items, interleaved and duplicate call
-  completion, malformed terminal data, `end_turn`, turn-state headers/metadata,
-  failures, rate limits, incomplete streams, and cache usage.
+- [ ] Build sanitized fixtures for text, pinned image/file/audio and other
+  media-bearing or structured content parts, multiple assistant phases,
+  encrypted reasoning, function/custom calls, refusal, hosted search and
+  annotations, compaction, unknown reasoning parts/items, interleaved and
+  duplicate call completion, malformed terminal data, `end_turn`, turn-state
+  headers/metadata, failures, rate limits, incomplete streams, and cache usage.
 - [x] Add a traceability preregistration mapping each confirmed defect to a
   planned regression
   and each unproven/design finding to its baseline and pre-registered contract.
@@ -1453,6 +1463,11 @@ not change their order or invent missing semantics.
   cohesive named modules before adding behavior.
 - [ ] Introduce a canonical item union with typed core variants and an opaque raw
   variant for unknown items.
+- [ ] Pin the complete public and Codex content-part/media-bearing item inventory
+  used by the phase. Preserve each supported text, image, file, audio, binary,
+  and structured content shape as typed provider data or an explicit private
+  artifact reference under D1B; do not flatten it into display text. Variants
+  absent from the pinned backend contract remain opaque and non-executable.
 - [ ] Preserve replayable item order, message phase, call/item IDs, encrypted
   reasoning and opaque unknown reasoning parts, refusal, annotations, hosted
   search, and compaction data.
@@ -1473,6 +1488,10 @@ not change their order or invent missing semantics.
 - [ ] Golden serialize-deserialize-serialize tests preserve item count, type,
   order, phase, IDs, content, annotations, and opaque JSON while keeping stream
   provenance out of replay serialization.
+- [ ] The pinned multimodal/content inventory has golden uninterrupted,
+  persistence, reload, stateless-replay, spawned, and forked fixtures. Typed
+  media, structured data, and artifact references round-trip without textual
+  substitution, authority expansion, or private-artifact path disclosure.
 - [ ] A sequence containing reasoning, commentary, call, further reasoning, and
   final answer remains in that exact order after persistence and resume.
 - [ ] The second `store:false` request replays the preceding `response.output`
@@ -1528,6 +1547,9 @@ authoritative completed item can become executable.
   remove every order-based completion fallback.
 - [ ] Reconcile deltas with `.done` and completed item data; repair or emit a
   typed mismatch instead of silently truncating.
+- [ ] Apply identity-keyed delta/completion reconciliation to every streamed
+  content part and media-bearing item in the accepted P3 manifest. UI previews
+  and textual renderings never replace the canonical typed content.
 - [ ] Preserve refusal, message phase, annotations/citations, hosted-search
   actions/sources, reasoning, compaction, and multiple message boundaries.
 - [ ] Represent refusal as a non-retryable model outcome, not provider failure;
@@ -1551,6 +1573,9 @@ authoritative completed item can become executable.
   continuation and a persisted resume.
 - [ ] Missing/malformed delta fixtures are repaired by authoritative completion
   data or fail with a typed diagnostic.
+- [ ] Streamed multimodal/content fixtures reconcile to the same canonical items
+  as non-streaming completion, including duplicate, interleaved, missing-delta,
+  and authoritative-completion repair cases.
 - [ ] Interleaved calls prove call two cannot complete call one. Exact duplicate
   frames are idempotent; conflicting duplicates, delta-only calls, and missing
   authoritative completion cannot execute.
