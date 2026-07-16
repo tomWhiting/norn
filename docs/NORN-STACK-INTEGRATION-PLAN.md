@@ -84,11 +84,14 @@ Other dependencies:
   "Integrated release" means only the final whole-campaign Responses and stack
   claim, which remains blocked until the Responses campaign is complete.
 
-Responses D2 concerns the transition from Norn's current lossy persisted
-transcript to the canonical P3 format. It does not select Haematite or perform
-the later storage-engine migration. P3 remains on the current session-storage
-authority; NS9 separately introduces the store seam and Haematite import after
-the logical event model is stable.
+Responses D2 concerns legacy and pre-canonical persisted sessions whose flat
+transcripts cannot recover P3 item order, phase, or other omitted data. New
+Responses sessions written through the P3 implementation candidate can persist
+canonical `response_items`, but that does not resolve D2's reject-or-offline-
+migrate decision for existing lossy sessions. D2 does not select Haematite or
+perform the later storage-engine migration. P3 remains on the current
+session-storage authority; NS9 separately introduces the store seam and
+Haematite import after the logical event model is stable.
 
 NS0 authority and identity inventories may proceed in parallel with P3 and P4.
 The shared encoding and Norn payload-fixture freeze follows P4 because it must
@@ -182,7 +185,7 @@ explicitly ruled; they are not silently deferred.
 | Phase | Status | Visible outcome |
 |---|---|---|
 | NS0. Architecture and contract boundary | [ ] Drafted; review open | The stack has one documented authority map and compatible contract vocabulary. |
-| NS1. Responses transcript and event substrate | [ ] In progress through Responses P3-P4: canonical persistence/replay candidate and complete event/item manifest landed; reconciler and phase gates remain open | Norn has a lossless canonical provider transcript and complete event reconciliation. |
+| NS1. Responses transcript and event substrate | [ ] Reviewable P3/P4 implementation candidate through `65dc1d5`: canonical persistence/replay, complete public/Codex manifests, identity-keyed reconciliation, refusal and hosted-search matrices, terminal-only equivalence, and authoritative UI suffix repair landed; D2, response-scoped audio/media, complete cross-session fixtures, retained evidence, and independent phase gates remain open | Norn has a lossless canonical provider transcript and complete event reconciliation. |
 | NS2. Norn semantic projection and read model | [ ] Not started | Existing session history is queryable through stable typed records and cursors. |
 | NS3. Local detachable read supervisor | [ ] Not started | A session can continue while local read clients observe, detach, and reconnect without acquiring mutation authority. |
 | NS4. Read-only Frame contribution | [ ] Not started | Norn sessions, agents, status, and timelines appear in a Frame host. |
@@ -278,14 +281,19 @@ it does not duplicate that implementation here.
 
 ### Work
 
+At `65dc1d5`, the implementation-candidate work is marked complete below.
+These checks record landed candidate behavior only; they do not accept P3, P4,
+or NS1. Media/audio coverage, complete lifecycle fixtures, D2, and independent
+review remain open where noted.
+
 - [ ] Complete the ordered canonical Responses item union under P3.
-- [ ] Preserve provider item order, identity, phase, annotations, refusals,
+- [x] Preserve provider item order, identity, phase, annotations, refusals,
   hosted calls, compaction, reasoning, and opaque unknown data.
 - [ ] Preserve typed image and other multimodal content without flattening it
   into display text; keep large content in referenced private artifacts where
   the canonical provider schema permits a reference.
-- [ ] Complete the P4 public/Codex event and item manifests.
-- [ ] Reconcile deltas with authoritative completed items by stable identity.
+- [x] Complete the P4 public/Codex event and item manifests.
+- [x] Reconcile deltas with authoritative completed items by stable identity.
 - [ ] Persist and replay the same canonical items through uninterrupted,
   resumed, spawned, and forked sessions.
 - [ ] Resolve Responses decision D2 for existing persisted sessions.
@@ -916,8 +924,10 @@ The critical and parallel paths are:
 3. Resolve Responses D2.
 4. In parallel, complete NS0A's authority and identity inventory without
    editing the P3/P4 transcript implementation.
-5. Implement and accept Responses P3.
-6. Implement and accept Responses P4.
+5. Close P3's remaining D2, media, lifecycle-fixture, and independent-review
+   gates, then obtain P3 acceptance.
+6. Close P4's remaining audio/media, fixture-matrix, and independent-review
+   gates, then obtain P4 acceptance.
 7. Complete the post-P4 NS0B contract freeze.
 8. Stop at M1 and confirm that the canonical event substrate is sufficient for
    Norn's tree/session projection before beginning NS2.

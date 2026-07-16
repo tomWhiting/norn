@@ -818,16 +818,17 @@ The following are non-negotiable:
 
 ## 18. Evidence basis
 
-The repository-observed statements above were grounded against these adjacent
-working copies on 2026-07-16. The paths are evidence pointers, not a claim that
-the sibling repositories are vendored dependencies of Norn.
+The repository-observed statements above were initially grounded against these
+adjacent working copies on 2026-07-16. The Norn evidence was refreshed through
+`65dc1d5` on 2026-07-17. The paths are evidence pointers, not a claim that the
+sibling repositories are vendored dependencies of Norn.
 Two read-only specialist agents performed the initial Frame/Beamr/Aion and
 Liminal/Lys inspections; the primary implementer reconciled their findings into
 this draft. Source-owner acceptance remains an open NS0 gate.
 
 | Repository snapshot | Inspected evidence |
 |---|---|
-| Norn `0d2b010` plus this working-tree draft | `crates/norn/src/session/events.rs:54-60,310-318` for current single-parent and child-completion semantics; the Responses plan for P3-P8 authority |
+| Norn `65dc1d5` (`128b282` canonical transcript; `f962a64` manifest/reconciler; `4b70a53` fixture/UI closure) | `crates/norn/src/session/events.rs:54-60,176-181,282-343` for single-parent, canonical-item persistence, and child-completion semantics; `crates/norn/src/provider/response_item.rs:18-37,149-173` and `crates/norn/src/provider/openai/response_reconciler.rs:50-109,314-391` for the candidate provider-item, reconciliation, and frame-atomic terminal seams; the Responses plan for candidate status and P3-P8 authority |
 | Beamr `d60f826` | `module_management.rs:17`, `spawning.rs:99`, `module.rs:280`, `tests/hot_code_loading.rs:171` under `crates/beamr` |
 | Frame `dadd430` | `frame-core/src/component.rs:10`, `frame-core/src/registry.rs:132,182`, `frame-state/src/handle.rs:39`, `frame-view/src/lib.rs:1`, `docs/briefs/F-5a-fragment-registration-assembly.md:1,103`, `docs/briefs/F-7b-frame-dev.md` |
 | Aion `833f271e` | `apps/aion-ops-console/src/app/routes.tsx:57,89`, `AppShell.tsx:22`, `providers.tsx:31`, `crates/aion-integration-norn/src/translate.rs:277` |
