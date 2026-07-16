@@ -34,6 +34,15 @@ fn id_token(account_id: &str, user_id: &str) -> String {
     }))
 }
 
+fn flat_id_token(account_id: &str, user_id: &str) -> String {
+    jwt(&serde_json::json!({
+        "email": "legacy-fixture@example.invalid",
+        "chatgpt_account_id": account_id,
+        "chatgpt_user_id": user_id,
+        "chatgpt_plan_type": "legacy-fixture-plan"
+    }))
+}
+
 fn access_token(subject: &str) -> String {
     jwt(&serde_json::json!({
         "sub": subject,
@@ -48,8 +57,22 @@ fn login_response(
     refresh_token: &str,
     response_account_id: Option<&str>,
 ) -> Result<Vec<u8>, serde_json::Error> {
+    login_response_with_id_token(
+        &id_token(account_id, user_id),
+        access_token,
+        refresh_token,
+        response_account_id,
+    )
+}
+
+fn login_response_with_id_token(
+    id_token: &str,
+    access_token: &str,
+    refresh_token: &str,
+    response_account_id: Option<&str>,
+) -> Result<Vec<u8>, serde_json::Error> {
     serde_json::to_vec(&serde_json::json!({
-        "id_token": id_token(account_id, user_id),
+        "id_token": id_token,
         "access_token": access_token,
         "refresh_token": refresh_token,
         "account_id": response_account_id,
@@ -123,6 +146,30 @@ async fn namespaced_login_identity_survives_durable_reload_and_reaches_request_h
 }
 
 #[tokio::test]
+async fn flat_login_identity_survives_durable_reload_and_reaches_request_headers() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let auth_root = auth_root(&directory)?;
+    let access_token = access_token("flat-login-access-fixture");
+    let response = login_response_with_id_token(
+        &flat_id_token("flat-login-account-fixture", "flat-login-user-fixture"),
+        &access_token,
+        "flat-login-refresh-fixture",
+        None,
+    )?;
+    let auth = auth_from_response_fixture(&response)?;
+
+    persist(&auth_root, &auth)?;
+    let manager = AuthManager::shared_for_tests(
+        auth_root,
+        AuthCredentialsStoreMode::File,
+        "http://127.0.0.1:9/unused".to_owned(),
+    )
+    .await?;
+
+    assert_request_headers(manager, &access_token, "flat-login-account-fixture").await
+}
+
+#[tokio::test]
 async fn namespaced_refresh_identity_survives_durable_reload_and_reaches_request_header()
 -> TestResult {
     let directory = tempfile::tempdir()?;
@@ -167,6 +214,62 @@ async fn namespaced_refresh_identity_survives_durable_reload_and_reaches_request
         reloaded,
         &access_token("refreshed-access-fixture"),
         "refresh-account-fixture",
+    )
+    .await?;
+    let requests = authority
+        .received_requests()
+        .await
+        .ok_or_else(|| std::io::Error::other("request recording is unavailable"))?;
+    assert_eq!(requests.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn flat_refresh_identity_survives_durable_reload_and_reaches_request_headers() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let auth_root = auth_root(&directory)?;
+    let initial_access = access_token("flat-initial-access-fixture");
+    let initial = auth_from_response_fixture(&login_response_with_id_token(
+        &flat_id_token("flat-refresh-account-fixture", "flat-refresh-user-fixture"),
+        &initial_access,
+        "flat-initial-refresh-fixture",
+        None,
+    )?)?;
+    persist(&auth_root, &initial)?;
+
+    let refreshed_access = access_token("flat-refreshed-access-fixture");
+    let authority = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id_token": flat_id_token(
+                "flat-refresh-account-fixture",
+                "flat-refresh-user-fixture"
+            ),
+            "access_token": refreshed_access,
+            "refresh_token": "flat-rotated-refresh-fixture"
+        })))
+        .mount(&authority)
+        .await;
+    let manager = AuthManager::shared_for_tests(
+        auth_root.clone(),
+        AuthCredentialsStoreMode::File,
+        authority.uri(),
+    )
+    .await?;
+
+    manager.refresh_token_from_authority().await?;
+    drop(manager);
+    let reloaded = AuthManager::shared_for_tests(
+        auth_root,
+        AuthCredentialsStoreMode::File,
+        format!("{}/unused-after-reload", authority.uri()),
+    )
+    .await?;
+
+    assert_request_headers(
+        reloaded,
+        &access_token("flat-refreshed-access-fixture"),
+        "flat-refresh-account-fixture",
     )
     .await?;
     let requests = authority

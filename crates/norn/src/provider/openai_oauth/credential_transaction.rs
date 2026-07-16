@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 use super::auth_root::NornAuthRoot;
 use super::credential_decode::{MalformedCredentialReason, decode_auth_dot_json};
 use super::credential_lock_timing::CredentialLockTiming;
+#[cfg(test)]
+use super::credential_recovery::io::{RecoveryFaultPoint as Fault, inject_recovery_fault as fault};
 use super::credential_revision::{revision, serialize_auth};
 use super::storage::{AUTH_JSON_FILE, DeleteAuthOutcome, StorageError};
 use super::types::AuthDotJson;
@@ -214,22 +216,30 @@ impl CredentialTransaction {
         if current.as_ref() != expected {
             return Err(CredentialTransactionError::Conflict);
         }
-
         let temporary = temporary_path();
         let write_result = (|| -> Result<(), CredentialTransactionError> {
+            #[cfg(test)]
+            fault(&self.root, Fault::CredentialTempCreate).map_err(StorageError::Io)?;
             let mut file = self.root.create_new(&temporary).map_err(StorageError::Io)?;
+            #[cfg(test)]
+            fault(&self.root, Fault::CredentialTempWrite).map_err(StorageError::Io)?;
             file.write_all(&proposed).map_err(StorageError::Io)?;
+            #[cfg(test)]
+            fault(&self.root, Fault::CredentialTempFileSync).map_err(StorageError::Io)?;
             file.sync_all().map_err(StorageError::Io)?;
             drop(file);
             #[cfg(test)]
-            super::credential_recovery::io::inject_recovery_fault(
-                &self.root,
-                super::credential_recovery::io::RecoveryFaultPoint::AuthPublication,
-            )
-            .map_err(StorageError::Io)?;
+            fault(&self.root, Fault::CredentialFinalRename).map_err(StorageError::Io)?;
             self.root
                 .rename(&temporary, Path::new(AUTH_JSON_FILE))
                 .map_err(StorageError::Io)?;
+            #[cfg(test)]
+            fault(&self.root, Fault::CredentialParentDirSync).map_err(|source| {
+                CredentialTransactionError::PublishedButUndurable {
+                    proposed_revision: proposed_revision.clone(),
+                    source,
+                }
+            })?;
             self.root.sync_dir(Path::new("")).map_err(|source| {
                 CredentialTransactionError::PublishedButUndurable {
                     proposed_revision: proposed_revision.clone(),
@@ -242,7 +252,6 @@ impl CredentialTransaction {
             self.cleanup_temporary(&temporary);
         }
         write_result?;
-
         if self.current_revision()?.as_ref() != Some(&proposed_revision) {
             return Err(CredentialTransactionError::VerificationConflict);
         }
@@ -266,6 +275,8 @@ impl CredentialTransaction {
         expected: Option<&CredentialRevision>,
         quarantine: &Path,
     ) -> Result<DeleteAuthOutcome, CredentialTransactionError> {
+        #[cfg(test)]
+        fault(&self.root, Fault::CredentialQuarantineRename).map_err(StorageError::Io)?;
         match self.root.rename_new(Path::new(AUTH_JSON_FILE), quarantine) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound && expected.is_none() => {
@@ -287,16 +298,23 @@ impl CredentialTransaction {
             self.restore_quarantine(quarantine)?;
             return Err(CredentialTransactionError::Conflict);
         }
-        if let Err(error) = self.root.remove_file(quarantine) {
+        #[cfg(test)]
+        let remove_result = fault(&self.root, Fault::CredentialQuarantineRemove)
+            .and_then(|()| self.root.remove_file(quarantine));
+        #[cfg(not(test))]
+        let remove_result = self.root.remove_file(quarantine);
+        if let Err(error) = remove_result {
             self.restore_quarantine(quarantine)?;
             return Err(StorageError::Io(error).into());
         }
+        #[cfg(test)]
+        fault(&self.root, Fault::CredentialPostDeleteDirSync)
+            .map_err(CredentialTransactionError::DeletedButUndurable)?;
         self.root
             .sync_dir(Path::new(""))
             .map_err(CredentialTransactionError::DeletedButUndurable)?;
         Ok(DeleteAuthOutcome::Removed)
     }
-
     fn current_revision(&self) -> Result<Option<CredentialRevision>, CredentialTransactionError> {
         self.read_raw().map(|raw| raw.as_deref().map(revision))
     }
@@ -333,7 +351,6 @@ impl CredentialTransaction {
         }
         Ok(())
     }
-
     fn read_raw(&self) -> Result<Option<Vec<u8>>, CredentialTransactionError> {
         let mut file = match self.root.open_read(Path::new(AUTH_JSON_FILE)) {
             Ok(file) => file,
@@ -344,7 +361,6 @@ impl CredentialTransaction {
         file.read_to_end(&mut raw).map_err(StorageError::Io)?;
         Ok(Some(raw))
     }
-
     fn read_raw_at(&self, relative: &Path) -> Result<Vec<u8>, CredentialTransactionError> {
         let mut file = self.root.open_read(relative).map_err(StorageError::Io)?;
         let mut raw = Vec::new();

@@ -13,14 +13,18 @@ use crate::provider::openai_oauth::{AuthManager, RefreshTokenError};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
-fn auth_document(access: &str, refresh: &str) -> AuthDotJson {
-    AuthDotJson::from_tokens(ChatGptTokens {
+fn token_set(access: &str, refresh: &str) -> ChatGptTokens {
+    ChatGptTokens {
         id_token: IdTokenInfo::create_for_testing("recovery-fault-account"),
         access_token: access.to_owned(),
         refresh_token: refresh.to_owned(),
         account_id: Some("recovery-fault-account".to_owned()),
         additional_fields: BTreeMap::new(),
-    })
+    }
+}
+
+fn auth_document(access: &str, refresh: &str) -> AuthDotJson {
+    AuthDotJson::from_tokens(token_set(access, refresh))
 }
 
 fn success_response() -> serde_json::Value {
@@ -50,13 +54,25 @@ fn marker_state(root: &NornAuthRoot) -> Result<Option<String>, Box<dyn Error>> {
         .map(str::to_owned))
 }
 
-fn stored_access(root: &NornAuthRoot) -> Result<String, Box<dyn Error>> {
-    let stored: AuthDotJson =
+fn stored_tokens(root: &NornAuthRoot) -> Result<ChatGptTokens, Box<dyn Error>> {
+    let auth: AuthDotJson =
         serde_json::from_slice(&std::fs::read(root.as_path().join(AUTH_JSON_FILE))?)?;
-    stored
-        .tokens
-        .map(|tokens| tokens.access_token)
+    auth.tokens
         .ok_or_else(|| std::io::Error::other("stored fault fixture has no tokens").into())
+}
+
+fn retained_transaction_temporaries(root: &NornAuthRoot) -> Result<usize, std::io::Error> {
+    let mut retained = 0;
+    for entry in std::fs::read_dir(root.as_path())? {
+        if entry?
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".transaction.tmp")
+        {
+            retained += 1;
+        }
+    }
+    Ok(retained)
 }
 
 async fn request_count(server: &MockServer) -> Result<usize, std::io::Error> {
@@ -102,7 +118,10 @@ async fn marker_publication_faults_fail_before_dispatch_with_typed_state() -> Te
         assert!(fault.was_triggered());
         assert!(matches!(&result, Err(RefreshTokenError::Coordination(_))));
         assert_eq!(request_count(&server).await?, 0);
-        assert_eq!(stored_access(&root)?, "seed-access");
+        assert_eq!(
+            stored_tokens(&root)?,
+            token_set("seed-access", "seed-refresh")
+        );
         assert_eq!(marker_state(&root)?.as_deref(), expected_marker);
         let rendered = format!("{result:?}");
         for secret in ["seed-access", "seed-refresh"] {
@@ -119,28 +138,83 @@ async fn marker_publication_faults_fail_before_dispatch_with_typed_state() -> Te
 }
 
 #[tokio::test]
-async fn auth_publication_fault_retains_commit_and_converges_without_replay() -> TestResult {
-    let server = success_server().await;
-    let directory = tempfile::tempdir()?;
-    let root = seeded_root(&directory)?;
-    let manager =
-        AuthManager::shared_for_tests(root.clone(), AuthCredentialsStoreMode::File, server.uri())
-            .await?;
-    let fault = arm_recovery_fault(root.as_path(), RecoveryFaultPoint::AuthPublication);
+async fn credential_publication_faults_converge_without_refresh_replay() -> TestResult {
+    let cases = [
+        (
+            RecoveryFaultPoint::CredentialTempCreate,
+            "seed-access",
+            "seed-refresh",
+        ),
+        (
+            RecoveryFaultPoint::CredentialTempWrite,
+            "seed-access",
+            "seed-refresh",
+        ),
+        (
+            RecoveryFaultPoint::CredentialTempFileSync,
+            "seed-access",
+            "seed-refresh",
+        ),
+        (
+            RecoveryFaultPoint::CredentialFinalRename,
+            "seed-access",
+            "seed-refresh",
+        ),
+        (
+            RecoveryFaultPoint::CredentialParentDirSync,
+            "rotated-access",
+            "rotated-refresh",
+        ),
+    ];
 
-    let first = manager.refresh_token_from_authority().await;
+    for (point, expected_access, expected_refresh) in cases {
+        let server = success_server().await;
+        let directory = tempfile::tempdir()?;
+        let root = seeded_root(&directory)?;
+        let manager = AuthManager::shared_for_tests(
+            root.clone(),
+            AuthCredentialsStoreMode::File,
+            server.uri(),
+        )
+        .await?;
+        let fault = arm_recovery_fault(root.as_path(), point);
 
-    assert!(fault.was_triggered());
-    assert!(matches!(first, Err(RefreshTokenError::Undurable(_))));
-    assert_eq!(stored_access(&root)?, "seed-access");
-    assert_eq!(marker_state(&root)?.as_deref(), Some("commit_pending"));
-    assert_eq!(request_count(&server).await?, 1);
+        let first = manager.refresh_token_from_authority().await;
 
-    manager.refresh_token_from_authority().await?;
+        assert!(fault.was_triggered(), "fault was not reached: {point:?}");
+        assert!(
+            matches!(&first, Err(RefreshTokenError::Undurable(_))),
+            "wrong refresh outcome at {point:?}: {first:?}"
+        );
+        assert_eq!(
+            stored_tokens(&root)?,
+            token_set(expected_access, expected_refresh)
+        );
+        assert_eq!(marker_state(&root)?.as_deref(), Some("commit_pending"));
+        assert_eq!(retained_transaction_temporaries(&root)?, 0);
+        assert_eq!(request_count(&server).await?, 1);
+        let rendered = format!("{first:?}");
+        for secret in [
+            "seed-access",
+            "seed-refresh",
+            "rotated-access",
+            "rotated-refresh",
+        ] {
+            assert!(!rendered.contains(secret));
+        }
+        let id_token = IdTokenInfo::create_for_testing("recovery-fault-account").raw_jwt;
+        assert!(!rendered.contains(&id_token));
 
-    assert_eq!(stored_access(&root)?, "rotated-access");
-    assert_eq!(marker_state(&root)?, None);
-    assert_eq!(request_count(&server).await?, 1);
+        manager.refresh_token_from_authority().await?;
+
+        assert_eq!(
+            stored_tokens(&root)?,
+            token_set("rotated-access", "rotated-refresh")
+        );
+        assert_eq!(marker_state(&root)?, None);
+        assert_eq!(retained_transaction_temporaries(&root)?, 0);
+        assert_eq!(request_count(&server).await?, 1);
+    }
     Ok(())
 }
 
@@ -167,13 +241,19 @@ async fn marker_deletion_faults_remain_typed_and_converge_without_replay() -> Te
 
         assert!(fault.was_triggered());
         assert!(matches!(first, Err(RefreshTokenError::Undurable(_))));
-        assert_eq!(stored_access(&root)?, "rotated-access");
+        assert_eq!(
+            stored_tokens(&root)?,
+            token_set("rotated-access", "rotated-refresh")
+        );
         assert_eq!(marker_state(&root)?.as_deref(), expected_marker);
         assert_eq!(request_count(&server).await?, 1);
 
         manager.refresh_token_from_authority().await?;
 
-        assert_eq!(stored_access(&root)?, "rotated-access");
+        assert_eq!(
+            stored_tokens(&root)?,
+            token_set("rotated-access", "rotated-refresh")
+        );
         assert_eq!(marker_state(&root)?, None);
         assert_eq!(request_count(&server).await?, 1);
     }

@@ -6,8 +6,41 @@ use serial_test::serial;
 use std::ffi::OsString;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStringExt as _;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+#[cfg(unix)]
+fn publish_named_oauth_fixture(
+    base_root: &norn::provider::openai_oauth::NornAuthRoot,
+    alias: &str,
+) -> TestResult {
+    use norn::provider::openai_oauth::{NamedLoginPreparation, OAuthHttpOptions};
+
+    let prepared = norn::provider::openai_oauth::prepare_named_login(
+        base_root,
+        alias,
+        OAuthHttpOptions::default(),
+    )?;
+    let NamedLoginPreparation::Pending(reservation) = prepared else {
+        return Err(std::io::Error::other("fresh account fixture unexpectedly recovered").into());
+    };
+    let credential = serde_json::to_vec(&serde_json::json!({
+        "auth_mode": "chatgpt",
+        "tokens": {
+            "id_token": "e30.e30.",
+            "access_token": format!("access-{alias}"),
+            "refresh_token": "",
+            "account_id": alias
+        }
+    }))?;
+    let auth_path = reservation.auth_root().as_path().join("auth.json");
+    std::fs::write(&auth_path, credential)?;
+    std::fs::set_permissions(&auth_path, std::fs::Permissions::from_mode(0o600))?;
+    reservation.commit()?;
+    Ok(())
+}
 
 #[test]
 fn auth_error_maps_to_exit_code_three() {
@@ -371,4 +404,44 @@ fn resumed_oauth_requires_explicit_account_but_api_key_does_not() -> TestResult 
 fn explicit_account_is_rejected_for_non_oauth_backends() {
     let result = validate_account_request(&ResolvedProviderAuth::None, Some("work"), false);
     assert!(matches!(result, Err(ProviderBuildError::Provider(_))));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[serial]
+async fn resumed_oauth_uses_explicit_account_after_active_selection_changes() -> TestResult {
+    use norn::provider::openai_oauth::{NornAuthRoot, OAuthHttpOptions, use_account};
+
+    let directory = tempfile::tempdir()?;
+    temp_env::async_with_vars([("NORN_HOME", Some(directory.path().as_os_str()))], async {
+        let base_root = NornAuthRoot::try_from(directory.path().join("auth"))?;
+        publish_named_oauth_fixture(&base_root, "work")?;
+        publish_named_oauth_fixture(&base_root, "personal")?;
+        use_account(&base_root, "work", OAuthHttpOptions::default())?;
+        use_account(&base_root, "personal", OAuthHttpOptions::default())?;
+
+        let overrides = ProviderConfigOverrides::default();
+        let omitted =
+            build_provider(ProviderKind::Openai, &overrides, "gpt-5.6-sol", None, true).await;
+        assert!(matches!(omitted, Err(ProviderBuildError::Auth(_))));
+
+        // Make the active account unusable so successful construction proves
+        // the production builder retained the resumed session's explicit alias.
+        let personal_root = norn::provider::provider_account_root(Some("personal"))?;
+        std::fs::write(personal_root.join("auth.json"), b"{")?;
+        let active_default =
+            build_provider(ProviderKind::Openai, &overrides, "gpt-5.6-sol", None, false).await;
+        assert!(matches!(active_default, Err(ProviderBuildError::Auth(_))));
+        let built = build_provider(
+            ProviderKind::Openai,
+            &overrides,
+            "gpt-5.6-sol",
+            Some("work"),
+            true,
+        )
+        .await?;
+        assert!(matches!(built, BuiltProvider::OpenAi(_)));
+        Ok(())
+    })
+    .await
 }

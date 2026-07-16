@@ -1,7 +1,10 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::*;
+use crate::provider::openai_oauth::credential_recovery::io::{
+    RecoveryFaultPoint, arm_recovery_fault,
+};
 use crate::provider::openai_oauth::{AuthDotJson, ChatGptTokens, IdTokenInfo};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -26,6 +29,20 @@ fn require_auth(value: Option<AuthDotJson>) -> Result<AuthDotJson, std::io::Erro
 
 fn auth_root(home: &tempfile::TempDir) -> Result<NornAuthRoot, super::super::NornAuthRootError> {
     NornAuthRoot::try_from(home.path())
+}
+
+fn retained_logout_quarantines(root: &NornAuthRoot) -> Result<usize, std::io::Error> {
+    let mut retained = 0;
+    for entry in std::fs::read_dir(root.as_path())? {
+        if entry?
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".logout-quarantine")
+        {
+            retained += 1;
+        }
+    }
+    Ok(retained)
 }
 
 #[tokio::test]
@@ -285,5 +302,99 @@ async fn local_removal_failure_never_starts_remote_revoke() -> TestResult {
         RemoteRevokeOutcome::Failed(LogoutError::LocalRemovalIncomplete)
     ));
     assert!(!revoke_started.load(Ordering::SeqCst));
+    Ok(())
+}
+
+#[tokio::test]
+async fn credential_deletion_faults_preserve_local_first_logout() -> TestResult {
+    let cases = [
+        (RecoveryFaultPoint::CredentialQuarantineRename, true),
+        (RecoveryFaultPoint::CredentialQuarantineRemove, true),
+        (RecoveryFaultPoint::CredentialPostDeleteDirSync, false),
+    ];
+
+    for (point, credential_remains) in cases {
+        let home = tempfile::tempdir()?;
+        let root = auth_root(&home)?;
+        let auth = auth_document();
+        super::super::storage::save_auth_dot_json(home.path(), &auth)?;
+        let timing = OAuthHttpOptions::default().credential_lock_timing()?;
+        let remote_calls = Arc::new(AtomicUsize::new(0));
+        let first_calls = Arc::clone(&remote_calls);
+        let fault = arm_recovery_fault(root.as_path(), point);
+
+        let first = logout_with_revoker(
+            &root,
+            AuthCredentialsStoreMode::File,
+            timing,
+            move |refresh_token| async move {
+                drop(refresh_token);
+                first_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await;
+
+        assert!(fault.was_triggered(), "fault was not reached: {point:?}");
+        if point == RecoveryFaultPoint::CredentialPostDeleteDirSync {
+            assert!(matches!(&first.local, Err(LocalLogoutError::Undurable)));
+        } else {
+            assert!(matches!(&first.local, Err(LocalLogoutError::Coordination)));
+        }
+        assert!(matches!(
+            &first.remote,
+            RemoteRevokeOutcome::Failed(LogoutError::LocalRemovalIncomplete)
+        ));
+        assert_eq!(remote_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(retained_logout_quarantines(&root)?, 0);
+        let credential_path = super::super::storage::auth_json_path(home.path());
+        assert_eq!(credential_path.exists(), credential_remains);
+        if credential_remains {
+            let stored = require_auth(super::super::storage::load_auth_dot_json(
+                &root,
+                AuthCredentialsStoreMode::File,
+            )?)?;
+            assert_eq!(stored, auth);
+        }
+        let rendered = format!("{first:?}");
+        for secret in ["access-token", "refresh-token"] {
+            assert!(!rendered.contains(secret));
+        }
+        let id_token = IdTokenInfo::create_for_testing("account").raw_jwt;
+        assert!(!rendered.contains(&id_token));
+
+        let recovery_calls = Arc::clone(&remote_calls);
+        let recovered = logout_with_revoker(
+            &root,
+            AuthCredentialsStoreMode::File,
+            timing,
+            move |refresh_token| async move {
+                recovery_calls.fetch_add(1, Ordering::SeqCst);
+                if refresh_token == "refresh-token" {
+                    Ok(())
+                } else {
+                    Err(LogoutError::Revoke(
+                        "logout recovered the wrong refresh credential".to_owned(),
+                    ))
+                }
+            },
+        )
+        .await;
+
+        if credential_remains {
+            assert!(matches!(recovered.local, Ok(DeleteAuthOutcome::Removed)));
+            assert!(matches!(recovered.remote, RemoteRevokeOutcome::Revoked));
+            assert_eq!(remote_calls.load(Ordering::SeqCst), 1);
+        } else {
+            assert!(matches!(recovered.local, Ok(DeleteAuthOutcome::Absent)));
+            assert!(matches!(
+                recovered.remote,
+                RemoteRevokeOutcome::NotApplicable
+            ));
+            assert_eq!(remote_calls.load(Ordering::SeqCst), 0);
+        }
+        assert!(!credential_path.exists());
+        assert_eq!(retained_logout_quarantines(&root)?, 0);
+    }
     Ok(())
 }
