@@ -32,7 +32,7 @@ use wire::{
     OutputItemSupport, announced_item_id, authoritative_items_failure, delta_event_name,
     delta_event_type, embedded_item_id, envelope_identity, item_type_allows_missing_id,
     output_item_support, parse_item, parse_terminal_items, required_object,
-    required_sequence_number, required_u64,
+    required_sequence_number, required_u64, validate_output_text_delta_logprobs,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -240,6 +240,9 @@ impl ResponseReconciler {
         let item_type = added.raw.get("type").and_then(Value::as_str);
         if item_type.is_none_or(|item_type| !channel_matches_item_type(channel, item_type)) {
             return Err(ResponseReconciliationError::DeltaItemKindConflict);
+        }
+        if matches!(channel, ResponseDeltaChannel::OutputText(_)) {
+            validate_output_text_delta_logprobs(event)?;
         }
         let delta = event.data.get("delta").and_then(Value::as_str).ok_or(
             ResponseReconciliationError::InvalidEnvelopeField {

@@ -8,6 +8,7 @@ use crate::provider::request::{
     Message, MessageRole, ProviderOptions, ProviderRequest, ReasoningEffort, ReasoningSummary,
     ToolCallKind,
 };
+use crate::provider::tools::{HostedToolDefinition, ProviderToolDefinition};
 
 /// Catalog provider identifier every `OpenAI` Responses connection
 /// resolves against.
@@ -156,11 +157,18 @@ pub(crate) fn build_payload(
     // the default configuration. On stateful backends (`store: true`) the
     // server threads reasoning itself and returns no `encrypted_content`, so
     // requesting it is not applicable and is omitted.
-    let include = if request.store {
-        Vec::new()
-    } else {
-        vec!["reasoning.encrypted_content".to_string()]
-    };
+    let mut include = Vec::new();
+    if !request.store {
+        include.push("reasoning.encrypted_content".to_owned());
+    }
+    if request.tools.iter().any(|tool| {
+        matches!(
+            tool,
+            ProviderToolDefinition::Hosted(HostedToolDefinition::WebSearch(_))
+        )
+    }) {
+        include.push("web_search_call.action.sources".to_owned());
+    }
 
     let context_management = if let Some(management) = request.context_management.as_ref() {
         vec![ContextManagementItem::Compaction {
@@ -603,6 +611,31 @@ mod tests {
                 && tool.get("name").is_none()
                 && tool.get("parameters").is_none()
         }));
+        assert_eq!(
+            payload["include"],
+            serde_json::json!([
+                "reasoning.encrypted_content",
+                "web_search_call.action.sources"
+            ])
+        );
+    }
+
+    #[test]
+    fn stateful_hosted_web_search_requests_sources_without_reasoning_blob()
+    -> Result<(), ProviderError> {
+        let mut req = make_request();
+        req.store = true;
+        req.tools.push(ProviderToolDefinition::Hosted(
+            HostedToolDefinition::WebSearch(HostedWebSearchTool::default()),
+        ));
+
+        let payload = build_payload(&req, CATALOG_BACKEND_RESPONSES_API)?;
+
+        assert_eq!(
+            payload["include"],
+            serde_json::json!(["web_search_call.action.sources"])
+        );
+        Ok(())
     }
 
     #[test]

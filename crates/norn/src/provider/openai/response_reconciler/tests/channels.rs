@@ -39,7 +39,11 @@ fn channel_cases() -> Vec<ChannelCase> {
             item_id: "msg_text",
             announced: message_start("msg_text"),
             delta_type: "response.output_text.delta",
-            delta_fields: Some(json!({"content_index": 0, "delta": "answer"})),
+            delta_fields: Some(json!({
+                "content_index": 0,
+                "delta": "answer",
+                "logprobs": []
+            })),
             done_type: "response.output_text.done",
             done_fields: json!({"content_index": 0, "text": "answer"}),
             channel: ResponseDeltaChannel::OutputText(0),
@@ -51,7 +55,7 @@ fn channel_cases() -> Vec<ChannelCase> {
             item_id: "msg_refusal",
             announced: message_start("msg_refusal"),
             delta_type: "response.refusal.delta",
-            delta_fields: Some(json!({"content_index": 0, "delta": "partial"})),
+            delta_fields: Some(json!({"content_index": 0, "delta": "can"})),
             done_type: "response.refusal.done",
             done_fields: json!({"content_index": 0, "refusal": "cannot"}),
             channel: ResponseDeltaChannel::Refusal(0),
@@ -119,7 +123,13 @@ fn all_supported_channel_done_events_reconcile_and_remain_idempotent() -> TestRe
             reconciler.ingest(&delta(case.delta_type, 2, case.item_id, 0, fields))?;
         }
         let completion = delta(case.done_type, 3, case.item_id, 0, case.done_fields.clone());
-        assert_eq!(reconciler.ingest(&completion)?, ReconcileUpdate::Accepted);
+        let ReconcileUpdate::CompletedChannel {
+            delta_reconciliation,
+        } = reconciler.ingest(&completion)?
+        else {
+            return Err("expected completed channel update".into());
+        };
+        assert_eq!(delta_reconciliation.disposition, case.disposition);
         assert_eq!(
             reconciler.accumulated_delta(case.item_id, 0, case.channel),
             Some(case.authoritative)
@@ -147,6 +157,56 @@ fn all_supported_channel_done_events_reconcile_and_remain_idempotent() -> TestRe
             ReconcileUpdate::Terminal { .. }
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn non_prefix_authority_conflicts_fail_closed() -> TestResult {
+    let mut channel = ResponseReconciler::new();
+    channel.ingest(&added(1, 0, message_start("msg_channel_conflict")))?;
+    channel.ingest(&delta(
+        "response.output_text.delta",
+        2,
+        "msg_channel_conflict",
+        0,
+        json!({"content_index": 0, "delta": "preview", "logprobs": []}),
+    ))?;
+    assert_eq!(
+        channel.ingest(&delta(
+            "response.output_text.done",
+            3,
+            "msg_channel_conflict",
+            0,
+            json!({"content_index": 0, "text": "different"}),
+        )),
+        Err(ResponseReconciliationError::AuthoritativeDeltaConflict)
+    );
+    assert_eq!(
+        channel.accumulated_delta(
+            "msg_channel_conflict",
+            0,
+            ResponseDeltaChannel::OutputText(0)
+        ),
+        Some("preview")
+    );
+
+    let mut item = ResponseReconciler::new();
+    item.ingest(&added(1, 0, message_start("msg_item_conflict")))?;
+    item.ingest(&delta(
+        "response.output_text.delta",
+        2,
+        "msg_item_conflict",
+        0,
+        json!({"content_index": 0, "delta": "preview", "logprobs": []}),
+    ))?;
+    assert_eq!(
+        item.ingest(&done(3, 0, message("msg_item_conflict", "different"))),
+        Err(ResponseReconciliationError::AuthoritativeDeltaConflict)
+    );
+    assert_eq!(
+        item.accumulated_delta("msg_item_conflict", 0, ResponseDeltaChannel::OutputText(0)),
+        Some("preview")
+    );
     Ok(())
 }
 

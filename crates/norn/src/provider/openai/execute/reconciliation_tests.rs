@@ -5,6 +5,8 @@ use serde_json::{Value, json};
 
 use super::*;
 
+mod equivalence;
+
 type TestResult = Result<(), Box<dyn Error>>;
 
 fn message(id: &str, content: &Value) -> Value {
@@ -271,6 +273,53 @@ fn unknown_event_is_raw_then_typed_unsupported() -> TestResult {
 }
 
 #[test]
+fn output_text_delta_logprobs_remain_on_the_raw_preview_envelope() -> TestResult {
+    let mut mapper = ResponsesMapper::default();
+    only_ok(mapper.map_event(&SseEvent {
+        event_type: "response.output_item.added".to_owned(),
+        data: json!({
+            "type": "response.output_item.added",
+            "sequence_number": 0,
+            "output_index": 0,
+            "item": {
+                "id": "msg_logprobs",
+                "type": "message",
+                "role": "assistant",
+                "status": "in_progress",
+                "content": []
+            }
+        }),
+    }))?;
+    let raw = json!({
+        "type": "response.output_text.delta",
+        "sequence_number": 1,
+        "item_id": "msg_logprobs",
+        "output_index": 0,
+        "content_index": 0,
+        "delta": "answer",
+        "logprobs": [{
+            "token": "answer",
+            "logprob": -0.1,
+            "top_logprobs": [{"token": "Answer", "logprob": -0.2}]
+        }]
+    });
+    let events = mapper.map_event(&SseEvent {
+        event_type: "response.output_text.delta".to_owned(),
+        data: raw.clone(),
+    });
+    let [
+        Ok(ProviderEvent::ResponseStreamEvent { event }),
+        Ok(ProviderEvent::TextDelta { text }),
+    ] = events.as_slice()
+    else {
+        return Err(io::Error::other("unexpected output-text delta projection").into());
+    };
+    assert_eq!(event.raw(), &raw);
+    assert_eq!(text, "answer");
+    Ok(())
+}
+
+#[test]
 fn known_audio_event_is_raw_then_precise_unsupported_media() -> TestResult {
     let raw = json!({
         "type": "response.audio.delta",
@@ -329,6 +378,7 @@ fn refusal_remains_separate_from_output_text_after_reconciliation() -> TestResul
             "output_index": 0,
             "content_index": 0,
             "delta": "I can explain. ",
+            "logprobs": [],
         }),
     };
     let refusal = SseEvent {

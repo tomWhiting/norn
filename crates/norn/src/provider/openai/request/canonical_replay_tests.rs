@@ -5,6 +5,9 @@ use crate::provider::request::{Message, MessageRole, ProviderRequest};
 use crate::provider::response_item::{
     ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
 };
+use crate::session::conversion::events_to_messages;
+use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
+use crate::session::{EventStore, JsonlSink, read_session_events};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -116,6 +119,128 @@ fn canonical_assistant_items_replay_in_exact_order_without_stream_coordinates() 
             .iter()
             .all(|item| item.get("sequence_number").is_none())
     );
+    Ok(())
+}
+
+#[test]
+fn persisted_hosted_search_turn_replays_exactly_into_stateless_continuation() -> TestResult {
+    let raw_items = vec![
+        serde_json::json!({
+            "type": "web_search_call",
+            "id": "ws_persisted",
+            "status": "completed",
+            "action": {
+                "type": "search",
+                "queries": ["canonical transcript persistence"],
+                "sources": [{
+                    "type": "url",
+                    "url": "https://example.test/source",
+                    "title": "Canonical transcript source"
+                }]
+            }
+        }),
+        serde_json::json!({
+            "type": "message",
+            "id": "msg_persisted",
+            "role": "assistant",
+            "phase": "commentary",
+            "status": "completed",
+            "content": [{
+                "type": "output_text",
+                "text": "I found the relevant source.",
+                "annotations": [{
+                    "type": "url_citation",
+                    "start_index": 0,
+                    "end_index": 31,
+                    "url": "https://example.test/source",
+                    "title": "Canonical transcript source"
+                }],
+                "logprobs": []
+            }]
+        }),
+        serde_json::json!({
+            "type": "function_call",
+            "id": "fc_persisted",
+            "call_id": "call_persisted",
+            "name": "read",
+            "arguments": "{\"path\":\"README.md\"}",
+            "status": "completed"
+        }),
+    ];
+    let response_items = raw_items
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, raw)| Ok(transcript_item(raw, u64::try_from(index)?)?))
+        .collect::<TestItemsResult>()?;
+
+    let temp = tempfile::tempdir()?;
+    let session_id = "canonical-hosted-search";
+    let session_path = temp.path().join(format!("{session_id}.jsonl"));
+    let store = EventStore::with_sink(Box::new(JsonlSink::open(&session_path)?));
+    let assistant_id = store.append(SessionEvent::AssistantMessage {
+        base: EventBase::new(None),
+        response_items,
+        content: "lossy flat text must not be replayed".to_owned(),
+        thinking: "lossy flat reasoning must not be replayed".to_owned(),
+        reasoning: Vec::new(),
+        tool_calls: vec![ToolCallEvent {
+            call_id: "call_stale_flat_projection".to_owned(),
+            name: "write".to_owned(),
+            arguments: serde_json::json!({"path": "wrong.txt"}),
+            kind: ToolCallKind::Function,
+        }],
+        usage: EventUsage::default(),
+        stop_reason: "tool_use".to_owned(),
+        response_id: Some("resp_persisted".to_owned()),
+    })?;
+    store.append(SessionEvent::ToolResult {
+        base: EventBase::new(Some(assistant_id)),
+        tool_call_id: "call_persisted".to_owned(),
+        tool_name: "read".to_owned(),
+        output: serde_json::Value::String("tool result".to_owned()),
+        spool_ref: None,
+        duration_ms: 1,
+    })?;
+    store.checkpoint()?;
+    drop(store);
+
+    let replay = read_session_events(temp.path(), session_id)?;
+    assert_eq!(replay.skipped_lines, 0);
+    let request = ProviderRequest {
+        messages: events_to_messages(&replay.events),
+        tools: Vec::new(),
+        model: "gpt-test".to_owned(),
+        reasoning_effort: None,
+        reasoning_summary: None,
+        service_tier: None,
+        config: None,
+        cache_key: None,
+        previous_response_id: None,
+        store: false,
+        context_management: None,
+    };
+    let payload = build_payload(&request, CATALOG_BACKEND_CODEX_SUBSCRIPTION)?;
+    let Some(input) = payload.get("input").and_then(serde_json::Value::as_array) else {
+        return Err(io::Error::other("request input was not an array").into());
+    };
+
+    let mut expected_input = raw_items;
+    expected_input.push(serde_json::json!({
+        "type": "function_call_output",
+        "call_id": "call_persisted",
+        "output": "tool result"
+    }));
+    assert_eq!(input, &expected_input);
+    assert!(input.iter().all(|item| item.get("output_index").is_none()));
+    assert!(
+        input
+            .iter()
+            .all(|item| item.get("sequence_number").is_none())
+    );
+    let serialized = payload.to_string();
+    assert!(!serialized.contains("lossy flat"));
+    assert!(!serialized.contains("call_stale_flat_projection"));
     Ok(())
 }
 

@@ -44,6 +44,73 @@ pub(super) fn required_u64(
         .ok_or(ResponseReconciliationError::InvalidEnvelopeField { event_type, field })
 }
 
+pub(super) fn validate_output_text_delta_logprobs(
+    event: &SseEvent,
+) -> Result<(), ResponseReconciliationError> {
+    const EVENT_TYPE: &str = "response.output_text.delta";
+    let logprobs = event.data.get("logprobs").and_then(Value::as_array).ok_or(
+        ResponseReconciliationError::InvalidEnvelopeField {
+            event_type: EVENT_TYPE,
+            field: "logprobs",
+        },
+    )?;
+
+    for logprob in logprobs {
+        if logprob.get("token").and_then(Value::as_str).is_none() {
+            return Err(ResponseReconciliationError::InvalidEnvelopeField {
+                event_type: EVENT_TYPE,
+                field: "logprobs[].token",
+            });
+        }
+        if logprob
+            .get("logprob")
+            .is_none_or(|value| !value.is_number())
+        {
+            return Err(ResponseReconciliationError::InvalidEnvelopeField {
+                event_type: EVENT_TYPE,
+                field: "logprobs[].logprob",
+            });
+        }
+
+        let Some(top_logprobs) = logprob.get("top_logprobs") else {
+            continue;
+        };
+        let Some(top_logprobs) = top_logprobs.as_array() else {
+            return Err(ResponseReconciliationError::InvalidEnvelopeField {
+                event_type: EVENT_TYPE,
+                field: "logprobs[].top_logprobs",
+            });
+        };
+        for candidate in top_logprobs {
+            if !candidate.is_object() {
+                return Err(ResponseReconciliationError::InvalidEnvelopeField {
+                    event_type: EVENT_TYPE,
+                    field: "logprobs[].top_logprobs[]",
+                });
+            }
+            if candidate
+                .get("token")
+                .is_some_and(|value| !value.is_string())
+            {
+                return Err(ResponseReconciliationError::InvalidEnvelopeField {
+                    event_type: EVENT_TYPE,
+                    field: "logprobs[].top_logprobs[].token",
+                });
+            }
+            if candidate
+                .get("logprob")
+                .is_some_and(|value| !value.is_number())
+            {
+                return Err(ResponseReconciliationError::InvalidEnvelopeField {
+                    event_type: EVENT_TYPE,
+                    field: "logprobs[].top_logprobs[].logprob",
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn envelope_identity(
     event: &SseEvent,
 ) -> Result<ResponseItemIdentity, ResponseReconciliationError> {

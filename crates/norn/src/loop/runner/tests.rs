@@ -24,6 +24,9 @@ use crate::provider::usage::Usage;
 use crate::session::events::{EventBase, EventUsage, SessionEvent};
 use crate::session::store::EventStore;
 
+mod refusal_matrix;
+mod responses_replay_matrix;
+
 // -- Helpers ----------------------------------------------------------
 
 struct DelayedProvider {

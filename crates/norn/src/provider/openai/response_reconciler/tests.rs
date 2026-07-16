@@ -194,21 +194,21 @@ fn interleaved_deltas_accumulate_only_under_exact_identity_and_index() -> TestRe
         6,
         "msg_a",
         0,
-        json!({"content_index": 0, "delta": "hel"}),
+        json!({"content_index": 0, "delta": "hel", "logprobs": []}),
     ))?;
     reconciler.ingest(&delta(
         "response.output_text.delta",
         7,
         "msg_b",
         1,
-        json!({"content_index": 0, "delta": "other"}),
+        json!({"content_index": 0, "delta": "other", "logprobs": []}),
     ))?;
     reconciler.ingest(&delta(
         "response.output_text.delta",
         8,
         "msg_a",
         0,
-        json!({"content_index": 0, "delta": "lo"}),
+        json!({"content_index": 0, "delta": "lo", "logprobs": []}),
     ))?;
     reconciler.ingest(&delta(
         "response.refusal.delta",
@@ -291,7 +291,7 @@ fn deltas_require_an_announced_identity_of_the_matching_family() -> TestResult {
         1,
         "msg_missing",
         0,
-        json!({"content_index": 0, "delta": "text"}),
+        json!({"content_index": 0, "delta": "text", "logprobs": []}),
     );
     assert_eq!(
         ResponseReconciler::new().ingest(&unknown),
@@ -306,7 +306,7 @@ fn deltas_require_an_announced_identity_of_the_matching_family() -> TestResult {
             2,
             "rs_a",
             0,
-            json!({"content_index": 0, "delta": "not a message"}),
+            json!({"content_index": 0, "delta": "not a message", "logprobs": []}),
         )),
         Err(ResponseReconciliationError::DeltaItemKindConflict)
     );
@@ -318,7 +318,7 @@ fn deltas_require_an_announced_identity_of_the_matching_family() -> TestResult {
         2,
         "msg_a",
         0,
-        json!({"content_index": 1, "delta": "wrong index"}),
+        json!({"content_index": 1, "delta": "wrong index", "logprobs": []}),
     ))?;
     assert_eq!(
         wrong_index.ingest(&done(3, 0, message("msg_a", "complete"))),
@@ -336,7 +336,7 @@ fn completed_items_are_authoritative_and_exact_duplicates_are_idempotent() -> Te
         2,
         "fc_a",
         0,
-        json!({"delta": "partial"}),
+        json!({"delta": "author"}),
     ))?;
     let complete = function_call("fc_a", "authoritative", "completed");
     let completion = reconciler.ingest(&done(3, 0, complete.clone()))?;
@@ -353,6 +353,7 @@ fn completed_items_are_authoritative_and_exact_duplicates_are_idempotent() -> Te
         delta_reconciliations[0].disposition,
         DeltaReconciliationDisposition::Repaired
     );
+    assert_eq!(delta_reconciliations[0].repair.as_deref(), Some("itative"));
     assert_eq!(
         reconciler.accumulated_delta("fc_a", 0, ResponseDeltaChannel::FunctionCallArguments),
         Some("authoritative")

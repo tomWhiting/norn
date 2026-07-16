@@ -198,7 +198,7 @@ fn mcp_arguments_repair_preview_and_done_binds_final_item() -> TestResult {
         3,
         "mcp_a",
         0,
-        json!({"delta": "partial"}),
+        json!({"delta": "{\"x\":"}),
     ))?;
     let completion = delta(
         "response.mcp_call_arguments.done",

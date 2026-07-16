@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use super::authoritative::authoritative_channels;
+use super::authoritative::{authoritative_channels, reconcile_preview};
 use super::wire::required_u64;
 use super::{
     DeltaReconciliationDisposition, ReconcileUpdate, ResponseDeltaChannel, ResponseItemIdentity,
@@ -71,15 +71,17 @@ impl ResponseReconciler {
         if self.completed.contains_key(&identity) {
             return Err(ResponseReconciliationError::ChannelCompletionAfterItemCompletion);
         }
-        let disposition = match self.deltas.insert(key.clone(), authoritative.to_owned()) {
-            None => DeltaReconciliationDisposition::Synthesized,
-            Some(preview) if preview == authoritative => DeltaReconciliationDisposition::Matched,
-            Some(_) => DeltaReconciliationDisposition::Repaired,
-        };
+        let preview = self.deltas.get(&key).cloned();
+        let delta_reconciliation =
+            reconcile_preview(&identity, spec.channel, preview, authoritative)?;
+        let disposition = delta_reconciliation.disposition;
+        self.deltas.insert(key.clone(), authoritative.to_owned());
         self.completed_channels
             .insert(key.clone(), authoritative.to_owned());
         self.channel_reconciliations.insert(key, disposition);
-        Ok(ReconcileUpdate::Accepted)
+        Ok(ReconcileUpdate::CompletedChannel {
+            delta_reconciliation,
+        })
     }
 
     pub(super) fn validate_completed_channels(

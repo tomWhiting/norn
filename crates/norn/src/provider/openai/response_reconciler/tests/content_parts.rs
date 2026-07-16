@@ -181,7 +181,7 @@ fn part_done_blocks_late_text_and_annotations() -> TestResult {
             3,
             "msg_a",
             0,
-            json!({"content_index": 0, "delta": "late"}),
+            json!({"content_index": 0, "delta": "late", "logprobs": []}),
         )),
         Err(ResponseReconciliationError::ItemScopedEventAfterCompletion)
     );

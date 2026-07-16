@@ -26,20 +26,52 @@ pub(super) fn reconcile_authoritative_deltas(
         return Err(ResponseReconciliationError::DeltaItemKindConflict);
     }
 
-    let mut reconciliations = Vec::with_capacity(authoritative.len());
+    let mut pending = Vec::with_capacity(authoritative.len());
     for (channel, content) in authoritative {
         let key = (identity.clone(), channel);
-        let disposition = match deltas.insert(key, content.clone()) {
-            None => DeltaReconciliationDisposition::Synthesized,
-            Some(preview) if preview == content => DeltaReconciliationDisposition::Matched,
-            Some(_) => DeltaReconciliationDisposition::Repaired,
-        };
-        reconciliations.push(DeltaReconciliation {
-            channel,
-            disposition,
-        });
+        let preview = deltas.get(&key).cloned();
+        let reconciliation = reconcile_preview(identity, channel, preview, &content)?;
+        pending.push((key, content, reconciliation));
+    }
+
+    let mut reconciliations = Vec::with_capacity(pending.len());
+    for (key, content, reconciliation) in pending {
+        deltas.insert(key, content);
+        reconciliations.push(reconciliation);
     }
     Ok(reconciliations)
+}
+
+pub(super) fn reconcile_preview(
+    identity: &ResponseItemIdentity,
+    channel: ResponseDeltaChannel,
+    preview: Option<String>,
+    authoritative: &str,
+) -> Result<DeltaReconciliation, ResponseReconciliationError> {
+    let (disposition, repair) = match preview {
+        None => (
+            DeltaReconciliationDisposition::Synthesized,
+            (!authoritative.is_empty()).then(|| authoritative.to_owned()),
+        ),
+        Some(preview) if preview == authoritative => {
+            (DeltaReconciliationDisposition::Matched, None)
+        }
+        Some(preview) => {
+            let suffix = authoritative
+                .strip_prefix(&preview)
+                .ok_or(ResponseReconciliationError::AuthoritativeDeltaConflict)?;
+            (
+                DeltaReconciliationDisposition::Repaired,
+                (!suffix.is_empty()).then(|| suffix.to_owned()),
+            )
+        }
+    };
+    Ok(DeltaReconciliation {
+        identity: identity.clone(),
+        channel,
+        disposition,
+        repair,
+    })
 }
 
 pub(super) fn authoritative_channels(

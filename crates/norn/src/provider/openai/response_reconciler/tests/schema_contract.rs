@@ -82,6 +82,125 @@ fn content_part_events_require_the_normative_payload_shape() -> TestResult {
 }
 
 #[test]
+fn output_text_delta_requires_the_normative_logprob_shape() -> TestResult {
+    for (fields, field) in [
+        (json!({"content_index": 0, "delta": "answer"}), "logprobs"),
+        (
+            json!({"content_index": 0, "delta": "answer", "logprobs": null}),
+            "logprobs",
+        ),
+        (
+            json!({"content_index": 0, "delta": "answer", "logprobs": [{}]}),
+            "logprobs[].token",
+        ),
+        (
+            json!({
+                "content_index": 0,
+                "delta": "answer",
+                "logprobs": [{"token": "answer", "logprob": "invalid"}]
+            }),
+            "logprobs[].logprob",
+        ),
+        (
+            json!({
+                "content_index": 0,
+                "delta": "answer",
+                "logprobs": [{"token": "answer", "logprob": -0.1, "top_logprobs": {}}]
+            }),
+            "logprobs[].top_logprobs",
+        ),
+        (
+            json!({
+                "content_index": 0,
+                "delta": "answer",
+                "logprobs": [{"token": "answer", "logprob": -0.1, "top_logprobs": [null]}]
+            }),
+            "logprobs[].top_logprobs[]",
+        ),
+        (
+            json!({
+                "content_index": 0,
+                "delta": "answer",
+                "logprobs": [{
+                    "token": "answer",
+                    "logprob": -0.1,
+                    "top_logprobs": [{"token": 1, "logprob": -0.2}]
+                }]
+            }),
+            "logprobs[].top_logprobs[].token",
+        ),
+        (
+            json!({
+                "content_index": 0,
+                "delta": "answer",
+                "logprobs": [{
+                    "token": "answer",
+                    "logprob": -0.1,
+                    "top_logprobs": [{"token": "Answer", "logprob": "invalid"}]
+                }]
+            }),
+            "logprobs[].top_logprobs[].logprob",
+        ),
+    ] {
+        let mut reconciler = ResponseReconciler::new();
+        reconciler.ingest(&added(1, 0, message_start("msg_logprobs")))?;
+        assert_eq!(
+            reconciler.ingest(&delta(
+                "response.output_text.delta",
+                2,
+                "msg_logprobs",
+                0,
+                fields,
+            )),
+            Err(ResponseReconciliationError::InvalidEnvelopeField {
+                event_type: "response.output_text.delta",
+                field,
+            })
+        );
+    }
+
+    for fields in [
+        json!({
+            "content_index": 0,
+            "delta": "answer",
+            "logprobs": [{
+                "token": "answer",
+                "logprob": -0.1,
+                "top_logprobs": [{"token": "Answer", "logprob": -0.2}]
+            }]
+        }),
+        json!({
+            "content_index": 0,
+            "delta": "answer",
+            "logprobs": [{
+                "token": "answer",
+                "logprob": -0.1,
+                "top_logprobs": [{"token": "Answer"}, {"logprob": -0.2}, {}]
+            }]
+        }),
+        json!({
+            "content_index": 0,
+            "delta": "answer",
+            "logprobs": [{"token": "answer", "logprob": -0.1}]
+        }),
+    ] {
+        let mut valid = ResponseReconciler::new();
+        valid.ingest(&added(1, 0, message_start("msg_logprobs")))?;
+        assert_eq!(
+            valid.ingest(&delta(
+                "response.output_text.delta",
+                2,
+                "msg_logprobs",
+                0,
+                fields,
+            ))?,
+            ReconcileUpdate::Accepted
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn completed_hosted_lifecycle_requires_completed_final_status() -> TestResult {
     for (item, lifecycle) in [
         (

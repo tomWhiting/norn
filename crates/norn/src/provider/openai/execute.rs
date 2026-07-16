@@ -10,7 +10,8 @@ use std::collections::HashMap;
 
 use super::request::build_payload;
 use super::response_reconciler::{
-    ReconcileUpdate, ResponseReconciler, ResponseReconciliationError,
+    DeltaReconciliation, ReconcileUpdate, ResponseDeltaChannel, ResponseReconciler,
+    ResponseReconciliationError,
 };
 use super::response_stream_event::{ResponseStreamEvent, ResponseStreamEventManifest};
 use super::response_terminal::decode_terminal;
@@ -139,6 +140,12 @@ impl SseEventMapper for ResponsesMapper {
             return mapped;
         }
 
+        if let Err(error) = append_reconciliation_repairs(&update, &mut mapped) {
+            self.finish();
+            mapped.push(Err(error));
+            return mapped;
+        }
+
         if event.event_type == "response.output_item.added"
             && let Some((item_id, call_id)) = output_item_added_call_id(event)
         {
@@ -152,6 +159,7 @@ impl SseEventMapper for ResponsesMapper {
             | ReconcileUpdate::DuplicateSequence { .. }
             | ReconcileUpdate::DuplicateCompletion { .. }
             | ReconcileUpdate::DuplicateChannelCompletion
+            | ReconcileUpdate::CompletedChannel { .. }
             | ReconcileUpdate::CompletedItem { .. } => None,
         };
         if let Some(items) = terminal_items {
@@ -213,6 +221,70 @@ impl ResponsesMapper {
         self.terminal = true;
         self.call_ids.clear();
     }
+}
+
+fn append_reconciliation_repairs(
+    update: &ReconcileUpdate,
+    mapped: &mut Vec<Result<ProviderEvent, ProviderError>>,
+) -> Result<(), ProviderError> {
+    match update {
+        ReconcileUpdate::CompletedChannel {
+            delta_reconciliation,
+        } => append_reconciliation_repair(delta_reconciliation, mapped),
+        ReconcileUpdate::CompletedItem {
+            delta_reconciliations,
+            ..
+        }
+        | ReconcileUpdate::Terminal {
+            delta_reconciliations,
+            ..
+        } => {
+            for reconciliation in delta_reconciliations {
+                append_reconciliation_repair(reconciliation, mapped)?;
+            }
+            Ok(())
+        }
+        ReconcileUpdate::Accepted
+        | ReconcileUpdate::Ignored
+        | ReconcileUpdate::DuplicateSequence { .. }
+        | ReconcileUpdate::DuplicateCompletion { .. }
+        | ReconcileUpdate::DuplicateChannelCompletion => Ok(()),
+    }
+}
+
+fn append_reconciliation_repair(
+    reconciliation: &DeltaReconciliation,
+    mapped: &mut Vec<Result<ProviderEvent, ProviderError>>,
+) -> Result<(), ProviderError> {
+    let Some(repair) = reconciliation.repair.clone() else {
+        return Ok(());
+    };
+    let event = match reconciliation.channel {
+        ResponseDeltaChannel::OutputText(_) => ProviderEvent::TextDelta { text: repair },
+        ResponseDeltaChannel::Refusal(content_index) => ProviderEvent::RefusalDelta {
+            item_id: reconciliation
+                .identity
+                .item_id()
+                .ok_or(ProviderError::ResponseProtocolViolation {
+                    source: ResponseReconciliationError::InvalidEnvelopeField {
+                        event_type: "response reconciliation",
+                        field: "message item id",
+                    },
+                })?
+                .to_owned(),
+            output_index: reconciliation.identity.output_index(),
+            content_index,
+            refusal: repair,
+        },
+        ResponseDeltaChannel::ReasoningSummaryText(_) | ResponseDeltaChannel::ReasoningText(_) => {
+            ProviderEvent::ThinkingDelta { text: repair }
+        }
+        ResponseDeltaChannel::FunctionCallArguments | ResponseDeltaChannel::CustomToolCallInput => {
+            return Ok(());
+        }
+    };
+    mapped.push(Ok(event));
+    Ok(())
 }
 
 #[cfg(test)]
@@ -474,7 +546,8 @@ mod streaming_tests {
                 "item_id": item_id,
                 "output_index": 0,
                 "content_index": 0,
-                "delta": delta
+                "delta": delta,
+                "logprobs": []
             }),
         )
     }

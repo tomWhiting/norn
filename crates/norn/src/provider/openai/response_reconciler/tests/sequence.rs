@@ -9,7 +9,7 @@ fn duplicate_delta_sequence_is_not_applied_twice() -> TestResult {
         2,
         "msg_a",
         0,
-        json!({"content_index": 0, "delta": "once"}),
+        json!({"content_index": 0, "delta": "once", "logprobs": []}),
     );
 
     assert_eq!(reconciler.ingest(&fragment)?, ReconcileUpdate::Accepted);
@@ -33,14 +33,14 @@ fn conflicting_duplicate_delta_poisoning_preserves_first_preview() -> TestResult
         2,
         "msg_a",
         0,
-        json!({"content_index": 0, "delta": "first"}),
+        json!({"content_index": 0, "delta": "first", "logprobs": []}),
     ))?;
     let conflict = delta(
         "response.output_text.delta",
         2,
         "msg_a",
         0,
-        json!({"content_index": 0, "delta": "second"}),
+        json!({"content_index": 0, "delta": "second", "logprobs": []}),
     );
 
     assert_eq!(

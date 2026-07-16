@@ -80,12 +80,20 @@ pub enum DeltaReconciliationDisposition {
 }
 
 /// Result of reconciling one delta channel with authoritative content.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeltaReconciliation {
+    /// Stable item identity whose channel was reconciled.
+    pub identity: ResponseItemIdentity,
     /// Identity-keyed channel that was reconciled.
     pub channel: ResponseDeltaChannel,
     /// Whether completion matched, repaired, or synthesized preview state.
     pub disposition: DeltaReconciliationDisposition,
+    /// Missing authoritative suffix to project to live consumers.
+    ///
+    /// `None` means the preview already matched or the authoritative value was
+    /// empty. A non-prefix conflict is rejected instead of being represented
+    /// as an append-only repair.
+    pub repair: Option<String>,
 }
 
 /// Result of accepting one stream frame.
@@ -107,6 +115,11 @@ pub enum ReconcileUpdate {
     },
     /// An exact repeated channel-completion event was already applied.
     DuplicateChannelCompletion,
+    /// One authoritative channel completion reconciled its preview.
+    CompletedChannel {
+        /// Identity-keyed result, including any missing suffix for live UI.
+        delta_reconciliation: DeltaReconciliation,
+    },
     /// An authoritative item was retained and reconciled with its previews.
     CompletedItem {
         /// Canonical completed item with stream provenance.
@@ -235,6 +248,9 @@ pub enum ResponseReconciliationError {
     /// Delta and completed-item families did not agree.
     #[error("response item completion did not match its accumulated delta family")]
     DeltaItemKindConflict,
+    /// Authoritative completion was not an append-only extension of preview.
+    #[error("authoritative response content conflicted with its streamed preview")]
+    AuthoritativeDeltaConflict,
     /// Item-level authority disagreed with an earlier channel completion.
     #[error("response item completion conflicted with completed channel content")]
     ChannelItemCompletionConflict,
