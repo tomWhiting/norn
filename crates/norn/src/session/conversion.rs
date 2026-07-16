@@ -5,10 +5,9 @@
 //! conversation-relevant events produce messages; metadata events
 //! (model changes, forks, labels, custom) are skipped.
 
-use std::collections::HashMap;
-
 use crate::provider::request::{AssistantToolCall, Message, MessageRole, ToolCallKind};
-use crate::session::events::SessionEvent;
+use crate::session::apply_local_tool_event;
+use crate::session::events::{SessionEvent, ToolCallEvent};
 
 /// Convert a slice of session events into provider-ready messages.
 ///
@@ -39,36 +38,19 @@ pub fn prompt_events_to_messages(events: &[SessionEvent]) -> Vec<Message> {
 }
 
 fn events_to_messages_inner(events: &[SessionEvent], include_compactions: bool) -> Vec<Message> {
-    // First pass: index every assistant-emitted tool call by its `call_id`
-    // so the second pass can stamp the matching kind onto each `ToolResult`.
-    // The map is small (one entry per tool call in the session) and only
-    // built once per conversion.
-    let kinds = collect_tool_call_kinds(events);
+    let mut pending_calls = Vec::new();
     events
         .iter()
-        .filter_map(|event| event_to_message(event, &kinds, include_compactions))
+        .filter_map(|event| {
+            let resolved_call = apply_local_tool_event(&mut pending_calls, event);
+            event_to_message(event, resolved_call, include_compactions)
+        })
         .collect()
-}
-
-/// Build a `call_id -> ToolCallKind` map over every `AssistantMessage` event's
-/// `tool_calls`. A later assistant message that re-uses the same `call_id`
-/// overwrites the earlier one, which is the desired behaviour: the most
-/// recent assistant turn defines the kind.
-fn collect_tool_call_kinds(events: &[SessionEvent]) -> HashMap<String, ToolCallKind> {
-    let mut kinds = HashMap::new();
-    for event in events {
-        if let Some(tool_calls) = event.assistant_tool_calls() {
-            for tc in tool_calls {
-                kinds.insert(tc.call_id, tc.kind);
-            }
-        }
-    }
-    kinds
 }
 
 fn event_to_message(
     event: &SessionEvent,
-    kinds: &HashMap<String, ToolCallKind>,
+    resolved_call: Option<ToolCallEvent>,
     include_compactions: bool,
 ) -> Option<Message> {
     match event {
@@ -82,6 +64,7 @@ fn event_to_message(
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         }),
 
         SessionEvent::AssistantMessage {
@@ -123,11 +106,13 @@ fn event_to_message(
                             ToolCallKind::Function => tc.arguments.to_string(),
                         },
                         kind: tc.kind,
+                        caller: tc.caller,
                     })
                     .collect(),
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             })
         }
 
@@ -149,7 +134,8 @@ fn event_to_message(
             // ToolCallEvent. A miss (no matching call_id in the slice) is the
             // legacy path — fall back to None so `serialize_tool_result`
             // defaults to `function_call_output`.
-            tool_call_kind: kinds.get(tool_call_id).copied(),
+            tool_call_kind: resolved_call.as_ref().map(|call| call.kind),
+            tool_call_caller: resolved_call.map_or_else(Default::default, |call| call.caller),
         }),
 
         SessionEvent::Compaction { summary, .. } if include_compactions => Some(Message {
@@ -162,6 +148,7 @@ fn event_to_message(
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         }),
 
         // A fired rule delivered as conversation content (ContextInjection
@@ -186,6 +173,7 @@ fn event_to_message(
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             }),
 
         SessionEvent::ModelChange { .. }
@@ -315,6 +303,7 @@ mod tests {
                 name: "read".to_owned(),
                 arguments: serde_json::json!({"path": "/tmp/test"}),
                 kind: crate::provider::request::ToolCallKind::Function,
+                caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             usage: EventUsage::default(),
             stop_reason: String::new(),
@@ -461,6 +450,7 @@ mod tests {
                     name: "bash".to_owned(),
                     arguments: serde_json::json!({"command": "pwd"}),
                     kind: crate::provider::request::ToolCallKind::Function,
+                    caller: crate::provider::request::ToolCallCaller::Absent,
                 }],
                 usage: EventUsage::default(),
                 stop_reason: String::new(),
@@ -534,12 +524,14 @@ mod tests {
                     name: "apply_patch".to_owned(),
                     arguments: args.clone(),
                     kind: crate::provider::request::ToolCallKind::Custom,
+                    caller: crate::provider::request::ToolCallCaller::Absent,
                 },
                 ToolCallEvent {
                     call_id: "call_fn".to_owned(),
                     name: "read".to_owned(),
                     arguments: args.clone(),
                     kind: crate::provider::request::ToolCallKind::Function,
+                    caller: crate::provider::request::ToolCallCaller::Absent,
                 },
             ],
             usage: EventUsage::default(),
@@ -602,6 +594,7 @@ mod tests {
                 name: "apply_patch".to_owned(),
                 arguments: serde_json::Value::String("apply patch content".to_owned()),
                 kind: crate::provider::request::ToolCallKind::Custom,
+                caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             usage: EventUsage::default(),
             stop_reason: String::new(),

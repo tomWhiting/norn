@@ -140,6 +140,7 @@ fn canonical_calls_override_conflicting_flat_projection() -> TestResult {
             name: "write".to_owned(),
             arguments: serde_json::json!({"path": "wrong"}),
             kind: ToolCallKind::Function,
+            caller: crate::provider::request::ToolCallCaller::Absent,
         }],
         usage: EventUsage::default(),
         stop_reason: "tool_use".to_owned(),

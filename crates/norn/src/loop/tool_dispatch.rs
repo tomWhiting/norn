@@ -268,6 +268,8 @@ pub(super) struct ToolResultRecord<'a> {
     pub(super) tool_name: &'a str,
     /// Wire form of the originating call (function vs custom).
     pub(super) kind: crate::provider::request::ToolCallKind,
+    /// Exact provider caller field to echo on the output.
+    pub(super) caller: crate::provider::request::ToolCallCaller,
     /// Structured tool output.
     pub(super) output: &'a Value,
     /// Wall-clock execution duration in milliseconds.
@@ -309,6 +311,7 @@ pub(super) async fn append_tool_result(
         tool_call_id,
         tool_name,
         kind,
+        caller,
         output: full_output,
         duration_ms,
         inline_char_limit,
@@ -374,6 +377,7 @@ pub(super) async fn append_tool_result(
         tool_call_id: Some(tool_call_id.to_string()),
         tool_name: Some(tool_name.to_string()),
         tool_call_kind: Some(kind),
+        tool_call_caller: caller,
     });
 
     Ok(output)
@@ -408,6 +412,7 @@ mod tests {
             name: name.to_owned(),
             arguments: arguments.to_owned(),
             kind: crate::provider::request::ToolCallKind::Function,
+            caller: crate::provider::request::ToolCallCaller::Absent,
         }
     }
 
@@ -1565,6 +1570,7 @@ mod tests {
                 tool_call_id: "tc-content",
                 tool_name: "read",
                 kind: crate::provider::request::ToolCallKind::Function,
+                caller: crate::provider::request::ToolCallCaller::Absent,
                 output: &output,
                 duration_ms: 3,
                 inline_char_limit: MODEL_OUTPUT_INLINE_CHAR_LIMIT,
@@ -1629,6 +1635,7 @@ mod tests {
                 tool_call_id,
                 tool_name,
                 kind: crate::provider::request::ToolCallKind::Function,
+                caller: crate::provider::request::ToolCallCaller::Absent,
                 output: &oversized_output(),
                 duration_ms: 1,
                 inline_char_limit,
@@ -1732,6 +1739,7 @@ mod tests {
                 tool_call_id: "tc-small",
                 tool_name: "read",
                 kind: crate::provider::request::ToolCallKind::Function,
+                caller: crate::provider::request::ToolCallCaller::Absent,
                 output: &output,
                 duration_ms: 1,
                 inline_char_limit: MODEL_OUTPUT_INLINE_CHAR_LIMIT,

@@ -180,6 +180,7 @@ mod tests {
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             },
             Message {
                 response_items: Vec::new(),
@@ -191,6 +192,7 @@ mod tests {
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             },
         ];
         let tools = vec![ToolDefinition {
@@ -235,6 +237,7 @@ mod tests {
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         };
         let without_reasoning = Message {
             response_items: Vec::new(),
@@ -268,6 +271,7 @@ mod tests {
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         };
         let with_thinking = Message {
             response_items: Vec::new(),
@@ -295,10 +299,12 @@ mod tests {
                 name: "search".to_string(),
                 arguments: "x".repeat(40),
                 kind: crate::provider::request::ToolCallKind::Function,
+                caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         };
         let n = estimate_prompt_tokens(&est, std::slice::from_ref(&msg), &[]);
         assert!(n >= 10);
@@ -362,10 +368,12 @@ mod tests {
                 name: "stale_tool".repeat(20),
                 arguments: "stale arguments".repeat(20),
                 kind: crate::provider::request::ToolCallKind::Function,
+                caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         };
         let expected = raw_items
             .iter()

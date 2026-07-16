@@ -397,6 +397,7 @@ async fn provider_threaded_resume_replays_post_anchor_history() {
                 name: "read".to_string(),
                 arguments: serde_json::json!({"path": "a"}),
                 kind: crate::provider::request::ToolCallKind::Function,
+                caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             usage: EventUsage::default(),
             stop_reason: "tool_use".to_string(),

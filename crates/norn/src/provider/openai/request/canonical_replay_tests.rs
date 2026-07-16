@@ -31,7 +31,7 @@ type TestItemResult = Result<ResponseTranscriptItem, crate::provider::ResponseIt
 
 #[test]
 fn canonical_assistant_items_replay_in_exact_order_without_stream_coordinates() -> TestResult {
-    let raw_items = vec![
+    let raw_items = [
         serde_json::json!({
             "type": "reasoning",
             "id": "rs_1",
@@ -96,6 +96,7 @@ fn canonical_assistant_items_replay_in_exact_order_without_stream_coordinates() 
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         }],
         tools: Vec::new(),
         model: "gpt-test".to_owned(),
@@ -164,6 +165,7 @@ fn persisted_hosted_search_turn_replays_exactly_into_stateless_continuation() ->
             "call_id": "call_persisted",
             "name": "read",
             "arguments": "{\"path\":\"README.md\"}",
+            "caller": {"type": "program", "caller_id": "call_program_persisted"},
             "status": "completed"
         }),
     ];
@@ -189,6 +191,7 @@ fn persisted_hosted_search_turn_replays_exactly_into_stateless_continuation() ->
             name: "write".to_owned(),
             arguments: serde_json::json!({"path": "wrong.txt"}),
             kind: ToolCallKind::Function,
+            caller: crate::provider::request::ToolCallCaller::Absent,
         }],
         usage: EventUsage::default(),
         stop_reason: "tool_use".to_owned(),
@@ -229,7 +232,8 @@ fn persisted_hosted_search_turn_replays_exactly_into_stateless_continuation() ->
     expected_input.push(serde_json::json!({
         "type": "function_call_output",
         "call_id": "call_persisted",
-        "output": "tool result"
+        "output": "tool result",
+        "caller": {"type": "program", "caller_id": "call_program_persisted"}
     }));
     assert_eq!(input, &expected_input);
     assert!(input.iter().all(|item| item.get("output_index").is_none()));
@@ -242,6 +246,105 @@ fn persisted_hosted_search_turn_replays_exactly_into_stateless_continuation() ->
     assert!(!serialized.contains("lossy flat"));
     assert!(!serialized.contains("call_stale_flat_projection"));
     Ok(())
+}
+
+#[test]
+fn caller_projection_is_ordered_family_aware_and_presence_preserving() -> TestResult {
+    let raw_items = [
+        serde_json::json!({
+            "type": "function_call",
+            "call_id": "call_reused",
+            "name": "first_function",
+            "arguments": "{}",
+            "caller": {
+                "type": "program",
+                "caller_id": "program_first",
+                "provider_extension": {"kept": true}
+            }
+        }),
+        serde_json::json!({
+            "type": "function_call",
+            "call_id": "call_reused",
+            "name": "second_function",
+            "arguments": "{}",
+            "caller": null
+        }),
+        serde_json::json!({
+            "type": "custom_tool_call",
+            "call_id": "call_reused",
+            "name": "custom",
+            "input": "opaque",
+            "caller": {"type": "program", "caller_id": "program_custom"}
+        }),
+        serde_json::json!({
+            "type": "function_call",
+            "call_id": "call_absent",
+            "name": "without_caller",
+            "arguments": "{}"
+        }),
+    ];
+    let response_items = raw_items
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, raw)| Ok(transcript_item(raw, u64::try_from(index)?)?))
+        .collect::<TestItemsResult>()?;
+    let mut messages = vec![Message {
+        response_items,
+        role: MessageRole::Assistant,
+        content: None,
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: Vec::new(),
+        tool_call_id: None,
+        tool_name: None,
+        tool_call_kind: None,
+        tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
+    }];
+    messages.extend([
+        tool_result_message("call_reused", ToolCallKind::Function, "first"),
+        tool_result_message("call_reused", ToolCallKind::Custom, "custom"),
+        tool_result_message("call_reused", ToolCallKind::Function, "second"),
+        tool_result_message("call_absent", ToolCallKind::Function, "absent"),
+    ]);
+    let request = ProviderRequest {
+        messages,
+        tools: Vec::new(),
+        model: "gpt-test".to_owned(),
+        reasoning_effort: None,
+        reasoning_summary: None,
+        service_tier: None,
+        config: None,
+        cache_key: None,
+        previous_response_id: None,
+        store: false,
+        context_management: None,
+    };
+    let payload = build_payload(&request, CATALOG_BACKEND_CODEX_SUBSCRIPTION)?;
+    let Some(input) = payload.get("input").and_then(serde_json::Value::as_array) else {
+        return Err(io::Error::other("request input was not an array").into());
+    };
+    let outputs = &input[raw_items.len()..];
+    assert_eq!(outputs[0]["caller"], raw_items[0]["caller"]);
+    assert_eq!(outputs[1]["caller"]["caller_id"], "program_custom");
+    assert_eq!(outputs[2]["caller"], serde_json::Value::Null);
+    assert!(outputs[3].get("caller").is_none());
+    Ok(())
+}
+
+fn tool_result_message(call_id: &str, kind: ToolCallKind, content: &str) -> Message {
+    Message {
+        response_items: Vec::new(),
+        role: MessageRole::ToolResult,
+        content: Some(content.to_owned()),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: Vec::new(),
+        tool_call_id: Some(call_id.to_owned()),
+        tool_name: Some("fixture".to_owned()),
+        tool_call_kind: Some(kind),
+        tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
+    }
 }
 
 type TestItemsResult = Result<Vec<ResponseTranscriptItem>, Box<dyn std::error::Error>>;

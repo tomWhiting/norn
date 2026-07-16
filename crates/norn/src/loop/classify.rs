@@ -362,6 +362,7 @@ mod tests {
                 name: "structured_output".to_owned(),
                 arguments: arguments.to_owned(),
                 kind: ToolCallKind::Function,
+                caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             stop_reason: StopReason::ToolUse,
             usage: Usage::default(),

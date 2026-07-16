@@ -132,6 +132,7 @@ impl StepMachine<'_> {
                 tool_call_id: &schema_tc.call_id,
                 tool_name: &self.config.schema_tool_name,
                 kind: schema_tc.kind,
+                caller: schema_tc.caller.clone(),
                 output: &Value::String(feedback),
                 duration_ms: 0,
                 inline_char_limit: self.inline_char_limit,
@@ -255,6 +256,7 @@ impl StepMachine<'_> {
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
 
         Ok(StepFlow::Next(StepState::Gate))

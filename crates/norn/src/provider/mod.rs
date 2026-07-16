@@ -18,7 +18,7 @@ pub use self::events::{ProviderEvent, StopReason};
 pub use self::reasoning::{ReasoningContentPart, ReasoningItem, ReasoningSummaryPart};
 pub use self::request::{
     AssistantToolCall, Message, MessageRole, ProviderConfig, ProviderOptions, ProviderRequest,
-    ReasoningEffort, ReasoningSummary, SecretString, ServiceTier, ToolDefinition,
+    ReasoningEffort, ReasoningSummary, SecretString, ServiceTier, ToolCallCaller, ToolDefinition,
 };
 pub use self::response_item::{
     OpaqueResponseItem, ResponseCompactionItem, ResponseContentPart, ResponseCustomToolCallItem,

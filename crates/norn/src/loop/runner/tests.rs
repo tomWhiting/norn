@@ -438,6 +438,63 @@ async fn thinking_delta_threaded_into_assistant_message() {
     assert_eq!(assistant_msg.1, "first let me reason");
 }
 
+#[tokio::test]
+async fn unmoored_program_caller_fails_before_assistant_persistence_or_repair()
+-> Result<(), Box<dyn std::error::Error>> {
+    let raw = serde_json::json!({
+        "type": "function_call",
+        "id": "fc_unmoored",
+        "call_id": "call_unmoored",
+        "name": "read_file",
+        "arguments": "{}",
+        "caller": {"type": "program", "caller_id": "program_missing"}
+    });
+    let item = ResponseItem::from_value(raw)?;
+    let provider = MockProvider::new(vec![vec![
+        ProviderEvent::ResponseItemDone {
+            item: ResponseTranscriptItem {
+                item,
+                provenance: ResponseStreamProvenance::default(),
+            },
+        },
+        done_event(StopReason::ToolUse),
+    ]]);
+    let store = EventStore::new();
+    let executor = MockToolExecutor::empty();
+    let mut loop_context = LoopContext::new("system");
+    let result = run_agent_step(AgentStepRequest {
+        provider: &provider,
+        executor: &executor,
+        store: &store,
+        user_prompt: "prompt",
+        tools: &[],
+        output_schema: None,
+        model: "test-model",
+        config: &default_config(),
+        event_tx: None,
+        inbound: None,
+        loop_context: &mut loop_context,
+        cancel: None,
+    })
+    .await;
+    assert!(matches!(
+        result,
+        Err(NornError::Provider(
+            ProviderError::ResponseProtocolViolation {
+                source: crate::provider::openai::response_reconciler::ResponseReconciliationError::UnmooredProgramCaller
+            }
+        ))
+    ));
+    assert!(
+        store.events().iter().all(|event| !matches!(
+            event,
+            SessionEvent::AssistantMessage { .. } | SessionEvent::ToolResult { .. }
+        )),
+        "invalid program call must never become replayable or receive synthetic repair",
+    );
+    Ok(())
+}
+
 // -- Test 2: Text-only no-schema -> Completed with Value::String (R10)
 
 #[tokio::test]

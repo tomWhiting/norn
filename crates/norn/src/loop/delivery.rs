@@ -7,13 +7,9 @@
 //! exactly these functions, so a message or child result is formatted,
 //! persisted, and audited identically no matter when it arrives.
 
-use std::fmt::Write as _;
-
-use crate::agent::result_channel::frame_child_result;
 use crate::agent::{PendingAgentMessage, PendingAgentMessages, append_pending_message_audit};
 use crate::error::SessionError;
 use crate::integration::hooks::HookRegistry;
-use crate::r#loop::active_input::{ActiveInput, ActiveInputReceiver};
 use crate::r#loop::inbound::{ChannelMessage, InboundChannel, MessageKind, frame_message};
 use crate::provider::agent_event::{
     AGENT_MESSAGE_DELIVERED_EVENT_TYPE, AgentEventSender, AgentMessageLifecycle,
@@ -24,6 +20,8 @@ use crate::session::store::EventStore;
 
 use super::helpers::append_and_notify;
 use super::loop_context::LoopContext;
+
+pub(super) use super::delivery_inputs::{drain_child_results, flush_active_inputs};
 
 /// Drain the inbound channel (if present) and partition messages by
 /// [`MessageKind`]. Returns `(steer, update)` — steers inject at the next
@@ -184,6 +182,7 @@ pub(super) async fn inject_inbound_messages(
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
     }
     Ok(user_event_ids)
@@ -445,144 +444,4 @@ pub(crate) fn requeue_undelivered_inbound(
         Some(error) => Err(error),
         None => Ok(()),
     }
-}
-
-/// Drain human active-turn input and persist it as ordinary user messages.
-///
-/// Active input is trusted operator text, not inter-agent traffic, so it does
-/// not use `<agent_message>` framing. A delivery acknowledgement is emitted only
-/// after the corresponding `UserMessage` event has been appended and the local
-/// conversation has been updated.
-pub(super) async fn flush_active_inputs(
-    store: &EventStore,
-    messages: &mut Vec<Message>,
-    active_input: Option<&mut ActiveInputReceiver>,
-    hooks: Option<&HookRegistry>,
-) -> Result<Vec<EventId>, SessionError> {
-    let Some(active_input) = active_input else {
-        return Ok(Vec::new());
-    };
-    inject_active_inputs(store, messages, active_input.drain(), hooks).await
-}
-
-async fn inject_active_inputs(
-    store: &EventStore,
-    messages: &mut Vec<Message>,
-    inputs: Vec<ActiveInput>,
-    hooks: Option<&HookRegistry>,
-) -> Result<Vec<EventId>, SessionError> {
-    if inputs.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut event_ids = Vec::with_capacity(inputs.len());
-    for input in inputs {
-        let content = input.content().to_string();
-        let event_id = append_and_notify(
-            store,
-            SessionEvent::UserMessage {
-                base: EventBase::new(store.last_event_id()),
-                content: content.clone(),
-            },
-            hooks,
-        )
-        .await?;
-        messages.push(Message {
-            response_items: Vec::new(),
-            role: MessageRole::User,
-            content: Some(content),
-            thinking: String::new(),
-            reasoning: Vec::new(),
-            tool_calls: Vec::new(),
-            tool_call_id: None,
-            tool_name: None,
-            tool_call_kind: None,
-        });
-        input.mark_delivered();
-        event_ids.push(event_id);
-    }
-    Ok(event_ids)
-}
-
-/// Drain pending child-agent results and inject them into the running
-/// conversation. Returns `true` if any results were injected.
-///
-/// `seed` carries a result that was already received outside this call —
-/// the linger-await ([`super::linger`]) consumes one result when it wakes
-/// and hands it here so every delivery, mid-run or lingering, goes through
-/// this single injection path. `rx: None` with a seed injects the seed
-/// alone; `rx: None` without one is a no-op.
-///
-/// Each result renders through
-/// [`frame_child_result`](crate::agent::result_channel::frame_child_result)
-/// — the same harness-built, content-escaped framing contract as inbound
-/// messages, so a child's output cannot forge an `<agent_message>` or
-/// `<agent_result>` frame in the parent's conversation. Each drained batch
-/// is persisted as one `UserMessage` event and pushed as one user-role
-/// message — keeping the persisted event stream and the live conversation
-/// in 1:1 correspondence (a requirement of in-flight compaction mapping).
-///
-/// W3.6 usage rollup: every drained result's
-/// [`subtree_usage`](crate::agent::result_channel::ChildAgentResult::subtree_usage)
-/// — seed included — is folded into `children_usage`
-/// ([`LoopContext::children_usage`](crate::agent_loop::loop_context::LoopContext)).
-/// Because this function is the single consumer of the bounded result
-/// channel **while the receiver is installed on the loop**, and every
-/// result it consumes passes through it exactly once, each child
-/// subtree is folded exactly once — no double-counting is structurally
-/// possible. (A driver may take the receiver out of the `LoopContext`
-/// and consume results externally between steps — the TUI does — in
-/// which case those results are injected by the driver and deliberately
-/// never folded: nothing reads a root's own rollup.)
-pub(super) async fn drain_child_results(
-    store: &EventStore,
-    messages: &mut Vec<Message>,
-    rx: Option<&mut tokio::sync::mpsc::Receiver<crate::agent::result_channel::ChildAgentResult>>,
-    hooks: Option<&HookRegistry>,
-    seed: Option<crate::agent::result_channel::ChildAgentResult>,
-    children_usage: &crate::r#loop::children_usage::ChildrenUsage,
-) -> Result<bool, SessionError> {
-    let mut batch: Vec<crate::agent::result_channel::ChildAgentResult> = seed.into_iter().collect();
-    if let Some(rx) = rx {
-        while let Ok(r) = rx.try_recv() {
-            batch.push(r);
-        }
-    }
-    if batch.is_empty() {
-        return Ok(false);
-    }
-    for result in &batch {
-        children_usage.add(&result.subtree_usage);
-    }
-
-    let formatted = if batch.len() == 1 {
-        frame_child_result(&batch[0])
-    } else {
-        let mut out = format!("Results from {} completed agents:\n\n", batch.len());
-        for r in &batch {
-            let _ = write!(out, "{}\n\n", frame_child_result(r));
-        }
-        out
-    };
-
-    append_and_notify(
-        store,
-        SessionEvent::UserMessage {
-            base: EventBase::new(store.last_event_id()),
-            content: formatted.clone(),
-        },
-        hooks,
-    )
-    .await?;
-    messages.push(Message {
-        response_items: Vec::new(),
-        role: MessageRole::User,
-        content: Some(formatted),
-        thinking: String::new(),
-        reasoning: Vec::new(),
-        tool_calls: Vec::new(),
-        tool_call_id: None,
-        tool_name: None,
-        tool_call_kind: None,
-    });
-    Ok(true)
 }

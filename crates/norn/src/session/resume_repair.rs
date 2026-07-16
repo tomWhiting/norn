@@ -2,7 +2,7 @@
 //!
 //! A hard process kill (`SIGKILL`, or the norn session killed mid-turn)
 //! can leave a durable `AssistantMessage` carrying tool calls with no
-//! matching `ToolResult`: the assistant turn is persisted the moment the
+//! matching local result: the assistant turn is persisted the moment the
 //! model requests the tools, and each result is persisted only after that
 //! tool executes, so a process that dies in between leaves one or more tool
 //! calls with no recorded output. On the next `--resume-if-exists`,
@@ -14,7 +14,8 @@
 //! never changes on its own.
 //!
 //! [`repair_dangling_tool_calls`] heals the log at open time by appending a
-//! synthetic `ToolResult` for every tool call that has no recorded output,
+//! synthetic `ToolResult` for every tool call that has neither a legacy
+//! `ToolResult` nor a canonical function/custom call-output item,
 //! so the reopened transcript is well-formed before the first provider
 //! request is assembled. It is:
 //!
@@ -34,8 +35,6 @@
 //! replay and provider-threaded) and stays queryable in the resumed action
 //! log ([`rebuild_action_log`](crate::agent::resume::rebuild_action_log)
 //! records it as an `Error` outcome).
-
-use std::collections::HashSet;
 
 use crate::error::SessionError;
 use crate::session::events::{EventBase, SessionEvent};
@@ -73,9 +72,9 @@ pub(crate) fn is_interrupted_tool_result(event: &SessionEvent) -> bool {
 /// `store` that has no recorded output, healing a transcript killed
 /// mid-turn so a resumed session assembles a well-formed provider request.
 ///
-/// A tool call is *dangling* when no `ToolResult` anywhere in the log
-/// references its `call_id` — exactly the condition the Responses API
-/// rejects with "no tool output found for function call". Every dangling
+/// A tool call is *dangling* when no later family-compatible canonical output
+/// and no later legacy `ToolResult` consumes it — exactly the condition the
+/// Responses API rejects with "no tool output found for function call". Every dangling
 /// call receives one synthetic result carrying [`INTERRUPTED_OUTPUT`],
 /// appended in the calls' original order after all existing events (so each
 /// synthetic output still follows its originating call on the wire).
@@ -93,38 +92,17 @@ pub(crate) fn is_interrupted_tool_result(event: &SessionEvent) -> bool {
 pub fn repair_dangling_tool_calls(store: &EventStore) -> Result<Vec<String>, SessionError> {
     let events = store.events();
 
-    // Every call_id already answered by a ToolResult, anywhere in the log:
-    // a call is dangling only when NO result references it.
-    let mut answered: HashSet<String> = HashSet::new();
-    for event in &events {
-        if let SessionEvent::ToolResult { tool_call_id, .. } = event {
-            answered.insert(tool_call_id.clone());
-        }
-    }
-
-    // Dangling calls in original append order, de-duplicated by call_id so a
-    // reused id never receives two synthetic outputs.
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut dangling: Vec<(String, String)> = Vec::new();
-    for event in &events {
-        if let Some(tool_calls) = event.assistant_tool_calls() {
-            for tc in tool_calls {
-                if answered.contains(&tc.call_id) || !seen.insert(tc.call_id.clone()) {
-                    continue;
-                }
-                dangling.push((tc.call_id, tc.name));
-            }
-        }
-    }
+    let dangling = crate::session::unresolved_local_tool_calls(&events);
 
     let mut repaired = Vec::with_capacity(dangling.len());
-    for (call_id, tool_name) in dangling {
+    for call in dangling {
+        let call_id = call.call_id;
         // `last_event_id` is re-read per append so the parent chain links
         // correctly across the whole synthesized batch.
         let event = SessionEvent::ToolResult {
             base: EventBase::new(store.last_event_id()),
             tool_call_id: call_id.clone(),
-            tool_name,
+            tool_name: call.name,
             output: serde_json::json!({ "error": INTERRUPTED_OUTPUT }),
             spool_ref: None,
             duration_ms: 0,
@@ -139,6 +117,8 @@ pub fn repair_dangling_tool_calls(store: &EventStore) -> Result<Vec<String>, Ses
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
     use crate::provider::openai::request::build_payload;
     use crate::provider::request::{
@@ -164,6 +144,7 @@ mod tests {
                     name: (*name).to_owned(),
                     arguments: serde_json::json!({"path": "/tmp/x"}),
                     kind: ReqToolCallKind::Function,
+                    caller: crate::provider::request::ToolCallCaller::Absent,
                 })
                 .collect(),
             usage: EventUsage::default(),
@@ -413,6 +394,7 @@ mod tests {
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         }];
         messages.extend(events_to_messages(&store.events()));
 

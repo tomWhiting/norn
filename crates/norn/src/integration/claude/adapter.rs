@@ -546,6 +546,7 @@ mod tests {
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             tools: vec![],
             model: "sonnet".to_owned(),
@@ -585,6 +586,7 @@ mod tests {
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             },
         );
         request

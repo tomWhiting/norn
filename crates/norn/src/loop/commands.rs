@@ -425,6 +425,7 @@ impl SlashCommandRegistry {
                         tool_call_id: None,
                         tool_name: None,
                         tool_call_kind: None,
+                        tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
                     }])
                 }),
             },
@@ -447,6 +448,7 @@ impl SlashCommandRegistry {
                         tool_call_id: None,
                         tool_name: None,
                         tool_call_kind: None,
+                        tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
                     }])
                 }),
             },
@@ -469,6 +471,7 @@ impl SlashCommandRegistry {
                         tool_call_id: None,
                         tool_name: None,
                         tool_call_kind: None,
+                        tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
                     }])
                 }),
             },
@@ -553,6 +556,7 @@ pub fn preprocess_input(
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             }]
         }
         SlashCommandHandler::Tool { tool_name, args } => {
@@ -572,10 +576,12 @@ pub fn preprocess_input(
                     name: tool_name.clone(),
                     arguments,
                     kind: crate::provider::request::ToolCallKind::Function,
+                    caller: crate::provider::request::ToolCallCaller::Absent,
                 }],
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             }]
         }
         SlashCommandHandler::Custom { handler } => handler(arg)?,
@@ -716,6 +722,7 @@ mod tests {
                         tool_call_id: None,
                         tool_name: None,
                         tool_call_kind: None,
+                        tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
                     }])
                 }),
             },

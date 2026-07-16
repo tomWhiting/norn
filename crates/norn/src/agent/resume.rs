@@ -213,6 +213,7 @@ mod tests {
                 name: name.to_owned(),
                 arguments: args,
                 kind: crate::provider::request::ToolCallKind::Function,
+                caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             usage: EventUsage::default(),
             stop_reason: "tool_use".to_owned(),

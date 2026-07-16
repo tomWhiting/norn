@@ -183,6 +183,7 @@ fn text_message(role: MessageRole, content: String) -> Message {
         tool_call_id: None,
         tool_name: None,
         tool_call_kind: None,
+        tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
     }
 }
 
@@ -213,6 +214,7 @@ mod tests {
                 name: "read".to_string(),
                 arguments: serde_json::json!({"path": "/tmp/a"}),
                 kind: crate::provider::request::ToolCallKind::Function,
+                caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             usage: EventUsage::default(),
             stop_reason: "tool_use".to_string(),
@@ -301,6 +303,7 @@ mod tests {
                 name: "stale_tool".to_string(),
                 arguments: serde_json::json!({}),
                 kind: crate::provider::request::ToolCallKind::Function,
+                caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             usage: EventUsage::default(),
             stop_reason: "end_turn".to_string(),

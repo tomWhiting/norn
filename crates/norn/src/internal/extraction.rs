@@ -69,6 +69,7 @@ pub async fn extract(
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             },
             Message {
                 response_items: Vec::new(),
@@ -80,6 +81,7 @@ pub async fn extract(
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             },
         ],
         tools: Vec::new(),

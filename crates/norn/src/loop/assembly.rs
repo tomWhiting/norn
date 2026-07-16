@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::provider::events::{ProviderEvent, StopReason};
 use crate::provider::reasoning::ReasoningItem;
-use crate::provider::request::ToolCallKind;
+use crate::provider::request::{ToolCallCaller, ToolCallKind};
 use crate::provider::response_item::{ResponseContentPart, ResponseItem, ResponseTranscriptItem};
 use crate::provider::usage::Usage;
 
@@ -28,6 +28,8 @@ pub struct AssembledToolCall {
     /// when the originating SSE events are `response.custom_tool_call_input.*`
     /// or `response.output_item.done` carries `item.type == "custom_tool_call"`.
     pub kind: ToolCallKind,
+    /// Exact provider `caller` field, including explicit `null`.
+    pub caller: ToolCallCaller,
 }
 
 /// A fully assembled response from one provider turn.
@@ -75,6 +77,7 @@ struct ToolCallAccumulator {
     /// `ToolCallComplete` overrides the delta-derived value so the wire
     /// classification on `output_item.done` wins if the two ever disagree.
     kind: ToolCallKind,
+    caller: ToolCallCaller,
 }
 
 /// Assembles a complete response from a sequence of `ProviderEvent` values.
@@ -143,6 +146,7 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
                         arguments: String::new(),
                         call_id: None,
                         kind: *kind,
+                        caller: ToolCallCaller::Absent,
                     }
                 });
                 if let Some(n) = name {
@@ -205,6 +209,7 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
                             arguments: arguments.clone(),
                             call_id: Some(call_id.clone()),
                             kind: *kind,
+                            caller: ToolCallCaller::Absent,
                         },
                     );
                 }
@@ -262,6 +267,7 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
                 name: entry.name.clone(),
                 arguments: entry.arguments.clone(),
                 kind: entry.kind,
+                caller: entry.caller.clone(),
             })
         })
         .collect();
@@ -343,6 +349,7 @@ fn record_completed_call(
             arguments: arguments.to_owned(),
             call_id: Some(call_id.to_owned()),
             kind,
+            caller: ToolCallCaller::from_item(transcript_item.item.raw()),
         },
     );
 }

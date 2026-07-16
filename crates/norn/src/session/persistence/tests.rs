@@ -120,6 +120,7 @@ fn one_of_each() -> Vec<SessionEvent> {
                 name: "Read".to_owned(),
                 arguments: serde_json::json!({"path": "/etc/hosts"}),
                 kind: crate::provider::request::ToolCallKind::Function,
+                caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             usage: EventUsage::default(),
             stop_reason: String::new(),
@@ -1838,6 +1839,7 @@ fn replay_fixture() -> (Vec<u8>, EventId) {
                 "tool_use_description": "inspect module a",
             }),
             kind: crate::provider::request::ToolCallKind::Function,
+            caller: crate::provider::request::ToolCallCaller::Absent,
         }],
         usage: EventUsage {
             input_tokens: 11,

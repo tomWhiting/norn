@@ -95,6 +95,13 @@ pub struct ToolCallEvent {
     /// so pre-existing session events deserialize without migration.
     #[serde(default)]
     pub kind: crate::provider::request::ToolCallKind,
+    /// Exact Responses `caller` field for the matching result. Old sessions
+    /// default to absent; explicit JSON `null` remains distinct.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::provider::request::ToolCallCaller::is_absent"
+    )]
+    pub caller: crate::provider::request::ToolCallCaller,
 }
 
 /// Token usage from a single provider call.

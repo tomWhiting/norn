@@ -423,6 +423,7 @@ mod tests {
             name: name.to_owned(),
             arguments: "{}".to_owned(),
             kind: crate::provider::request::ToolCallKind::Function,
+            caller: crate::provider::request::ToolCallCaller::Absent,
         }
     }
 

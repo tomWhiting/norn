@@ -127,6 +127,7 @@ impl NornWrappedClaudeCode {
                                     name,
                                     arguments: input,
                                     kind: crate::provider::request::ToolCallKind::Function,
+                                    caller: crate::provider::request::ToolCallCaller::Absent,
                                 })
                             } else {
                                 None

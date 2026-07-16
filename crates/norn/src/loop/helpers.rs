@@ -113,6 +113,7 @@ pub(super) fn build_initial_messages(
         tool_call_id: None,
         tool_name: None,
         tool_call_kind: None,
+        tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
     });
 
     // The managed dynamic-context Developer message is NOT placed here: it is
@@ -145,6 +146,7 @@ pub(super) fn build_initial_messages(
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
     }
     let new_input_len = messages.len() - input_start;
@@ -239,6 +241,7 @@ pub(super) async fn accept_schema_tool_call(
                 tool_call_id: &schema_tc.call_id,
                 tool_name: schema_tool_name,
                 kind: schema_tc.kind,
+                caller: schema_tc.caller.clone(),
                 output: &Value::String("accepted".to_string()),
                 duration_ms: 0,
                 inline_char_limit,
@@ -290,6 +293,7 @@ pub(super) async fn reject_post_schema_tools(
                     tool_call_id: &tc.call_id,
                     tool_name: &tc.name,
                     kind: tc.kind,
+                    caller: tc.caller.clone(),
                     output: &rejection,
                     duration_ms: 0,
                     inline_char_limit,
@@ -352,6 +356,7 @@ pub(super) async fn handle_iteration_signals(
                     tool_call_id: None,
                     tool_name: None,
                     tool_call_kind: None,
+                    tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
                 });
             }
             IterationSignal::RepeatedFailure {
@@ -483,63 +488,6 @@ pub(super) async fn execute_tool_batch(
     let (before, after) = partition_injections_by_timing(batch_injections);
     apply_rule_injections(request.loop_context, after, request.messages, request.store).await?;
     Ok(before)
-}
-
-/// Ensure every tool call in the last `AssistantMessage` has a matching
-/// `ToolResult` in the store. Appends synthetic cancelled results for
-/// any that are missing.
-///
-/// Called after `run_agent_step` returns (all exit paths) and after
-/// external cancellation (e.g. Ctrl+C drops the step future). This
-/// guarantees the store is always in a valid state where no tool call
-/// is orphaned — the provider never sees a tool call without a result.
-pub async fn ensure_tool_results_complete(store: &EventStore) {
-    let events = store.events();
-
-    let last_assistant = events.iter().rposition(|event| {
-        event
-            .assistant_tool_calls()
-            .is_some_and(|calls| !calls.is_empty())
-    });
-    let Some(assistant_idx) = last_assistant else {
-        return;
-    };
-    let Some(tool_calls) = events[assistant_idx].assistant_tool_calls() else {
-        return;
-    };
-    if tool_calls.is_empty() {
-        return;
-    }
-
-    let results_after: Vec<&str> = events[assistant_idx..]
-        .iter()
-        .filter_map(|e| match e {
-            SessionEvent::ToolResult { tool_call_id, .. } => Some(tool_call_id.as_str()),
-            _ => None,
-        })
-        .collect();
-
-    for tc in &tool_calls {
-        if !results_after.contains(&tc.call_id.as_str()) {
-            let event = SessionEvent::ToolResult {
-                base: EventBase::new(store.last_event_id()),
-                tool_call_id: tc.call_id.clone(),
-                tool_name: tc.name.clone(),
-                output: serde_json::json!({
-                    "error": "execution cancelled before completion"
-                }),
-                spool_ref: None,
-                duration_ms: 0,
-            };
-            if let Err(e) = append_off_executor(store, event) {
-                tracing::error!(
-                    tool_call_id = %tc.call_id,
-                    error = %e,
-                    "failed to append cancelled tool result",
-                );
-            }
-        }
-    }
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ use crate::r#loop::classify::call_provider_with_retry;
 use crate::r#loop::config::AgentStepResult;
 use crate::r#loop::helpers::{append_and_notify, handle_iteration_signals};
 use crate::r#loop::iteration::evaluate_iteration;
+use crate::r#loop::programmatic_calling::validate_programmatic_callers;
 use crate::provider::events::StopReason;
 use crate::provider::request::{AssistantToolCall, Message, MessageRole, ProviderRequest};
 use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
@@ -80,6 +81,8 @@ impl StepMachine<'_> {
             }
         }
 
+        validate_programmatic_callers(&self.messages, &response)?;
+
         if let Some(hooks) = self.loop_context.hooks.as_deref() {
             let summary = LlmCallSummary {
                 stop_reason: Some(response.stop_reason.clone()),
@@ -126,6 +129,7 @@ impl StepMachine<'_> {
                 name: tc.name.clone(),
                 arguments: tc.arguments.clone(),
                 kind: tc.kind,
+                caller: tc.caller.clone(),
             })
             .collect();
 
@@ -138,6 +142,7 @@ impl StepMachine<'_> {
                 arguments: serde_json::from_str(&tc.arguments)
                     .unwrap_or_else(|_| Value::String(tc.arguments.clone())),
                 kind: tc.kind,
+                caller: tc.caller.clone(),
             })
             .collect();
 
@@ -204,6 +209,7 @@ impl StepMachine<'_> {
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
         self.conversation_state
             .observe_response(response.response_id.as_deref(), self.messages.len());

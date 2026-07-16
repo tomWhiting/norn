@@ -10,6 +10,10 @@ use crate::provider::request::{
 };
 use crate::provider::tools::{HostedToolDefinition, ProviderToolDefinition};
 
+mod caller_projection;
+
+use caller_projection::ToolCallerProjection;
+
 /// Catalog provider identifier every `OpenAI` Responses connection
 /// resolves against.
 pub(super) const CATALOG_PROVIDER: &str = "openai";
@@ -109,6 +113,7 @@ pub(crate) fn build_payload(
 ) -> Result<serde_json::Value, ProviderError> {
     let mut instructions = String::new();
     let mut input = Vec::new();
+    let mut callers = ToolCallerProjection::default();
 
     for msg in &request.messages {
         match msg.role {
@@ -127,10 +132,12 @@ pub(crate) fn build_payload(
                 input.push(serialize_user_message(msg));
             }
             MessageRole::Assistant => {
+                callers.observe_assistant(msg)?;
                 serialize_assistant_into(&mut input, msg);
             }
             MessageRole::ToolResult => {
-                input.push(serialize_tool_result(msg)?);
+                let caller = callers.caller_for_result(msg)?;
+                input.push(serialize_tool_result(msg, caller.value())?);
             }
         }
     }
@@ -394,7 +401,7 @@ fn serialize_assistant_into(input: &mut Vec<serde_json::Value>, msg: &Message) {
     }
 
     for tc in &msg.tool_calls {
-        let item = match tc.kind {
+        let mut item = match tc.kind {
             ToolCallKind::Function => serde_json::json!({
                 "type": "function_call",
                 "call_id": tc.call_id,
@@ -408,6 +415,9 @@ fn serialize_assistant_into(input: &mut Vec<serde_json::Value>, msg: &Message) {
                 "input": tc.arguments,
             }),
         };
+        if let (Some(caller), Some(object)) = (tc.caller.value(), item.as_object_mut()) {
+            object.insert("caller".to_owned(), caller.clone());
+        }
         input.push(item);
     }
 }
@@ -421,7 +431,10 @@ fn serialize_assistant_into(input: &mut Vec<serde_json::Value>, msg: &Message) {
 /// the kind is `None`, matching pre-existing tool results), and
 /// `custom_tool_call_output` for [`ToolCallKind::Custom`]. The payload shape
 /// (`call_id` + `output`) is identical for both envelopes — only the `type`
-/// discriminator differs.
+/// discriminator differs. When the originating canonical call carried a
+/// `caller` field, the ordered projection built while walking the conversation
+/// copies that exact JSON value onto the output. This is required for the
+/// service to resume the correct hosted program after Programmatic Tool Calling.
 ///
 /// `call_id` is the only identifier the model correlates a tool result with
 /// its originating call; the Responses API rejects items that omit it, and a
@@ -431,7 +444,10 @@ fn serialize_assistant_into(input: &mut Vec<serde_json::Value>, msg: &Message) {
 /// over with an empty string — every `ToolResult` is constructed from an
 /// `AssembledToolCall` that already carries the `call_id`, so absence is
 /// unambiguously an upstream bug.
-fn serialize_tool_result(msg: &Message) -> Result<serde_json::Value, ProviderError> {
+fn serialize_tool_result(
+    msg: &Message,
+    caller: Option<&serde_json::Value>,
+) -> Result<serde_json::Value, ProviderError> {
     let call_id = msg
         .tool_call_id
         .as_deref()
@@ -444,15 +460,22 @@ fn serialize_tool_result(msg: &Message) -> Result<serde_json::Value, ProviderErr
         ToolCallKind::Function => "function_call_output",
         ToolCallKind::Custom => "custom_tool_call_output",
     };
-    Ok(serde_json::json!({
+    let mut item = serde_json::json!({
         "type": item_type,
         "call_id": call_id,
         "output": msg.content.as_deref().unwrap_or(""),
-    }))
+    });
+    if let (Some(caller), Some(object)) = (caller, item.as_object_mut()) {
+        object.insert("caller".to_owned(), caller.clone());
+    }
+    Ok(item)
 }
 
 #[cfg(test)]
 mod canonical_replay_tests;
+
+#[cfg(test)]
+mod caller_projection_tests;
 
 #[cfg(test)]
 #[allow(
@@ -499,6 +522,7 @@ mod tests {
                     tool_call_id: None,
                     tool_name: None,
                     tool_call_kind: None,
+                    tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
                 },
                 Message {
                     response_items: Vec::new(),
@@ -510,6 +534,7 @@ mod tests {
                     tool_call_id: None,
                     tool_name: None,
                     tool_call_kind: None,
+                    tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
                 },
                 Message {
                     response_items: Vec::new(),
@@ -521,6 +546,7 @@ mod tests {
                     tool_call_id: None,
                     tool_name: None,
                     tool_call_kind: None,
+                    tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
                 },
             ],
             tools: vec![
@@ -949,6 +975,7 @@ mod tests {
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             },
         );
         let payload =
@@ -986,6 +1013,7 @@ mod tests {
                 tool_call_id: None,
                 tool_name: Some("tool-name-secret-must-not-escape".to_string()),
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             tools: vec![],
             model: "gpt-4.1-mini".to_string(),
@@ -1029,6 +1057,7 @@ mod tests {
                 tool_call_id: Some(String::new()),
                 tool_name: Some("write".to_string()),
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             tools: vec![],
             model: "gpt-4.1-mini".to_string(),
@@ -1064,10 +1093,12 @@ mod tests {
                     name: "freeform_tool".to_string(),
                     arguments: "*** BEGIN PATCH ***".to_string(),
                     kind: ToolCallKind::Custom,
+                    caller: crate::provider::request::ToolCallCaller::Absent,
                 }],
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             tools: vec![],
             model: "gpt-5".to_string(),
@@ -1109,10 +1140,12 @@ mod tests {
                     name: "read".to_string(),
                     arguments: r#"{"path":"a"}"#.to_string(),
                     kind: ToolCallKind::Function,
+                    caller: crate::provider::request::ToolCallCaller::Absent,
                 }],
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             tools: vec![],
             model: "gpt-5".to_string(),
@@ -1148,6 +1181,7 @@ mod tests {
                 tool_call_id: Some("call_custom".to_string()),
                 tool_name: Some("apply_patch".to_string()),
                 tool_call_kind: Some(ToolCallKind::Custom),
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             tools: vec![],
             model: "gpt-5".to_string(),
@@ -1184,6 +1218,7 @@ mod tests {
                 tool_call_id: Some("call_legacy".to_string()),
                 tool_name: Some("read".to_string()),
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             tools: vec![],
             model: "gpt-5".to_string(),
@@ -1215,6 +1250,7 @@ mod tests {
                 tool_call_id: Some("call_xyz".to_string()),
                 tool_name: Some("read".to_string()),
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             tools: vec![],
             model: "gpt-4.1-mini".to_string(),
@@ -1264,10 +1300,12 @@ mod tests {
                     name: "read".to_string(),
                     arguments: r#"{"path":"a"}"#.to_string(),
                     kind: ToolCallKind::Function,
+                    caller: crate::provider::request::ToolCallCaller::Absent,
                 }],
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             tools: vec![],
             model: "gpt-5".to_string(),

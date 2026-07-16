@@ -30,6 +30,9 @@ pub use branch::{
     BranchedChild, ChildBranchRequest, ChildDurability, ROOT_PATH_ADDRESS, SessionBinding,
     SessionBrancher, child_path_slug, slugify_name_stem,
 };
+pub(crate) use event_projection::{
+    apply_local_tool_event, unresolved_local_tool_calls, without_orphan_local_tool_outputs,
+};
 pub use manager::{CreateSessionOptions, OpenSession, ReplaySummary, SessionManager};
 pub use mutation_ledger::{
     DiffStats, MutationLedger, MutationLedgerEntry, MutationOp, RecordedMutation, RevertStatus,
@@ -49,5 +52,7 @@ pub use store::{DurabilityPolicy, EventStore, JsonlSink, PersistenceSink};
 
 #[cfg(test)]
 mod canonical_persistence_tests;
+#[cfg(test)]
+mod canonical_tool_resolution_tests;
 #[cfg(test)]
 mod canonical_transcript_tests;

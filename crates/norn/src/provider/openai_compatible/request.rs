@@ -302,6 +302,7 @@ mod tests {
                     tool_call_id: None,
                     tool_name: None,
                     tool_call_kind: None,
+                    tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
                 },
                 Message {
                     response_items: Vec::new(),
@@ -313,6 +314,7 @@ mod tests {
                     tool_call_id: None,
                     tool_name: None,
                     tool_call_kind: None,
+                    tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
                 },
                 Message {
                     response_items: Vec::new(),
@@ -324,6 +326,7 @@ mod tests {
                     tool_call_id: None,
                     tool_name: None,
                     tool_call_kind: None,
+                    tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
                 },
             ],
             tools: vec![ProviderToolDefinition::Function(ToolDefinition {
@@ -397,10 +400,12 @@ mod tests {
                 name: "read_file".to_owned(),
                 arguments: r#"{"path":"README.md"}"#.to_owned(),
                 kind: ToolCallKind::Function,
+                caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
         request.messages.push(Message {
             response_items: Vec::new(),
@@ -412,6 +417,7 @@ mod tests {
             tool_call_id: Some("call_123".to_owned()),
             tool_name: Some("tool-name-secret-must-not-escape".to_owned()),
             tool_call_kind: Some(ToolCallKind::Function),
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
 
         let value = serde_json::to_value(build_payload(&request).unwrap()).unwrap();
@@ -439,6 +445,7 @@ mod tests {
             tool_call_id: None,
             tool_name: Some("read_file".to_owned()),
             tool_call_kind: Some(ToolCallKind::Function),
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
 
         let err = build_payload(&request).unwrap_err();
@@ -545,6 +552,7 @@ mod tests {
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
 
         let value = serde_json::to_value(build_payload(&request).unwrap()).unwrap();
@@ -588,6 +596,7 @@ mod tests {
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
 
         let error = build_payload(&request).unwrap_err();

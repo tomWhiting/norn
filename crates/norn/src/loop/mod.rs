@@ -40,6 +40,7 @@ pub mod config;
 pub mod context;
 mod conversation_state;
 mod delivery;
+mod delivery_inputs;
 mod dev_context;
 pub mod event_schemas;
 
@@ -49,13 +50,14 @@ mod helpers;
 mod inflight_compaction;
 pub(crate) use delivery::{UndeliveredWindow, requeue_undelivered_inbound};
 pub(crate) use helpers::append_off_executor;
-pub use helpers::ensure_tool_results_complete;
+pub use tool_result_repair::ensure_tool_results_complete;
 pub mod inbound;
 pub mod iteration;
 pub mod linger;
 pub mod loop_context;
 pub mod notifications;
 mod numeric;
+mod programmatic_calling;
 
 pub mod retry;
 mod rule_wiring;
@@ -64,5 +66,12 @@ pub mod schema;
 mod stop_records;
 mod summarization;
 mod tool_dispatch;
+mod tool_result_repair;
 
 pub mod tokens;
+
+#[cfg(test)]
+mod canonical_tool_resolution_tests;
+
+#[cfg(test)]
+mod caller_propagation_tests;

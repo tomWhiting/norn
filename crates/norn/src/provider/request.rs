@@ -131,6 +131,10 @@ pub enum ToolCallKind {
     Custom,
 }
 
+mod tool_call_caller;
+
+pub use tool_call_caller::ToolCallCaller;
+
 /// A tool call made by the assistant.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AssistantToolCall {
@@ -146,6 +150,11 @@ pub struct AssistantToolCall {
     /// Which surface kind this call uses. See [`ToolCallKind`].
     #[serde(default)]
     pub kind: ToolCallKind,
+    /// Exact provider `caller` field. Canonical Responses items remain the
+    /// primary representation; this keeps provider-neutral fallback replay
+    /// coherent when the field is present.
+    #[serde(default, skip_serializing_if = "ToolCallCaller::is_absent")]
+    pub caller: ToolCallCaller,
 }
 
 /// A message in the conversation history.
@@ -194,6 +203,12 @@ pub struct Message {
     /// has not yet plumbed the kind through.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_kind: Option<ToolCallKind>,
+    /// Exact provider `caller` field for a tool result. Absence, explicit
+    /// `null`, and an object value remain distinct so Programmatic Tool Calling
+    /// can resume the correct hosted program on both threaded and stateless
+    /// requests.
+    #[serde(default, skip_serializing_if = "ToolCallCaller::is_absent")]
+    pub tool_call_caller: ToolCallCaller,
 }
 
 /// Provider-specific configuration options.
@@ -501,6 +516,7 @@ mod tests {
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         };
         let json = serde_json::to_string(&msg).expect("serialize");
         assert!(
@@ -529,6 +545,7 @@ mod tests {
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         };
         let json = serde_json::to_string(&msg).expect("serialize");
         let back: Message = serde_json::from_str(&json).expect("deserialize");

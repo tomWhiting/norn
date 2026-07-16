@@ -2973,6 +2973,7 @@ mod tests {
                         "tool_use_description": "inspect entry point",
                     }),
                     kind: crate::provider::request::ToolCallKind::Function,
+                    caller: crate::provider::request::ToolCallCaller::Absent,
                 }],
                 usage: EventUsage::default(),
                 stop_reason: "tool_use".to_owned(),

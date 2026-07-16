@@ -541,6 +541,7 @@ mod tests {
                 name: "read".to_owned(),
                 arguments: serde_json::json!({"path": "Cargo.toml"}),
                 kind: ToolCallKind::Function,
+                caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             usage: EventUsage::default(),
             stop_reason: String::new(),
@@ -1429,6 +1430,7 @@ mod tests {
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             },
             // ~140k chars of replayed encrypted reasoning → ~35k extra tokens.
             Message {
@@ -1448,6 +1450,7 @@ mod tests {
                 tool_call_id: None,
                 tool_name: None,
                 tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             },
         ];
 

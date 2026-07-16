@@ -351,6 +351,7 @@ mod tests {
             tool_call_id: None,
             tool_name: None,
             tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         }
     }
 
@@ -582,6 +583,7 @@ mod tests {
                 name: "bash".to_string(),
                 arguments: serde_json::json!({"command": "long-running"}),
                 kind: ToolCallKind::Function,
+                caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             usage: EventUsage::default(),
             stop_reason: "tool_use".to_string(),
