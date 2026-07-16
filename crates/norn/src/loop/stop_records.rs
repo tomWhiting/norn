@@ -86,6 +86,7 @@ pub(super) async fn record_abnormal_step_stop(
             ("max_iterations", ctx.timeout_state.lock().iterations)
         }
         AgentStepResult::Completed { .. }
+        | AgentStepResult::Refused { .. }
         | AgentStepResult::SchemaUnreachable { .. }
         | AgentStepResult::Truncated { .. } => return,
     };
@@ -101,6 +102,10 @@ pub(super) async fn record_abnormal_step_stop(
     ) {
         let partial = ctx.timeout_state.lock().in_flight_partial.take();
         if let Some(partial) = partial.filter(|p| !p.is_empty()) {
+            let refusal_chars = partial
+                .refusal
+                .as_deref()
+                .map(|refusal| refusal.chars().count());
             let event = SessionEvent::Custom {
                 base: EventBase::new(ctx.store.last_event_id()),
                 event_type: PARTIAL_OUTPUT_EVENT_TYPE.to_string(),
@@ -109,8 +114,10 @@ pub(super) async fn record_abnormal_step_stop(
                     "hard_cut": true,
                     "text": partial.text,
                     "thinking": partial.thinking,
+                    "refusal": partial.refusal,
                     "text_chars": partial.text.chars().count(),
                     "thinking_chars": partial.thinking.chars().count(),
+                    "refusal_chars": refusal_chars,
                 }),
             };
             // Kept best-effort: propagating would replace the typed

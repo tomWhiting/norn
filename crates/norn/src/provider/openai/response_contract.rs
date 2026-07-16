@@ -68,7 +68,11 @@ pub enum StreamEventStage {
     Lifecycle,
     /// The event contributes incremental content to an identity-keyed item.
     Incremental,
-    /// The event carries authoritative completion for a non-terminal component.
+    /// A non-terminal component closed; payload authority is event-specific.
+    ///
+    /// Consumers must not infer reconciliation semantics from this coarse
+    /// stage. Some entries carry final content while others are lifecycle-only
+    /// closure markers.
     Completed,
     /// The event terminates the response stream or reports a standalone error.
     Terminal,

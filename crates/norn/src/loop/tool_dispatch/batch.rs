@@ -429,6 +429,7 @@ mod tests {
     fn response_with(calls: Vec<AssembledToolCall>) -> AssembledResponse {
         AssembledResponse {
             response_items: Vec::new(),
+            refusal: None,
             reasoning: Vec::new(),
             text: String::new(),
             thinking: String::new(),

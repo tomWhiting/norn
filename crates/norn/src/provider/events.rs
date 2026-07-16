@@ -1,5 +1,6 @@
 //! Streaming event types emitted by providers.
 
+use super::openai::response_stream_event::ResponseStreamEvent;
 use super::reasoning::ReasoningItem;
 use super::request::ToolCallKind;
 use super::response_item::ResponseTranscriptItem;
@@ -24,10 +25,49 @@ pub enum StopReason {
 /// Each variant carries only delta data, not accumulated state.
 #[derive(Clone, Debug)]
 pub enum ProviderEvent {
+    /// One lossless `OpenAI` Responses stream envelope.
+    ///
+    /// This is the observability lane for the complete public/Codex event
+    /// taxonomy. It never becomes replayable conversation state by itself;
+    /// authoritative completed items arrive separately through
+    /// [`ResponseItemDone`](Self::ResponseItemDone).
+    ResponseStreamEvent {
+        /// Validated envelope retaining the exact provider JSON.
+        event: Box<ResponseStreamEvent>,
+    },
+
     /// A chunk of text content from the model.
     TextDelta {
         /// The text fragment.
         text: String,
+    },
+
+    /// A refusal-content preview from the model.
+    ///
+    /// Refusal is a model outcome, not a transport failure. Identity and
+    /// indices remain attached so interleaved message parts cannot collapse
+    /// into one unkeyed string.
+    RefusalDelta {
+        /// Provider output-item identifier.
+        item_id: String,
+        /// Position of the message in `response.output`.
+        output_index: u64,
+        /// Position of the refusal part in the message content array.
+        content_index: u64,
+        /// Incremental refusal text.
+        refusal: String,
+    },
+
+    /// Authoritative refusal text from `response.refusal.done`.
+    RefusalComplete {
+        /// Provider output-item identifier.
+        item_id: String,
+        /// Position of the message in `response.output`.
+        output_index: u64,
+        /// Position of the refusal part in the message content array.
+        content_index: u64,
+        /// Complete refusal text.
+        refusal: String,
     },
 
     /// A chunk of thinking/reasoning content.

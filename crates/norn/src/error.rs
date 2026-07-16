@@ -382,6 +382,43 @@ pub enum ProviderError {
         feature: String,
     },
 
+    /// The Responses stream carried an event outside the pinned public and
+    /// Codex manifests.
+    ///
+    /// The authority-controlled discriminator is deliberately absent from
+    /// this error. The lossless raw envelope is emitted separately before
+    /// this terminal outcome.
+    #[error("unsupported Responses stream event")]
+    UnsupportedResponseEvent,
+
+    /// The Responses output requested client-side action that Norn does not
+    /// implement end to end, or used an unknown output-item discriminator.
+    ///
+    /// The lossless item is emitted on the canonical event lane before this
+    /// terminal outcome; its provider-controlled discriminator is not copied
+    /// into ordinary error text.
+    #[error("unsupported Responses output item")]
+    UnsupportedResponseItem,
+
+    /// The Responses stream carried response-scoped media for which Norn has
+    /// no persisted canonical artifact yet.
+    ///
+    /// The raw event is emitted before this terminal outcome. Keeping this
+    /// distinct from [`UnsupportedResponseEvent`](Self::UnsupportedResponseEvent)
+    /// records that the event is known while its end-to-end media contract is
+    /// not implemented.
+    #[error("unsupported Responses media output")]
+    UnsupportedResponseMedia,
+
+    /// A pinned Responses event violated identity, sequencing, completion,
+    /// or terminal reconciliation rules.
+    #[error("Responses protocol violation: {source}")]
+    ResponseProtocolViolation {
+        /// Typed non-disclosing reconciliation failure.
+        #[source]
+        source: crate::provider::openai::response_reconciler::ResponseReconciliationError,
+    },
+
     /// The request exceeded the model's context window.
     ///
     /// Classified from a `response.failed` SSE event carrying the
@@ -447,6 +484,10 @@ impl ProviderError {
             Self::ResponseParseError { .. }
             | Self::RequestSerializationFailed { .. }
             | Self::UnsupportedFeature { .. }
+            | Self::UnsupportedResponseEvent
+            | Self::UnsupportedResponseItem
+            | Self::UnsupportedResponseMedia
+            | Self::ResponseProtocolViolation { .. }
             | Self::RedirectPolicyRefused { .. }
             | Self::ContextWindowExceeded
             | Self::QuotaExceeded

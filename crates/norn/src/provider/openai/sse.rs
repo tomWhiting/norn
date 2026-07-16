@@ -2,8 +2,10 @@
 //!
 //! Splits the streaming protocol surface across two files:
 //!
-//! * `sse.rs` (this file) — the raw byte-stream parser ([`SseParser`]) and
-//!   lifecycle/delta dispatcher ([`map_sse_event`]).
+//! * `super::sse_parser` — fail-closed raw byte-stream parsing, re-exported
+//!   here as [`SseParser`].
+//! * `sse.rs` (this file) — legacy lifecycle/delta UI projections through
+//!   [`map_sse_event`].
 //! * `super::sse_completed_item` — lossless completed-item capture.
 //! * `super::sse_types` — typed deserialization targets for
 //!   `output_item.done` / `response.failed` / `response.incomplete`
@@ -16,25 +18,17 @@
 use serde::Deserialize;
 
 use super::sse_completed_item::map_completed_item;
+pub use super::sse_parser::{SseEvent, SseParseError, SseParser};
 use super::sse_types::{ResponseFailedPayload, classify_failed_error, incomplete_stop_reason};
 use crate::error::ProviderError;
 use crate::provider::events::{ProviderEvent, StopReason};
 use crate::provider::request::ToolCallKind;
 use crate::provider::usage::Usage;
 
-/// An intermediate SSE event parsed from the byte stream.
-#[derive(Clone, Debug)]
-pub struct SseEvent {
-    /// The SSE event type (e.g. `response.output_text.delta`).
-    pub event_type: String,
-    /// The parsed JSON data payload.
-    pub data: serde_json::Value,
-}
-
 /// Parses a complete SSE transcript into a sequence of `SseEvent` values.
 ///
 /// Test-support convenience over [`SseParser`] (a single `feed` followed by
-/// the tail [`SseParser::finish`] flush) — the production streaming path
+/// the EOF [`SseParser::finish`] cleanup) — the production streaming path
 /// never has the whole transcript in hand, so this exists only for tests
 /// that replay recorded transcripts through the real parser.
 #[cfg(test)]
@@ -45,150 +39,11 @@ pub(crate) fn parse_sse_bytes(raw: &str) -> Vec<SseEvent> {
     events
 }
 
-/// Stateful incremental SSE parser.
-///
-/// Accepts arbitrary byte chunks via [`SseParser::feed`] and yields complete
-/// [`SseEvent`] values as frames become available. Frames split across chunk
-/// boundaries — including individual `event:` or `data:` lines, the
-/// double-newline frame delimiter, and multi-byte UTF-8 codepoints — are
-/// reassembled correctly.
-///
-/// After the underlying byte stream completes, callers SHOULD invoke
-/// [`SseParser::finish`] to flush any trailing frame that lacks a terminating
-/// blank line.
-///
-/// The parser holds a byte buffer (`Vec<u8>`) rather than a `String` so that
-/// multi-byte UTF-8 codepoints split across chunks are preserved. Newline
-/// (`0x0A`) cannot appear inside a UTF-8 continuation byte, so byte-level
-/// line scanning is safe.
-#[derive(Debug, Default)]
-pub struct SseParser {
-    buffer: Vec<u8>,
-    current_event_type: String,
-    current_data: String,
-}
-
-impl SseParser {
-    /// Creates a new parser with empty state.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Feeds a chunk of bytes into the parser, returning any complete events.
-    ///
-    /// Empty chunks are a no-op (return an empty `Vec`). Otherwise the chunk
-    /// is appended to the internal buffer and every complete `\n`-terminated
-    /// line is consumed from the front. CRLF line endings are handled by
-    /// stripping a trailing `\r` before processing.
-    pub fn feed(&mut self, chunk: &[u8]) -> Vec<SseEvent> {
-        if chunk.is_empty() {
-            return Vec::new();
-        }
-        self.buffer.extend_from_slice(chunk);
-        let mut events = Vec::new();
-        while let Some(pos) = self.buffer.iter().position(|&b| b == b'\n') {
-            let line_end = if pos > 0 && self.buffer[pos - 1] == b'\r' {
-                pos - 1
-            } else {
-                pos
-            };
-            let line = String::from_utf8_lossy(&self.buffer[..line_end]).into_owned();
-            self.buffer.drain(..=pos);
-            self.process_line(&line, &mut events);
-        }
-        events
-    }
-
-    /// Flushes any trailing partial line and pending frame state.
-    ///
-    /// Callers MUST invoke this once the underlying byte stream has ended
-    /// (otherwise a final frame that lacks a terminating blank line will be
-    /// lost).
-    pub fn finish(&mut self) -> Vec<SseEvent> {
-        let mut events = Vec::new();
-        if !self.buffer.is_empty() {
-            let tail = std::mem::take(&mut self.buffer);
-            let trimmed: &[u8] = if tail.last() == Some(&b'\r') {
-                &tail[..tail.len() - 1]
-            } else {
-                &tail[..]
-            };
-            let line = String::from_utf8_lossy(trimmed).into_owned();
-            self.process_line(&line, &mut events);
-        }
-        self.dispatch_frame(&mut events);
-        events
-    }
-
-    fn process_line(&mut self, line: &str, events: &mut Vec<SseEvent>) {
-        if line.starts_with(':') {
-            return;
-        }
-
-        if let Some(event_value) = line
-            .strip_prefix("event: ")
-            .or_else(|| line.strip_prefix("event:"))
-        {
-            self.current_event_type = event_value.trim().to_string();
-        } else if let Some(data_value) = line
-            .strip_prefix("data: ")
-            .or_else(|| line.strip_prefix("data:"))
-        {
-            // Per the SSE specification, successive `data:` lines within one
-            // frame accumulate joined by a newline; replacing would silently
-            // truncate multi-line payloads to their final line.
-            if !self.current_data.is_empty() {
-                self.current_data.push('\n');
-            }
-            self.current_data.push_str(data_value);
-        } else if line.is_empty() {
-            self.dispatch_frame(events);
-        }
-    }
-
-    /// Emits the buffered frame if its data parses as JSON, then resets
-    /// frame state.
-    ///
-    /// Frames whose data is not valid JSON are dropped by design — the
-    /// Chat Completions `[DONE]` sentinel is exactly such a frame and
-    /// marks a normal end of stream — but never silently: the sentinel is
-    /// logged at debug level and anything else (a corrupt or truncated
-    /// payload) at warn with structural metadata only. Payload text is never
-    /// copied into ordinary logs.
-    fn dispatch_frame(&mut self, events: &mut Vec<SseEvent>) {
-        if !self.current_data.is_empty() {
-            match serde_json::from_str::<serde_json::Value>(&self.current_data) {
-                Ok(data) => events.push(SseEvent {
-                    event_type: self.current_event_type.clone(),
-                    data,
-                }),
-                Err(_) => {
-                    if self.current_data == "[DONE]" {
-                        tracing::debug!(
-                            event_type_present = !self.current_event_type.is_empty(),
-                            "dropping SSE [DONE] sentinel frame"
-                        );
-                    } else {
-                        tracing::warn!(
-                            event_type_present = !self.current_event_type.is_empty(),
-                            data_len = self.current_data.len(),
-                            "dropping SSE frame with unparseable JSON data"
-                        );
-                    }
-                }
-            }
-        }
-        self.current_event_type.clear();
-        self.current_data.clear();
-    }
-}
-
 /// Maps an `SseEvent` to an optional `ProviderEvent`.
 ///
 /// Unrecognized event types produce `None` and a structural debug record that
 /// never copies the authority-controlled discriminator into ordinary logs.
-pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderError>> {
+pub(crate) fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderError>> {
     match event.event_type.as_str() {
         "response.output_text.delta" => {
             let text = event
@@ -208,6 +63,57 @@ pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderE
                 .unwrap_or_default()
                 .to_string();
             Some(Ok(ProviderEvent::ThinkingDelta { text }))
+        }
+
+        "response.refusal.delta" | "response.refusal.done" => {
+            let complete = event.event_type == "response.refusal.done";
+            let event_type = if complete {
+                "response.refusal.done"
+            } else {
+                "response.refusal.delta"
+            };
+            let text_field = if complete { "refusal" } else { "delta" };
+            let required_string = |field: &'static str| {
+                event
+                    .data
+                    .get(field)
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+                    .ok_or_else(|| ProviderError::ResponseParseError {
+                        reason: format!("{event_type} missing required `{field}`"),
+                    })
+            };
+            let required_index = |field: &'static str| {
+                event
+                    .data
+                    .get(field)
+                    .and_then(serde_json::Value::as_u64)
+                    .ok_or_else(|| ProviderError::ResponseParseError {
+                        reason: format!("{event_type} missing required `{field}`"),
+                    })
+            };
+            let mapped = (|| {
+                let item_id = required_string("item_id")?;
+                let output_index = required_index("output_index")?;
+                let content_index = required_index("content_index")?;
+                let refusal = required_string(text_field)?;
+                if complete {
+                    Ok(ProviderEvent::RefusalComplete {
+                        item_id,
+                        output_index,
+                        content_index,
+                        refusal,
+                    })
+                } else {
+                    Ok(ProviderEvent::RefusalDelta {
+                        item_id,
+                        output_index,
+                        content_index,
+                        refusal,
+                    })
+                }
+            })();
+            Some(mapped)
         }
 
         "response.function_call_arguments.delta" | "response.custom_tool_call_input.delta" => {
@@ -290,6 +196,11 @@ pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderE
             };
             Some(Err(err))
         }
+
+        "error" => Some(Err(ProviderError::StreamError {
+            reason: "provider returned a standalone Responses error event".to_owned(),
+            transient: None,
+        })),
 
         "response.incomplete" => {
             // A `response.incomplete` event is the Responses API's terminal
@@ -1402,14 +1313,14 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     }
 
     #[test]
-    fn parser_finish_flushes_trailing_frame() {
-        // Frame without a terminating blank line.
+    fn parser_finish_discards_trailing_frame() {
+        // EOF is not an SSE event delimiter.
         let mut parser = SseParser::new();
         let early = parser.feed(b"event: a\ndata: {\"v\":1}\n");
         assert!(early.is_empty());
         let tail = parser.finish();
-        assert_eq!(tail.len(), 1);
-        assert_eq!(tail[0].event_type, "a");
+        assert!(tail.is_empty());
+        assert_eq!(parser.error(), None);
     }
 
     #[test]
@@ -1463,33 +1374,32 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         );
     }
 
-    /// The tail-flush path must apply the same concatenation rule.
+    /// EOF discards a valid but unterminated multiline frame.
     #[test]
-    fn successive_data_lines_concatenate_across_finish() {
+    fn successive_data_lines_without_blank_line_are_discarded() {
         let mut parser = SseParser::new();
         let events = parser.feed(b"event: e\ndata: {\ndata: \"b\": 2}\n");
         assert!(events.is_empty());
         let tail = parser.finish();
-        assert_eq!(tail.len(), 1);
-        assert_eq!(tail[0].data, serde_json::json!({"b": 2}));
+        assert!(tail.is_empty());
+        assert_eq!(parser.error(), None);
     }
 
-    /// Regression test (final-state hardening, T1 item 8): a frame whose
-    /// data fails JSON parsing is dropped (load-bearing for the
-    /// Chat Completions `[DONE]` sentinel) but the parser recovers and the
-    /// surrounding frames still parse — corruption never poisons the
-    /// stream.
+    /// A corrupt non-sentinel frame is a typed terminal protocol fault. Events
+    /// preceding it remain available, while later bytes cannot silently
+    /// resume the poisoned stream.
     #[test]
-    fn corrupt_frame_dropped_without_poisoning_subsequent_frames() {
+    fn corrupt_frame_fails_closed_after_preceding_events() {
         let mut parser = SseParser::new();
         let events = parser.feed(
             b"event: a\ndata: {\"ok\": 1}\n\n\
               event: corrupt\ndata: {\"truncated\": \n\n\
               event: b\ndata: {\"ok\": 2}\n\n",
         );
-        assert_eq!(events.len(), 2, "corrupt frame must be dropped: {events:?}");
+        assert_eq!(events.len(), 1, "only the preceding frame may survive");
         assert_eq!(events[0].event_type, "a");
-        assert_eq!(events[1].event_type, "b");
+        assert_eq!(parser.error(), Some(SseParseError::InvalidJson));
+        assert!(parser.feed(b"event: later\ndata: {}\n\n").is_empty());
     }
 
     #[test]
@@ -1500,113 +1410,33 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     }
 
     #[test]
-    fn corrupt_trailing_frame_dropped_on_finish() {
+    fn corrupt_trailing_frame_is_discarded_at_eof() {
         let mut parser = SseParser::new();
         let events = parser.feed(b"event: tail\ndata: {\"broken\":");
         assert!(events.is_empty());
         assert!(parser.finish().is_empty());
+        assert_eq!(parser.error(), None);
     }
 
-    /// Pins the drop-logging contract: corrupt frames warn (they are wire
-    /// faults an operator must be able to diagnose), while the expected
-    /// `[DONE]` sentinel only logs at debug.
+    /// Parser failures and mapper diagnostics never render authority bytes.
     #[test]
-    fn frame_drops_log_warn_for_corruption_and_debug_for_done_sentinel() {
-        use std::sync::{Arc, Mutex};
+    fn frame_failures_are_typed_and_non_disclosing() {
+        let mut parser = SseParser::new();
+        assert!(parser.feed(b"data: [DONE]\n\n").is_empty());
+        assert_eq!(parser.error(), None);
 
-        #[derive(Clone, Default)]
-        struct SharedBuf(Arc<Mutex<Vec<u8>>>);
-
-        impl std::io::Write for SharedBuf {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().expect("buffer lock").write(buf)
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-
-        impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for SharedBuf {
-            type Writer = SharedBuf;
-            fn make_writer(&'writer self) -> Self::Writer {
-                self.clone()
-            }
-        }
-
-        let buf = SharedBuf::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .with_writer(buf.clone())
-            .with_ansi(false)
-            .finish();
-
-        tracing::subscriber::with_default(subscriber, || {
-            let mut parser = SseParser::new();
-            let _done = parser.feed(b"data: [DONE]\n\n");
-            let _corrupt = parser.feed(
-                b"event: sentinel-private-event-secret\x1b[31m\ndata: {\"sentinel-private-frame-secret\": \n\n",
-            );
-            let _unknown = map_sse_event(&SseEvent {
-                event_type: "sentinel-private-unknown-event\u{1b}[31m".to_owned(),
-                data: serde_json::Value::Null,
-            });
-            let _malformed_reasoning = map_sse_event(&SseEvent {
-                event_type: "response.output_item.done".to_owned(),
-                data: serde_json::json!({
-                    "item": {
-                        "type": "reasoning",
-                        "summary": [{
-                            "type": "sentinel-private-reasoning-secret\u{1b}[31m",
-                            "text": "sentinel-private-reasoning-text"
-                        }]
-                    }
-                }),
-            });
-            let _malformed_tool = map_sse_event(&SseEvent {
-                event_type: "response.output_item.done".to_owned(),
-                data: serde_json::json!({
-                    "item": {
-                        "type": "function_call",
-                        "name": "sentinel-private-tool-name",
-                        "arguments": "{}"
-                    }
-                }),
-            });
-        });
-
-        let output = String::from_utf8(buf.0.lock().expect("buffer lock").clone())
-            .expect("log output is UTF-8");
+        let secret = "sentinel-private-frame-secret";
         assert!(
-            output.contains("dropping SSE [DONE] sentinel frame"),
-            "expected the [DONE] debug line, got: {output}"
+            parser
+                .feed(format!("event: private\ndata: {{\"{secret}\": \n\n").as_bytes())
+                .is_empty()
         );
-        assert!(
-            output.contains("dropping SSE frame with unparseable JSON data"),
-            "expected the corrupt-frame warn line, got: {output}"
-        );
-        let done_line = output
-            .lines()
-            .find(|line| line.contains("[DONE] sentinel"))
-            .expect("[DONE] line present");
-        assert!(
-            done_line.contains("DEBUG"),
-            "the [DONE] sentinel must log at debug, not warn: {done_line}"
-        );
-        let corrupt_line = output
-            .lines()
-            .find(|line| line.contains("unparseable JSON data"))
-            .expect("corrupt-frame line present");
-        assert!(
-            corrupt_line.contains("WARN"),
-            "corrupt frames must log at warn: {corrupt_line}"
-        );
-        assert!(!output.contains("sentinel-private-frame-secret"));
-        assert!(!output.contains("sentinel-private-event-secret"));
-        assert!(!output.contains("sentinel-private-unknown-event"));
-        assert!(!output.contains("sentinel-private-reasoning-secret"));
-        assert!(!output.contains("sentinel-private-reasoning-text"));
-        assert!(!output.contains("sentinel-private-tool-name"));
-        assert!(!output.contains('\u{1b}'));
+        let rendered = parser
+            .error()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        assert!(!rendered.contains(secret));
+        assert_eq!(rendered, "SSE stream contained an invalid JSON frame");
     }
 
     #[test]

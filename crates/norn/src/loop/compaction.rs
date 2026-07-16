@@ -430,7 +430,7 @@ fn fallback_digest(
     })
 }
 
-/// Text and thinking deltas accumulated by an **in-flight** provider
+/// Text, refusal, and thinking deltas accumulated by an **in-flight** provider
 /// call — content the stream has produced but no assembled response has
 /// yet persisted.
 ///
@@ -452,13 +452,16 @@ pub struct InFlightPartial {
     /// Thinking/reasoning-summary deltas accumulated so far, in stream
     /// order.
     pub thinking: String,
+    /// Refusal content accumulated so far. `Some("")` is distinct from
+    /// absence: an explicitly empty refusal is still a refusal outcome.
+    pub refusal: Option<String>,
 }
 
 impl InFlightPartial {
     /// Whether the stream had produced any content before the cut.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.text.is_empty() && self.thinking.is_empty()
+        self.text.is_empty() && self.thinking.is_empty() && self.refusal.is_none()
     }
 }
 

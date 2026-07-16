@@ -9,6 +9,11 @@
 use std::collections::HashMap;
 
 use super::request::build_payload;
+use super::response_reconciler::{
+    ReconcileUpdate, ResponseReconciler, ResponseReconciliationError,
+};
+use super::response_stream_event::{ResponseStreamEvent, ResponseStreamEventManifest};
+use super::response_terminal::decode_terminal;
 use super::sse::{SseEvent, map_sse_event, output_item_added_call_id};
 use crate::error::ProviderError;
 use crate::provider::events::ProviderEvent;
@@ -53,58 +58,136 @@ impl SenderProvider {
     }
 }
 
-/// Stateful [`SseEventMapper`] over the Responses API dispatcher.
+/// Stateful Responses stream validation, reconciliation, and projection.
 ///
-/// The wire dispatch itself is stateless ([`map_sse_event`]); this mapper adds
-/// the one piece of per-response state the dispatcher cannot hold: the
-/// `item_id` -> `call_id` correlation announced by `response.output_item.added`
-/// for tool calls. Each streaming tool-input fragment
-/// ([`ProviderEvent::ToolCallDelta`]) is stamped with its `call_id` so an
-/// embedder can correlate live input streaming with the tool call its UI knows
-/// by `call_id` (the streaming `item_id` is an internal merge key the embedder
-/// never sees on the completed call). The map is cleared at response end
-/// (terminal `Done`/error) so no correlation leaks across responses.
+/// Every valid envelope is emitted losslessly for machine observers. The
+/// reconciler separately owns identity-keyed preview state and emits canonical
+/// items only in terminal `response.output` order. [`map_sse_event`] remains a
+/// compatibility projection for the existing text/thinking/tool UI; it is no
+/// longer an authority for replay or execution.
 #[derive(Default)]
 struct ResponsesMapper {
     /// Tool-call `item_id` (`fc_*` / `ctc_*`) -> `call_id` (`call_*`),
     /// populated from `response.output_item.added`.
     call_ids: HashMap<String, String>,
+    /// Per-response identity and completion state.
+    reconciler: ResponseReconciler,
+    /// Whether this mapper already delivered a terminal outcome.
+    terminal: bool,
 }
 
 impl SseEventMapper for ResponsesMapper {
     fn map_event(&mut self, event: &SseEvent) -> Vec<Result<ProviderEvent, ProviderError>> {
-        // Record the correlation the instant the item is announced. Per the
-        // Responses API lifecycle this `output_item.added` always precedes the
-        // item's argument-delta events, so the map is populated before any
-        // delta this mapper must stamp.
+        if self.terminal {
+            return vec![Err(ProviderError::ResponseProtocolViolation {
+                source: ResponseReconciliationError::PostTerminalFrame,
+            })];
+        }
+
+        let envelope = match ResponseStreamEvent::from_sse(&event.event_type, event.data.clone()) {
+            Ok(envelope) => envelope,
+            Err(error) => {
+                self.terminal = true;
+                return vec![Err(ProviderError::ResponseParseError {
+                    reason: error.to_string(),
+                })];
+            }
+        };
+        let manifest = envelope.manifest();
+        let mut mapped = vec![Ok(ProviderEvent::ResponseStreamEvent {
+            event: Box::new(envelope),
+        })];
+
+        match manifest {
+            ResponseStreamEventManifest::Unknown => {
+                self.finish();
+                mapped.push(Err(ProviderError::UnsupportedResponseEvent));
+                return mapped;
+            }
+            ResponseStreamEventManifest::CodexOverlay(_) => return mapped,
+            ResponseStreamEventManifest::Public(_) => {}
+        }
+
+        let update = match self.reconciler.ingest(event) {
+            Ok(update) => update,
+            Err(error) => {
+                for item in error.retained_items() {
+                    mapped.push(Ok(ProviderEvent::ResponseItemDone { item: item.clone() }));
+                }
+                let provider_error = match &error {
+                    ResponseReconciliationError::UnknownOutputItemType { .. }
+                    | ResponseReconciliationError::UnsupportedExecutableItem { .. } => {
+                        ProviderError::UnsupportedResponseItem
+                    }
+                    ResponseReconciliationError::UnsupportedResponseMedia => {
+                        ProviderError::UnsupportedResponseMedia
+                    }
+                    _ => ProviderError::ResponseProtocolViolation { source: error },
+                };
+                self.finish();
+                mapped.push(Err(provider_error));
+                return mapped;
+            }
+        };
+
+        if matches!(
+            update,
+            ReconcileUpdate::DuplicateSequence { .. }
+                | ReconcileUpdate::DuplicateCompletion { .. }
+                | ReconcileUpdate::DuplicateChannelCompletion
+        ) {
+            return mapped;
+        }
+
         if event.event_type == "response.output_item.added"
             && let Some((item_id, call_id)) = output_item_added_call_id(event)
         {
             self.call_ids.insert(item_id, call_id);
         }
 
-        let mut mapped: Vec<Result<ProviderEvent, ProviderError>> =
-            map_sse_event(event).into_iter().collect();
+        let terminal_items = match &update {
+            ReconcileUpdate::Terminal { items, .. } => Some(items.as_slice()),
+            ReconcileUpdate::Accepted
+            | ReconcileUpdate::Ignored
+            | ReconcileUpdate::DuplicateSequence { .. }
+            | ReconcileUpdate::DuplicateCompletion { .. }
+            | ReconcileUpdate::DuplicateChannelCompletion
+            | ReconcileUpdate::CompletedItem { .. } => None,
+        };
+        if let Some(items) = terminal_items {
+            mapped.extend(
+                items
+                    .iter()
+                    .cloned()
+                    .map(|item| Ok(ProviderEvent::ResponseItemDone { item })),
+            );
+        }
 
-        let mut response_ended = false;
-        for result in &mut mapped {
-            match result {
+        let projection = if matches!(
+            event.event_type.as_str(),
+            "response.completed" | "response.incomplete"
+        ) {
+            Some(decode_terminal(event, &update))
+        } else {
+            map_sse_event(event)
+        };
+        if let Some(mut projected) = projection {
+            match &mut projected {
+                Ok(ProviderEvent::ResponseItemDone { .. }) => {}
                 Ok(ProviderEvent::ToolCallDelta {
                     item_id, call_id, ..
                 }) => {
-                    // The stateless dispatcher leaves `call_id` unset; fill it
-                    // from the announced correlation. A miss (item never
-                    // announced) leaves it `None` — honest, never fabricated.
                     if call_id.is_none() {
                         *call_id = self.call_ids.get(item_id).cloned();
                     }
+                    mapped.push(projected);
                 }
-                Ok(ProviderEvent::Done { .. }) | Err(_) => response_ended = true,
-                Ok(_) => {}
+                Ok(ProviderEvent::Done { .. }) | Err(_) => {
+                    self.finish();
+                    mapped.push(projected);
+                }
+                Ok(_) => mapped.push(projected),
             }
-        }
-        if response_ended {
-            self.call_ids.clear();
         }
 
         mapped
@@ -124,6 +207,16 @@ impl SseEventMapper for ResponsesMapper {
         &event.event_type
     }
 }
+
+impl ResponsesMapper {
+    fn finish(&mut self) {
+        self.terminal = true;
+        self.call_ids.clear();
+    }
+}
+
+#[cfg(test)]
+mod reconciliation_tests;
 
 #[cfg(test)]
 #[allow(
@@ -180,25 +273,37 @@ mod streaming_tests {
         let added = SseEvent {
             event_type: "response.output_item.added".to_string(),
             data: serde_json::json!({
+                "type": "response.output_item.added",
+                "sequence_number": 0,
+                "output_index": 0,
                 "item": {
                     "type": "function_call",
                     "id": "fc_1",
                     "call_id": "call_1",
                     "name": "read",
                     "arguments": "",
+                    "status": "in_progress"
                 }
             }),
         };
-        assert!(
-            mapper.map_event(&added).is_empty(),
-            "output_item.added itself maps to no ProviderEvent",
-        );
+        let added_events = mapper.map_event(&added);
+        assert!(matches!(
+            added_events.as_slice(),
+            [Ok(ProviderEvent::ResponseStreamEvent { .. })]
+        ));
         let delta = SseEvent {
             event_type: "response.function_call_arguments.delta".to_string(),
-            data: serde_json::json!({"item_id": "fc_1", "delta": "{\"path\""}),
+            data: serde_json::json!({
+                "type": "response.function_call_arguments.delta",
+                "sequence_number": 1,
+                "item_id": "fc_1",
+                "output_index": 0,
+                "delta": "{\"path\""
+            }),
         };
         match mapper.map_event(&delta).as_slice() {
             [
+                Ok(ProviderEvent::ResponseStreamEvent { .. }),
                 Ok(ProviderEvent::ToolCallDelta {
                     item_id, call_id, ..
                 }),
@@ -213,37 +318,68 @@ mod streaming_tests {
             other => panic!("expected a stamped ToolCallDelta, got {other:?}"),
         }
 
-        // Terminal Done clears the map: a stray delta for the same item on a
-        // fresh response is no longer correlated (no cross-response leakage).
+        // Terminal completion emits the canonical item before Done and closes
+        // the mapper. A later frame is rejected rather than correlated using
+        // stale state.
         let done = SseEvent {
             event_type: "response.completed".to_string(),
             data: serde_json::json!({
-                "response": {"status": "completed", "usage": {"input_tokens": 1, "output_tokens": 1}}
+                "type": "response.completed",
+                "sequence_number": 2,
+                "response": {
+                    "id": "resp_1",
+                    "status": "completed",
+                    "output": [{
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "name": "read",
+                        "arguments": "{\"path\"}",
+                        "status": "completed"
+                    }],
+                    "usage": {
+                        "input_tokens": 1,
+                        "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+                        "output_tokens": 1,
+                        "output_tokens_details": {"reasoning_tokens": 0},
+                        "total_tokens": 2
+                    }
+                }
             }),
         };
-        let _ = mapper.map_event(&done);
+        assert!(matches!(
+            mapper.map_event(&done).as_slice(),
+            [
+                Ok(ProviderEvent::ResponseStreamEvent { .. }),
+                Ok(ProviderEvent::ResponseItemDone { .. }),
+                Ok(ProviderEvent::Done { .. })
+            ]
+        ));
         match mapper.map_event(&delta).as_slice() {
-            [Ok(ProviderEvent::ToolCallDelta { call_id, .. })] => {
-                assert_eq!(*call_id, None, "the map is cleared at response end");
-            }
-            other => panic!("expected an uncorrelated ToolCallDelta, got {other:?}"),
+            [Err(ProviderError::ResponseProtocolViolation { .. })] => {}
+            other => panic!("expected a post-terminal protocol error, got {other:?}"),
         }
     }
 
     #[test]
-    fn responses_mapper_delta_without_added_is_uncorrelated() {
-        // A delta whose item was never announced carries `call_id: None` —
-        // honest, never fabricated.
+    fn responses_mapper_rejects_delta_without_added_identity() {
         let mut mapper = ResponsesMapper::default();
         let delta = SseEvent {
             event_type: "response.function_call_arguments.delta".to_string(),
-            data: serde_json::json!({"item_id": "fc_x", "delta": "{"}),
+            data: serde_json::json!({
+                "type": "response.function_call_arguments.delta",
+                "sequence_number": 0,
+                "item_id": "fc_x",
+                "output_index": 0,
+                "delta": "{"
+            }),
         };
         match mapper.map_event(&delta).as_slice() {
-            [Ok(ProviderEvent::ToolCallDelta { call_id, .. })] => {
-                assert_eq!(*call_id, None);
-            }
-            other => panic!("expected ToolCallDelta, got {other:?}"),
+            [
+                Ok(ProviderEvent::ResponseStreamEvent { .. }),
+                Err(ProviderError::ResponseProtocolViolation { .. }),
+            ] => {}
+            other => panic!("expected raw event then protocol error, got {other:?}"),
         }
     }
 
@@ -307,9 +443,158 @@ mod streaming_tests {
         .expect("create")
     }
 
-    fn sse_completed_frame() -> &'static str {
-        "event: response.completed\n\
-         data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}}\n\n"
+    fn sse_frame(event_type: &str, payload: &serde_json::Value) -> String {
+        format!("event: {event_type}\ndata: {payload}\n\n")
+    }
+
+    fn message_added_frame(sequence_number: u64, item_id: &str) -> String {
+        sse_frame(
+            "response.output_item.added",
+            &serde_json::json!({
+                "type": "response.output_item.added",
+                "sequence_number": sequence_number,
+                "output_index": 0,
+                "item": {
+                    "id": item_id,
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "in_progress",
+                    "content": []
+                }
+            }),
+        )
+    }
+
+    fn output_text_delta_frame(sequence_number: u64, item_id: &str, delta: &str) -> String {
+        sse_frame(
+            "response.output_text.delta",
+            &serde_json::json!({
+                "type": "response.output_text.delta",
+                "sequence_number": sequence_number,
+                "item_id": item_id,
+                "output_index": 0,
+                "content_index": 0,
+                "delta": delta
+            }),
+        )
+    }
+
+    #[derive(Clone, Copy)]
+    enum MessageTerminal<'reason> {
+        Completed,
+        Incomplete(&'reason str),
+    }
+
+    fn terminal_message_frame(
+        sequence_number: u64,
+        response_id: &str,
+        item_id: &str,
+        text: &str,
+        terminal: MessageTerminal<'_>,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> String {
+        let total_tokens = input_tokens.saturating_add(output_tokens);
+        let (event_type, status, item_status, incomplete_details) = match terminal {
+            MessageTerminal::Completed => (
+                "response.completed",
+                "completed",
+                "completed",
+                serde_json::Value::Null,
+            ),
+            MessageTerminal::Incomplete(reason) => (
+                "response.incomplete",
+                "incomplete",
+                "incomplete",
+                serde_json::json!({"reason": reason}),
+            ),
+        };
+        sse_frame(
+            event_type,
+            &serde_json::json!({
+                "type": event_type,
+                "sequence_number": sequence_number,
+                "response": {
+                    "id": response_id,
+                    "status": status,
+                    "output": [{
+                        "id": item_id,
+                        "type": "message",
+                        "role": "assistant",
+                        "status": item_status,
+                        "content": [{
+                            "type": "output_text",
+                            "text": text,
+                            "annotations": [],
+                            "logprobs": []
+                        }]
+                    }],
+                    "incomplete_details": incomplete_details,
+                    "usage": {
+                        "input_tokens": input_tokens,
+                        "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+                        "output_tokens": output_tokens,
+                        "output_tokens_details": {"reasoning_tokens": 0},
+                        "total_tokens": total_tokens
+                    }
+                }
+            }),
+        )
+    }
+
+    fn completed_message_stream(
+        response_id: &str,
+        item_id: &str,
+        deltas: &[&str],
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> String {
+        let mut body = message_added_frame(0, item_id);
+        let mut text = String::new();
+        let mut sequence_number = 1;
+        for delta in deltas {
+            text.push_str(delta);
+            body.push_str(&output_text_delta_frame(sequence_number, item_id, delta));
+            sequence_number = sequence_number.saturating_add(1);
+        }
+        body.push_str(&terminal_message_frame(
+            sequence_number,
+            response_id,
+            item_id,
+            &text,
+            MessageTerminal::Completed,
+            input_tokens,
+            output_tokens,
+        ));
+        body
+    }
+
+    fn incomplete_message_stream(
+        response_id: &str,
+        item_id: &str,
+        deltas: &[&str],
+        reason: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> String {
+        let mut body = message_added_frame(0, item_id);
+        let mut text = String::new();
+        let mut sequence_number = 1;
+        for delta in deltas {
+            text.push_str(delta);
+            body.push_str(&output_text_delta_frame(sequence_number, item_id, delta));
+            sequence_number = sequence_number.saturating_add(1);
+        }
+        body.push_str(&terminal_message_frame(
+            sequence_number,
+            response_id,
+            item_id,
+            &text,
+            MessageTerminal::Incomplete(reason),
+            input_tokens,
+            output_tokens,
+        ));
+        body
     }
 
     async fn drain_request(socket: &mut tokio::net::TcpStream) {
@@ -350,12 +635,7 @@ mod streaming_tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
-        let body = "event: response.output_text.delta\n\
-                    data: {\"delta\":\"hello\"}\n\n\
-                    event: response.output_text.delta\n\
-                    data: {\"delta\":\"world\"}\n\n\
-                    event: response.completed\n\
-                    data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}}\n\n";
+        let body = completed_message_stream("resp_multi", "msg_multi", &["hello", "world"], 1, 2);
 
         Mock::given(method("POST"))
             .respond_with(
@@ -371,16 +651,36 @@ mod streaming_tests {
 
         let mut deltas = Vec::new();
         let mut got_done = false;
+        let mut raw_event_types = Vec::new();
+        let mut completed_items = 0;
         while let Some(evt) = stream.next().await {
             match evt {
                 Ok(ProviderEvent::TextDelta { text }) => deltas.push(text),
                 Ok(ProviderEvent::Done { .. }) => got_done = true,
+                Ok(ProviderEvent::ResponseStreamEvent { event }) => {
+                    raw_event_types.push(event.event_type().to_owned());
+                }
+                Ok(ProviderEvent::ResponseItemDone { .. }) => completed_items += 1,
                 Ok(_) => {}
                 Err(e) => panic!("unexpected error: {e}"),
             }
         }
         assert_eq!(deltas, vec!["hello".to_string(), "world".to_string()]);
         assert!(got_done, "expected Done event");
+        assert_eq!(
+            raw_event_types,
+            [
+                "response.output_item.added",
+                "response.output_text.delta",
+                "response.output_text.delta",
+                "response.completed"
+            ],
+            "each wire frame must be surfaced exactly once in transport order"
+        );
+        assert_eq!(
+            completed_items, 1,
+            "the terminal output item must be emitted exactly once"
+        );
     }
 
     #[tokio::test]
@@ -394,14 +694,14 @@ mod streaming_tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
-        let body = "event: response.output_text.delta\n\
-                    data: {\"delta\":\"partial \"}\n\n\
-                    event: response.output_text.delta\n\
-                    data: {\"delta\":\"answer\"}\n\n\
-                    event: response.incomplete\n\
-                    data: {\"response\":{\"id\":\"resp_inc\",\"status\":\"incomplete\",\
-                    \"incomplete_details\":{\"reason\":\"max_output_tokens\"},\
-                    \"usage\":{\"input_tokens\":11,\"output_tokens\":13}}}\n\n";
+        let body = incomplete_message_stream(
+            "resp_inc",
+            "msg_inc",
+            &["partial ", "answer"],
+            "max_output_tokens",
+            11,
+            13,
+        );
 
         Mock::given(method("POST"))
             .respond_with(
@@ -448,12 +748,8 @@ mod streaming_tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
-        let body = "event: response.output_text.delta\n\
-                    data: {\"delta\":\"redac\"}\n\n\
-                    event: response.incomplete\n\
-                    data: {\"response\":{\"id\":\"resp_cf\",\"status\":\"incomplete\",\
-                    \"incomplete_details\":{\"reason\":\"content_filter\"},\
-                    \"usage\":{\"input_tokens\":5,\"output_tokens\":2}}}\n\n";
+        let body =
+            incomplete_message_stream("resp_cf", "msg_cf", &["redac"], "content_filter", 5, 2);
 
         Mock::given(method("POST"))
             .respond_with(
@@ -492,9 +788,21 @@ mod streaming_tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
-        let frame1 = "event: response.output_text.delta\ndata: {\"delta\":\"a\"}\n\n";
-        let frame2 = "event: response.output_text.delta\ndata: {\"delta\":\"b\"}\n\n";
-        let frame3 = sse_completed_frame();
+        let frame1 = format!(
+            "{}{}",
+            message_added_frame(0, "msg_incremental"),
+            output_text_delta_frame(1, "msg_incremental", "a")
+        );
+        let frame2 = output_text_delta_frame(2, "msg_incremental", "b");
+        let frame3 = terminal_message_frame(
+            3,
+            "resp_incremental",
+            "msg_incremental",
+            "ab",
+            MessageTerminal::Completed,
+            1,
+            2,
+        );
         let gap = Duration::from_millis(80);
 
         let server_task = tokio::spawn(async move {
@@ -559,11 +867,7 @@ mod streaming_tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
-        let body = format!(
-            "event: response.output_text.delta\n\
-             data: {{\"delta\":\"after-retry\"}}\n\n{}",
-            sse_completed_frame()
-        );
+        let body = completed_message_stream("resp_retry", "msg_retry", &["after-retry"], 1, 2);
 
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "1"))
@@ -691,11 +995,7 @@ mod streaming_tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
-        let body = format!(
-            "event: response.output_text.delta\n\
-             data: {{\"delta\":\"after-clamp\"}}\n\n{}",
-            sse_completed_frame()
-        );
+        let body = completed_message_stream("resp_clamp", "msg_clamp", &["after-clamp"], 1, 2);
 
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "3600"))
@@ -795,10 +1095,12 @@ mod streaming_tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
-        let body = format!(
-            "event: response.output_text.delta\n\
-             data: {{\"delta\":\"after-far-future\"}}\n\n{}",
-            sse_completed_frame()
+        let body = completed_message_stream(
+            "resp_far_future",
+            "msg_far_future",
+            &["after-far-future"],
+            1,
+            2,
         );
 
         Mock::given(method("POST"))
@@ -857,10 +1159,12 @@ mod streaming_tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
-        let body = format!(
-            "event: response.output_text.delta\n\
-             data: {{\"delta\":\"after-fast-backoff\"}}\n\n{}",
-            sse_completed_frame()
+        let body = completed_message_stream(
+            "resp_fast_backoff",
+            "msg_fast_backoff",
+            &["after-fast-backoff"],
+            1,
+            2,
         );
 
         // Header-less 429: the configured backoff governs the wait.
@@ -921,10 +1225,12 @@ mod streaming_tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
-        let body = format!(
-            "event: response.output_text.delta\n\
-             data: {{\"delta\":\"after-date-retry\"}}\n\n{}",
-            sse_completed_frame()
+        let body = completed_message_stream(
+            "resp_date_retry",
+            "msg_date_retry",
+            &["after-date-retry"],
+            1,
+            2,
         );
 
         // `start` is captured *before* the date is generated so the
@@ -1149,7 +1455,11 @@ mod streaming_tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
-        let frame = "event: response.output_text.delta\ndata: {\"delta\":\"partial\"}\n\n";
+        let frame = format!(
+            "{}{}",
+            message_added_frame(0, "msg_stalled"),
+            output_text_delta_frame(1, "msg_stalled", "partial")
+        );
 
         let server_task = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -1224,7 +1534,11 @@ mod streaming_tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
-        let frame = "event: response.output_text.delta\ndata: {\"delta\":\"partial\"}\n\n";
+        let frame = format!(
+            "{}{}",
+            message_added_frame(0, "msg_dropped"),
+            output_text_delta_frame(1, "msg_dropped", "partial")
+        );
 
         let server_task = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -1275,8 +1589,8 @@ mod streaming_tests {
     }
 
     /// Regression test (final-state hardening, T1 item 2): a Responses
-    /// stream that closes *cleanly* (proper chunked terminator) without a
-    /// terminal `response.completed`/`failed`/`incomplete` event previously
+    /// stream that closes *cleanly* (proper chunked terminator) with an
+    /// unterminated `response.completed` frame previously
     /// ended in silence — the provider task returned `Ok(())`, no `Done`
     /// event was emitted, and the loop's fallback classified the condition
     /// as Terminal. The same physical condition on the Chat Completions
@@ -1284,11 +1598,26 @@ mod streaming_tests {
     /// Responses provider must now emit its own typed retryable error
     /// carrying chunk/event diagnostics.
     #[tokio::test]
-    async fn clean_close_without_terminal_event_yields_retryable_stream_interrupted() {
+    async fn clean_close_with_unterminated_terminal_frame_yields_stream_interrupted() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
-        let frame = "event: response.output_text.delta\ndata: {\"delta\":\"partial\"}\n\n";
+        let mut frame = format!(
+            "{}{}",
+            message_added_frame(0, "msg_clean_close"),
+            output_text_delta_frame(1, "msg_clean_close", "partial")
+        );
+        let mut unterminated = terminal_message_frame(
+            2,
+            "resp_clean_close",
+            "msg_clean_close",
+            "partial",
+            MessageTerminal::Completed,
+            1,
+            1,
+        );
+        assert_eq!(unterminated.pop(), Some('\n'));
+        frame.push_str(&unterminated);
 
         let server_task = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -1303,8 +1632,9 @@ mod streaming_tests {
                 .unwrap();
             let chunk = format!("{:X}\r\n{}\r\n", frame.len(), frame);
             socket.write_all(chunk.as_bytes()).await.unwrap();
-            // Clean chunked-encoding terminator: the HTTP body ends
-            // without any transport error and without a terminal event.
+            // Clean chunked-encoding terminator. The apparent terminal
+            // frame lacks its dispatching blank line, so SSE requires it
+            // to be discarded at EOF rather than promoted to success.
             socket.write_all(b"0\r\n\r\n").await.unwrap();
             socket.flush().await.unwrap();
         });
@@ -1354,11 +1684,8 @@ mod streaming_tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
-        let body = format!(
-            "event: response.output_text.delta\n\
-             data: {{\"delta\":\"after-refresh\"}}\n\n{}",
-            sse_completed_frame()
-        );
+        let body =
+            completed_message_stream("resp_refresh", "msg_refresh", &["after-refresh"], 1, 2);
 
         Mock::given(method("POST"))
             .and(header("Authorization", "Bearer stale-token"))
@@ -1460,5 +1787,130 @@ mod streaming_tests {
             1,
             "should have attempted refresh exactly once"
         );
+    }
+
+    #[tokio::test]
+    async fn malformed_sse_json_yields_one_typed_terminal_error()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(
+                        "event: response.created\n\
+                         data: {\"type\":\"response.created\",broken}\n\n",
+                    ),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = build_provider(server.uri(), 0);
+        let mut stream = provider.stream(build_request())?;
+        let events: Vec<_> = stream.by_ref().collect().await;
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events.as_slice(),
+            [Err(ProviderError::ResponseParseError { reason })]
+                if reason == "SSE stream contained an invalid JSON frame"
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn explicit_empty_sse_data_fails_before_a_later_terminal()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(
+                        "event: response.created\n\
+                         data:\n\n\
+                         event: response.completed\n\
+                         data: {\"type\":\"response.completed\",\"sequence_number\":1,\"response\":{\"id\":\"resp_late\",\"status\":\"completed\",\"output\":[]}}\n\n",
+                    ),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = build_provider(server.uri(), 0);
+        let mut stream = provider.stream(build_request())?;
+        let events: Vec<_> = stream.by_ref().collect().await;
+        assert!(matches!(
+            events.as_slice(),
+            [Err(ProviderError::ResponseParseError { reason })]
+                if reason == "SSE stream contained an invalid JSON frame"
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn extra_event_field_space_is_not_normalized_before_validation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(
+                        "event:  response.created\n\
+                         data: {\"type\":\"response.created\",\"sequence_number\":0}\n\n",
+                    ),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = build_provider(server.uri(), 0);
+        let mut stream = provider.stream(build_request())?;
+        let events: Vec<_> = stream.by_ref().collect().await;
+        assert!(matches!(
+            events.as_slice(),
+            [Err(ProviderError::ResponseParseError { reason })]
+                if reason == "SSE event name does not match Responses payload type"
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mapped_failed_event_yields_exactly_one_terminal_error()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(
+                        "event: response.failed\n\
+                         data: {\"type\":\"response.failed\",\"sequence_number\":0,\"response\":{\"id\":\"resp_failed\",\"status\":\"failed\",\"output\":[],\"error\":{\"code\":\"invalid_prompt\",\"message\":\"sentinel-private\"}}}\n\n",
+                    ),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = build_provider(server.uri(), 0);
+        let mut stream = provider.stream(build_request())?;
+        let events: Vec<_> = stream.by_ref().collect().await;
+        assert!(matches!(
+            events.as_slice(),
+            [
+                Ok(ProviderEvent::ResponseStreamEvent { .. }),
+                Err(ProviderError::InvalidRequest { .. })
+            ]
+        ));
+        Ok(())
     }
 }

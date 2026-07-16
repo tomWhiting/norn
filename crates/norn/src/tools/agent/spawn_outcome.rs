@@ -134,6 +134,17 @@ pub(crate) fn extract_outcome_summary(
             usage,
             children_usage,
         },
+        Ok(AgentStepResult::Refused {
+            refusal,
+            iterations,
+            usage,
+            children_usage,
+        }) => stopped(
+            format!("sub-agent refused the request: {refusal}"),
+            AgentStopReason::Refused { iterations },
+            usage,
+            children_usage,
+        ),
         Ok(AgentStepResult::SchemaUnreachable {
             best_attempt,
             validation_errors,

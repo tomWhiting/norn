@@ -425,6 +425,11 @@ impl StreamExecutor {
                     return Ok(());
                 }
             }
+            if let Some(error) = parser.error() {
+                return Err(ProviderError::ResponseParseError {
+                    reason: error.to_string(),
+                });
+            }
         }
 
         for sse_event in parser.finish() {
@@ -433,6 +438,11 @@ impl StreamExecutor {
                 self.log_complete(request_start, stream_start, chunk_count, event_count);
                 return Ok(());
             }
+        }
+        if let Some(error) = parser.error() {
+            return Err(ProviderError::ResponseParseError {
+                reason: error.to_string(),
+            });
         }
 
         // The byte stream ended without a terminal Done. Let the mapper
@@ -501,11 +511,14 @@ async fn emit_mapped<M: SseEventMapper>(
         dump.write_sse_event(mapper.dump_label(sse_event), &sse_event.data);
     }
     for provider_event in mapper.map_event(sse_event) {
-        let is_done = matches!(provider_event, Ok(ProviderEvent::Done { .. }));
+        let is_terminal = matches!(
+            provider_event,
+            Ok(ProviderEvent::Done { .. } | ProviderEvent::Error { .. }) | Err(_)
+        );
         if tx.send(provider_event).await.is_err() {
             return true;
         }
-        if is_done {
+        if is_terminal {
             return true;
         }
     }

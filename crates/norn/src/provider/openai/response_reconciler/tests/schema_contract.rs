@@ -1,0 +1,169 @@
+use super::*;
+
+fn part_event(item_id: &str, part: &Value) -> SseEvent {
+    delta(
+        "response.content_part.added",
+        2,
+        item_id,
+        0,
+        json!({"content_index": 0, "part": part}),
+    )
+}
+
+fn hosted_event(event_type: &str, item_id: &str) -> SseEvent {
+    delta(event_type, 2, item_id, 0, json!({}))
+}
+
+#[test]
+fn content_part_events_require_the_normative_payload_shape() -> TestResult {
+    for (item_id, announcement, part, field) in [
+        (
+            "msg_a",
+            message_start("msg_a"),
+            json!({"type": "output_text", "text": "", "annotations": []}),
+            "part.logprobs",
+        ),
+        (
+            "msg_b",
+            message_start("msg_b"),
+            json!({"type": "refusal"}),
+            "part.refusal",
+        ),
+        (
+            "rs_a",
+            json!({
+                "id": "rs_a",
+                "type": "reasoning",
+                "summary": [],
+                "content": [],
+                "status": "in_progress"
+            }),
+            json!({"type": "reasoning_text"}),
+            "part.text",
+        ),
+    ] {
+        let mut reconciler = ResponseReconciler::new();
+        reconciler.ingest(&added(1, 0, announcement))?;
+        assert_eq!(
+            reconciler.ingest(&part_event(item_id, &part)),
+            Err(ResponseReconciliationError::InvalidEnvelopeField {
+                event_type: "response.content_part.added",
+                field,
+            })
+        );
+    }
+
+    let mut summary = ResponseReconciler::new();
+    summary.ingest(&added(
+        1,
+        0,
+        json!({
+            "id": "rs_b",
+            "type": "reasoning",
+            "summary": [],
+            "content": [],
+            "status": "in_progress"
+        }),
+    ))?;
+    assert_eq!(
+        summary.ingest(&delta(
+            "response.reasoning_summary_part.added",
+            2,
+            "rs_b",
+            0,
+            json!({"summary_index": 0, "part": {"type": "summary_text"}}),
+        )),
+        Err(ResponseReconciliationError::InvalidEnvelopeField {
+            event_type: "response.reasoning_summary_part.added",
+            field: "part.text",
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn completed_hosted_lifecycle_requires_completed_final_status() -> TestResult {
+    for (item, lifecycle) in [
+        (
+            json!({
+                "id": "fs_a",
+                "type": "file_search_call",
+                "queries": ["query"],
+                "status": "searching"
+            }),
+            "response.file_search_call.completed",
+        ),
+        (
+            json!({
+                "id": "ws_a",
+                "type": "web_search_call",
+                "action": {"type": "search", "query": "query"},
+                "status": "searching"
+            }),
+            "response.web_search_call.completed",
+        ),
+        (
+            json!({
+                "id": "ig_a",
+                "type": "image_generation_call",
+                "result": null,
+                "status": "generating"
+            }),
+            "response.image_generation_call.completed",
+        ),
+        (
+            json!({
+                "id": "ci_a",
+                "type": "code_interpreter_call",
+                "code": null,
+                "container_id": "cntr_a",
+                "outputs": null,
+                "status": "interpreting"
+            }),
+            "response.code_interpreter_call.completed",
+        ),
+    ] {
+        let item_id = item["id"].as_str().ok_or("missing test item id")?;
+        let mut reconciler = ResponseReconciler::new();
+        reconciler.ingest(&added(1, 0, item.clone()))?;
+        reconciler.ingest(&hosted_event(lifecycle, item_id))?;
+        assert_eq!(
+            reconciler.ingest(&done(3, 0, item)),
+            Err(ResponseReconciliationError::ItemScopedCompletionConflict)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn mcp_list_tools_lifecycle_does_not_invent_error_cross_field_rules() -> TestResult {
+    let failed_item = json!({
+        "id": "list_a",
+        "type": "mcp_list_tools",
+        "server_label": "server",
+        "tools": []
+    });
+    let mut failed = ResponseReconciler::new();
+    failed.ingest(&added(1, 0, failed_item.clone()))?;
+    failed.ingest(&hosted_event("response.mcp_list_tools.failed", "list_a"))?;
+    assert!(matches!(
+        failed.ingest(&done(3, 0, failed_item))?,
+        ReconcileUpdate::CompletedItem { .. }
+    ));
+
+    let completed_item = json!({
+        "id": "list_b",
+        "type": "mcp_list_tools",
+        "server_label": "server",
+        "tools": [],
+        "error": "failed"
+    });
+    let mut completed = ResponseReconciler::new();
+    completed.ingest(&added(1, 0, completed_item.clone()))?;
+    completed.ingest(&hosted_event("response.mcp_list_tools.completed", "list_b"))?;
+    assert!(matches!(
+        completed.ingest(&done(3, 0, completed_item))?,
+        ReconcileUpdate::CompletedItem { .. }
+    ));
+    Ok(())
+}

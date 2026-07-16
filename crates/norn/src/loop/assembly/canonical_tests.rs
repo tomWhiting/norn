@@ -99,6 +99,7 @@ fn canonical_items_keep_cross_family_order_and_drive_derived_views() -> TestResu
         .collect::<Vec<_>>();
     assert_eq!(preserved, raw_items);
     assert_eq!(response.text, "workingdone");
+    assert_eq!(response.refusal.as_deref(), Some("partial refusal"));
     assert_eq!(response.tool_calls.len(), 1);
     assert_eq!(response.tool_calls[0].call_id, "call_1");
     assert_eq!(response.tool_calls[0].name, "read");
@@ -107,6 +108,68 @@ fn canonical_items_keep_cross_family_order_and_drive_derived_views() -> TestResu
         &response.response_items[3].item,
         ResponseItem::Opaque(_)
     ));
+    Ok(())
+}
+
+#[test]
+fn canonical_pure_refusal_does_not_become_ordinary_text() -> TestResult {
+    let events = vec![
+        ProviderEvent::TextDelta {
+            text: "stale ordinary delta".to_owned(),
+        },
+        completed_item(
+            serde_json::json!({
+                "type": "message",
+                "id": "msg_refusal",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{
+                    "type": "refusal",
+                    "refusal": "I cannot help with that"
+                }]
+            }),
+            0,
+        )?,
+        ProviderEvent::Done {
+            stop_reason: StopReason::EndTurn,
+            usage: Usage::default(),
+            response_id: Some("resp_refusal".to_owned()),
+        },
+    ];
+
+    let Some(response) = assemble_response(&events) else {
+        return Err(io::Error::other("canonical refusal did not assemble").into());
+    };
+    assert!(response.text.is_empty());
+    assert_eq!(response.refusal.as_deref(), Some("I cannot help with that"));
+    Ok(())
+}
+
+#[test]
+fn canonical_empty_refusal_preserves_outcome_presence() -> TestResult {
+    let events = vec![
+        completed_item(
+            serde_json::json!({
+                "type": "message",
+                "id": "msg_empty_refusal",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "refusal", "refusal": ""}]
+            }),
+            0,
+        )?,
+        ProviderEvent::Done {
+            stop_reason: StopReason::EndTurn,
+            usage: Usage::default(),
+            response_id: Some("resp_empty_refusal".to_owned()),
+        },
+    ];
+
+    let Some(response) = assemble_response(&events) else {
+        return Err(io::Error::other("canonical empty refusal did not assemble").into());
+    };
+    assert!(response.text.is_empty());
+    assert_eq!(response.refusal, Some(String::new()));
     Ok(())
 }
 

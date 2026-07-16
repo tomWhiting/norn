@@ -646,7 +646,8 @@ async fn orchestrate_run(
             // Structured workflow callers (Rhai) read the AgentStepResult
             // value directly and distinguish Cancelled from the others
             // there (S2).
-            AgentStepResult::SchemaUnreachable { .. }
+            AgentStepResult::Refused { .. }
+            | AgentStepResult::SchemaUnreachable { .. }
             | AgentStepResult::MaxIterationsReached { .. }
             | AgentStepResult::TimedOut { .. }
             | AgentStepResult::Cancelled { .. }

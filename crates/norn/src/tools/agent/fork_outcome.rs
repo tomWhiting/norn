@@ -182,6 +182,19 @@ fn classify_step_result(result: AgentStepResult, duration: std::time::Duration) 
             error_message: None,
             stop: None,
         }),
+        AgentStepResult::Refused {
+            refusal,
+            iterations,
+            usage,
+            children_usage,
+        } => project(Projection {
+            status: AgentStatus::Failed,
+            result_summary: serde_json::Value::String(refusal.clone()),
+            usage,
+            children_usage,
+            error_message: Some(format!("fork refused the request: {refusal}")),
+            stop: Some(AgentStopReason::Refused { iterations }),
+        }),
         AgentStepResult::SchemaUnreachable {
             best_attempt,
             validation_errors,

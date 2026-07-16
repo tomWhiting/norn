@@ -37,6 +37,11 @@ pub struct AssembledResponse {
     ///
     /// Empty for providers that do not expose Responses-compatible items.
     pub response_items: Vec<ResponseTranscriptItem>,
+    /// Refusal content projected from canonical assistant message parts.
+    ///
+    /// Kept separate from ordinary output text so a model refusal cannot be
+    /// reported as a successful answer or lost from a mixed response.
+    pub refusal: Option<String>,
     /// Accumulated text content.
     pub text: String,
     /// Accumulated reasoning/thinking content.
@@ -102,6 +107,7 @@ struct ToolCallAccumulator {
 /// Classification happens in the caller after assembly.
 pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> {
     let mut text = String::new();
+    let mut refusal: Option<String> = None;
     let mut thinking = String::new();
     let mut reasoning: Vec<ReasoningItem> = Vec::new();
     let mut tool_calls_map: HashMap<String, ToolCallAccumulator> = HashMap::new();
@@ -116,6 +122,9 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
         match event {
             ProviderEvent::TextDelta { text: delta } => {
                 text.push_str(delta);
+            }
+            ProviderEvent::RefusalDelta { refusal: delta, .. } => {
+                refusal.get_or_insert_default().push_str(delta);
             }
             ProviderEvent::ToolCallDelta {
                 item_id,
@@ -221,7 +230,9 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
             // before assembly runs.
             ProviderEvent::TextComplete { .. }
             | ProviderEvent::ThinkingComplete { .. }
+            | ProviderEvent::RefusalComplete { .. }
             | ProviderEvent::ToolResult { .. }
+            | ProviderEvent::ResponseStreamEvent { .. }
             | ProviderEvent::Compaction { .. }
             | ProviderEvent::Error { .. } => {}
         }
@@ -231,8 +242,9 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
         return None;
     }
 
-    if let Some(completed_text) = completed_message_text(&response_items) {
-        text = completed_text;
+    if let Some(projection) = completed_message_projection(&response_items) {
+        text = projection.text;
+        refusal = projection.refusal;
     }
 
     let tool_calls: Vec<AssembledToolCall> = tool_call_order
@@ -256,6 +268,7 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
 
     Some(AssembledResponse {
         response_items,
+        refusal,
         text,
         thinking,
         reasoning,
@@ -334,21 +347,33 @@ fn record_completed_call(
     );
 }
 
-fn completed_message_text(items: &[ResponseTranscriptItem]) -> Option<String> {
+struct CompletedMessageProjection {
+    text: String,
+    refusal: Option<String>,
+}
+
+fn completed_message_projection(
+    items: &[ResponseTranscriptItem],
+) -> Option<CompletedMessageProjection> {
     let mut saw_message = false;
     let mut text = String::new();
+    let mut refusal: Option<String> = None;
     for item in items {
         let Some(message) = item.item.as_message() else {
             continue;
         };
         saw_message = true;
         for part in message.content() {
-            if let ResponseContentPart::OutputText { text: part, .. } = part {
-                text.push_str(part);
+            match part {
+                ResponseContentPart::OutputText { text: part, .. } => text.push_str(part),
+                ResponseContentPart::Refusal { refusal: part, .. } => {
+                    refusal.get_or_insert_default().push_str(part);
+                }
+                ResponseContentPart::Opaque { .. } => {}
             }
         }
     }
-    saw_message.then_some(text)
+    saw_message.then_some(CompletedMessageProjection { text, refusal })
 }
 
 #[cfg(test)]

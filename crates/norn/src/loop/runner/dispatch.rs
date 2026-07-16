@@ -43,6 +43,12 @@ impl StepMachine<'_> {
                 self.on_tools_only(&response, tool_calls).await
             }
             ResponseClass::TextStopNoSchema => self.on_text_stop(response).await,
+            ResponseClass::Refused { refusal } => Ok(StepFlow::Done(AgentStepResult::Refused {
+                refusal,
+                iterations: self.iterations,
+                usage: std::mem::take(&mut self.total_usage),
+                children_usage: self.loop_context.children_usage.snapshot(),
+            })),
             ResponseClass::Truncated { kind } => self.on_truncated(&response, kind).await,
             ResponseClass::ToolsAndSchemaValid {
                 pre_schema_tools,

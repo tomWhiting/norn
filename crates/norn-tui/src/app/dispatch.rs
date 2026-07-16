@@ -250,6 +250,11 @@ fn handle_child_event(
                 .agent_panel
                 .set_transient_activity(child_id, AgentActivity::Running("writing".to_string()));
         }
+        ProviderEvent::RefusalDelta { refusal, .. } if !refusal.is_empty() => {
+            state
+                .agent_panel
+                .set_transient_activity(child_id, AgentActivity::Running("writing".to_string()));
+        }
         ProviderEvent::ThinkingDelta { text } if !text.is_empty() => {
             state
                 .agent_panel
@@ -312,6 +317,9 @@ pub fn handle_provider_event(
     state.note_event_received(Instant::now());
     match event {
         ProviderEvent::TextDelta { text } => handle_text_delta(state, guard, renderer, &text),
+        ProviderEvent::RefusalDelta { refusal, .. } => {
+            handle_text_delta(state, guard, renderer, &refusal)
+        }
         ProviderEvent::ThinkingDelta { text } => {
             handle_thinking_delta(state, &text);
             Ok(())
@@ -385,8 +393,10 @@ pub fn handle_provider_event(
         // display text already arrived via the ThinkingDelta stream.
         ProviderEvent::TextComplete { .. }
         | ProviderEvent::ThinkingComplete { .. }
+        | ProviderEvent::RefusalComplete { .. }
         | ProviderEvent::ReasoningItemDone { .. }
         | ProviderEvent::ResponseItemDone { .. }
+        | ProviderEvent::ResponseStreamEvent { .. }
         | ProviderEvent::Compaction { .. } => Ok(()),
     }
 }
@@ -475,6 +485,7 @@ fn set_complete_from_step(state: &mut AppState, step: &AgentStepResult) {
 pub fn extract_usage(result: &AgentStepResult) -> Usage {
     match result {
         AgentStepResult::Completed { usage, .. }
+        | AgentStepResult::Refused { usage, .. }
         | AgentStepResult::SchemaUnreachable { usage, .. }
         | AgentStepResult::MaxIterationsReached { usage, .. }
         | AgentStepResult::Cancelled { usage, .. }
@@ -1029,6 +1040,27 @@ mod tests {
         );
         let out = render_agent_panel(&mut state);
         assert!(out.contains("thinking"), "got: {out:?}");
+        assert_eq!(state.activity_log.len(), 0);
+    }
+
+    #[test]
+    fn child_refusal_delta_renders_writing_status_without_activity_spam() {
+        let (mut state, _root_id, child_id) = state_with_one_child();
+
+        handle_child_event(
+            &mut state,
+            child_id,
+            "spawn/haiku",
+            ProviderEvent::RefusalDelta {
+                item_id: "msg_refusal".to_owned(),
+                output_index: 0,
+                content_index: 0,
+                refusal: "request declined".to_owned(),
+            },
+        );
+
+        let output = render_agent_panel(&mut state);
+        assert!(output.contains("writing"), "got: {output:?}");
         assert_eq!(state.activity_log.len(), 0);
     }
 

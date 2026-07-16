@@ -7,10 +7,14 @@ mod provider;
 pub mod rate_limiter;
 pub mod request;
 pub mod response_contract;
+pub mod response_reconciler;
+pub mod response_stream_event;
+mod response_terminal;
 pub mod retry_after;
 pub(crate) mod schema_downlevel;
 pub mod sse;
 mod sse_completed_item;
+mod sse_parser;
 mod sse_types;
 pub mod tools;
 

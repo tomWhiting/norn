@@ -407,6 +407,22 @@ pub enum AgentStepResult {
         children_usage: Usage,
     },
 
+    /// The model explicitly declined the request.
+    ///
+    /// A refusal is a deterministic model outcome rather than a provider
+    /// failure. It is never retried automatically and never reported as a
+    /// successful empty response.
+    Refused {
+        /// Refusal text preserved from the canonical response message.
+        refusal: String,
+        /// Completed provider iterations, including the refusing response.
+        iterations: u32,
+        /// Accumulated token usage across all provider calls in this step.
+        usage: Usage,
+        /// Summed child-subtree usage, disjoint from `usage`.
+        children_usage: Usage,
+    },
+
     /// The schema enforcement budget was exhausted without valid output.
     SchemaUnreachable {
         /// Best output attempt produced, if any.

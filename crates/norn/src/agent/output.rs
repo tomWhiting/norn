@@ -33,6 +33,12 @@ use crate::session::store::EventStore;
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum AgentStopReason {
+    /// The model explicitly declined the request.
+    Refused {
+        /// Completed provider iterations, including the refusing response.
+        iterations: u32,
+    },
+
     /// The schema-enforcement budget was exhausted without valid output.
     /// The best attempt the model produced (if any) is on the partial
     /// [`AgentOutput::output`]; the validation errors and attempt count
@@ -189,6 +195,16 @@ impl RunOutcome {
                 usage,
                 event_store: None,
             }),
+            AgentStepResult::Refused {
+                refusal,
+                iterations,
+                usage,
+                ..
+            } => stopped(
+                AgentStopReason::Refused { iterations },
+                Value::String(refusal),
+                usage,
+            ),
             AgentStepResult::SchemaUnreachable {
                 best_attempt,
                 validation_errors,
@@ -364,6 +380,32 @@ mod tests {
         let output = outcome.into_output();
         assert_eq!(output.output, serde_json::json!({"answer": 42}));
         assert!(output.event_store.is_some(), "store rides the payload");
+    }
+
+    #[test]
+    fn refused_maps_to_stopped_with_typed_reason_and_refusal_output() {
+        let outcome = RunOutcome::from_step_result(
+            AgentStepResult::Refused {
+                refusal: "request declined".to_owned(),
+                iterations: 2,
+                usage: sample_usage(),
+                children_usage: Usage::default(),
+            },
+            None,
+        );
+
+        assert!(!outcome.is_completed());
+        assert!(outcome.structured_output().is_none());
+        assert_eq!(
+            outcome.stop_reason(),
+            Some(&AgentStopReason::Refused { iterations: 2 })
+        );
+        assert_eq!(
+            outcome.output().output,
+            Value::String("request declined".to_owned())
+        );
+        assert_eq!(outcome.output().usage.input_tokens, 100);
+        assert!(matches!(outcome, RunOutcome::Stopped { .. }));
     }
 
     #[test]

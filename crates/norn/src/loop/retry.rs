@@ -239,6 +239,7 @@ mod tests {
     fn ok_response() -> AssembledResponse {
         AssembledResponse {
             response_items: Vec::new(),
+            refusal: None,
             text: "ok".to_string(),
             thinking: String::new(),
             reasoning: Vec::new(),

@@ -15,6 +15,9 @@ use crate::provider::agent_event::AgentEventSender;
 use crate::provider::events::{ProviderEvent, StopReason};
 use crate::provider::mock::MockProvider;
 use crate::provider::request::{Message, MessageRole, ProviderRequest, ToolDefinition};
+use crate::provider::response_item::{
+    ResponseContentPart, ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
+};
 use crate::provider::tools::ProviderCapabilities;
 use crate::provider::traits::{Provider, ProviderStream};
 use crate::provider::usage::Usage;
@@ -94,6 +97,39 @@ fn thinking_delta(text: &str) -> ProviderEvent {
     ProviderEvent::ThinkingDelta {
         text: text.to_string(),
     }
+}
+
+fn refusal_delta(refusal: &str) -> ProviderEvent {
+    ProviderEvent::RefusalDelta {
+        item_id: "msg_refusal".to_owned(),
+        output_index: 0,
+        content_index: 0,
+        refusal: refusal.to_owned(),
+    }
+}
+
+fn completed_message_item(
+    id: &str,
+    content: &Value,
+) -> Result<ProviderEvent, crate::provider::ResponseItemError> {
+    let item = ResponseItem::from_value(serde_json::json!({
+        "type": "message",
+        "id": id,
+        "role": "assistant",
+        "status": "completed",
+        "content": content,
+    }))?;
+    Ok(ProviderEvent::ResponseItemDone {
+        item: ResponseTranscriptItem {
+            item,
+            provenance: ResponseStreamProvenance {
+                item_id: Some(id.to_owned()),
+                output_index: Some(0),
+                content_index: None,
+                sequence_number: Some(1),
+            },
+        },
+    })
 }
 
 fn tool_call_delta(item_id: &str, name: Option<&str>, args: &str) -> ProviderEvent {
@@ -425,6 +461,79 @@ async fn text_only_no_schema_completes() {
 
     let (output, _) = assert_completed(result);
     assert_eq!(output, Value::String("The answer is 42.".to_string()));
+}
+
+#[tokio::test]
+async fn empty_canonical_refusal_returns_refused_without_retry()
+-> Result<(), Box<dyn std::error::Error>> {
+    let item = ResponseItem::from_value(serde_json::json!({
+        "type": "message",
+        "id": "msg_empty_refusal",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{"type": "refusal", "refusal": ""}]
+    }))?;
+    let events = vec![
+        ProviderEvent::ResponseItemDone {
+            item: ResponseTranscriptItem {
+                item,
+                provenance: ResponseStreamProvenance {
+                    item_id: Some("msg_empty_refusal".to_owned()),
+                    output_index: Some(0),
+                    content_index: None,
+                    sequence_number: Some(1),
+                },
+            },
+        },
+        done_event(StopReason::EndTurn),
+    ];
+    let provider = MockProvider::new(vec![events]);
+    let store = EventStore::new();
+    let executor = MockToolExecutor::empty();
+
+    let result = run_step(
+        &provider,
+        &executor,
+        &store,
+        &[],
+        None,
+        &default_config(),
+        None,
+    )
+    .await;
+    let AgentStepResult::Refused {
+        refusal,
+        iterations,
+        usage,
+        ..
+    } = result
+    else {
+        return Err(std::io::Error::other("empty refusal did not stop as Refused").into());
+    };
+    assert!(refusal.is_empty());
+    assert_eq!(iterations, 1);
+    assert_eq!(usage.input_tokens, 10);
+    assert_eq!(usage.output_tokens, 5);
+    assert_eq!(provider.call_count(), 1);
+
+    let persisted = store.events().into_iter().find_map(|event| match event {
+        SessionEvent::AssistantMessage { response_items, .. } => Some(response_items),
+        _ => None,
+    });
+    let Some(response_items) = persisted else {
+        return Err(std::io::Error::other("refusal turn was not persisted").into());
+    };
+    let Some(message) = response_items
+        .first()
+        .and_then(|entry| entry.item.as_message())
+    else {
+        return Err(std::io::Error::other("persisted refusal item was not a message").into());
+    };
+    assert!(matches!(
+        message.content(),
+        [ResponseContentPart::Refusal { refusal, .. }] if refusal.is_empty()
+    ));
+    Ok(())
 }
 
 // -- Test 3: Schema valid on first try (R4 case 1) --------------------
@@ -6149,7 +6258,23 @@ impl Provider for PartialThenHangs {
             Ok(thinking_delta("mulling it over ")),
             Ok(text_delta("the answer ")),
             Ok(text_delta("is 4")),
+            Ok(refusal_delta("I cannot ")),
+            Ok(refusal_delta("help")),
         ];
+        Ok(Box::pin(stream::iter(events).chain(stream::pending())))
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::default()
+    }
+}
+
+struct RefusalThenHangs;
+
+impl Provider for RefusalThenHangs {
+    fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+        use futures_util::StreamExt as _;
+        let events = vec![Ok(refusal_delta("I cannot complete this request"))];
         Ok(Box::pin(stream::iter(events).chain(stream::pending())))
     }
 
@@ -6198,8 +6323,10 @@ async fn step_timeout_persists_partial_output_and_stop_record() {
     assert_eq!(partial["hard_cut"].as_bool(), Some(true));
     assert_eq!(partial["text"].as_str(), Some("the answer is 4"));
     assert_eq!(partial["thinking"].as_str(), Some("mulling it over "));
+    assert_eq!(partial["refusal"].as_str(), Some("I cannot help"));
     assert_eq!(partial["text_chars"].as_u64(), Some(15));
     assert_eq!(partial["thinking_chars"].as_u64(), Some(16));
+    assert_eq!(partial["refusal_chars"].as_u64(), Some(13));
 
     let stops = customs_of_type(&store, "loop.step_stopped");
     assert_eq!(stops.len(), 1, "exactly one stop record");
@@ -6212,6 +6339,50 @@ async fn step_timeout_persists_partial_output_and_stop_record() {
         partial_idx < stop_idx,
         "the partial content precedes the stop that cut it",
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn step_timeout_returns_and_persists_partial_refusal()
+-> Result<(), Box<dyn std::error::Error>> {
+    let provider = RefusalThenHangs;
+    let executor = MockToolExecutor::empty();
+    let store = EventStore::new();
+    let config = AgentLoopConfig {
+        step_timeout: Some(Duration::from_secs(5)),
+        ..AgentLoopConfig::default()
+    };
+    let mut loop_ctx = LoopContext::new("system");
+
+    let result = run_agent_step(AgentStepRequest {
+        provider: &provider,
+        executor: &executor,
+        store: &store,
+        user_prompt: "prompt",
+        tools: &[],
+        output_schema: None,
+        model: "test-model",
+        config: &config,
+        event_tx: None,
+        inbound: None,
+        loop_context: &mut loop_ctx,
+        cancel: None,
+    })
+    .await?;
+    let AgentStepResult::TimedOut { partial_output, .. } = result else {
+        return Err(std::io::Error::other("refusal stream did not time out").into());
+    };
+    assert_eq!(
+        partial_output,
+        Some(Value::String("I cannot complete this request".to_owned()))
+    );
+
+    let partials = customs_of_type(&store, "loop.partial_output");
+    assert_eq!(partials.len(), 1);
+    assert_eq!(
+        partials[0].1["refusal"].as_str(),
+        Some("I cannot complete this request")
+    );
+    Ok(())
 }
 
 /// Gap 7 (cancellation): a cancel that wins the provider-call race is
@@ -6255,6 +6426,7 @@ async fn cancellation_mid_stream_persists_partial_output_and_stop_record() {
     assert_eq!(partial["stop_reason"].as_str(), Some("cancelled"));
     assert_eq!(partial["hard_cut"].as_bool(), Some(true));
     assert_eq!(partial["text"].as_str(), Some("the answer is 4"));
+    assert_eq!(partial["refusal"].as_str(), Some("I cannot help"));
 
     let stops = customs_of_type(&store, "loop.step_stopped");
     assert_eq!(stops.len(), 1);
@@ -6385,7 +6557,8 @@ async fn completed_step_leaves_no_abnormal_stop_records() {
 /// that window so the complete response survives as the durable
 /// `loop.partial_output` record instead of vanishing entirely.
 #[tokio::test(start_paused = true)]
-async fn timeout_during_post_llm_hook_persists_the_assembled_response_as_partial() {
+async fn timeout_during_post_llm_hook_persists_the_assembled_response_as_partial()
+-> Result<(), Box<dyn std::error::Error>> {
     struct HangingPostLlm;
     #[async_trait::async_trait]
     impl crate::integration::hooks::PostLlmHook for HangingPostLlm {
@@ -6398,6 +6571,19 @@ async fn timeout_during_post_llm_hook_persists_the_assembled_response_as_partial
         thinking_delta("mulling it over "),
         text_delta("the answer "),
         text_delta("is 4"),
+        refusal_delta("stale refusal preview"),
+        completed_message_item(
+            "msg_post_llm",
+            &serde_json::json!([
+                {
+                    "type": "output_text",
+                    "text": "the answer is 4",
+                    "annotations": [],
+                    "logprobs": [],
+                },
+                {"type": "refusal", "refusal": "canonical refusal"},
+            ]),
+        )?,
         done_event(StopReason::EndTurn),
     ]]);
     let executor = MockToolExecutor::empty();
@@ -6427,8 +6613,7 @@ async fn timeout_during_post_llm_hook_persists_the_assembled_response_as_partial
         loop_context: &mut loop_ctx,
         cancel: None,
     })
-    .await
-    .expect("timeout is a stop outcome, not an error");
+    .await?;
     assert!(matches!(result, AgentStepResult::TimedOut { .. }));
 
     // The cut landed after assembly but before the durable append: no
@@ -6449,10 +6634,12 @@ async fn timeout_during_post_llm_hook_persists_the_assembled_response_as_partial
     assert_eq!(partial["hard_cut"].as_bool(), Some(true));
     assert_eq!(partial["text"].as_str(), Some("the answer is 4"));
     assert_eq!(partial["thinking"].as_str(), Some("mulling it over "));
+    assert_eq!(partial["refusal"].as_str(), Some("canonical refusal"));
 
     let stops = customs_of_type(&store, "loop.step_stopped");
     assert_eq!(stops.len(), 1);
     assert_eq!(stops[0].1["stop_reason"].as_str(), Some("timeout"));
+    Ok(())
 }
 
 // -- PROMPT-CACHE fix: the managed dynamic-context message rides the tail --

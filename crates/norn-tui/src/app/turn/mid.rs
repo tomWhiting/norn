@@ -108,10 +108,15 @@ fn root_provider_event_needs_panel_redraw(event: &ProviderEvent) -> bool {
     !matches!(
         event,
         ProviderEvent::TextDelta { .. }
+            | ProviderEvent::RefusalDelta { .. }
             | ProviderEvent::ThinkingDelta { .. }
             | ProviderEvent::ToolCallDelta { .. }
             | ProviderEvent::TextComplete { .. }
             | ProviderEvent::ThinkingComplete { .. }
+            | ProviderEvent::RefusalComplete { .. }
+            | ProviderEvent::ReasoningItemDone { .. }
+            | ProviderEvent::ResponseItemDone { .. }
+            | ProviderEvent::ResponseStreamEvent { .. }
             | ProviderEvent::Compaction { .. }
     )
 }
@@ -120,10 +125,15 @@ fn child_provider_event_needs_panel_redraw(event: &ProviderEvent) -> bool {
     !matches!(
         event,
         ProviderEvent::TextDelta { .. }
+            | ProviderEvent::RefusalDelta { .. }
             | ProviderEvent::ThinkingDelta { .. }
             | ProviderEvent::ToolCallDelta { name: None, .. }
             | ProviderEvent::TextComplete { .. }
             | ProviderEvent::ThinkingComplete { .. }
+            | ProviderEvent::RefusalComplete { .. }
+            | ProviderEvent::ReasoningItemDone { .. }
+            | ProviderEvent::ResponseItemDone { .. }
+            | ProviderEvent::ResponseStreamEvent { .. }
             | ProviderEvent::Compaction { .. }
     )
 }
@@ -227,6 +237,7 @@ pub(super) fn handle_active_input_delivery(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use norn::provider::openai::response_stream_event::ResponseStreamEvent;
     use norn::provider::request::ToolCallKind;
 
     #[test]
@@ -236,6 +247,27 @@ mod tests {
         };
 
         assert!(!root_provider_event_needs_panel_redraw(&event));
+    }
+
+    #[test]
+    fn refusal_complete_and_raw_event_do_not_force_redundant_panel_redraw()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let refusal_complete = ProviderEvent::RefusalComplete {
+            item_id: "msg_refusal".to_owned(),
+            output_index: 0,
+            content_index: 0,
+            refusal: "request declined".to_owned(),
+        };
+        let raw = ProviderEvent::ResponseStreamEvent {
+            event: Box::new(ResponseStreamEvent::from_raw(serde_json::json!({
+                "type": "response.output_text.delta",
+                "sequence_number": 1
+            }))?),
+        };
+
+        assert!(!root_provider_event_needs_panel_redraw(&refusal_complete));
+        assert!(!root_provider_event_needs_panel_redraw(&raw));
+        Ok(())
     }
 
     #[test]

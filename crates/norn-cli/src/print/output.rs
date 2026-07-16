@@ -65,6 +65,12 @@ pub enum StopInfo {
     /// The model produced valid structured output (or text in no-schema
     /// mode). The envelope's `output` holds the final value.
     Completed,
+    /// The model explicitly declined the request. The envelope's `output`
+    /// carries the refusal text.
+    Refused {
+        /// Completed provider iterations, including the refusing response.
+        iterations: u32,
+    },
     /// The schema enforcement budget was exhausted without valid output.
     /// The envelope's `output` holds the best attempt, if any.
     SchemaUnreachable {
@@ -132,6 +138,9 @@ impl StopInfo {
     pub fn from_result(result: &AgentStepResult) -> Self {
         match result {
             AgentStepResult::Completed { .. } => Self::Completed,
+            AgentStepResult::Refused { iterations, .. } => Self::Refused {
+                iterations: *iterations,
+            },
             AgentStepResult::SchemaUnreachable {
                 attempts,
                 validation_errors,
@@ -167,6 +176,9 @@ impl StopInfo {
 pub fn extract_output_and_usage(result: &AgentStepResult) -> (Option<Value>, Usage) {
     match result {
         AgentStepResult::Completed { output, usage, .. } => (Some(output.clone()), usage.clone()),
+        AgentStepResult::Refused { refusal, usage, .. } => {
+            (Some(Value::String(refusal.clone())), usage.clone())
+        }
         AgentStepResult::SchemaUnreachable {
             best_attempt,
             usage,
@@ -405,18 +417,20 @@ pub(crate) fn agent_event_method(agent_event: &norn::provider::AgentEvent) -> &'
     use norn::provider::events::ProviderEvent;
     match &agent_event.event {
         AgentEventKind::Provider(event) => match event {
-            ProviderEvent::TextComplete { .. } | ProviderEvent::ThinkingComplete { .. } => {
-                "event/message"
-            }
+            ProviderEvent::TextComplete { .. }
+            | ProviderEvent::ThinkingComplete { .. }
+            | ProviderEvent::RefusalComplete { .. } => "event/message",
             ProviderEvent::ToolCallComplete { .. } => "event/toolCall",
             ProviderEvent::ToolResult { .. } => "event/toolResult",
             ProviderEvent::TextDelta { .. }
             | ProviderEvent::ThinkingDelta { .. }
+            | ProviderEvent::RefusalDelta { .. }
             | ProviderEvent::ToolCallDelta { .. } => "event/progress",
             ProviderEvent::Done { .. } => "event/stop",
             ProviderEvent::Compaction { .. }
             | ProviderEvent::ReasoningItemDone { .. }
             | ProviderEvent::ResponseItemDone { .. }
+            | ProviderEvent::ResponseStreamEvent { .. }
             | ProviderEvent::Error { .. } => "event/raw",
         },
         AgentEventKind::Message(_) => "event/message",
@@ -471,12 +485,26 @@ fn message_event_to_value(lifecycle: &norn::provider::AgentMessageLifecycle) -> 
 }
 
 fn is_delta_event(event: &ProviderEvent) -> bool {
-    matches!(
-        event,
+    match event {
         ProviderEvent::TextDelta { .. }
-            | ProviderEvent::ThinkingDelta { .. }
-            | ProviderEvent::ToolCallDelta { .. }
-    )
+        | ProviderEvent::ThinkingDelta { .. }
+        | ProviderEvent::RefusalDelta { .. }
+        | ProviderEvent::ToolCallDelta { .. } => true,
+        ProviderEvent::ResponseStreamEvent { event } => {
+            event.manifest_stage()
+                == Some(norn::provider::openai::response_contract::StreamEventStage::Incremental)
+        }
+        ProviderEvent::TextComplete { .. }
+        | ProviderEvent::ThinkingComplete { .. }
+        | ProviderEvent::RefusalComplete { .. }
+        | ProviderEvent::ReasoningItemDone { .. }
+        | ProviderEvent::ResponseItemDone { .. }
+        | ProviderEvent::ToolCallComplete { .. }
+        | ProviderEvent::ToolResult { .. }
+        | ProviderEvent::Compaction { .. }
+        | ProviderEvent::Done { .. }
+        | ProviderEvent::Error { .. } => false,
+    }
 }
 
 fn stop_reason_label(reason: &norn::provider::events::StopReason) -> &'static str {
@@ -500,6 +528,18 @@ fn provider_event_to_value(event: &ProviderEvent) -> Option<Value> {
         ProviderEvent::ThinkingDelta { text } => json!({
             "type": "thinking_delta",
             "text": text,
+        }),
+        ProviderEvent::RefusalDelta {
+            item_id,
+            output_index,
+            content_index,
+            refusal,
+        } => json!({
+            "type": "refusal_delta",
+            "item_id": item_id,
+            "output_index": output_index,
+            "content_index": content_index,
+            "refusal": refusal,
         }),
         ProviderEvent::ToolCallDelta {
             item_id,
@@ -525,6 +565,18 @@ fn provider_event_to_value(event: &ProviderEvent) -> Option<Value> {
         ProviderEvent::ThinkingComplete { text } => json!({
             "type": "thinking",
             "text": text,
+        }),
+        ProviderEvent::RefusalComplete {
+            item_id,
+            output_index,
+            content_index,
+            refusal,
+        } => json!({
+            "type": "refusal",
+            "item_id": item_id,
+            "output_index": output_index,
+            "content_index": content_index,
+            "refusal": refusal,
         }),
         ProviderEvent::ToolCallComplete {
             call_id,
@@ -572,6 +624,7 @@ fn provider_event_to_value(event: &ProviderEvent) -> Option<Value> {
             "type": "response_item",
             "item": item,
         }),
+        ProviderEvent::ResponseStreamEvent { event } => event.raw().clone(),
         ProviderEvent::Done {
             stop_reason,
             usage,
@@ -659,6 +712,10 @@ pub fn emit_stream_completed<W: Write>(
 pub fn drain_diagnostics(collector: &Arc<DiagnosticCollector>) -> Vec<NornDiagnostic> {
     collector.drain()
 }
+
+#[cfg(test)]
+#[path = "output/raw_stream_event_tests.rs"]
+mod raw_stream_event_tests;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -1025,6 +1082,28 @@ mod tests {
         assert_eq!(truncated["reason"], json!("truncated"));
         assert_eq!(truncated["truncation"], json!("max_tokens"));
         assert_eq!(truncated["iterations"], json!(1));
+    }
+
+    #[test]
+    fn refused_stop_preserves_typed_reason_output_and_usage() -> Result<(), serde_json::Error> {
+        let result = AgentStepResult::Refused {
+            refusal: "request declined".to_owned(),
+            iterations: 3,
+            usage: Usage {
+                input_tokens: 13,
+                output_tokens: 7,
+                ..Usage::default()
+            },
+            children_usage: Usage::default(),
+        };
+
+        let stop = serde_json::to_value(StopInfo::from_result(&result))?;
+        let (output, usage) = extract_output_and_usage(&result);
+        assert_eq!(stop, json!({"reason": "refused", "iterations": 3}));
+        assert_eq!(output, Some(json!("request declined")));
+        assert_eq!(usage.input_tokens, 13);
+        assert_eq!(usage.output_tokens, 7);
+        Ok(())
     }
 
     /// The error stop serialises under the same internally-tagged

@@ -310,10 +310,19 @@ async fn run_agent_step_common(
             result
         } else {
             let snapshot = timeout_state.lock();
+            let in_flight_output = snapshot.in_flight_partial.as_ref().and_then(|partial| {
+                if partial.text.is_empty() {
+                    partial.refusal.clone()
+                } else {
+                    Some(partial.text.clone())
+                }
+            });
             Ok(AgentStepResult::TimedOut {
                 elapsed: started.elapsed(),
                 iterations: snapshot.iterations,
-                partial_output: snapshot.last_assistant_text.clone().map(Value::String),
+                partial_output: in_flight_output
+                    .or_else(|| snapshot.last_assistant_text.clone())
+                    .map(Value::String),
                 usage: snapshot.usage.clone(),
                 children_usage: children_usage.snapshot(),
             })

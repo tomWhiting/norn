@@ -74,6 +74,14 @@ pub(super) enum ResponseClass {
     /// No tool calls and model stopped (text-only response).
     TextStopNoSchema,
 
+    /// The model returned refusal content. This takes precedence over tool
+    /// dispatch so a mixed malformed response cannot execute calls after a
+    /// refusal outcome.
+    Refused {
+        /// Refusal text projected from the canonical message.
+        refusal: String,
+    },
+
     /// No tool calls and the provider stopped abnormally (`MaxTokens` or
     /// `ContentFilter`) in no-schema mode: any text is an incomplete
     /// fragment and must not be returned as successful output (REVIEW
@@ -97,6 +105,12 @@ pub(super) fn classify_response(
     output_schema: Option<&Value>,
     schema_tool_name: &str,
 ) -> ResponseClass {
+    if let Some(refusal) = &response.refusal {
+        return ResponseClass::Refused {
+            refusal: refusal.clone(),
+        };
+    }
+
     if response.tool_calls.is_empty() {
         // REVIEW item 5: a tool-call-free response that stopped on
         // `MaxTokens`/`ContentFilter` is an incomplete fragment. In
@@ -196,7 +210,8 @@ pub(super) fn classify_response(
 /// terminal, ...) instead of the turn dying later on a generic
 /// "stream ended without a Done event".
 ///
-/// When `partial_capture` is supplied, the in-flight text/thinking deltas
+/// When `partial_capture` is supplied, the in-flight text, refusal, and
+/// thinking deltas
 /// are mirrored into
 /// [`TimeoutState::in_flight_partial`](crate::agent_loop::compaction::TimeoutState)
 /// as they arrive: the capture is reset when the stream attempt starts and
@@ -237,6 +252,16 @@ pub(super) async fn call_provider(
                         partial.thinking.push_str(text);
                     }
                 }
+                ProviderEvent::RefusalDelta { refusal, .. } => {
+                    if let Some(partial) = state.lock().in_flight_partial.as_mut() {
+                        partial.refusal.get_or_insert_default().push_str(refusal);
+                    }
+                }
+                ProviderEvent::RefusalComplete { refusal, .. } => {
+                    if let Some(partial) = state.lock().in_flight_partial.as_mut() {
+                        partial.refusal = Some(refusal.clone());
+                    }
+                }
                 _ => {}
             }
         }
@@ -256,6 +281,17 @@ pub(super) async fn call_provider(
             transient: None,
         })
     })?;
+    if let Some(state) = partial_capture {
+        // Repair previews with the terminal, canonical projection. This is
+        // load-bearing in the post-LLM/pre-persist window: a timeout there
+        // must retain completed text/refusal even when preview events were
+        // absent, duplicated, or superseded by an authoritative done item.
+        state.lock().in_flight_partial = Some(InFlightPartial {
+            text: assembled.text.clone(),
+            thinking: assembled.thinking.clone(),
+            refusal: assembled.refusal.clone(),
+        });
+    }
     // The capture is deliberately NOT cleared here: assembly is not
     // durability. Between this return and the `AssistantMessage` append,
     // `run_post_llm` hooks run arbitrary user shell hooks — a step timeout
@@ -317,6 +353,7 @@ mod tests {
     fn schema_call_response(arguments: &str) -> AssembledResponse {
         AssembledResponse {
             response_items: Vec::new(),
+            refusal: None,
             text: String::new(),
             thinking: String::new(),
             reasoning: Vec::new(),
@@ -339,6 +376,30 @@ mod tests {
             "required": ["answer"],
             "additionalProperties": false
         })
+    }
+
+    #[test]
+    fn refusal_precedes_schema_validation_and_tool_dispatch() {
+        let mut response = schema_call_response("{\"answer\":\"would otherwise pass\"}");
+        response.refusal = Some("request declined".to_owned());
+        response.text = "ordinary text must not win".to_owned();
+        let schema = strict_schema();
+
+        assert!(matches!(
+            classify_response(&response, Some(&schema), "structured_output"),
+            ResponseClass::Refused { refusal } if refusal == "request declined"
+        ));
+    }
+
+    #[test]
+    fn empty_refusal_is_still_a_refusal_outcome() {
+        let mut response = schema_call_response("{\"answer\":\"would otherwise pass\"}");
+        response.refusal = Some(String::new());
+
+        assert!(matches!(
+            classify_response(&response, None, "structured_output"),
+            ResponseClass::Refused { refusal } if refusal.is_empty()
+        ));
     }
 
     #[test]

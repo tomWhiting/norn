@@ -139,6 +139,15 @@ async fn main() {
                 usage.input_tokens, usage.output_tokens
             );
         }
+        Ok(AgentStepResult::Refused { refusal, usage, .. }) => {
+            eprintln!("[5/5] REFUSED");
+            eprintln!("  Refusal: {refusal}");
+            eprintln!(
+                "  Tokens: {} in / {} out",
+                usage.input_tokens, usage.output_tokens
+            );
+            std::process::exit(1);
+        }
         Ok(AgentStepResult::SchemaUnreachable {
             best_attempt,
             validation_errors,
