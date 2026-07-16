@@ -331,6 +331,7 @@ impl ResponseReconciler {
         let mut items = Vec::with_capacity(parsed_items.len());
         let mut terminal_identities = BTreeSet::new();
         let mut delta_reconciliations = Vec::new();
+        let mut terminal_deltas = self.deltas.clone();
         for mut transcript in parsed_items {
             let output_index = transcript.provenance.output_index.ok_or(
                 ResponseReconciliationError::InvalidEnvelopeField {
@@ -363,7 +364,7 @@ impl ResponseReconciler {
                 completed.clone()
             } else {
                 delta_reconciliations.extend(reconcile_authoritative_deltas(
-                    &mut self.deltas,
+                    &mut terminal_deltas,
                     &identity,
                     &transcript.item,
                 )?);
@@ -384,6 +385,7 @@ impl ResponseReconciler {
         if enforce_actionable_resolution {
             self.validate_actionable_resolution(&terminal_identities, &items)?;
         }
+        self.deltas = terminal_deltas;
         self.terminal = true;
         Ok(ReconcileUpdate::Terminal {
             items,

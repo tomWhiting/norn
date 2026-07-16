@@ -98,6 +98,48 @@ fn terminal_output_rejects_conflicting_completion() -> TestResult {
 }
 
 #[test]
+fn rejected_terminal_frame_preserves_every_accumulated_preview() -> TestResult {
+    let mut reconciler = ResponseReconciler::new();
+    reconciler.ingest(&added(1, 0, message_start("msg_first")))?;
+    reconciler.ingest(&delta(
+        "response.output_text.delta",
+        2,
+        "msg_first",
+        0,
+        json!({"content_index": 0, "delta": "first", "logprobs": []}),
+    ))?;
+    reconciler.ingest(&added(3, 1, message_start("msg_second")))?;
+    reconciler.ingest(&delta(
+        "response.output_text.delta",
+        4,
+        "msg_second",
+        1,
+        json!({"content_index": 0, "delta": "second", "logprobs": []}),
+    ))?;
+
+    assert_eq!(
+        reconciler.ingest(&event(
+            "response.completed",
+            5,
+            json!({"response": {"output": [
+                message("msg_first", "first complete"),
+                message("msg_second", "different")
+            ]}}),
+        )),
+        Err(ResponseReconciliationError::AuthoritativeDeltaConflict)
+    );
+    assert_eq!(
+        reconciler.accumulated_delta("msg_first", 0, ResponseDeltaChannel::OutputText(0)),
+        Some("first")
+    );
+    assert_eq!(
+        reconciler.accumulated_delta("msg_second", 1, ResponseDeltaChannel::OutputText(0)),
+        Some("second")
+    );
+    Ok(())
+}
+
+#[test]
 fn terminal_output_cannot_omit_or_reorder_completed_items() -> TestResult {
     let first = message("msg_first", "first");
     let second = message("msg_second", "second");
