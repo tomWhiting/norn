@@ -12,7 +12,10 @@
   implementation candidate and fixture closure are complete through source
   `fcd1b30`; retained Gate C,
   the live A/B/A experiment, the P1 dependency, and independent P2 acceptance
-  remain open.
+  remain open. P3 canonical transcript foundations are present, and P4 now has
+  a reviewable streaming/reconciliation candidate at `f962a64`; response-scoped
+  audio persistence, complete cross-session fixture matrices, P3 D2 work, and
+  independent P3/P4 acceptance remain open.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -403,8 +406,8 @@ artifacts to the same clean head with zero errors.
 | P0. Credential and workspace authority containment | [x] Accepted by focused Gate D review `7ce29d7` on 2026-07-15 | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] Gate A complete at base `2917c8e`; Gate B foundation next; D0 remote enforcement deferred to exit | The program has executable contracts and protected quality gates. |
 | P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; retained Gate C, live A/B/A, P1 dependency, and independent acceptance open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
-| P3. Canonical ordered transcript | [ ] Implementation candidate in progress; canonical model/replay/persistence/fork paths and strict gates are green; D2, complete media fixtures, spawned-session evidence, and review remain open | Responses items survive stream, persistence, resume, and replay in order. |
-| P4. Streaming and replay conformance | [ ] Contract manifest complete; identity reconciler implementation in progress | Supported events/items are complete, reconciled, and fail closed. |
+| P3. Canonical ordered transcript | [ ] Implementation candidate through `f962a64`; canonical model/replay/persistence/fork paths and strict gates are green; D2, complete media fixtures, spawned-session evidence, and review remain open | Responses items survive stream, persistence, resume, and replay in order. |
+| P4. Streaming and replay conformance | [ ] Reviewable candidate at `f962a64`; public/Codex manifests, identity/channel/item reconciliation, terminal parsing, refusal, and raw CLI events are implemented; audio persistence, remaining fixture matrices, and review remain open | Supported events/items are complete, reconciled, and fail closed. |
 | P5. Conversation and Codex turn semantics | [ ] | Local/provider history and turn-scoped state have explicit lifetimes. |
 | P6. Transport, retry, and usage | [ ] | Retries terminate once; observed and unknown attempt usage remain explicit. |
 | P7. Request, schema, and model controls | [ ] | Advertised capabilities match validated payload and tool behavior. |
@@ -1557,8 +1560,9 @@ not change their order or invent missing semantics.
 
 ## P4. Streaming and replay conformance
 
-**Status:** [ ] Contract manifest complete and reconciler implementation in
-progress; **findings closed:** `STATE-01`, `EVT-01` through
+**Status:** [ ] Reviewable implementation candidate at `f962a64`; independent
+review and the explicitly open fixtures below still block acceptance;
+**candidate coverage:** `STATE-01`, `EVT-01` through
 `EVT-07`; **dependencies:** P3.
 
 ### What this phase fixes
@@ -1580,36 +1584,48 @@ authoritative completed item can become executable.
 
 ### Work checklist
 
-- [ ] Use the P1 production-LOC baseline to decide whether the SSE production
+- [x] Use the P1 production-LOC baseline to decide whether the SSE production
   implementation requires decomposition. Split it by parser, item assembly,
   reconciliation, and terminal mapping where required by LOC or cohesion.
-- [ ] Maintain separate checked manifests for the pinned public taxonomy
+- [x] Maintain separate checked manifests for the pinned public taxonomy
   (53 stream events and 28 output-item variants at the 2026-07-15 P1 contract
-  retrieval) and Codex-specific
+  retrieval, rechecked through Developer Docs MCP on 2026-07-17) and Codex-specific
   events/items/headers. Each name is handled, allowlisted lifecycle-only, or
   typed unsupported, and a taxonomy change fails the manifest check.
-- [ ] Key deltas by item ID, output index, and content index.
-- [ ] Preserve item ID and call ID on added/delta/done/completed events. Reconcile
+- [x] Key deltas by item ID, output index, and content index.
+- [x] Preserve item ID and call ID on added/delta/done/completed events. Reconcile
   interleaved and duplicate frames idempotently; reject conflicting identity and
   remove every order-based completion fallback.
-- [ ] Reconcile deltas with `.done` and completed item data; repair or emit a
+- [x] Reconcile deltas with `.done` and completed item data; repair or emit a
   typed mismatch instead of silently truncating.
 - [ ] Apply identity-keyed delta/completion reconciliation to every streamed
   content part and media-bearing item in the accepted P3 manifest. UI previews
-  and textual renderings never replace the canonical typed content.
-- [ ] Preserve refusal, message phase, annotations/citations, hosted-search
+  and textual renderings never replace the canonical typed content. Text,
+  refusal, reasoning, annotations, image generation, hosted search, MCP, and
+  code-interpreter channels are implemented; response-scoped audio is retained
+  raw then fails with typed `UnsupportedResponseMedia` until P3 owns a durable
+  audio artifact.
+- [x] Preserve refusal, message phase, annotations/citations, hosted-search
   actions/sources, reasoning, compaction, and multiple message boundaries.
-- [ ] Represent refusal as a non-retryable model outcome, not provider failure;
+- [x] Represent refusal as a non-retryable model outcome, not provider failure;
   preserve canonical refusal content and usage through persistence and replay.
-- [ ] Preserve every unknown output item raw and return a typed
+- [x] Preserve every unknown output item raw and return a typed
   `UnsupportedResponseItem` rather than ordinary success unless its exact type
   is on the pinned inert/lifecycle allowlist. Apply the same rule to an unknown
   event not on the pinned lifecycle allowlist.
-- [ ] Make parser/mapper terminal delivery exactly once and reject/ignore later
+- [x] Make parser/mapper terminal delivery exactly once and reject/ignore later
   frames deterministically. P6 separately owns stopping the network producer.
 - [ ] Replace empty-string, zero-usage, absent-response-ID, default-EndTurn, and
   delta-only-call fallbacks with typed required/optional fields. Unknown reasoning
   parts survive opaquely; malformed required completion data is a protocol error.
+
+The candidate has removed the executable-call, terminal-status, response-ID,
+and refusal-presence fallbacks. The parsed terminal JSON still distinguishes
+absent `usage`, but the legacy numeric `Usage` projection does not yet carry
+field-presence bits; that remaining accounting representation is owned by
+`USAGE-01` in P6, so this combined item remains unchecked. Output-text delta
+logprobs likewise remain raw preview data while the authoritative completed
+content part is preserved canonically.
 
 ### Phase-specific evidence
 
@@ -1618,19 +1634,19 @@ authoritative completed item can become executable.
   become empty success.
 - [ ] Hosted-search action, sources, annotations, and answer survive a tool-loop
   continuation and a persisted resume.
-- [ ] Missing/malformed delta fixtures are repaired by authoritative completion
+- [x] Missing/malformed delta fixtures are repaired by authoritative completion
   data or fail with a typed diagnostic.
 - [ ] Streamed multimodal/content fixtures reconcile to the same canonical items
   as non-streaming completion, including duplicate, interleaved, missing-delta,
   and authoritative-completion repair cases.
-- [ ] Interleaved calls prove call two cannot complete call one. Exact duplicate
+- [x] Interleaved calls prove call two cannot complete call one. Exact duplicate
   frames are idempotent; conflicting duplicates, delta-only calls, and missing
   authoritative completion cannot execute.
-- [ ] Tests cover arbitrary SSE chunk boundaries, CRLF, multiline data,
+- [x] Tests cover arbitrary SSE chunk boundaries, CRLF, multiline data,
   duplicate/out-of-order frames, incomplete EOF, and post-terminal input.
-- [ ] Public and Codex manifest tests fail when a variant is added, removed, or
+- [x] Public and Codex manifest tests fail when a variant is added, removed, or
   loses classification.
-- [ ] An unknown output item and unknown non-allowlisted event preserve raw data
+- [x] An unknown output item and unknown non-allowlisted event preserve raw data
   and terminate with the exact typed unsupported outcome.
 
 ### Review and exit gate
@@ -2063,6 +2079,8 @@ ledger prematurely.
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
 | P1 | Gate A complete at base `2917c8e`; Gate B foundation not yet implemented | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A `READY` | Implement and independently review the executable foundation, complete and verify P1, then resolve D0 before acceptance |
 | P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and the bounded source fixture matrices are present | Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks; retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle | Record the historical missing-phase-base disposition, resolve the P1 dependency, run the live A/B/A validity experiment, execute and retain the complete candidate gates, then obtain P2 acceptance |
+| P3 | Canonical ordered transcript foundation through `f962a64`: exact completed items drive derived views and survive persistence/replay paths | Canonical round-trip, ordering, opaque-item, refusal, and stateless serializer fixtures are green inside the full workspace gate | Resolve D2, complete the media/content inventory and spawned/cross-session matrices, then obtain protocol and persistence review |
+| P4 | Streaming/reconciliation candidate `f962a64`: 53-event/28-item manifests, complete parsed JSON events, identity-safe completion, item-scoped image/MCP/code/search reconciliation, terminal parsing, and refusal outcomes | 544 OpenAI provider tests and 60 reconciler tests; strict workspace Clippy, all-target tests, doc tests, fmt, diff, bypass, and production-LOC checks are green; see the [`2026-07-17 candidate handoff`](reviews/2026-07-17-p4-streaming-candidate-handoff.md) | Add durable response-scoped audio representation, finish refusal/hosted-resume/multimodal matrices, obtain independent review, then run final retained phase gates |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|
