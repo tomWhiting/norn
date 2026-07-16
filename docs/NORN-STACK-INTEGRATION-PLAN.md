@@ -185,7 +185,7 @@ explicitly ruled; they are not silently deferred.
 | Phase | Status | Visible outcome |
 |---|---|---|
 | NS0. Architecture and contract boundary | [ ] Drafted; review open | The stack has one documented authority map and compatible contract vocabulary. |
-| NS1. Responses transcript and event substrate | [ ] Reviewable P3/P4 implementation candidate through `65dc1d5`: canonical persistence/replay, complete public/Codex manifests, identity-keyed reconciliation, refusal and hosted-search matrices, terminal-only equivalence, and authoritative UI suffix repair landed; D2, response-scoped audio/media, complete cross-session fixtures, retained evidence, and independent phase gates remain open | Norn has a lossless canonical provider transcript and complete event reconciliation. |
+| NS1. Responses transcript and event substrate | [ ] Reviewable P3/P4 implementation candidate through `07bf9c1`: the exact 28-item output union, shipped non-audio nested/tool schemas, canonical caller-aware persistence/replay, the complete pinned public manifest and scoped Codex overlay, identity-keyed reconciliation, refusal and hosted-search matrices, representative real spawn/fork paths, and authoritative UI suffix repair landed; D2, response-scoped audio, the exhaustive lifecycle matrix, retained evidence, and independent phase gates remain open | Norn has a lossless canonical provider transcript and complete event reconciliation. |
 | NS2. Norn semantic projection and read model | [ ] Not started | Existing session history is queryable through stable typed records and cursors. |
 | NS3. Local detachable read supervisor | [ ] Not started | A session can continue while local read clients observe, detach, and reconnect without acquiring mutation authority. |
 | NS4. Read-only Frame contribution | [ ] Not started | Norn sessions, agents, status, and timelines appear in a Frame host. |
@@ -281,21 +281,28 @@ it does not duplicate that implementation here.
 
 ### Work
 
-At `65dc1d5`, the implementation-candidate work is marked complete below.
+At `07bf9c1`, the implementation-candidate work is marked complete below.
 These checks record landed candidate behavior only; they do not accept P3, P4,
-or NS1. Media/audio coverage, complete lifecycle fixtures, D2, and independent
+or NS1. Response audio, exhaustive lifecycle fixtures, D2, and independent
 review remain open where noted.
 
-- [ ] Complete the ordered canonical Responses item union under P3.
+- [x] Complete the ordered canonical 28-discriminator Responses output-item
+  union under P3, including one authoritative validator and an explicit
+  inert/executable/conditional classification for every discriminator.
 - [x] Preserve provider item order, identity, phase, annotations, refusals,
   hosted calls, compaction, reasoning, and opaque unknown data.
-- [ ] Preserve typed image and other multimodal content without flattening it
-  into display text; keep large content in referenced private artifacts where
-  the canonical provider schema permits a reference.
+- [x] Preserve the shipped non-audio image, file, binary, and structured content
+  shapes without flattening them into display text; keep large content in
+  referenced private artifacts where the canonical provider schema permits a
+  reference.
+- [ ] Add the D2-compatible response-scoped audio artifact sidecar without
+  fabricating an output-item identity or terminal audio item.
 - [x] Complete the P4 public/Codex event and item manifests.
 - [x] Reconcile deltas with authoritative completed items by stable identity.
-- [ ] Persist and replay the same canonical items through uninterrupted,
-  resumed, spawned, and forked sessions.
+- [x] Persist and replay representative canonical non-audio vectors through
+  uninterrupted, resumed, spawned, and forked sessions.
+- [ ] Complete the exhaustive all-discriminator/optional-shape lifecycle matrix;
+  the representative real spawn/fork fixtures do not imply that broader claim.
 - [ ] Resolve Responses decision D2 for existing persisted sessions.
 
 ### Difference after the phase
@@ -924,9 +931,9 @@ The critical and parallel paths are:
 3. Resolve Responses D2.
 4. In parallel, complete NS0A's authority and identity inventory without
    editing the P3/P4 transcript implementation.
-5. Close P3's remaining D2, media, lifecycle-fixture, and independent-review
-   gates, then obtain P3 acceptance.
-6. Close P4's remaining audio/media, fixture-matrix, and independent-review
+5. Close P3's remaining D2, response-audio, exhaustive lifecycle-fixture, and
+   independent-review gates, then obtain P3 acceptance.
+6. Close P4's remaining audio, fixture-matrix, and independent-review
    gates, then obtain P4 acceptance.
 7. Complete the post-P4 NS0B contract freeze.
 8. Stop at M1 and confirm that the canonical event substrate is sufficient for
