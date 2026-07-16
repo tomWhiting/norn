@@ -12,10 +12,11 @@
   implementation candidate and fixture closure are complete through source
   `fcd1b30`; retained Gate C,
   the live A/B/A experiment, the P1 dependency, and independent P2 acceptance
-  remain open. P3 canonical transcript foundations are present, and P4 now has
-  a reviewable conformance candidate through `65dc1d5`; response-scoped audio
-  persistence, complete P3 cross-session fixture matrices, P3 D2 work, retained
-  phase evidence, and independent P3/P4 acceptance remain open.
+  remain open. P3 canonical transcript foundations plus representative real
+  spawn/fork lifecycle evidence are present through `4662fbc`, and P4 has a
+  reviewable conformance candidate through `65dc1d5`; P3 D2, the complete
+  media/content inventory, response-scoped audio persistence, retained phase
+  evidence, and independent P3/P4 acceptance remain open.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -406,7 +407,7 @@ artifacts to the same clean head with zero errors.
 | P0. Credential and workspace authority containment | [x] Accepted by focused Gate D review `7ce29d7` on 2026-07-15 | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] Gate A complete at base `2917c8e`; Gate B foundation next; D0 remote enforcement deferred to exit | The program has executable contracts and protected quality gates. |
 | P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; retained Gate C, live A/B/A, P1 dependency, and independent acceptance open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
-| P3. Canonical ordered transcript | [ ] Implementation candidate through `65dc1d5`; canonical model/replay/persistence/fork paths and strict gates are green; D2, complete media fixtures, spawned-session evidence, and review remain open | Responses items survive stream, persistence, resume, and replay in order. |
+| P3. Canonical ordered transcript | [ ] Implementation candidate through `4662fbc`; canonical model/replay/persistence, exact second-request, real spawn, and real agent-fork paths are green; D2, the complete media inventory, retained evidence, and review remain open | Responses items survive stream, persistence, resume, and replay in order. |
 | P4. Streaming and replay conformance | [ ] Reviewable candidate through `65dc1d5`; public/Codex manifests, identity/channel/item reconciliation, terminal parsing, refusal, hosted-search replay, authoritative UI repair, and raw CLI events are implemented; audio persistence, retained phase evidence, and independent review remain open | Supported events/items are complete, reconciled, and fail closed. |
 | P5. Conversation and Codex turn semantics | [ ] | Local/provider history and turn-scoped state have explicit lifetimes. |
 | P6. Transport, retry, and usage | [ ] | Retries terminate once; observed and unknown attempt usage remain explicit. |
@@ -444,7 +445,7 @@ blocks phase acceptance and cannot be represented as implemented evidence.
 | D1C | File-descriptor exhaustion mitigation introduced by descriptor-pinned private storage and persistent agent sinks. | P0 | [x] Mandatory per the 2026-07-11 post-review owner ruling: the official CLI raises its soft `RLIMIT_NOFILE` only to a finite OS-provided ceiling, reports inherited/effective limits and a labelled descriptor snapshot through `doctor`, and preserves typed `EMFILE` versus `ENFILE` diagnostics across the P0 private/session/process boundary. Library embedders do not receive an implicit process-global mutation. Structural descriptor sharing or lazy reopen remains an explicitly owned follow-up rather than being misrepresented as solved by a higher limit. `RLIMIT_CORE=0` remains a separate open decision because it also affects spawned user commands. |
 | D1E | Structural descriptor closure after the owner rejected residual Norn-owned `EMFILE` risk. | P0 | [x] Decided, implemented, and independently accepted at `7ce29d7`. Idle session/history/process retention and eager spool-root probing are removed; cancellation-safe adoption owns process groups until spool attachment commits; and the process-wide fail-fast authority covers active/scalable process, spool, session, diagnostic, persistent stdio, LSP, HTTP, OAuth callback/browser, read/search, Rhai, debug, ordinary one-shot configuration, discovery, task, and write/edit/patch families. The former arbitrary transient headroom is replaced by exact observer reserve and typed filesystem/subprocess/HTTP permits. The final distribution and Gate D review cover selected descriptor-retention/admission, cancellation, live-transport release, and OAuth launcher permit lifecycles. This item does not claim that Norn can prevent unrelated embedder or operating-system-wide exhaustion. |
 | D1D | Complete `NornSettings.mcp_servers` as the layered MCP client surface: user, shared project, private project-local, per-agent, CLI, and live-session scopes with remembered shared-project approval and dynamic tool-catalogue refresh. | P0 | [x] Owner decision confirmed by Tom on 2026-07-13 and attributed in `DECISIONS-2026-07.md` section 10; implementation and its complete startup/live-control fixture matrix were independently accepted at `7ce29d7`. Precedence is `session > CLI > local > project > user`; same-name entries replace wholesale. Only shared checked-in project definitions require definition-bound remembered approval; user-owned private, CLI, and live-session input is direct operator configuration. Root, variant, and spawned agents select views from the connected pool without treating MCP roots as confinement. Startup consumption, live add/remove/enable/disable/reload, contextual roots, and provider-visible tool refresh are implemented. |
-| D2 | Existing session policy: explicit version rejection or an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [ ] Open |
+| D2 | Existing session policy: explicit version rejection or an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [ ] Open. The 2026-07-17 audit confirmed that canonical items were added while format version 1 remained unchanged and that old/new readers can continue after unknown/newer data, so a header bump alone is insufficient. The owner must choose a new isolated rejecting namespace or an offline atomic migration with an honest legacy-fidelity record; normal runtime migration is excluded. |
 | D3 | Threaded-state policy: decide replaceable Developer context and whether/how local compaction may reset an anchor without losing stored reasoning. Select a genuinely replaceable surface, lossless replay contract, fresh-thread transition, or disable threading/local replay. | P5 | [ ] Open |
 | D4 | Single retry owner and existing configured attempt/budget semantics for HTTP and in-stream failures. | P6 | [ ] Open |
 | D5 | Native `text.format` versus synthetic tool policy by API shape, catalog-selected apply-patch/search envelopes, and local-dispatch versus user-request semantics for tool-backed slash commands. | P7 | [ ] Open |
@@ -1479,7 +1480,10 @@ are not pass claims.
 **dependencies:** P0-P2 and D2.
 
 The implementation candidate now carries exact completed-item JSON through
-assembly, JSONL persistence, resume, fork, and `store:false` replay. The
+assembly, JSONL persistence, resume, top-level session fork, real persistent
+spawn, real agent fork, and `store:false` replay. The live second request and
+the direct persisted reload now have exact full-input assertions rather than
+subsequence-only checks. The
 2026-07-16 official Developer Docs contract is pinned at 53 public stream
 events and 28 public output-item variants, with a separately pinned Codex
 overlay. D2 and the unchecked fixture/review requirements below still block
@@ -1523,14 +1527,14 @@ not change their order or invent missing semantics.
 - [x] Store stream provenance such as item ID, output index, and content index
   separately from replayable provider item JSON. Envelope coordinates must never
   leak into the next request unless the provider item schema owns that field.
-- [ ] Make normalized text, reasoning, calls, and stop reason derived views only.
+- [x] Make normalized text, reasoning, calls, and stop reason derived views only.
 - [ ] Version the new persisted format and replace the flat representation under
   D2. A rejecting runtime must fail before mutation. An approved migration must
   be offline, atomic, idempotent, recoverable from interruption, backup-aware,
   and absent from the normal runtime read path.
 - [x] Define the minimal documented normalization allowlist for server-only
   fields rejected on replay; preserve everything else.
-- [ ] Update uninterrupted, persisted, resumed, spawned, and forked session paths.
+- [x] Update uninterrupted, persisted, resumed, spawned, and forked session paths.
 
 ### Phase-specific evidence
 
@@ -1540,10 +1544,13 @@ not change their order or invent missing semantics.
 - [ ] The pinned multimodal/content inventory has golden uninterrupted,
   persistence, reload, stateless-replay, spawned, and forked fixtures. Typed
   media, structured data, and artifact references round-trip without textual
-  substitution, authority expansion, or private-artifact path disclosure.
+  substitution, authority expansion, or private-artifact path disclosure. The
+  representative supported non-audio vector is green through real spawn and
+  agent-fork paths at `4662fbc`; exhaustive inventory and response-scoped audio
+  remain open and are not implied by that fixture.
 - [x] A sequence containing reasoning, commentary, call, further reasoning, and
   final answer remains in that exact order after persistence and resume.
-- [ ] The second `store:false` request replays the preceding `response.output`
+- [x] The second `store:false` request replays the preceding `response.output`
   sequence exactly except for the approved normalization allowlist.
 - [x] Unknown items round-trip opaquely without becoming executable by accident.
 - [ ] Existing-session tests cover format versioning, interrupted/repeated
@@ -1561,8 +1568,8 @@ not change their order or invent missing semantics.
 ## P4. Streaming and replay conformance
 
 **Status:** [ ] Reviewable implementation candidate through `65dc1d5`;
-response-scoped audio, retained phase evidence, and independent review still
-block acceptance;
+the D2-gated response-scoped audio sidecar, retained phase evidence, and
+independent review still block acceptance;
 **candidate coverage:** `STATE-01`, `EVT-01` through
 `EVT-07`; **dependencies:** P3.
 
@@ -1606,9 +1613,13 @@ authoritative completed item can become executable.
   annotations, image generation, hosted search, MCP, and code-interpreter
   channels are implemented. Missing authoritative text suffixes are projected
   to live consumers; non-prefix conflicts fail with a typed protocol error.
-- [ ] Add the durable response-scoped audio artifact under P3, then apply the
-  same completion/replay contract. Until then audio is retained raw and fails
-  with typed `UnsupportedResponseMedia` rather than being flattened or dropped.
+- [ ] Add the durable response-scoped audio sidecar under P3 after D2. The
+  official event schema carries response-level deltas and `.done` markers but
+  no item/content coordinates, codec/MIME, or terminal payload, so the correct
+  evidence is stream-to-private-artifact persistence/reload, not invented
+  output-item or streamed/terminal equivalence. Until then audio is retained
+  raw and fails with typed `UnsupportedResponseMedia` rather than being
+  flattened or dropped.
 - [x] Preserve refusal, message phase, annotations/citations, hosted-search
   actions/sources, reasoning, compaction, and multiple message boundaries.
 - [x] Represent refusal as a non-retryable model outcome, not provider failure;
@@ -1646,8 +1657,10 @@ authoritative completed content part is preserved canonically.
 - [x] Streamed supported non-audio content reconciles to the same canonical
   items as terminal-only authoritative completion, including duplicate,
   interleaved, missing-delta, and append-only authoritative-repair cases.
-- [ ] Response-scoped audio receives the same streamed/terminal equivalence
-  fixture after P3 owns its durable artifact representation.
+- [ ] Response-scoped audio receives stream-to-private-artifact
+  persistence/reload, completion-marker, corruption, cancellation, resume,
+  spawn, and fork fixtures after P3 owns its D2-compatible sidecar. No terminal
+  audio payload or output-item correlation may be fabricated.
 - [x] Interleaved calls prove call two cannot complete call one. Exact duplicate
   frames are idempotent; conflicting duplicates, delta-only calls, and missing
   authoritative completion cannot execute.
@@ -2088,8 +2101,8 @@ ledger prematurely.
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
 | P1 | Gate A complete at base `2917c8e`; Gate B foundation not yet implemented | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A `READY` | Implement and independently review the executable foundation, complete and verify P1, then resolve D0 before acceptance |
 | P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and the bounded source fixture matrices are present | Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks; retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle | Record the historical missing-phase-base disposition, resolve the P1 dependency, run the live A/B/A validity experiment, execute and retain the complete candidate gates, then obtain P2 acceptance |
-| P3 | Canonical ordered transcript foundation through `65dc1d5`: exact completed items drive derived views and survive persistence/replay paths | Canonical round-trip, ordering, opaque-item, refusal, hosted-search, and stateless serializer fixtures are green inside the full workspace gate | Resolve D2, complete the media/content inventory and spawned/cross-session matrices, then obtain protocol and persistence review |
-| P4 | Streaming/reconciliation candidate through `65dc1d5`: 53-event/28-item manifests, complete parsed JSON events, identity-safe and frame-atomic completion, item-scoped image/MCP/code/search reconciliation, documented delta-logprob validation, terminal parsing, refusal outcomes, hosted-search replay, and append-only UI repair | 551 OpenAI provider tests; refusal 4/4 and hosted runner/resume 1/1; strict workspace Clippy, all-target tests, doc tests, fmt, diff, bypass, and production-LOC checks are green; see the [`2026-07-17 fixture-closure handoff`](reviews/2026-07-17-p4-fixture-closure-handoff.md) | Add durable response-scoped audio representation, obtain independent review, and run final retained phase gates; P6 separately owns usage-presence projection and retry-attempt UI cleanup |
+| P3 | Canonical ordered transcript candidate through `4662fbc`: exact completed items drive derived views and survive persistence, exact second-request replay, real persistent spawn, real agent fork, reload, and manager resume paths | Canonical round-trip 36/36; exact hosted-search continuation/reload 1/1; real persistent spawn/fork 2/2; workspace/all-target tests and strict Clippy green | Resolve D2, complete the exhaustive media/content inventory and D2-compatible audio sidecar, retain final phase evidence, then obtain protocol and persistence review |
+| P4 | Streaming/reconciliation candidate through `65dc1d5`: 53-event/28-item manifests, complete parsed JSON events, identity-safe and frame-atomic completion, item-scoped image/MCP/code/search reconciliation, documented delta-logprob validation, terminal parsing, refusal outcomes, hosted-search replay, and append-only UI repair | 551 OpenAI provider tests; refusal 4/4 and hosted runner/resume 1/1; strict workspace Clippy, all-target tests, doc tests, fmt, diff, bypass, and production-LOC checks are green; see the [`2026-07-17 fixture-closure handoff`](reviews/2026-07-17-p4-fixture-closure-handoff.md) | After D2, add the durable response-scoped audio sidecar and stream-to-artifact evidence; obtain independent review and run final retained phase gates; P6 separately owns usage-presence projection and retry-attempt UI cleanup |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|
