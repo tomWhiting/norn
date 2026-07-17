@@ -178,18 +178,6 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     // real tool: the gated registry is only known after `build()`.
     warn_unmatched_tool_flag_names(&parts.registry, &resolved.applied);
 
-    // Surface a partial replay on stderr before the terminal enters raw
-    // mode: the tolerant reader skips torn/corrupt/unknown/duplicate lines
-    // instead of failing the load, and that count must reach the user.
-    if let Some(replay) = parts.replay.as_ref()
-        && replay.skipped_lines > 0
-    {
-        eprintln!(
-            "norn: warning: {} corrupt or unreadable line(s) skipped while loading session {}",
-            replay.skipped_lines, parts.info.session_id,
-        );
-    }
-
     // `info.session_id` is always populated (fresh UUID under
     // `--no-session`); `session_entry` is `Some` only for a persisted
     // session, carrying the id and directory the TUI event loop appends to.

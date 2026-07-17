@@ -6,7 +6,7 @@ use crate::cli::ExitCode;
 use crate::cli::SessionExportFormat;
 use crate::session::{SessionIndexEntry, SessionManager, SessionPersistError};
 
-use norn::session::events::SessionEvent;
+use norn::session::events::{ProviderEpochBoundaryReason, SessionEvent};
 
 /// Execute the `norn session export` subcommand: resolve the session,
 /// load its events, and render in the requested format.
@@ -15,15 +15,6 @@ pub fn run_export(data_dir: &Path, input: &str, format: Option<SessionExportForm
         Ok(loaded) => loaded,
         Err(err) => return report_export_error(&err),
     };
-    if read.skipped_lines > 0 {
-        // The tolerant reader already logged each skipped line; surface
-        // the count on stderr so a piped export is never silently partial.
-        eprintln!(
-            "norn: warning: {} corrupt/unreadable line(s) skipped while reading session {}",
-            read.skipped_lines, entry.id,
-        );
-    }
-
     match format.unwrap_or(SessionExportFormat::Jsonl) {
         SessionExportFormat::Jsonl => export_jsonl(&read.events),
         SessionExportFormat::Json => export_json(&entry, &read.events),
@@ -133,6 +124,12 @@ fn export_markdown(entry: &SessionIndexEntry, events: &[SessionEvent]) -> ExitCo
                 ..
             } => {
                 println!("_Model changed: {old_model} -> {new_model}_\n");
+            }
+            SessionEvent::ProviderEpochBoundary { reason, .. } => {
+                let reason = match reason {
+                    ProviderEpochBoundaryReason::MigratedLegacy => "migrated legacy session",
+                };
+                println!("_Provider epoch boundary: {reason}_\n");
             }
             SessionEvent::Compaction { summary, .. } => {
                 println!("_Compaction: {summary}_\n");

@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use super::mcp_args::McpCmd;
+use super::session_args::SessionCmd;
 
 /// Norn — agent runtime CLI: interactive REPL or one-shot headless execution.
 #[derive(Parser, Debug)]
@@ -183,6 +184,12 @@ pub struct Cli {
     /// With --session-id, resume that exact ID when it already exists.
     #[arg(long, requires = "session_id")]
     pub resume_if_exists: bool,
+
+    /// Allow a coherent migrated legacy session to resume from a fresh
+    /// provider epoch when its exact provider transcript cannot be replayed.
+    /// Corrupt or ambiguous legacy records remain inspect/export-only.
+    #[arg(long, conflicts_with = "no_session")]
+    pub allow_degraded_session: bool,
 
     /// OAuth account for this agent run. Resumed, forked, and
     /// open-or-resume runs require an explicit account to avoid silently
@@ -379,78 +386,6 @@ pub enum InitCmd {
     },
 }
 
-/// Session subcommands (NC14).
-#[derive(Subcommand, Debug)]
-pub enum SessionCmd {
-    /// List sessions (defaults to the current working directory).
-    List {
-        /// Show sessions from all directories, not just the current one.
-        #[arg(long)]
-        all: bool,
-        /// Maximum number of sessions to list.
-        #[arg(long, value_name = "N")]
-        limit: Option<usize>,
-        /// Output format: `table` (default) or `json`.
-        #[arg(long, value_name = "FORMAT", value_enum)]
-        format: Option<SessionListFormat>,
-    },
-    /// Show session metadata and event summary.
-    Show {
-        /// Session ID or name (ID accepts an 8-character minimum prefix).
-        #[arg(value_name = "ID|NAME")]
-        id: String,
-    },
-    /// Resume a session interactively.
-    Resume {
-        /// Session ID or name.
-        #[arg(value_name = "ID|NAME")]
-        id: String,
-    },
-    /// Fork a session and enter the REPL on the new copy.
-    Fork {
-        /// Source session ID or name.
-        #[arg(value_name = "ID|NAME")]
-        id: String,
-    },
-    /// Export a session to a file.
-    Export {
-        /// Session ID or name.
-        #[arg(value_name = "ID|NAME")]
-        id: String,
-        /// Export format.
-        #[arg(long, value_name = "FORMAT", value_enum)]
-        format: Option<SessionExportFormat>,
-    },
-    /// Remove a session and its index entry.
-    Remove {
-        /// Session ID or name.
-        #[arg(value_name = "ID|NAME")]
-        id: String,
-    },
-}
-
-/// Output formats for `session list`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-#[value(rename_all = "kebab-case")]
-pub enum SessionListFormat {
-    /// Human-readable table.
-    Table,
-    /// JSON array.
-    Json,
-}
-
-/// Output formats for `session export`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-#[value(rename_all = "kebab-case")]
-pub enum SessionExportFormat {
-    /// NDJSON of every `SessionEvent`.
-    Jsonl,
-    /// Single JSON document.
-    Json,
-    /// Human-readable Markdown transcript.
-    Markdown,
-}
-
 /// Auth subcommands (NC13).
 #[derive(Subcommand, Debug)]
 pub enum AuthCmd {
@@ -551,6 +486,33 @@ mod tests {
     fn resume_with_argument_captures_id() {
         let cli = Cli::try_parse_from(["norn", "--resume", "abcd1234"]).unwrap();
         assert_eq!(cli.resume.as_deref(), Some("abcd1234"));
+        assert!(!cli.allow_degraded_session);
+    }
+
+    #[test]
+    fn degraded_session_approval_parses_on_agent_and_session_resume_paths() {
+        let agent =
+            Cli::try_parse_from(["norn", "--resume", "abcd1234", "--allow-degraded-session"])
+                .unwrap();
+        assert!(agent.allow_degraded_session);
+
+        let subcommand = Cli::try_parse_from([
+            "norn",
+            "session",
+            "resume",
+            "abcd1234",
+            "--allow-degraded-session",
+        ])
+        .unwrap();
+        assert!(matches!(
+            subcommand.command,
+            Some(Command::Session {
+                command: SessionCmd::Resume {
+                    allow_degraded_session: true,
+                    ..
+                },
+            })
+        ));
     }
 
     #[test]
@@ -577,6 +539,51 @@ mod tests {
             }) => assert!(all),
             other => panic!("expected session list subcommand, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn session_migrate_subcommand_parses() {
+        let cli = Cli::try_parse_from(["norn", "session", "migrate"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Session {
+                command: SessionCmd::Migrate,
+            })
+        ));
+    }
+
+    #[test]
+    fn session_legacy_export_subcommand_parses() {
+        let cli = Cli::try_parse_from([
+            "norn",
+            "session",
+            "legacy",
+            "export",
+            "legacy-0123456789abcdef",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Session {
+                command: SessionCmd::Legacy {
+                    command: crate::cli::LegacySessionCmd::Export { catalog_id },
+                },
+            }) if catalog_id == "legacy-0123456789abcdef"
+        ));
+    }
+
+    #[test]
+    fn session_legacy_verify_subcommand_parses() -> Result<(), clap::Error> {
+        let cli = Cli::try_parse_from(["norn", "session", "legacy", "verify"])?;
+        assert!(matches!(
+            cli.command,
+            Some(Command::Session {
+                command: SessionCmd::Legacy {
+                    command: crate::cli::LegacySessionCmd::Verify,
+                },
+            })
+        ));
+        Ok(())
     }
 
     #[test]

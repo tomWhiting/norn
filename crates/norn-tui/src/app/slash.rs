@@ -190,7 +190,7 @@ fn create_new_session_store(
             opened.entry.id.clone(),
             DurabilityPolicy::Flush,
         )),
-        opened.entry.id.clone(),
+        &opened.entry,
         &[],
     ));
     Ok((opened.entry.id, opened.store, binding))
@@ -614,7 +614,7 @@ mod tests {
 
     use norn::provider::request::ReasoningEffort;
     use norn::session::events::{EventBase, SessionEvent};
-    use norn::session::{read_index, read_session_events};
+    use norn::session::{read_index, read_session_events_for_entry};
 
     /// Index-lock deadline for the store fixtures — generous test
     /// configuration; no test here contends the lock.
@@ -652,7 +652,9 @@ mod tests {
                 content: "hello after rotation".to_owned(),
             })
             .unwrap();
-        let read = read_session_events(tmp.path(), &id).unwrap();
+        let registered = read_index(tmp.path()).unwrap();
+        let entry = registered.iter().find(|entry| entry.id == id).unwrap();
+        let read = read_session_events_for_entry(tmp.path(), entry).unwrap();
         assert_eq!(read.events.len(), 1, "appended event must be on disk");
         assert!(matches!(
             &read.events[0],

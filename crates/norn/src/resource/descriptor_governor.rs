@@ -32,10 +32,10 @@ pub(crate) const THREE_PIPE_RETAINED: u32 = 3;
 pub(crate) const HTTP_REQUEST_PEAK: u32 = 3;
 
 /// Peak for one descriptor-relative private-filesystem transaction: the
-/// private root, two simultaneously held traversal directories, a source file,
-/// and a no-replace publication destination. Simpler private reads and writes
-/// use the same conservative operation-scoped reservation.
-pub(crate) const PRIVATE_FS_OPERATION_PEAK: u32 = 5;
+/// private root, an optional retained lock file, two traversal directories, a
+/// source file, and a no-replace publication destination. Simpler private
+/// reads and writes use the same conservative operation-scoped reservation.
+pub(crate) const PRIVATE_FS_OPERATION_PEAK: u32 = 6;
 
 /// Serial `ignore::Walk` peak: `walkdir` 2.5.0 retains at most ten directory
 /// handles (`WalkDirOptions::max_open`) while `ignore` may open one ignore file

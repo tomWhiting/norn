@@ -86,15 +86,21 @@ Other dependencies:
 
 Responses D2 concerns legacy and pre-canonical persisted sessions whose flat
 transcripts cannot recover P3 item order, phase, or other omitted data. The
-owner decided D2 on 2026-07-17. New strict runtime sessions will use the
-versionless `~/.norn/session-store/` namespace; the existing
-`~/.norn/sessions/` tree remains untouched as the legacy source and backup, and
-no `sessions-v2` path is introduced. A separate explicit offline migration must
-be atomic, idempotent, interruption-recoverable, and absent from normal runtime
-reads. Canonically complete legacy sessions may resume from a fresh provider-
-state epoch; flattened but coherent sessions require an explicit degraded/fresh-
-epoch resume with the fidelity loss recorded; corrupt or ambiguous sessions are
-inspect/export-only. The decision is recorded, not implemented or accepted.
+owner decided D2 on 2026-07-17, and an in-flight implementation candidate now
+uses the versionless `~/.norn/session-store/` namespace for strict format-2
+sessions. The existing `~/.norn/sessions/` tree remains untouched; migration
+publishes a separate immutable digest-addressed private backup and never creates
+a `sessions-v2` path. `norn session migrate` is the explicit offline, staged,
+no-replace operation. Normal startup does not decode legacy history: the shared
+standard resolver checks legacy-path metadata and, only when needed, a bounded
+cutover receipt and ownership proof. `norn session legacy verify` performs the
+separate history-proportional verification of the strict store, backup,
+manifest, and live legacy tree. Canonically complete legacy sessions begin a
+fresh provider-state epoch; flattened but coherent sessions require explicit
+degraded/fresh-epoch approval with the fidelity loss recorded; corrupt or
+ambiguous sessions remain inspect/export-only. `SessionManager::standard()`
+applies the same cutover boundary to library embedders. The implementation is
+not yet frozen, retained as final evidence, independently reviewed, or accepted.
 D2 does not select Haematite or perform the later storage-engine migration. P3
 remains on Norn's JSONL session-storage authority; NS9 separately introduces the
 store seam and Haematite import after the logical event model is stable.
@@ -191,7 +197,7 @@ explicitly ruled; they are not silently deferred.
 | Phase | Status | Visible outcome |
 |---|---|---|
 | NS0. Architecture and contract boundary | [ ] Drafted; review open | The stack has one documented authority map and compatible contract vocabulary. |
-| NS1. Responses transcript and event substrate | [ ] Frozen P3/P4 implementation candidate through `07bf9c1`: the exact 28-item output union, shipped non-audio nested/tool schemas, canonical caller-aware persistence/replay, the complete pinned public manifest and scoped Codex overlay, identity-keyed reconciliation, refusal and hosted-search matrices, representative real spawn/fork paths, and authoritative UI suffix repair landed; D2 is decided but unimplemented, while response-scoped audio, the exhaustive lifecycle matrix, retained evidence, and independent phase gates remain open | Norn has a lossless canonical provider transcript and complete event reconciliation. |
+| NS1. Responses transcript and event substrate | [ ] Frozen P3/P4 transcript/streaming candidate through `07bf9c1`, plus an in-flight D2 persistence candidate: the exact 28-item output union, shipped non-audio nested/tool schemas, canonical caller-aware persistence/replay, the complete pinned public manifest and scoped Codex overlay, identity-keyed reconciliation, refusal and hosted-search matrices, representative real spawn/fork paths, authoritative UI suffix repair, strict format-2 store, and offline migration policy are implemented; response-scoped audio, the exhaustive lifecycle matrix, D2 retained evidence, and independent phase gates remain open | Norn has a lossless canonical provider transcript and complete event reconciliation. |
 | NS2. Norn semantic projection and read model | [ ] Not started | Existing session history is queryable through stable typed records and cursors. |
 | NS3. Local detachable read supervisor | [ ] Not started | A session can continue while local read clients observe, detach, and reconnect without acquiring mutation authority. |
 | NS4. Read-only Frame contribution | [ ] Not started | Norn sessions, agents, status, and timelines appear in a Frame host. |
@@ -287,11 +293,11 @@ it does not duplicate that implementation here.
 
 ### Work
 
-At `07bf9c1`, the implementation-candidate work is marked complete below.
-These checks record landed candidate behavior only; they do not accept P3, P4,
-or NS1. The source range remains frozen for external review. Response audio,
-exhaustive lifecycle fixtures, D2 implementation, and independent review remain
-open where noted.
+At `07bf9c1`, the transcript and streaming implementation-candidate work is
+marked complete below. The separate D2 source candidate is present but not yet
+frozen. These checks record candidate behavior only; they do not accept P3, P4,
+or NS1. Response audio, exhaustive lifecycle fixtures, D2 retained verification,
+and independent review remain open where noted.
 
 - [x] Complete the ordered canonical 28-discriminator Responses output-item
   union under P3, including one authoritative validator and an explicit
@@ -310,10 +316,13 @@ open where noted.
   uninterrupted, resumed, spawned, and forked sessions.
 - [ ] Complete the exhaustive all-discriminator/optional-shape lifecycle matrix;
   the representative real spawn/fork fixtures do not imply that broader claim.
-- [ ] Implement the decided Responses D2 contract: strict new sessions under
+- [x] Implement the decided Responses D2 contract: strict new sessions under
   `~/.norn/session-store/`, untouched legacy `~/.norn/sessions/`, and a separate
   offline atomic migration with canonical, degraded/fresh-epoch, and
-  inspect/export-only classifications.
+  inspect/export-only classifications. Normal runtime uses a bounded cutover
+  proof; complete migration verification is explicit and offline; the shared
+  checked resolver and `SessionManager::standard()` cover standard CLI and
+  library construction. Final retained evidence and review remain open.
 
 ### Difference after the phase
 
@@ -938,11 +947,12 @@ The critical and parallel paths are:
 
 1. Complete P1 acceptance.
 2. Complete P2 retained evidence and acceptance.
-3. Implement and verify the owner-decided Responses D2 contract.
+3. Freeze, retain evidence for, and independently verify the implemented
+   Responses D2 contract.
 4. In parallel, complete NS0A's authority and identity inventory without
    editing the P3/P4 transcript implementation.
-5. Close P3's remaining D2 implementation, response-audio, exhaustive lifecycle-fixture, and
-   independent-review gates, then obtain P3 acceptance.
+5. Close P3's remaining D2 evidence/review, response-audio, exhaustive
+   lifecycle-fixture, and independent-review gates, then obtain P3 acceptance.
 6. Close P4's remaining audio, fixture-matrix, and independent-review
    gates, then obtain P4 acceptance.
 7. Complete the post-P4 NS0B contract freeze.

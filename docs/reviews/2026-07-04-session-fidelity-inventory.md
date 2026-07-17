@@ -10,6 +10,13 @@
 > Open owner ruling: EventId stays UUIDv7 (nothing sorts it; it surfaces
 > in spool filenames) or joins the v4 unification.
 
+> **Historical persistence snapshot.** The gap verdicts remain part of the
+> campaign record, but the tolerant-reader and flat-layout mechanics cited below
+> were superseded by Responses D2. Current sessions use strict format 2 under
+> `~/.norn/session-store/`; legacy `~/.norn/sessions/` data is available only to
+> the explicit offline migration and inspection surfaces tracked in
+> `docs/RESPONSES-API-REMEDIATION-PLAN.md`.
+
 Recon date: 2026-07-04. Verified at HEAD, main @ 3cac008. All paths relative to repo root.
 Purpose: complete gap list between what happens in a norn agent run and what reaches durable
 session storage. This inventory drives the session-tree storage design campaign (see the

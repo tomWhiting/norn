@@ -10,69 +10,14 @@
 //! equivalent single-pass
 //! [`ReplayArtifacts`](crate::session::ReplayArtifacts) restorers).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 
 use crate::error::SessionError;
-use crate::provider::response_item::{ResponseCustomToolCallItem, ResponseFunctionCallItem};
 use crate::session::events::{ContextMarkKind, EventBase, EventId, SessionEvent};
 use crate::session::store::EventStore;
 
-/// Result of a successful [`ContextEdits::auto_compact_keeping_recent_turns`]
-/// call.
-///
-/// Carries everything a live consumer (the agent loop) needs to apply the
-/// compaction to an in-flight prompt without re-deriving state: the ID of the
-/// appended [`SessionEvent::Compaction`] and the IDs of the events this
-/// specific compaction newly hid from prompt construction.
-#[derive(Debug)]
-pub struct AutoCompactionOutcome {
-    /// ID of the appended [`SessionEvent::Compaction`] event.
-    pub compaction_id: EventId,
-    /// Events that were visible in the prompt view before this compaction
-    /// and are superseded by it. Excludes events that were already
-    /// superseded by an earlier compaction or suppressed (those produced no
-    /// prompt content to begin with). Ordered by store insertion order.
-    pub newly_superseded: Vec<EventId>,
-}
-
-/// A computed auto-compaction cut that has not yet been committed.
-///
-/// Produced by [`ContextEdits::plan_auto_compaction`] and consumed by
-/// [`ContextEdits::commit_compaction_plan`]. The two-phase split exists so
-/// a caller that owns a provider handle (the agent loop) can generate an
-/// LLM-written summary of the events about to be elided *before* the
-/// compaction record is appended, while callers without one (manual
-/// `/compact` paths) commit the mechanical digest directly.
-#[derive(Debug)]
-pub struct CompactionPlan {
-    /// Exclusive end of the replaced span in store insertion order.
-    cut_exclusive: usize,
-    /// IDs of every event the compaction will supersede.
-    replaced_ids: Vec<EventId>,
-    /// Subset of `replaced_ids` that was still visible in the prompt view
-    /// when the plan was computed.
-    newly_superseded: Vec<EventId>,
-}
-
-impl CompactionPlan {
-    /// Exclusive end of the replaced span in store insertion order.
-    #[must_use]
-    pub const fn cut_exclusive(&self) -> usize {
-        self.cut_exclusive
-    }
-
-    /// IDs of every event the compaction will supersede.
-    #[must_use]
-    pub fn replaced_ids(&self) -> &[EventId] {
-        &self.replaced_ids
-    }
-
-    /// Events still visible in the prompt view when the plan was computed.
-    #[must_use]
-    pub fn newly_superseded(&self) -> &[EventId] {
-        &self.newly_superseded
-    }
-}
+use super::context_edit_compaction::compact_boundary_after_tool_results;
+pub use super::context_edit_plan::{AutoCompactionOutcome, CompactionPlan};
 
 /// Tracks context editing marks applied to session events.
 ///
@@ -222,6 +167,7 @@ impl ContextEdits {
                     | SessionEvent::SpokenResponse { .. }
                     | SessionEvent::ToolResult { .. }
                     | SessionEvent::ModelChange { .. }
+                    | SessionEvent::ProviderEpochBoundary { .. }
                     | SessionEvent::ChildBranch { .. }
                     | SessionEvent::ForkComplete { .. }
                     | SessionEvent::Label { .. }
@@ -546,125 +492,7 @@ pub fn build_compaction_digest(
     replaced: &[SessionEvent],
     token_estimate_freed: usize,
 ) -> serde_json::Value {
-    let mut user_messages = 0_usize;
-    let mut assistant_messages = 0_usize;
-    let mut tool_results = 0_usize;
-    let mut prior_compactions = 0_usize;
-    let mut other_events = 0_usize;
-    let mut tool_calls: BTreeMap<String, usize> = BTreeMap::new();
-    let mut response_item_sequences = Vec::new();
-    for event in replaced {
-        match event {
-            SessionEvent::UserMessage { .. } => user_messages += 1,
-            SessionEvent::AssistantMessage {
-                base,
-                response_items,
-                tool_calls: legacy_calls,
-                ..
-            } => {
-                assistant_messages += 1;
-                if response_items.is_empty() {
-                    for call in legacy_calls {
-                        *tool_calls.entry(call.name.clone()).or_insert(0) += 1;
-                    }
-                } else {
-                    response_item_sequences.push(serde_json::json!({
-                        "assistant_event_id": base.id.to_string(),
-                        "item_types": response_items
-                            .iter()
-                            .map(|entry| entry.item.item_type())
-                            .collect::<Vec<_>>(),
-                    }));
-                    for entry in response_items {
-                        let name = entry
-                            .item
-                            .as_function_call()
-                            .map(ResponseFunctionCallItem::name)
-                            .or_else(|| {
-                                entry
-                                    .item
-                                    .as_custom_tool_call()
-                                    .map(ResponseCustomToolCallItem::name)
-                            });
-                        if let Some(name) = name {
-                            *tool_calls.entry(name.to_string()).or_insert(0) += 1;
-                        }
-                    }
-                }
-            }
-            SessionEvent::ToolResult { .. } => tool_results += 1,
-            SessionEvent::Compaction { .. } => prior_compactions += 1,
-            SessionEvent::Custom { .. }
-            | SessionEvent::ModelChange { .. }
-            | SessionEvent::ChildBranch { .. }
-            | SessionEvent::ForkComplete { .. }
-            | SessionEvent::Label { .. }
-            | SessionEvent::RuleInjection { .. }
-            | SessionEvent::ContextMark { .. }
-            | SessionEvent::SpokenResponse { .. } => other_events += 1,
-        }
-    }
-    let first = replaced.first().map(SessionEvent::base);
-    let last = replaced.last().map(SessionEvent::base);
-    serde_json::json!({
-        "summary_kind": "mechanical_digest",
-        "event_count_suppressed": replaced.len(),
-        "token_estimate_freed": token_estimate_freed,
-        "user_messages": user_messages,
-        "assistant_messages": assistant_messages,
-        "tool_results": tool_results,
-        "prior_compactions": prior_compactions,
-        "other_events": other_events,
-        "tool_calls": tool_calls,
-        "response_item_sequences": response_item_sequences,
-        "first_timestamp": first.map(|b| b.timestamp.to_rfc3339()),
-        "last_timestamp": last.map(|b| b.timestamp.to_rfc3339()),
-        "turn_range": {
-            "start": first.map(|b| b.id.to_string()),
-            "end": last.map(|b| b.id.to_string()),
-        }
-    })
-}
-
-fn compact_boundary_after_tool_results(events: &[SessionEvent], assistant_idx: usize) -> usize {
-    let call_ids = match events.get(assistant_idx) {
-        Some(SessionEvent::AssistantMessage { tool_calls, .. }) => tool_calls
-            .iter()
-            .map(|call| call.call_id.clone())
-            .collect::<HashSet<_>>(),
-        _ => HashSet::new(),
-    };
-    if call_ids.is_empty() {
-        return assistant_idx.saturating_add(1);
-    }
-
-    let mut unresolved = call_ids;
-    let mut idx = assistant_idx.saturating_add(1);
-    while idx < events.len() {
-        match &events[idx] {
-            SessionEvent::ToolResult { tool_call_id, .. } => {
-                unresolved.remove(tool_call_id);
-                if unresolved.is_empty() {
-                    return idx.saturating_add(1);
-                }
-            }
-            SessionEvent::AssistantMessage { .. } => {
-                return assistant_idx;
-            }
-            SessionEvent::UserMessage { .. }
-            | SessionEvent::Custom { .. }
-            | SessionEvent::ModelChange { .. }
-            | SessionEvent::ChildBranch { .. }
-            | SessionEvent::ForkComplete { .. }
-            | SessionEvent::Label { .. }
-            | SessionEvent::RuleInjection { .. }
-            | SessionEvent::ContextMark { .. }
-            | SessionEvent::SpokenResponse { .. }
-            | SessionEvent::Compaction { .. } => {}
-        }
-        idx += 1;
-    }
-    assistant_idx
+    super::context_edit_compaction::build_compaction_digest(replaced, token_estimate_freed)
 }
 
 #[cfg(test)]

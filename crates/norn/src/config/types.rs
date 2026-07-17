@@ -1040,9 +1040,10 @@ pub struct ContextSettings {
 /// Session-scope settings.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SessionSettings {
-    /// Retention window, in days, for session JSONL files under
-    /// `~/.norn/sessions/`. The session cluster's cleanup task deletes
-    /// records older than this. [`None`] means "retain indefinitely".
+    /// Reserved retention window, in days, for session records under the
+    /// active session store. No cleanup worker currently consumes this field,
+    /// so setting it does not delete records. [`None`] means no requested
+    /// retention policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleanup_days: Option<u32>,
 

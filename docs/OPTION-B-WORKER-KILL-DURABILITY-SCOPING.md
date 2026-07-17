@@ -1,5 +1,12 @@
 # Option B — Worker-Kill (kill -9 mid-Norn-step) Durability: Engineering Scoping
 
+> **Historical scoping note (superseded for local session persistence).** This
+> document's tolerant-reader and flat-file recovery analysis describes the June
+> 2026 implementation. Responses D2 replaces that runtime surface with strict
+> format-2 storage under `~/.norn/session-store/` and explicit offline migration
+> from untouched `~/.norn/sessions/`; see
+> `docs/RESPONSES-API-REMEDIATION-PLAN.md`.
+
 **Date:** 2026-06-29
 **Author:** scoping pass (code-verified, not review-trusted)
 **Scope:** Harden the Aion↔Norn boundary so an Aion worker killed with `kill -9`
@@ -158,14 +165,15 @@ the tail. The tolerant reader cannot recover bytes the OS never wrote.
 
 **(a) Evidence — resolved:** `session/persistence/lock.rs` implements an advisory
 `flock` on a *separate* `index.lock` file (separate so the atomic rename of
-`index.jsonl` never swaps the locked inode). Every mutating entry point holds it:
-`append_index_entry`, `insert_index_entry_if_absent`,
-`insert_index_entry_for_new_session`, `update_index_entry`, `remove_index_entry`
-(`index.rs:137-244,445-456`). Rewrites are tmp+fsync+rename (`write_index_atomic`,
-`index.rs:76-93`). The idempotent create primitives
-(`insert_index_entry_if_absent`, `insert_index_entry_for_new_session`) do the
-existence check **and** the append under the same lock, so two racing creates
-with the same id cannot both win.
+`index.jsonl` never swaps the locked inode). Production creation goes through
+the crash-recoverable publication transaction, registered timeline reads and
+writes pin the exact generation under `index.lock`, registered metadata updates
+revalidate the same generation, and `delete_session_transaction` journals the
+complete subtree before cleanup. Rewrites are tmp+fsync+rename
+(`write_index_atomic_in` in `index_codec.rs`). The old raw row insertion,
+ID-only append, and arbitrary update helpers are now test-only; production code
+cannot publish an index row without its timeline or mutate a replacement
+generation through those compatibility fixtures.
 
 **(b) Fix shape:** none required (the brief's "flock" option is exactly what
 landed).

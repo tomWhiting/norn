@@ -177,6 +177,7 @@ fn event_to_message(
             }),
 
         SessionEvent::ModelChange { .. }
+        | SessionEvent::ProviderEpochBoundary { .. }
         | SessionEvent::ChildBranch { .. }
         | SessionEvent::ForkComplete { .. }
         | SessionEvent::Label { .. }

@@ -1528,7 +1528,7 @@ mod tests {
                 root_id.clone(),
                 DurabilityPolicy::Flush,
             )),
-            root_id.clone(),
+            &opened.entry,
             &[],
         ));
 

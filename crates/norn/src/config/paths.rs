@@ -5,14 +5,14 @@
 //! - [`norn_dir`] — `~/.norn/` (root, honours `$NORN_HOME`).
 //! - [`profiles_dir`] — `~/.norn/profiles/`.
 //! - [`rules_dir`] — `~/.norn/rules/`.
-//! - [`session_data_dir`] — `~/.norn/sessions/`.
+//! - [`resolve_standard_session_data_dir`] — the checked
+//!   `~/.norn/session-store/` runtime authority.
 //! - [`skills_dir`] — `~/.norn/skills/`.
 //! - [`settings_file`] — `~/.norn/settings.json`.
 //!
-//! Every helper returns [`Option<PathBuf>`] — the workspace standard
-//! disallows `.unwrap()`/`.expect()` in library code, so callers must
-//! handle the (rare) case where neither `$NORN_HOME` nor [`dirs::home_dir`]
-//! can resolve a directory.
+//! General layout helpers return [`Option<PathBuf>`]. Security-sensitive
+//! session resolvers return a typed [`ConfigError`] instead, so a missing or
+//! invalid authority cannot silently become repository-relative storage.
 
 use std::path::PathBuf;
 
@@ -32,7 +32,10 @@ const PROFILES_SUBDIR: &str = "profiles";
 const RULES_SUBDIR: &str = "rules";
 
 /// Subdirectory for session JSONL files and index.
-const SESSIONS_SUBDIR: &str = "sessions";
+const SESSION_STORE_SUBDIR: &str = "session-store";
+
+/// Legacy session namespace consumed only by the explicit offline migrator.
+const LEGACY_SESSIONS_SUBDIR: &str = "sessions";
 
 /// Subdirectory of `~/.norn/` containing user-level skill packages.
 const SKILLS_SUBDIR: &str = "skills";
@@ -66,6 +69,51 @@ pub fn norn_dir() -> Option<PathBuf> {
     trusted_home_dir().map(|home| home.join(DEFAULT_NORN_DIRECTORY))
 }
 
+/// Resolve the trusted Norn root used by session persistence.
+///
+/// Unlike [`norn_dir`], this checked resolver never ignores an invalid
+/// authority and falls through to another one. A non-empty `NORN_HOME` must
+/// be absolute; otherwise the operating-system home must exist and be
+/// absolute.
+///
+/// # Errors
+///
+/// Returns [`ConfigError::InvalidConfig`] when the selected authority is
+/// relative or no trusted user root can be resolved.
+pub fn resolve_session_norn_root() -> Result<PathBuf, ConfigError> {
+    resolve_session_norn_root_from(std::env::var_os(NORN_HOME), dirs::home_dir)
+}
+
+fn resolve_session_norn_root_from(
+    override_dir: Option<std::ffi::OsString>,
+    home_dir: impl FnOnce() -> Option<PathBuf>,
+) -> Result<PathBuf, ConfigError> {
+    if let Some(value) = override_dir
+        && !value.is_empty()
+    {
+        let root = PathBuf::from(value);
+        if root.is_absolute() {
+            return Ok(root);
+        }
+        return Err(ConfigError::InvalidConfig {
+            reason: "NORN_HOME must be an absolute path so a working directory cannot become the trusted session-storage tier"
+                .to_owned(),
+        });
+    }
+
+    let home = home_dir().ok_or_else(|| ConfigError::InvalidConfig {
+        reason: "session persistence requires an absolute NORN_HOME or user home directory"
+            .to_owned(),
+    })?;
+    if !home.is_absolute() {
+        return Err(ConfigError::InvalidConfig {
+            reason: "the user home directory must be absolute so a working directory cannot become the trusted session-storage tier"
+                .to_owned(),
+        });
+    }
+    Ok(home.join(DEFAULT_NORN_DIRECTORY))
+}
+
 /// Returns the operating-system home directory only when it is absolute.
 ///
 /// A relative home would make trusted user configuration and credentials
@@ -88,7 +136,7 @@ pub fn trusted_home_dir() -> Option<PathBuf> {
 /// Returns [`ConfigError::InvalidConfig`] when `NORN_HOME` is relative. The
 /// configured value is deliberately omitted from the diagnostic because it
 /// may be controlled by a launch wrapper.
-pub(crate) fn validate_norn_home() -> Result<(), ConfigError> {
+pub fn validate_norn_home() -> Result<(), ConfigError> {
     if let Some(value) = std::env::var_os(NORN_HOME)
         && !value.is_empty()
         && !PathBuf::from(value).is_absolute()
@@ -118,9 +166,9 @@ pub(crate) fn validate_user_home() -> Result<(), ConfigError> {
 
 /// Resolve the directory containing named profile files: `~/.norn/profiles/`.
 ///
-/// Sits directly under [`norn_dir`] (alongside `sessions/`) per NA-002 —
-/// profiles moved out of any `config/` subdirectory so the layout matches
-/// the flat `~/.norn/` structure used by sessions, debug, and tasks.
+/// Sits directly under [`norn_dir`] alongside the active `session-store/`
+/// and legacy `sessions/` namespaces. Profiles remain outside any `config/`
+/// subdirectory so the user-level layout stays flat.
 #[must_use]
 pub fn profiles_dir() -> Option<PathBuf> {
     norn_dir().map(|d| d.join(PROFILES_SUBDIR))
@@ -141,14 +189,60 @@ pub fn rules_dir() -> Option<PathBuf> {
 // Session data directory
 // ---------------------------------------------------------------------------
 
-/// Resolve the session-data directory: `~/.norn/sessions/`.
+/// Resolve the active strict session-store directory: `~/.norn/session-store/`.
 ///
-/// Returns [`None`] when neither `$NORN_HOME` nor [`dirs::home_dir`] resolves.
-/// Sensitive session callers must surface that absence as a typed error; they
-/// must never fall back to repository-relative storage.
+/// This is the standard runtime front door for library embedders. It resolves
+/// a trusted absolute root and, when the legacy `~/.norn/sessions/` namespace
+/// still exists, verifies the fixed-size cutover proof inside the active
+/// store. The guard observes legacy-path metadata only; it never opens or
+/// decodes legacy session content during normal startup.
+///
+/// [`crate::session::SessionManager::new`] remains available for deliberately
+/// custom, embedder-owned stores. Do not combine it with a path assembled from
+/// [`norn_dir`] when the standard user store is intended.
+///
+/// # Errors
+///
+/// Returns [`ConfigError::InvalidConfig`] when no trusted root exists, a
+/// session namespace cannot be inspected, or legacy data exists without a
+/// complete bounded cutover proof.
+pub fn resolve_standard_session_data_dir() -> Result<PathBuf, ConfigError> {
+    let root = resolve_session_norn_root()?;
+    resolve_standard_session_data_dir_at(&root)
+}
+
+/// Resolve the legacy session directory: `~/.norn/sessions/`.
+///
+/// Normal runtime code must not read this namespace. It exists only as the
+/// immutable input to the explicit offline session migration command.
 #[must_use]
-pub fn session_data_dir() -> Option<PathBuf> {
-    norn_dir().map(|d| d.join(SESSIONS_SUBDIR))
+pub fn legacy_session_data_dir() -> Option<PathBuf> {
+    norn_dir().map(|d| d.join(LEGACY_SESSIONS_SUBDIR))
+}
+
+fn resolve_standard_session_data_dir_at(root: &std::path::Path) -> Result<PathBuf, ConfigError> {
+    let active = root.join(SESSION_STORE_SUBDIR);
+    let legacy = root.join(LEGACY_SESSIONS_SUBDIR);
+    if path_entry_exists(&legacy)?
+        && let Err(error) = crate::session::verify_legacy_session_cutover(root)
+    {
+        return Err(ConfigError::InvalidConfig {
+            reason: format!(
+                "legacy sessions exist without a complete verified migration; run 'norn session migrate' or inspect the session namespaces before continuing: {error}"
+            ),
+        });
+    }
+    Ok(active)
+}
+
+fn path_entry_exists(path: &std::path::Path) -> Result<bool, ConfigError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(ConfigError::InvalidConfig {
+            reason: format!("could not inspect the session storage namespace: {error}"),
+        }),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -270,11 +364,13 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn session_data_dir_appends_sessions_subdir_and_is_some() {
+    fn legacy_session_data_dir_appends_legacy_subdir_and_is_some() {
         let tempdir = tempfile::tempdir().unwrap();
         let _guard = NornHomeGuard::set(Some(tempdir.path()));
-        let dir = session_data_dir().expect("session_data_dir must produce Some");
-        assert_eq!(dir, tempdir.path().join("sessions"));
+        assert_eq!(
+            legacy_session_data_dir(),
+            Some(tempdir.path().join("sessions"))
+        );
     }
 
     #[test]
@@ -305,3 +401,7 @@ mod tests {
         assert_eq!(dir, tempdir.path().join("rules"));
     }
 }
+
+#[cfg(test)]
+#[path = "paths_session_tests.rs"]
+mod standard_session_tests;

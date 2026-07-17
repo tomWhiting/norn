@@ -406,10 +406,21 @@ mod tests {
         let infra = parent_infra(parent_id);
         let parent_ctx = ToolContext::empty();
         let artifact_dir = tempdir()?;
+        let manager = crate::session::SessionManager::new(artifact_dir.path());
+        let opened = manager.create_with_id(
+            "root-session",
+            crate::session::CreateSessionOptions {
+                model: "test-model".to_owned(),
+                working_dir: "/work".to_owned(),
+                name: None,
+            },
+            crate::session::DurabilityPolicy::Flush,
+        )?;
         let artifacts = Arc::new(crate::session::SessionArtifactStore::for_session(
             artifact_dir.path(),
-            "root-session",
+            &opened.entry,
             crate::session::DurabilityPolicy::Flush,
+            None,
         )?);
         parent_ctx.insert_extension(Arc::clone(&artifacts));
 

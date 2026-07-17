@@ -17,9 +17,8 @@
 //!         +-- fork-1a2b3c4d--spawn-9e8f7a6b.jsonl   (grandchild)
 //! ```
 //!
-//! The file name is the **full path slug**: every path segment after
-//! `root`, joined with `--` (sibling-scoped names alone would collide
-//! across different parents' grandchildren). Discovery stays
+//! The file name is the **full path slug**: segments after `root` are joined
+//! with `--` (sibling names alone would collide across parents). Discovery stays
 //! manifest-driven: each child gets an index row carrying its
 //! [`rel_path`](crate::session::persistence::SessionIndexEntry::rel_path)
 //! — nothing ever crawls the directory.
@@ -32,18 +31,18 @@
 //! 2. **append the [`SessionEvent::ChildBranch`] reservation to the
 //!    parent's store** (durable before anything keyed by the name
 //!    exists),
-//! 3. insert the child's index row,
-//! 4. create the child file (version header + `ChildBranch` provenance
-//!    header) with a live [`JsonlSink`].
+//! 3. stage the strict child timeline and durably journal its exact digest
+//!    plus index row,
+//! 4. publish the child file without replacement, then atomically add the
+//!    index row and clear the journal.
 //!
 //! A crash between 2 and 3 leaves a burned name plus a dangling child
 //! reference — exactly the state resume paths already tolerate (the
-//! `ForkComplete`-`Option` honesty machinery). A crash between 3 and 4
-//! leaves an index row without a file, which resumes as an empty session
-//! (the same self-healing state `open_or_resume` already recovers). The
-//! inverse orphan — a child file with **no** reservation — cannot be
-//! produced by this ordering; if one is found on disk anyway (external
-//! tampering, pre-parent-first residue) the mint refuses with the typed
+//! `ForkComplete`-`Option` honesty machinery). Once the journal is durable,
+//! every index read or mutation converges the no-clobber timeline-first
+//! publication before exposing the row. An unjournaled staged file is inert;
+//! a foreign file at the final path is never adopted or replaced. If one is
+//! found on disk (external tampering or old residue), the mint refuses with the typed
 //! [`SessionPersistError::ChildPathOccupied`] rather than truncating or
 //! appending to a foreign history.
 //!
@@ -58,21 +57,32 @@
 //! an INVARIANT, not an optimization target** (review §6).
 
 use std::collections::HashSet;
-use std::path::Path;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
+#[cfg(test)]
 use uuid::Uuid;
 
-use crate::session::events::{ChildBranchKind, EventBase, SessionEvent};
+#[cfg(test)]
+use crate::session::events::EventBase;
+use crate::session::events::{ChildBranchKind, SessionEvent};
 use crate::session::manager::SessionManager;
+#[cfg(test)]
 use crate::session::persistence::index::insert_child_index_entry;
-use crate::session::persistence::types::{
-    SESSION_FORMAT_VERSION, SessionIndexEntry, SessionPersistError, SessionStatus,
-};
-use crate::session::spool::SpoolWriter;
-use crate::session::store::{DurabilityPolicy, EventStore, JsonlSink};
-use crate::util::PrivateRoot;
+use crate::session::persistence::types::SessionIndexEntry;
+#[cfg(test)]
+use crate::session::persistence::types::SessionPersistError;
+#[cfg(test)]
+use crate::session::persistence::types::{SESSION_FORMAT_VERSION, SessionStatus};
+use crate::session::store::{DurabilityPolicy, EventStore};
+#[path = "branch_child.rs"]
+mod child;
+#[path = "branch_materialize.rs"]
+mod materialize;
+#[cfg(test)]
+use child::mint_child_name;
+#[cfg(test)]
+use materialize::materialize_child;
 
 /// The canonical path address of a primary line (a root session). Child
 /// addresses nest under it: `root/fork-1a2b3c4d/spawn-9e8f7a6b`.
@@ -243,7 +253,7 @@ impl std::fmt::Debug for BranchedChild {
 enum Persistence {
     Persistent {
         brancher: Arc<SessionBrancher>,
-        session_id: String,
+        registered: Box<SessionIndexEntry>,
     },
     Ephemeral,
 }
@@ -289,6 +299,8 @@ impl SessionBinding {
 
     /// Binding for a persisted root (or a resumed persisted session).
     ///
+    /// `registered` pins the exact immutable index generation; a binding
+    /// retained across delete-and-recreate refuses every later mint.
     /// `events` is the session's replayed history (empty for a fresh
     /// create): the ever-used name set is re-derived from `ChildBranch`
     /// events this session appended as a parent, and the session's own
@@ -298,9 +310,10 @@ impl SessionBinding {
     #[must_use]
     pub fn persistent_root(
         brancher: Arc<SessionBrancher>,
-        session_id: String,
+        registered: &SessionIndexEntry,
         events: &[SessionEvent],
     ) -> Self {
+        let session_id = &registered.id;
         let mut used = HashSet::new();
         let mut path_address = ROOT_PATH_ADDRESS.to_owned();
         for event in events {
@@ -325,7 +338,7 @@ impl SessionBinding {
             path_address,
             persistence: Persistence::Persistent {
                 brancher,
-                session_id,
+                registered: Box::new(registered.clone()),
             },
             used_names: Mutex::new(used),
         }
@@ -341,7 +354,7 @@ impl SessionBinding {
     #[must_use]
     pub fn session_id(&self) -> Option<&str> {
         match &self.persistence {
-            Persistence::Persistent { session_id, .. } => Some(session_id),
+            Persistence::Persistent { registered, .. } => Some(&registered.id),
             Persistence::Ephemeral => None,
         }
     }
@@ -368,234 +381,6 @@ impl SessionBinding {
     #[must_use]
     pub fn ever_used_names(&self) -> HashSet<String> {
         self.used_names.lock().clone()
-    }
-
-    /// Mint a child session under this agent — THE branching primitive.
-    ///
-    /// Holds this binding's allocation lock across the whole sequence
-    /// (name mint → parent-store reservation append → index insert →
-    /// child-file creation), in parent-first order; see the module docs
-    /// for the ordering rationale and crash-residue contract.
-    ///
-    /// `parent_store` is this agent's own live store: the durable (or,
-    /// for ephemeral parents, in-memory) carrier of the reservation
-    /// event.
-    ///
-    /// # Errors
-    ///
-    /// [`SessionPersistError::EphemeralParent`] when `Persist` is
-    /// requested under an ephemeral parent;
-    /// [`SessionPersistError::ChildPathOccupied`] when the freshly minted
-    /// name's slug file or index row already exists (orphan residue —
-    /// never truncated, never appended to);
-    /// [`SessionPersistError::EventStore`] when the reservation append is
-    /// rejected; plus index/file I/O failures.
-    pub fn branch_child(
-        &self,
-        parent_store: &EventStore,
-        request: &ChildBranchRequest,
-    ) -> Result<BranchedChild, SessionPersistError> {
-        super::persistence::io::ensure_session_id_path_safe(&request.child_session_id)?;
-        // ONE lock across check + append + insert + create (review §8).
-        let mut used = self.used_names.lock();
-
-        let persistent = match (&self.persistence, request.durability) {
-            (Persistence::Ephemeral, ChildDurability::Persist) => {
-                return Err(SessionPersistError::EphemeralParent {
-                    parent_path: self.path_address.clone(),
-                });
-            }
-            (
-                Persistence::Ephemeral | Persistence::Persistent { .. },
-                ChildDurability::Ephemeral,
-            ) => None,
-            (
-                Persistence::Persistent {
-                    brancher,
-                    session_id,
-                },
-                ChildDurability::Persist,
-            ) => Some((Arc::clone(brancher), session_id.clone())),
-        };
-
-        let name = mint_child_name(&request.name_stem, &used);
-        let path_address = format!("{}/{name}", self.path_address);
-
-        // Mint-collision pre-check BEFORE burning the name in the parent
-        // log: a fresh name whose slug file or index row already exists
-        // is orphan residue and a hard typed refusal.
-        if let Some((brancher, _)) = &persistent {
-            let rel_path = brancher.child_rel_path(&path_address);
-            let _permit = crate::session::persistence::acquire_private_fs()?;
-            let root = PrivateRoot::create(brancher.manager.data_dir())?;
-            if root.regular_file_exists(Path::new(&rel_path))? {
-                return Err(SessionPersistError::ChildPathOccupied { rel_path });
-            }
-        }
-
-        // PARENT-FIRST: the reservation event is appended (durably, when
-        // the parent has a sink) before any child artifact exists.
-        let anchor = parent_store.last_event_id();
-        let reservation = SessionEvent::ChildBranch {
-            base: EventBase::new(anchor.clone()),
-            parent_session_id: self.session_id().map(str::to_owned),
-            child_session_id: persistent
-                .is_some()
-                .then(|| request.child_session_id.clone()),
-            path_address: path_address.clone(),
-            parent_event_anchor: anchor.clone(),
-            kind: request.kind,
-        };
-        parent_store.append(reservation.clone())?;
-        used.insert(name);
-
-        let Some((brancher, parent_session_id)) = persistent else {
-            return Ok(BranchedChild {
-                store: Arc::new(EventStore::new()),
-                binding: Arc::new(Self {
-                    path_address: path_address.clone(),
-                    persistence: Persistence::Ephemeral,
-                    used_names: Mutex::new(HashSet::new()),
-                }),
-                path_address,
-                session_id: None,
-                parent_event_anchor: anchor,
-            });
-        };
-
-        let (store, binding) = materialize_child(
-            &brancher,
-            &parent_session_id,
-            &path_address,
-            request,
-            &reservation,
-        )?;
-        Ok(BranchedChild {
-            store: Arc::new(store),
-            binding: Arc::new(binding),
-            path_address,
-            session_id: Some(request.child_session_id.clone()),
-            parent_event_anchor: anchor,
-        })
-    }
-}
-
-/// Steps 3–4 of the mint (index row, then child file + provenance
-/// header), split from [`SessionBinding::branch_child`] so the
-/// crash-window tests can observe the on-disk state between the
-/// reservation append and the child artifacts.
-fn materialize_child(
-    brancher: &Arc<SessionBrancher>,
-    parent_session_id: &str,
-    path_address: &str,
-    request: &ChildBranchRequest,
-    reservation: &SessionEvent,
-) -> Result<(EventStore, SessionBinding), SessionPersistError> {
-    let rel_path = brancher.child_rel_path(path_address);
-    let now = chrono::Utc::now();
-    let entry = SessionIndexEntry {
-        id: request.child_session_id.clone(),
-        name: Some(path_address.to_owned()),
-        model: request.model.clone(),
-        working_dir: request.working_dir.clone(),
-        created_at: now,
-        updated_at: now,
-        event_count: 0,
-        status: SessionStatus::Active,
-        format_version: SESSION_FORMAT_VERSION,
-        total_input_tokens: 0,
-        total_output_tokens: 0,
-        total_cache_read_tokens: 0,
-        rel_path: Some(rel_path.clone()),
-        parent_id: Some(parent_session_id.to_owned()),
-    };
-    // Mint-collision check BEFORE the index insert: the sink APPENDS to
-    // an existing file, and adopting an orphan would interleave two
-    // agents' histories in one file. Checking before inserting means a
-    // refusal leaves NO index row pointing at a foreign file. This check
-    // handles pre-existing orphan residue; racing mints are excluded
-    // elsewhere — same-process by the binding's allocation lock, and
-    // cross-process by `insert_child_index_entry`'s id + rel_path claim
-    // checks under the inter-process index lock (the first process to
-    // insert the row owns the path; the loser is refused typed before it
-    // ever touches the file). A writer outside norn's protocol could
-    // still race file creation, but no check can close a TOCTOU window
-    // against arbitrary external writers — the locked row claim is the
-    // authoritative gate.
-    {
-        let _permit = crate::session::persistence::acquire_private_fs()?;
-        let root = PrivateRoot::create(brancher.manager.data_dir())?;
-        if root.regular_file_exists(Path::new(&rel_path))? {
-            return Err(SessionPersistError::ChildPathOccupied { rel_path });
-        }
-    }
-    // Index row BEFORE the file: a crash here leaves a row without a
-    // file, which resumes as an empty session (already-tolerated state).
-    insert_child_index_entry(
-        brancher.manager.data_dir(),
-        &entry,
-        brancher.manager.index_lock_deadline(),
-    )?;
-    let sink = JsonlSink::open_registered(
-        brancher.manager.data_dir(),
-        &entry,
-        brancher.durability,
-        brancher.manager.index_lock_deadline(),
-    )?;
-    let mut store = EventStore::with_sink(Box::new(sink));
-    // The child spools oversized tool outputs into the SAME root-keyed
-    // `<root-id>/spool/` directory its timeline lives under (the ruled
-    // layout: one `<root-uuid>/` dir holding `children/` and `spool/`),
-    // exactly where `SessionManager` re-arms it on a later resume.
-    store.attach_spool(SpoolWriter::for_session(
-        brancher.manager.data_dir(),
-        &brancher.root_session_id,
-        brancher.durability,
-    ));
-    // The child's provenance header: the same ChildBranch record, as the
-    // child's first own event (fresh event id — the parent's copy keeps
-    // its own).
-    if let SessionEvent::ChildBranch {
-        parent_session_id,
-        child_session_id,
-        path_address,
-        parent_event_anchor,
-        kind,
-        ..
-    } = reservation
-    {
-        store.append(SessionEvent::ChildBranch {
-            base: EventBase::new(None),
-            parent_session_id: parent_session_id.clone(),
-            child_session_id: child_session_id.clone(),
-            path_address: path_address.clone(),
-            parent_event_anchor: parent_event_anchor.clone(),
-            kind: *kind,
-        })?;
-    }
-    let binding = SessionBinding {
-        path_address: path_address.to_owned(),
-        persistence: Persistence::Persistent {
-            brancher: Arc::clone(brancher),
-            session_id: request.child_session_id.clone(),
-        },
-        used_names: Mutex::new(HashSet::new()),
-    };
-    Ok((store, binding))
-}
-
-/// Mint a per-parent-unique child name: `{stem}-{8 hex}` (the 8-char
-/// suffix mirrors R8's short-id display convention), retrying with fresh
-/// randomness until it clears the ever-used set. Collisions are
-/// astronomically rare (8 hex chars of a fresh `UUIDv4` per attempt), so
-/// the loop is unbounded by design — a cap would be an invented limit.
-fn mint_child_name(stem: &str, used: &HashSet<String>) -> String {
-    loop {
-        let hex = Uuid::new_v4().simple().to_string();
-        let candidate = format!("{stem}-{}", &hex[..8]);
-        if !used.contains(&candidate) {
-            return candidate;
-        }
     }
 }
 
@@ -630,6 +415,7 @@ mod tests {
         _tmp: tempfile::TempDir,
         manager: SessionManager,
         id: String,
+        entry: SessionIndexEntry,
         store: Arc<EventStore>,
         binding: Arc<SessionBinding>,
     }
@@ -646,13 +432,14 @@ mod tests {
         ));
         let binding = Arc::new(SessionBinding::persistent_root(
             brancher,
-            root_id.clone(),
+            &opened.entry,
             &[],
         ));
         Root {
             _tmp: tmp,
             manager,
             id: root_id,
+            entry: opened.entry,
             store: Arc::new(opened.store),
             binding,
         }
@@ -776,7 +563,7 @@ mod tests {
     /// disk while no child file exists yet; materialization then creates
     /// it. This drives the split halves of `branch_child` directly.
     #[test]
-    fn reservation_is_on_disk_before_child_file_exists() {
+    fn reservation_is_on_disk_before_child_file_exists() -> Result<(), Box<dyn std::error::Error>> {
         let root = persistent_root();
         let req = request("worker", ChildDurability::Persist);
 
@@ -825,13 +612,14 @@ mod tests {
         // Steps 3–4: materialize, then everything exists.
         let brancher = Arc::new(SessionBrancher::new(
             root.manager.clone(),
-            root.id.clone(),
+            root.id,
             DurabilityPolicy::Flush,
         ));
         let (child_store, _binding) =
-            materialize_child(&brancher, &root.id, &path_address, &req, &reservation).unwrap();
+            materialize_child(&brancher, &root.entry, &path_address, &req, &reservation)?;
         assert!(root.manager.data_dir().join(&rel).exists());
         assert_eq!(child_store.len(), 1, "provenance header appended");
+        Ok(())
     }
 
     /// Mint-collision hard error: an orphan file already sitting at the
@@ -861,10 +649,10 @@ mod tests {
         };
         let brancher = Arc::new(SessionBrancher::new(
             root.manager.clone(),
-            root.id.clone(),
+            root.id,
             DurabilityPolicy::Flush,
         ));
-        let err = materialize_child(&brancher, &root.id, &path_address, &req, &reservation)
+        let err = materialize_child(&brancher, &root.entry, &path_address, &req, &reservation)
             .expect_err("an occupied slug path must refuse hard");
         assert!(
             matches!(&err, SessionPersistError::ChildPathOccupied { rel_path: r } if *r == rel_path),
@@ -902,6 +690,7 @@ mod tests {
         // Foreign row claiming the same rel_path under a different id.
         let mut foreign = SessionIndexEntry {
             id: Uuid::new_v4().to_string(),
+            generation: Uuid::new_v4(),
             name: None,
             model: "m".to_owned(),
             working_dir: "/w".to_owned(),
@@ -915,6 +704,8 @@ mod tests {
             total_cache_read_tokens: 0,
             rel_path: Some(rel_path),
             parent_id: Some(root.id.clone()),
+            fidelity: crate::session::persistence::ResumeFidelity::Canonical,
+            origin: crate::session::persistence::SessionRecordOrigin::Native,
         };
         insert_child_index_entry(root.manager.data_dir(), &foreign, None).unwrap();
 
@@ -931,7 +722,7 @@ mod tests {
             root.id.clone(),
             DurabilityPolicy::Flush,
         ));
-        let err = materialize_child(&brancher, &root.id, &path_address, &req, &reservation)
+        let err = materialize_child(&brancher, &root.entry, &path_address, &req, &reservation)
             .expect_err("a claimed rel_path must refuse hard");
         assert!(
             matches!(err, SessionPersistError::ChildPathOccupied { .. }),
@@ -1024,6 +815,53 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn stale_binding_cannot_mint_under_recreated_parent_id()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let manager = SessionManager::new(tmp.path());
+        let opened = manager.create_with_id("parent-aba", options(), DurabilityPolicy::Flush)?;
+        let original_generation = opened.entry.generation;
+        let parent_store = Arc::new(opened.store);
+        let binding = SessionBinding::persistent_root(
+            Arc::new(SessionBrancher::new(
+                manager.clone(),
+                opened.entry.id.clone(),
+                DurabilityPolicy::Flush,
+            )),
+            &opened.entry,
+            &[],
+        );
+
+        manager.delete("parent-aba")?;
+        let replacement =
+            manager.create_with_id("parent-aba", options(), DurabilityPolicy::Flush)?;
+        assert_ne!(original_generation, replacement.entry.generation);
+
+        let child_id = Uuid::new_v4().to_string();
+        let error = binding
+            .branch_child(
+                &parent_store,
+                &ChildBranchRequest {
+                    child_session_id: child_id.clone(),
+                    name_stem: "worker".to_owned(),
+                    kind: ChildBranchKind::Spawn,
+                    durability: ChildDurability::Persist,
+                    model: "test-model".to_owned(),
+                    working_dir: "/work".to_owned(),
+                },
+            )
+            .err()
+            .ok_or_else(|| std::io::Error::other("stale child mint unexpectedly succeeded"))?;
+        assert!(matches!(
+            error,
+            SessionPersistError::GenerationChanged { .. }
+        ));
+        assert!(manager.resolve(&child_id).is_err());
+        assert!(!tmp.path().join("parent-aba/children").exists());
+        Ok(())
+    }
+
     /// For-all-time uniqueness across restart: the ever-used set is
     /// re-derived from the parent's replayed events, a historical name
     /// refuses reuse, and inherited (fork-seeded) reservations are NOT
@@ -1048,12 +886,12 @@ mod tests {
             .unwrap();
         let brancher = Arc::new(SessionBrancher::new(
             root.manager.clone(),
-            root.id.clone(),
+            root.id,
             DurabilityPolicy::Flush,
         ));
         let rebuilt = SessionBinding::persistent_root(
             Arc::clone(&brancher),
-            root.id,
+            &resumed.entry,
             &resumed.store.events(),
         );
         assert!(
@@ -1067,11 +905,11 @@ mod tests {
 
         // A DIFFERENT session rebuilding from the same events (the
         // fork-seed inheritance shape) must NOT count them as its own.
-        let other = SessionBinding::persistent_root(
-            brancher,
-            Uuid::new_v4().to_string(),
-            &resumed.store.events(),
-        );
+        let mut other_entry = resumed.entry.clone();
+        other_entry.id = Uuid::new_v4().to_string();
+        other_entry.generation = Uuid::new_v4();
+        let other =
+            SessionBinding::persistent_root(brancher, &other_entry, &resumed.store.events());
         assert!(
             other.ever_used_names().is_empty(),
             "inherited reservations must not over-reserve a child's namespace",
@@ -1101,7 +939,8 @@ mod tests {
             root.id,
             DurabilityPolicy::Flush,
         ));
-        let rebuilt = SessionBinding::persistent_root(brancher, child_id, &resumed.store.events());
+        let rebuilt =
+            SessionBinding::persistent_root(brancher, &resumed.entry, &resumed.store.events());
         assert_eq!(rebuilt.path_address(), child_path);
     }
 
@@ -1131,16 +970,16 @@ mod tests {
             .manager
             .resume(&root.id, DurabilityPolicy::Flush)
             .unwrap();
-        assert_eq!(resumed.replay.skipped_lines, 0);
 
         // The burned name is reserved; a fresh mint works and picks a
         // different name.
         let brancher = Arc::new(SessionBrancher::new(
             root.manager.clone(),
-            root.id.clone(),
+            root.id,
             DurabilityPolicy::Flush,
         ));
-        let binding = SessionBinding::persistent_root(brancher, root.id, &resumed.store.events());
+        let binding =
+            SessionBinding::persistent_root(brancher, &resumed.entry, &resumed.store.events());
         assert!(binding.ever_used_names().contains(ghost_name));
         let store = Arc::new(resumed.store);
         let fresh = binding

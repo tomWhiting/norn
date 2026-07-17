@@ -1838,7 +1838,8 @@ mod tests {
     /// unreferenced orphan spool file — never a durable event with a
     /// dangling reference.
     #[tokio::test]
-    async fn sink_failure_after_spool_write_leaves_orphan_never_dangling() {
+    async fn sink_failure_after_spool_write_leaves_orphan_never_dangling()
+    -> Result<(), Box<dyn std::error::Error>> {
         struct FailingSink;
         impl PersistenceSink for FailingSink {
             fn persist(&mut self, _event: &SessionEvent) -> Result<(), SessionPersistError> {
@@ -1846,11 +1847,22 @@ mod tests {
             }
         }
         let tmp = tempfile::tempdir().expect("tempdir");
+        let manager = crate::session::SessionManager::new(tmp.path());
+        let opened = manager.create_with_id(
+            "sess-ordering",
+            crate::session::CreateSessionOptions {
+                model: "test-model".to_owned(),
+                working_dir: "/work".to_owned(),
+                name: None,
+            },
+            DurabilityPolicy::Flush,
+        )?;
         let mut store = EventStore::with_sink(Box::new(FailingSink));
         store.attach_spool(SpoolWriter::for_session(
             tmp.path(),
-            "sess-ordering",
+            &opened.entry,
             DurabilityPolicy::Flush,
+            None,
         ));
         let mut messages = Vec::new();
 
@@ -1877,5 +1889,6 @@ mod tests {
             serde_json::to_vec(&oversized_output()).expect("serialize"),
             "the orphan holds the verbatim full output",
         );
+        Ok(())
     }
 }

@@ -222,11 +222,10 @@ impl Agent {
         self.session_entry.as_ref()
     }
 
-    /// What was recovered from disk while opening the persisted session
-    /// ([`AgentBuilder::open_session`](crate::agent::builder::AgentBuilder::open_session)
-    /// builds only). A non-zero
-    /// [`ReplaySummary::skipped_lines`] means the replayed history is
-    /// incomplete; the builder already logs it at warn level.
+    /// What was recovered from disk while strictly opening the persisted
+    /// session ([`AgentBuilder::open_session`](crate::agent::builder::AgentBuilder::open_session)
+    /// builds only). Malformed history fails the open rather than producing
+    /// a partial replay summary.
     #[must_use]
     pub fn session_replay(&self) -> Option<ReplaySummary> {
         self.replay

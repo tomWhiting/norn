@@ -49,6 +49,22 @@ fn creates_private_tree_and_reopens_regular_file() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+#[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
+#[test]
+fn repeated_root_directory_reads_restart_from_the_beginning()
+-> Result<(), Box<dyn std::error::Error>> {
+    let container = tempfile::tempdir()?;
+    let root = PrivateRoot::create(&container.path().join("private"))?;
+    root.create_new(Path::new("first"))?.write_all(b"one")?;
+    root.create_new(Path::new("second"))?.write_all(b"two")?;
+
+    let first = root.read_dir(Path::new(""))?;
+    let second = root.read_dir(Path::new(""))?;
+    assert_eq!(first, second);
+    assert_eq!(first.len(), 2);
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn macos_create_retry_is_single_bounded_and_create_only() {

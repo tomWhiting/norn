@@ -30,6 +30,14 @@ pub fn norn_dir() -> Option<PathBuf> {
     norn::config::paths::norn_dir()
 }
 
+/// Resolve the trusted Norn root for session migration and inspection.
+///
+/// Unlike the general optional resolver, this rejects a non-empty relative
+/// `NORN_HOME` instead of silently falling back to the real user home.
+pub fn session_norn_root() -> Result<PathBuf, norn::error::ConfigError> {
+    norn::config::paths::resolve_session_norn_root()
+}
+
 /// Resolve the directory containing named profile files: `~/.norn/profiles/`.
 ///
 /// Delegates to [`norn::config::paths::profiles_dir`].
@@ -47,16 +55,19 @@ pub fn project_rules_dir(cwd: &Path) -> PathBuf {
     cwd.join(".norn").join("rules")
 }
 
-/// Resolve the session-data directory: `~/.norn/sessions/`.
+/// Resolve the active strict session-store directory: `~/.norn/session-store/`.
 ///
-/// Delegates to [`norn::config::paths::session_data_dir`]. A missing trusted
-/// root is a typed error; sensitive session data is never made relative to
-/// the repository.
+/// A missing trusted root is a typed error; sensitive session data is never
+/// made relative to the repository. When the legacy namespace still exists,
+/// bounded preflight validates only the cutover receipt inside the active
+/// store; it never decodes legacy history during normal startup.
 pub fn session_data_dir() -> Result<PathBuf, norn::error::ConfigError> {
-    norn::config::paths::session_data_dir().ok_or_else(|| norn::error::ConfigError::InvalidConfig {
-        reason: "session persistence requires an absolute NORN_HOME or user home directory"
-            .to_owned(),
-    })
+    norn::config::paths::resolve_standard_session_data_dir()
+}
+
+/// Resolve the legacy session directory used only by explicit offline migration.
+pub fn legacy_session_data_dir() -> Result<PathBuf, norn::error::ConfigError> {
+    session_norn_root().map(|root| root.join("sessions"))
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +159,83 @@ mod tests {
     #[test]
     fn session_data_dir_returns_private_path_or_typed_error() {
         match session_data_dir() {
+            Ok(path) => assert!(path.ends_with("session-store")),
+            Err(error) => {
+                let message = error.to_string();
+                assert!(
+                    message.contains("absolute NORN_HOME")
+                        || message.contains("complete verified migration")
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn legacy_source_and_header_only_active_store_fail_closed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        std::fs::create_dir(temp.path().join("sessions"))?;
+        std::fs::create_dir(temp.path().join("session-store"))?;
+        std::fs::write(
+            temp.path().join("session-store/index.jsonl"),
+            b"{\"norn_session_format\":2}\n",
+        )?;
+
+        temp_env::with_var("NORN_HOME", Some(temp.path().as_os_str()), || {
+            let error = session_data_dir()
+                .err()
+                .ok_or_else(|| std::io::Error::other("header-only store proved migration"))?;
+            assert!(error.to_string().contains("complete verified migration"));
+            Ok::<_, Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    #[serial_test::serial]
+    #[cfg(unix)]
+    fn runtime_cutover_does_not_decode_unreadable_legacy_contents()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        std::fs::create_dir(temp.path().join("sessions"))?;
+        std::fs::write(temp.path().join("sessions/index.jsonl"), b"")?;
+        let _ = norn::session::migrate_legacy_sessions(temp.path())?;
+        std::fs::remove_file(temp.path().join("sessions/index.jsonl"))?;
+        std::os::unix::fs::symlink(
+            temp.path().join("missing-legacy-index"),
+            temp.path().join("sessions/index.jsonl"),
+        )?;
+
+        temp_env::with_var("NORN_HOME", Some(temp.path().as_os_str()), || {
+            assert_eq!(session_data_dir()?, temp.path().join("session-store"));
+            Ok::<_, Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn session_root_rejects_relative_norn_home_without_fallback()
+    -> Result<(), Box<dyn std::error::Error>> {
+        temp_env::with_var(
+            "NORN_HOME",
+            Some(std::ffi::OsStr::new("relative-home")),
+            || {
+                let error = session_norn_root()
+                    .err()
+                    .ok_or_else(|| std::io::Error::other("relative session authority accepted"))?;
+                assert!(
+                    error
+                        .to_string()
+                        .contains("NORN_HOME must be an absolute path")
+                );
+                Ok::<_, Box<dyn std::error::Error>>(())
+            },
+        )
+    }
+
+    #[test]
+    fn legacy_session_data_dir_is_a_distinct_offline_source() {
+        match legacy_session_data_dir() {
             Ok(path) => assert!(path.ends_with("sessions")),
             Err(error) => assert!(error.to_string().contains("absolute NORN_HOME")),
         }

@@ -1,125 +1,122 @@
-//! Single-pass tolerant reading of persisted session event streams.
+//! Fail-closed reading of active format-2 session timelines.
 
-use std::collections::HashSet;
-use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::io::BufRead;
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 
-use crate::session::events::{EventId, SessionEvent};
-use crate::util::PrivateRoot;
-
-use super::acquire_private_fs;
-use super::io::{
-    ensure_session_id_not_reserved, ensure_session_id_path_safe, session_file_relative,
-};
+use super::io::ensure_session_id_not_reserved;
+#[cfg(test)]
+use super::io::ensure_session_id_path_safe;
 use super::replay::ReplayArtifacts;
-use super::types::{
-    SESSION_FORMAT_VERSION, SessionFileHeader, SessionIndexEntry, SessionPersistError,
-};
+use super::strict::STRICT_SESSION_FORMAT_VERSION;
+#[cfg(test)]
+use super::strict::read_strict_event_file;
+use super::strict_runtime::map_strict_error;
+use super::timeline_file::open_existing_timeline;
+#[cfg(test)]
+use super::timeline_lock::TimelineTransaction;
+use super::types::{SessionIndexEntry, SessionPersistError};
 
-/// Tolerantly read a flat session JSONL file in one pass.
-pub fn read_session_events(
+/// Strictly read a flat format-2 session timeline.
+#[cfg(test)]
+pub(crate) fn read_session_events(
     data_dir: &Path,
     session_id: &str,
 ) -> Result<ReplayArtifacts, SessionPersistError> {
     ensure_session_id_not_reserved(session_id)?;
     ensure_session_id_path_safe(session_id)?;
     let relative = PathBuf::from(format!("{session_id}.jsonl"));
-    read_session_events_at(data_dir, &relative, session_id)
+    read_session_events_at(data_dir, &relative, None)
 }
 
-/// Read a session file resolved through its registered relative path.
+/// Strictly read a format-2 timeline resolved through its registered path.
 pub fn read_session_events_for_entry(
     data_dir: &Path,
     entry: &SessionIndexEntry,
 ) -> Result<ReplayArtifacts, SessionPersistError> {
-    ensure_session_id_not_reserved(&entry.id)?;
-    let relative = session_file_relative(entry)?;
-    read_session_events_at(data_dir, &relative, &entry.id)
+    read_session_events_for_entry_with_deadline(data_dir, entry, None)
 }
 
+pub(crate) fn read_session_events_for_entry_with_deadline(
+    data_dir: &Path,
+    entry: &SessionIndexEntry,
+    lock_deadline: Option<std::time::Duration>,
+) -> Result<ReplayArtifacts, SessionPersistError> {
+    ensure_session_id_not_reserved(&entry.id)?;
+    super::index::with_registered_timeline(data_dir, entry, lock_deadline, |root, relative| {
+        let events = match open_existing_timeline(root, relative) {
+            Ok(events) => events,
+            Err(SessionPersistError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                return missing_timeline(Some(&entry.id));
+            }
+            Err(error) => return Err(error),
+        };
+        replay_from_events(events, &root.display_path(relative))
+    })
+}
+
+#[cfg(test)]
 fn read_session_events_at(
     data_dir: &Path,
     relative: &Path,
-    session_id: &str,
+    registered_id: Option<&str>,
 ) -> Result<ReplayArtifacts, SessionPersistError> {
-    let _permit = acquire_private_fs()?;
-    let root = match PrivateRoot::open(data_dir) {
-        Ok(root) => root,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(ReplayArtifacts::default());
+    let transaction = match TimelineTransaction::open(data_dir, relative) {
+        Ok(transaction) => transaction,
+        Err(SessionPersistError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return missing_timeline(registered_id);
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(error),
     };
-    let file = match root.open_read(relative) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(ReplayArtifacts::default());
+    let events = match open_existing_timeline(transaction.root(), relative) {
+        Ok(events) => events,
+        Err(SessionPersistError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return missing_timeline(registered_id);
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(error),
     };
-    read_session_events_from(BufReader::new(file), session_id)
+    drop(transaction);
+    replay_from_events(events, &data_dir.join(relative))
 }
 
+fn replay_from_events(
+    events: Vec<crate::session::events::SessionEvent>,
+    display_path: &Path,
+) -> Result<ReplayArtifacts, SessionPersistError> {
+    let mut artifacts =
+        ReplayArtifacts::from_strict_events(events, display_path).map_err(map_strict_error)?;
+    artifacts.format_version = Some(STRICT_SESSION_FORMAT_VERSION);
+    Ok(artifacts)
+}
+
+fn missing_timeline(registered_id: Option<&str>) -> Result<ReplayArtifacts, SessionPersistError> {
+    match registered_id {
+        Some(id) => Err(SessionPersistError::NotFound {
+            input: id.to_owned(),
+        }),
+        None => Ok(ReplayArtifacts::default()),
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn read_session_events_from<R: BufRead>(
     reader: R,
     session_id: &str,
 ) -> Result<ReplayArtifacts, SessionPersistError> {
-    let mut artifacts = ReplayArtifacts::default();
-    let mut seen_first_content_line = false;
-    let mut seen_ids: HashSet<EventId> = HashSet::new();
-    for (idx, raw) in reader.split(b'\n').enumerate() {
-        let raw = raw?;
-        if raw.iter().all(u8::is_ascii_whitespace) {
-            continue;
-        }
-        if !seen_first_content_line {
-            seen_first_content_line = true;
-            if let Ok(header) = serde_json::from_slice::<SessionFileHeader>(&raw) {
-                artifacts.format_version = Some(header.version);
-                if header.version > SESSION_FORMAT_VERSION {
-                    tracing::warn!(
-                        session_id,
-                        file_version = header.version,
-                        reader_version = SESSION_FORMAT_VERSION,
-                        "session file written by a newer norn; unknown events will be skipped",
-                    );
-                }
-                continue;
-            }
-        }
-        match serde_json::from_slice::<SessionEvent>(&raw) {
-            Ok(event) => {
-                let id = event.base().id.clone();
-                if seen_ids.insert(id.clone()) {
-                    artifacts.push(event);
-                } else {
-                    artifacts.skipped_lines = artifacts.skipped_lines.saturating_add(1);
-                    tracing::warn!(
-                        session_id,
-                        line = idx + 1,
-                        event_id = %id,
-                        "skipping duplicate session event line; first occurrence kept",
-                    );
-                }
-            }
-            Err(error) => {
-                artifacts.skipped_lines = artifacts.skipped_lines.saturating_add(1);
-                tracing::warn!(
-                    session_id,
-                    line = idx + 1,
-                    %error,
-                    "skipping corrupt or unknown session event line",
-                );
-            }
-        }
-    }
-    if artifacts.skipped_lines > 0 {
-        tracing::warn!(
-            session_id,
-            skipped = artifacts.skipped_lines,
-            recovered = artifacts.events.len(),
-            "session file contained skipped lines; recovered events were loaded",
-        );
-    }
+    let display_path = PathBuf::from(format!("{session_id}.jsonl"));
+    read_session_events_from_path(reader, &display_path)
+}
+
+#[cfg(test)]
+fn read_session_events_from_path<R: BufRead>(
+    reader: R,
+    display_path: &Path,
+) -> Result<ReplayArtifacts, SessionPersistError> {
+    let timeline = read_strict_event_file(reader, display_path).map_err(map_strict_error)?;
+    let mut artifacts = ReplayArtifacts::from_strict_events(timeline.events, display_path)
+        .map_err(map_strict_error)?;
+    artifacts.format_version = Some(STRICT_SESSION_FORMAT_VERSION);
     Ok(artifacts)
 }

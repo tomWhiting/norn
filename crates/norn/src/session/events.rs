@@ -163,6 +163,15 @@ pub enum ContextMarkKind {
     Inject,
 }
 
+/// Why provider-owned conversation state must begin a new epoch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderEpochBoundaryReason {
+    /// The visible timeline was migrated from legacy storage, whose provider
+    /// anchors cannot be proven to name the exact strict replay state.
+    MigratedLegacy,
+}
+
 /// A single session event. Each variant embeds an [`EventBase`] via the
 /// `base` field. Events are self-contained — no accumulated state.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -274,6 +283,17 @@ pub enum SessionEvent {
         old_model: String,
         /// The model being switched to.
         new_model: String,
+    },
+
+    /// Durable boundary invalidating every earlier provider response anchor.
+    ///
+    /// This event produces no prompt content. A later native assistant
+    /// response may establish the first anchor of the new provider epoch.
+    ProviderEpochBoundary {
+        /// Common event metadata.
+        base: EventBase,
+        /// Why the prior provider epoch cannot continue.
+        reason: ProviderEpochBoundaryReason,
     },
 
     /// A compaction summary replacing a range of earlier events.
@@ -429,6 +449,7 @@ impl SessionEvent {
             | Self::SpokenResponse { base, .. }
             | Self::ToolResult { base, .. }
             | Self::ModelChange { base, .. }
+            | Self::ProviderEpochBoundary { base, .. }
             | Self::Compaction { base, .. }
             | Self::ChildBranch { base, .. }
             | Self::ForkComplete { base, .. }

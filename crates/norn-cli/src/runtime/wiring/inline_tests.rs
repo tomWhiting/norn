@@ -322,21 +322,25 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn slash_state_builder_threads_session_id() -> Result<(), Box<dyn std::error::Error>> {
         use clap::Parser;
 
         use crate::cli::Cli;
-        let cli = Cli::try_parse_from(["norn"])?;
-        let parts = built_parts();
-        let store = Arc::new(EventStore::new());
-        let (state, _registry) = build_slash_state_from_bundle(
-            &cli,
-            slash_inputs(&parts),
-            store,
-            Some("abc-123".to_owned()),
-            TEST_LOCK_DEADLINE,
-        )?;
-        assert_eq!(state.current_session_id().as_deref(), Some("abc-123"));
-        Ok(())
+        let norn_home = tempfile::tempdir()?;
+        temp_env::with_var("NORN_HOME", Some(norn_home.path().as_os_str()), || {
+            let cli = Cli::try_parse_from(["norn"])?;
+            let parts = built_parts();
+            let store = Arc::new(EventStore::new());
+            let (state, _registry) = build_slash_state_from_bundle(
+                &cli,
+                slash_inputs(&parts),
+                store,
+                Some("abc-123".to_owned()),
+                TEST_LOCK_DEADLINE,
+            )?;
+            assert_eq!(state.current_session_id().as_deref(), Some("abc-123"));
+            Ok(())
+        })
     }
 }

@@ -110,9 +110,9 @@ pub(crate) fn validate_build_inputs(
 /// `~/.norn/settings.json` itself is not exempted: exempt roots are directory
 /// prefixes (`starts_with`), so a file-granular allowance is not expressible
 /// here, and exempting its directory would be too broad (`~/.norn/` also holds
-/// `sessions/`). Nothing extra is added for it. `~/.norn/sessions/` (session
-/// transcripts for ALL workspaces) and the `~/.norn/` root itself are never
-/// exempted.
+/// the active `session-store/` and legacy `sessions/` trees). Nothing extra is
+/// added for it. Session transcripts for ALL workspaces and the `~/.norn/` root
+/// itself are never exempted.
 pub(crate) fn compute_read_exempt_roots(
     workspace_root: Option<&Path>,
     working_dir: &Path,
@@ -121,7 +121,7 @@ pub(crate) fn compute_read_exempt_roots(
         let mut roots: Vec<PathBuf> = Vec::new();
         // Narrow `~/.norn/` convention subdirs (NORN_HOME-aware via the
         // `config::paths` helpers) — skills, profiles, and rules only,
-        // never the norn root and never `sessions/`.
+        // never the norn root or either session namespace.
         if let Some(skills) = crate::config::paths::skills_dir() {
             roots.push(skills);
         }

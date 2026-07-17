@@ -54,10 +54,9 @@ impl std::fmt::Debug for EventStore {
 ///
 /// A persist error is surfaced from [`EventStore::append`] and the event
 /// is **not** added to the in-memory store, so memory never claims more
-/// durability than disk has. Retrying the same event after a failure is
-/// safe even if the failed attempt actually reached the file: the
-/// tolerant reader skips duplicate `EventId` lines, keeping the first
-/// occurrence.
+/// durability than disk has. A sink that can report an ambiguous write
+/// failure must reconcile an exact durable retry without adding a duplicate
+/// event; strict session readers reject duplicate `EventId` rows.
 pub trait PersistenceSink: Send {
     /// Write one event durably according to the sink's policy.
     ///
@@ -171,10 +170,9 @@ impl EventStore {
     ///   exists in the store.
     /// * [`SessionError::StorageError`] if the sink fails to persist the
     ///   event. The event is **not** in the in-memory store in that
-    ///   case, so retrying the same event is safe: the sink guarantees a
-    ///   partial line from the failure is never continued onto, and if
-    ///   the failed attempt did reach the file, the duplicate line the
-    ///   retry leaves is skipped by the tolerant reader on resume.
+    ///   case. Retry safety is a sink invariant: partial rows cannot be
+    ///   continued, and an exact event already made durable by an ambiguous
+    ///   attempt must be recognised rather than appended twice.
     pub fn append(&self, event: SessionEvent) -> Result<EventId, SessionError> {
         let id = event.base().id.clone();
         if let Some(sink) = &self.sink {

@@ -191,6 +191,7 @@ mod tests {
             )
             .unwrap();
         let root_id = opened.entry.id.clone();
+        let root_entry = opened.entry.clone();
         let store = opened.store;
         store.append(user("pre-branch a")).unwrap();
         store.append(user("pre-branch b")).unwrap();
@@ -198,10 +199,10 @@ mod tests {
         let binding = SessionBinding::persistent_root(
             Arc::new(SessionBrancher::new(
                 manager,
-                root_id.clone(),
+                root_id,
                 DurabilityPolicy::Flush,
             )),
-            root_id,
+            &root_entry,
             &[],
         );
         let branched = binding

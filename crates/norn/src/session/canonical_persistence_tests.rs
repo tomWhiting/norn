@@ -117,7 +117,6 @@ fn canonical_items_survive_jsonl_persistence_reload_and_resume_in_order() -> Tes
     drop(store);
 
     let artifacts = read_session_events(temp.path(), session_id)?;
-    assert_eq!(artifacts.skipped_lines, 0);
     assert_eq!(artifacts.events.len(), 1);
     let Some(SessionEvent::AssistantMessage { response_items, .. }) = artifacts.events.first()
     else {

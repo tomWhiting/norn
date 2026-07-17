@@ -4,6 +4,7 @@ use crate::session::SessionError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use uuid::Uuid;
 
 /// Schema version this writer stamps into new session JSONL files (as the
 /// header line) and into [`SessionIndexEntry::format_version`].
@@ -15,18 +16,20 @@ use thiserror::Error;
 ///   `format_version = 0`.
 /// * `1` — first explicit version: a [`SessionFileHeader`] JSON object is
 ///   the first line of every newly created session file.
-pub const SESSION_FORMAT_VERSION: u32 = 1;
+/// * `2` — strict index and timeline decoding, with explicit resume fidelity
+///   and record provenance on every active index row.
+pub const SESSION_FORMAT_VERSION: u32 = 2;
 
-/// The header line written as the first line of a session JSONL file at
-/// creation time.
+/// The mandatory first line of every active index and session JSONL file.
 ///
 /// Serialised as `{"norn_session_format":N}`. The key is deliberately not
 /// `type` so a header line can never be confused with a
 /// [`SessionEvent`](crate::session::events::SessionEvent) (which is
-/// internally tagged on `type`), and vice
-/// versa. The header is optional on read: files created before versioning
-/// (format `0`) start directly with an event line and still load.
+/// internally tagged on `type`), and vice versa. Active format-2 readers fail
+/// closed when this exact header is absent; headerless and format-1 files are
+/// inputs to the explicit legacy migrator, never the active runtime reader.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionFileHeader {
     /// Schema version of the writer that created the file.
     #[serde(rename = "norn_session_format")]
@@ -114,8 +117,9 @@ pub enum SessionPersistError {
         reason: String,
     },
 
-    /// A caller-supplied session ID is already in use — indexed, or
-    /// present on disk as an orphan `{id}.jsonl` session file. The
+    /// A caller-supplied session ID is already indexed, or its target path is
+    /// occupied inside an otherwise valid strict store. A store containing
+    /// artifacts but no index instead fails as [`Self::MissingIndex`]. The
     /// create-exactly-this path
     /// ([`SessionManager::create_with_id`](crate::session::SessionManager::create_with_id))
     /// never attaches to prior history in either form — choose a new ID
@@ -151,6 +155,71 @@ pub enum SessionPersistError {
         rel_path: String,
     },
 
+    /// A crash-recovery publication record disagreed with an existing index
+    /// row, timeline, or private staging artifact. Recovery never replaces or
+    /// removes the disagreeing bytes.
+    #[error("cannot recover publication for session '{id}': {reason}")]
+    PublicationConflict {
+        /// Session identifier recorded by the publication journal.
+        id: String,
+        /// Exact invariant that failed during recovery.
+        reason: &'static str,
+    },
+
+    /// An index-rewrite artifact used the writer-owned name prefix without
+    /// matching the exact canonical UUID shape, or occupied an owned name
+    /// with a non-file entry. Recovery never guesses ownership from a prefix.
+    #[error("cannot recover session index artifact '{name}': {reason}")]
+    IndexArtifactConflict {
+        /// Conflicting entry name inside the session-store root.
+        name: String,
+        /// Exact ownership invariant that failed.
+        reason: &'static str,
+    },
+
+    /// The complete replacement index was atomically renamed into place, but
+    /// synchronizing the session-store directory failed. The replacement is
+    /// visible to this process, while its survival across a crash is unknown.
+    #[error(
+        "session index replacement at {} is visible, but its crash durability is \
+         indeterminate because the parent directory could not be synchronized: {source}",
+        path.display()
+    )]
+    IndexCommitIndeterminate {
+        /// Active index whose replacement reached the rename boundary.
+        path: std::path::PathBuf,
+        /// Directory synchronization failure after the successful rename.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// A durable deletion record disagreed with the active index or its owned
+    /// artifact paths. Recovery refuses to guess which state is authoritative.
+    #[error("cannot recover session deletion '{transaction_id}': {reason}")]
+    DeletionConflict {
+        /// Identifier encoded in the owned deletion-journal file name.
+        transaction_id: String,
+        /// Exact invariant that failed during recovery.
+        reason: &'static str,
+    },
+
+    /// The index no longer contains a deleted session subtree, but physical
+    /// cleanup did not finish. The durable deletion journal remains and the
+    /// next session-store operation will retry cleanup before proceeding.
+    #[error(
+        "session '{id}' was deleted from the index, but cleanup transaction '{transaction_id}' \
+         remains pending and will be retried: {source}"
+    )]
+    DeletionCleanupPending {
+        /// Session explicitly selected for deletion.
+        id: String,
+        /// Durable deletion transaction retained for recovery.
+        transaction_id: String,
+        /// Cleanup or journal-removal failure after index publication.
+        #[source]
+        source: Box<SessionPersistError>,
+    },
+
     /// A persistent child was requested under an ephemeral parent. An
     /// ephemeral parent has no session directory to hang a child file off,
     /// so the request is refused typed at the mint boundary — never
@@ -169,11 +238,77 @@ pub enum SessionPersistError {
     /// `EventStore::append` rejected an event during resume reconstruction.
     #[error("event store rejected resumed event: {0}")]
     EventStore(String),
+
+    /// The active format-2 index failed strict structural validation.
+    #[error("invalid active session index: {0}")]
+    InvalidIndex(#[source] Box<super::strict::StrictStoreError>),
+
+    /// An active format-2 timeline failed strict structural validation.
+    #[error("invalid active session timeline: {0}")]
+    InvalidTimeline(#[source] Box<super::strict::StrictStoreError>),
+
+    /// An append would duplicate or contradict an event already durable in
+    /// the strict timeline, or retry a different event after an ambiguous
+    /// write outcome.
+    #[error("session event '{event_id}' cannot be appended: {reason}")]
+    EventAppendConflict {
+        /// Provider-independent session event identifier.
+        event_id: String,
+        /// Exact fail-closed conflict reason.
+        reason: &'static str,
+    },
+
+    /// A retained session handle or index mutation no longer names the active
+    /// generation for its session identifier.
+    #[error("session generation changed for '{id}'")]
+    GenerationChanged {
+        /// Session whose generation comparison failed.
+        id: String,
+    },
+
+    /// A session-store directory contained artifacts but no active index.
+    #[error(
+        "session store at {} contains data but is missing its required format-2 index",
+        path.display()
+    )]
+    MissingIndex {
+        /// Session-store directory whose authority is ambiguous without an index.
+        path: std::path::PathBuf,
+    },
+
+    /// A degraded projection needs explicit trusted approval before execution.
+    #[error("session '{id}' is a fresh-epoch projection; explicit resume approval is required")]
+    ResumeApprovalRequired {
+        /// Session whose visible history cannot silently enter a new epoch.
+        id: String,
+    },
+
+    /// The retained record is available for inspection/export but not execution.
+    #[error("session '{id}' is inspect-only and cannot be resumed")]
+    SessionNotResumable {
+        /// Inspect-only session identifier.
+        id: String,
+    },
+
+    /// An advisory index counter could not represent the next exact value.
+    #[error("session '{id}' index counter '{field}' overflowed; the index was not changed")]
+    IndexCounterOverflow {
+        /// Session whose counter update was rejected.
+        id: String,
+        /// Counter that could not represent the update.
+        field: &'static str,
+    },
 }
 
 impl From<std::io::Error> for SessionPersistError {
     fn from(error: std::io::Error) -> Self {
         Self::from_io(error, "performing session persistence I/O", None)
+    }
+}
+
+impl From<super::strict::StrictStoreError> for SessionPersistError {
+    fn from(error: super::strict::StrictStoreError) -> Self {
+        Self::InvalidIndex(Box::new(error))
     }
 }
 
@@ -227,13 +362,64 @@ pub enum SessionStatus {
     Completed,
 }
 
+/// How faithfully a persisted timeline can participate in future execution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResumeFidelity {
+    /// The canonical persisted representation is complete and replayable.
+    Canonical,
+    /// Visible history is usable only after starting a fresh provider-state epoch.
+    FreshEpochProjection,
+    /// The timeline is retained for inspection and export, not execution.
+    InspectOnly,
+}
+
+impl ResumeFidelity {
+    /// Whether this classification permits an execution resume.
+    #[must_use]
+    pub const fn permits_resume(self) -> bool {
+        !matches!(self, Self::InspectOnly)
+    }
+
+    /// Whether resume must discard any legacy provider-state anchor.
+    #[must_use]
+    pub const fn requires_fresh_epoch(self) -> bool {
+        matches!(self, Self::FreshEpochProjection)
+    }
+}
+
+/// Visible-history lineage of one active session-store record.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SessionRecordOrigin {
+    /// The visible history has no migrated-legacy lineage.
+    Native,
+    /// The visible history descends from a one-shot legacy migration.
+    ///
+    /// Forked descendants preserve this lineage: the digest identifies the
+    /// legacy root history incorporated into the descendant, not merely the
+    /// process that wrote the current row.
+    MigratedLegacy {
+        /// Source session format observed by the migrator.
+        source_format: u32,
+        /// Lowercase SHA-256 digest of the exact legacy source bytes.
+        source_sha256: String,
+    },
+}
+
 /// One row in `index.jsonl`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionIndexEntry {
     /// Session identifier — a UUID v4 by default (R8: v7's shared
     /// timestamp prefix defeats git-style short-prefix eyeballing), or a
     /// validated caller-supplied opaque string.
     pub id: String,
+    /// Immutable random identity for this exact incarnation of `id`.
+    ///
+    /// Deleting and recreating the same session id mints a new generation so
+    /// stale sinks and deferred mutations cannot attach to the replacement.
+    pub generation: Uuid,
     /// Optional human-readable name (set via `/name` or `--session-name`).
     pub name: Option<String>,
     /// Model identifier active when the session was created.
@@ -249,26 +435,20 @@ pub struct SessionIndexEntry {
     /// Lifecycle status.
     pub status: SessionStatus,
     /// Session JSONL schema version of the writer that created the
-    /// session ([`SESSION_FORMAT_VERSION`] for new sessions). `0` means
-    /// the session predates versioning and its file has no header line.
-    #[serde(default)]
+    /// session. Active rows must equal [`SESSION_FORMAT_VERSION`].
     pub format_version: u32,
     /// Cumulative input tokens across all turns.
-    #[serde(default)]
     pub total_input_tokens: u64,
     /// Cumulative output tokens across all turns.
-    #[serde(default)]
     pub total_output_tokens: u64,
     /// Cumulative cache-read tokens across all turns.
-    #[serde(default)]
     pub total_cache_read_tokens: u64,
-    /// The session file's path **relative to the data directory**, for
-    /// sessions whose file does not live at the flat `{id}.jsonl`
-    /// derivation — child sessions live at
-    /// `{root-id}/children/{path-slug}.jsonl`. Absent (`None`) for
-    /// legacy/root sessions, which keep resolving through the flat
-    /// derivation unchanged — zero migration of old rows. Discovery stays
-    /// manifest-driven: nothing ever crawls the directory.
+    /// The session file's path **relative to the data directory**. Child
+    /// sessions live at `{root-id}/children/{path-slug}.jsonl`; active root
+    /// sessions use `None` and resolve to `{id}.jsonl`. Legacy paths are
+    /// classified and rewritten by the explicit migration before any row
+    /// enters this active index. Discovery stays index-driven: the runtime
+    /// never crawls the directory to infer sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rel_path: Option<String>,
     /// Session id of the parent this session was branched from (the
@@ -277,4 +457,27 @@ pub struct SessionIndexEntry {
     /// root sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
+    /// Fidelity assigned during migration or native format-2 creation.
+    pub fidelity: ResumeFidelity,
+    /// Visible-history lineage retained across descendant forks.
+    pub origin: SessionRecordOrigin,
+}
+
+impl SessionIndexEntry {
+    /// Whether execution may resume from this stored timeline.
+    #[must_use]
+    pub const fn permits_resume(&self) -> bool {
+        self.fidelity.permits_resume()
+    }
+
+    /// Whether resume must begin a fresh provider-state epoch.
+    ///
+    /// Every migrated legacy record returns `true`, including records whose
+    /// visible event representation is otherwise canonical. Legacy provider
+    /// anchors are never promoted into the active format-2 store.
+    #[must_use]
+    pub const fn requires_fresh_provider_epoch(&self) -> bool {
+        matches!(self.origin, SessionRecordOrigin::MigratedLegacy { .. })
+            || self.fidelity.requires_fresh_epoch()
+    }
 }

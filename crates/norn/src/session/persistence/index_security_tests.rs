@@ -1,10 +1,14 @@
+use super::codec::{read_index_in, write_index_atomic_in};
 use super::*;
-use crate::session::persistence::types::{SESSION_FORMAT_VERSION, SessionStatus};
+use crate::session::persistence::types::{
+    ResumeFidelity, SESSION_FORMAT_VERSION, SessionRecordOrigin, SessionStatus,
+};
 
 fn entry(id: &str, name: &str) -> SessionIndexEntry {
     let now = Utc::now();
     SessionIndexEntry {
         id: id.to_owned(),
+        generation: uuid::Uuid::new_v4(),
         name: Some(name.to_owned()),
         model: "gpt-test".to_owned(),
         working_dir: "/work".to_owned(),
@@ -18,6 +22,8 @@ fn entry(id: &str, name: &str) -> SessionIndexEntry {
         total_cache_read_tokens: 0,
         rel_path: None,
         parent_id: None,
+        fidelity: ResumeFidelity::Canonical,
+        origin: SessionRecordOrigin::Native,
     }
 }
 
@@ -32,7 +38,13 @@ fn locked_index_transaction_remains_on_root_after_root_replacement()
 
     let lock = lock_index(&data_dir, None)?;
     std::fs::rename(&data_dir, &parked)?;
-    write_index_atomic(&data_dir, &[entry("replacement", "untouched")])?;
+    std::fs::create_dir(&data_dir)?;
+    let replacement = entry("replacement", "untouched");
+    let replacement_body = format!(
+        "{{\"norn_session_format\":{SESSION_FORMAT_VERSION}}}\n{}\n",
+        serde_json::to_string(&replacement)?
+    );
+    std::fs::write(index_file_path(&data_dir), replacement_body)?;
 
     let mut locked_entries = read_index_in(lock.root())?;
     locked_entries

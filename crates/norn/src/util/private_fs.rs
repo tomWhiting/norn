@@ -13,16 +13,16 @@ use std::os::fd::OwnedFd;
 mod mutation;
 #[path = "private_fs_observation.rs"]
 mod observation;
+#[path = "private_fs_api.rs"]
+mod private_root_api;
+
+pub(crate) use observation::{PrivateRootReader, PrivateTreeEntry};
 
 #[cfg(all(
     test,
     any(target_vendor = "apple", target_os = "linux", target_os = "android")
 ))]
 use mutation::rename_new_relative_file_with_hooks;
-use mutation::{
-    publish_new_relative_file, remove_relative_directory, remove_relative_file,
-    rename_new_relative_file, rename_relative_file,
-};
 #[cfg(all(test, unix, not(any(target_os = "redox", target_os = "espidf"))))]
 use mutation::{
     publish_new_relative_file_after, publish_new_relative_file_with_hooks,
@@ -78,118 +78,6 @@ pub(crate) struct PrivateRoot {
     path: PathBuf,
     #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
     descriptor: OwnedFd,
-}
-
-impl PrivateRoot {
-    /// Open or create an absolute private root and enforce mode `0700`.
-    pub(crate) fn create(path: &Path) -> io::Result<Self> {
-        create_root(path)
-    }
-
-    /// Create the root and durably publish every absolute ancestor entry.
-    pub(crate) fn create_with_durable_ancestors(path: &Path) -> io::Result<Self> {
-        create_root_with_durable_ancestors(path)
-    }
-
-    /// Open an existing absolute private root and enforce mode `0700`.
-    pub(crate) fn open(path: &Path) -> io::Result<Self> {
-        open_root(path)
-    }
-
-    /// Observe one existing regular file without creating or changing modes.
-    pub(crate) fn open_read_observational(root: &Path, relative: &Path) -> io::Result<File> {
-        observation::open_regular_file(root, relative)
-    }
-
-    /// The original absolute spelling supplied by the caller.
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// Render a relative path below the root for diagnostics only.
-    pub(crate) fn display_path(&self, relative: &Path) -> PathBuf {
-        self.path.join(relative)
-    }
-
-    /// Create and harden all relative directory components to `0700`.
-    pub(crate) fn create_dir_all(&self, relative: &Path) -> io::Result<()> {
-        create_relative_directory(self, relative).map(drop)
-    }
-
-    /// Open an existing private regular file for reading.
-    pub(crate) fn open_read(&self, relative: &Path) -> io::Result<File> {
-        open_file(self, relative, FileAccess::Read)
-    }
-
-    /// Open an existing private regular file for reading and appending.
-    pub(crate) fn open_read_append(&self, relative: &Path) -> io::Result<File> {
-        open_file(self, relative, FileAccess::ReadAppend)
-    }
-
-    /// Open or create a private regular append-only file.
-    pub(crate) fn open_append_create(&self, relative: &Path) -> io::Result<File> {
-        open_file(self, relative, FileAccess::AppendCreate)
-    }
-
-    /// Open or create a private regular advisory-lock file.
-    pub(crate) fn open_lock(&self, relative: &Path) -> io::Result<File> {
-        open_file(self, relative, FileAccess::Lock)
-    }
-
-    /// Exclusively create a private regular file.
-    pub(crate) fn create_new(&self, relative: &Path) -> io::Result<File> {
-        open_file(self, relative, FileAccess::CreateNew)
-    }
-
-    /// Return whether `relative` securely resolves to a regular file.
-    pub(crate) fn regular_file_exists(&self, relative: &Path) -> io::Result<bool> {
-        match self.open_read(relative) {
-            Ok(file) => {
-                drop(file);
-                Ok(true)
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-            Err(error) => Err(error),
-        }
-    }
-
-    /// Enumerate an existing directory through a pinned descriptor.
-    pub(crate) fn read_dir(&self, relative: &Path) -> io::Result<Vec<PrivateDirEntry>> {
-        read_directory(self, relative)
-    }
-
-    /// Remove a relative regular-file entry without following it.
-    pub(crate) fn remove_file(&self, relative: &Path) -> io::Result<()> {
-        remove_relative_file(self, relative)
-    }
-
-    /// Remove a relative directory tree without following any entry.
-    pub(crate) fn remove_dir_all(&self, relative: &Path) -> io::Result<()> {
-        remove_relative_directory(self, relative)
-    }
-
-    /// Atomically rename one regular file over another within this root.
-    pub(crate) fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
-        rename_relative_file(self, from, to)
-    }
-
-    /// Atomically rename one regular file to an unoccupied name.
-    pub(crate) fn rename_new(&self, from: &Path, to: &Path) -> io::Result<()> {
-        rename_new_relative_file(self, from, to)
-    }
-
-    /// Atomically publish an existing regular file at an unoccupied name.
-    ///
-    /// Supported POSIX-style Unix targets use descriptor-relative `linkat`.
-    /// Redox, ESP-IDF, and non-Unix targets fail closed as unsupported.
-    pub(crate) fn publish_new(&self, from: &Path, to: &Path) -> io::Result<()> {
-        publish_new_relative_file(self, from, to)
-    }
-
-    /// Synchronize a relative directory's metadata and entries.
-    pub(crate) fn sync_dir(&self, relative: &Path) -> io::Result<()> {
-        sync_relative_directory(self, relative)
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -394,8 +282,13 @@ fn open_root(_path: &Path) -> io::Result<PrivateRoot> {
 fn open_relative_directory(root: &PrivateRoot, relative: &Path) -> io::Result<OwnedFd> {
     use rustix::fs::{Mode, openat};
 
-    let mut directory =
-        rustix::io::fcntl_dupfd_cloexec(&root.descriptor, 0).map_err(io::Error::from)?;
+    let mut directory = openat(
+        &root.descriptor,
+        Path::new("."),
+        directory_flags(),
+        Mode::empty(),
+    )
+    .map_err(io::Error::from)?;
     for component in relative_components(relative, true)? {
         directory = openat(&directory, component, directory_flags(), Mode::empty())
             .map_err(io::Error::from)?;
@@ -569,6 +462,17 @@ mod tests;
 #[path = "private_fs_rename_tests.rs"]
 mod rename_tests;
 
+#[cfg(all(
+    test,
+    any(target_vendor = "apple", target_os = "linux", target_os = "android")
+))]
+#[path = "private_fs_directory_publish_tests.rs"]
+mod directory_publish_tests;
+
 #[cfg(all(test, unix, not(any(target_os = "redox", target_os = "espidf"))))]
 #[path = "private_fs_durability_tests.rs"]
 mod durability_tests;
+
+#[cfg(all(test, unix, not(any(target_os = "redox", target_os = "espidf"))))]
+#[path = "private_fs_observation_tests.rs"]
+mod observation_tests;

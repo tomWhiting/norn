@@ -35,13 +35,15 @@ use serde_json::{Map, Value};
 use termina::escape::csi::{Csi, Sgr};
 use termina::style::{ColorSpec, Intensity, RgbColor};
 
-use norn::session::events::SessionEvent;
+use norn::session::events::{ProviderEpochBoundaryReason, SessionEvent};
 
 use crate::render::markdown::MarkdownRenderer;
 use crate::render::style::colour_for;
 use crate::render::thinking::render_thinking as render_thinking_block;
 use crate::terminal::caps::TerminalCaps;
 use crate::tools::renderer::renderer_for;
+
+pub use super::display_toggles::DisplayToggles;
 
 /// Foreground colour for the user-message prefix.
 ///
@@ -55,63 +57,6 @@ pub(crate) const USER_PREFIX_COLOUR: RgbColor = RgbColor::new(80, 160, 220);
 /// Iterated in order before falling back to the first string-typed
 /// field, then the first field in iteration order.
 const PRIMARY_KEY_PRIORITY: &[&str] = &["text", "content", "written", "response"];
-
-/// Visibility toggles for rendering output.
-///
-/// Thinking is visible by default so provider reasoning summaries are
-/// not silently dropped from the live TUI. Secondary structured fields
-/// remain hidden initially to avoid expanding every structured event.
-/// Pressing Ctrl+E toggles the whole extra-output layer off or on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DisplayToggles {
-    /// Whether thinking content is rendered into the scroll region.
-    pub thinking_visible: bool,
-    /// Whether secondary structured-output fields are rendered.
-    pub secondary_fields_visible: bool,
-}
-
-impl Default for DisplayToggles {
-    fn default() -> Self {
-        Self {
-            thinking_visible: true,
-            secondary_fields_visible: false,
-        }
-    }
-}
-
-impl DisplayToggles {
-    /// Construct with thinking visible and secondary fields hidden.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            thinking_visible: true,
-            secondary_fields_visible: false,
-        }
-    }
-
-    /// Toggle the extra-output layer.
-    ///
-    /// Turning it off hides both thinking and secondary structured
-    /// fields. Turning it on shows both.
-    pub fn toggle(&mut self) {
-        let visible = !self.thinking_visible;
-        self.thinking_visible = visible;
-        self.secondary_fields_visible = visible;
-    }
-
-    /// Render the human-readable status string shown momentarily after
-    /// the Ctrl+E keystroke (e.g. `"thinking: on, details: on"`).
-    #[must_use]
-    pub fn status_text(&self) -> String {
-        let thinking = if self.thinking_visible { "on" } else { "off" };
-        let details = if self.secondary_fields_visible {
-            "on"
-        } else {
-            "off"
-        };
-        format!("thinking: {thinking}, details: {details}")
-    }
-}
 
 /// Render a [`SessionEvent`] into styled terminal output.
 ///
@@ -148,6 +93,12 @@ pub fn render_event(
             new_model,
             ..
         } => render_dim_status_line(&format!("model: {old_model} → {new_model}")),
+        SessionEvent::ProviderEpochBoundary { reason, .. } => {
+            let reason = match reason {
+                ProviderEpochBoundaryReason::MigratedLegacy => "migrated legacy session",
+            };
+            render_dim_status_line(&format!("provider epoch boundary: {reason}"))
+        }
         SessionEvent::Compaction { summary, .. } => {
             render_dim_status_line(&format!("compaction: {summary}"))
         }

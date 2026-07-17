@@ -634,10 +634,21 @@ mod tests {
         dir: &Path,
     ) -> Result<Arc<crate::session::SessionArtifactStore>, crate::session::SessionPersistError>
     {
+        let manager = crate::session::SessionManager::new(dir);
+        let opened = manager.create_with_id(
+            "root-session",
+            crate::session::CreateSessionOptions {
+                model: "test-model".to_owned(),
+                working_dir: "/work".to_owned(),
+                name: None,
+            },
+            crate::session::DurabilityPolicy::Flush,
+        )?;
         crate::session::SessionArtifactStore::for_session(
             dir,
-            "root-session",
+            &opened.entry,
             crate::session::DurabilityPolicy::Flush,
+            None,
         )
         .map(Arc::new)
     }

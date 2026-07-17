@@ -7,7 +7,7 @@
 //! dispatches is selected by the [`HookEventType`] stored on the instance.
 //!
 //! Dispatch flow for each trait method (with one fire-and-forget exception
-//! for [`SessionEventHook`]):
+//! for [`super::traits::SessionEventHook`]):
 //!
 //! 1. Gate on the matcher. Events whose
 //!    [`HookEventType::supports_matcher`] is `false` always fire; otherwise
@@ -25,7 +25,7 @@
 //!    - any other exit code (or signal) → warn + [`HookOutcome::Proceed`].
 //!    - spawn / I/O / timeout failures → warn + [`HookOutcome::Proceed`].
 //!
-//! [`SessionEventHook`] is the only fire-and-forget impl (D15). It clones
+//! [`super::traits::SessionEventHook`] is the only fire-and-forget impl (D15). It clones
 //! the hook's state into a [`tokio::spawn`] task so a slow logger does not
 //! bottleneck `append_and_notify` on the agent loop. All other impls await
 //! the spawn inline.
@@ -33,7 +33,6 @@
 use std::process::Stdio;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
@@ -42,20 +41,17 @@ use super::input::{
     HookInput, NORN_AGENT_ID, NORN_HOOK_EVENT, NORN_PROFILE, NORN_PROJECT_DIR, NORN_SESSION_ID,
 };
 use super::matchers::HookMatcher;
-use super::new_traits::{
-    CompactionHook, PostToolFailureHook, SessionLifecycleHook, StopHook, SubagentHook,
-    UserPromptHook,
-};
 use super::output::HookOutput;
-use super::traits::{
-    HookOutcome, LlmCallSummary, PostLlmHook, PostToolHook, PreLlmHook, PreToolHook,
-    SessionEventHook,
-};
-use crate::provider::request::ProviderRequest;
+use super::traits::HookOutcome;
+#[cfg(test)]
+use super::traits::{PreToolHook, SessionEventHook};
 use crate::session::events::SessionEvent;
+#[cfg(test)]
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::traits::ToolOutput;
+
+mod implementations;
 
 /// Common context fields captured at hook construction time.
 ///
@@ -156,8 +152,19 @@ impl ShellCommandHook {
         }
     }
 
+    fn tool_result_input(&self, envelope: &ToolEnvelope, output: &ToolOutput) -> HookInput {
+        let mut input = self.base_input();
+        input.tool_name = Some(envelope.tool_name.clone());
+        input.tool_input = Some(envelope.model_args.clone());
+        input.tool_call_id = Some(envelope.tool_call_id.clone());
+        input.tool_output = Some(output.content.clone());
+        input.tool_duration_ms =
+            Some(u64::try_from(output.duration.as_millis()).unwrap_or(u64::MAX));
+        input
+    }
+
     /// Core spawn pipeline shared by every trait impl except the fire-and-
-    /// forget [`SessionEventHook`] entry point.
+    /// forget [`super::traits::SessionEventHook`] entry point.
     ///
     /// Returns [`HookOutcome::Proceed`] on every non-fatal failure path
     /// (spawn error, I/O error, timeout, malformed JSON) per `DESIGN.md`
@@ -309,6 +316,7 @@ const fn session_event_variant_name(event: &SessionEvent) -> &'static str {
         SessionEvent::SpokenResponse { .. } => "SpokenResponse",
         SessionEvent::ToolResult { .. } => "ToolResult",
         SessionEvent::ModelChange { .. } => "ModelChange",
+        SessionEvent::ProviderEpochBoundary { .. } => "ProviderEpochBoundary",
         SessionEvent::Compaction { .. } => "Compaction",
         SessionEvent::ChildBranch { .. } => "ChildBranch",
         SessionEvent::ForkComplete { .. } => "ForkComplete",
@@ -370,223 +378,6 @@ fn interpret_exit(
             );
             HookOutcome::Proceed
         }
-    }
-}
-
-// ---- Trait implementations -------------------------------------------------
-//
-// Every implementation follows the same shape:
-//   1. should_fire(matcher_input)? early-return Proceed (or unit) on miss.
-//   2. Build the per-event HookInput on top of base_input().
-//   3. Call execute() — except the SessionEventHook impl, which spawns.
-//   4. Map the resulting HookOutcome back to the trait return type.
-//
-// CO10 is enforced for free by HookOutput::to_hook_outcome: a hook
-// configured for any non-PreTool event that returns `decision: "modify"`
-// degrades to Proceed there, so impls below can pass through the outcome
-// directly. The PreToolHook impl is the only one that may surface
-// HookOutcome::Modify.
-
-#[async_trait]
-impl PreToolHook for ShellCommandHook {
-    async fn before_tool(&self, envelope: &ToolEnvelope, _ctx: &ToolContext) -> HookOutcome {
-        if !self.should_fire(Some(envelope.tool_name.as_str())) {
-            return HookOutcome::Proceed;
-        }
-        let mut input = self.base_input();
-        input.tool_name = Some(envelope.tool_name.clone());
-        input.tool_input = Some(envelope.model_args.clone());
-        input.tool_call_id = Some(envelope.tool_call_id.clone());
-        self.execute(input).await
-    }
-}
-
-#[async_trait]
-impl PostToolHook for ShellCommandHook {
-    async fn after_tool(&self, envelope: &ToolEnvelope, output: &ToolOutput, _ctx: &ToolContext) {
-        if !self.should_fire(Some(envelope.tool_name.as_str())) {
-            return;
-        }
-        let duration_ms = u64::try_from(output.duration.as_millis()).unwrap_or(u64::MAX);
-        let mut input = self.base_input();
-        input.tool_name = Some(envelope.tool_name.clone());
-        input.tool_input = Some(envelope.model_args.clone());
-        input.tool_call_id = Some(envelope.tool_call_id.clone());
-        input.tool_output = Some(output.content.clone());
-        input.tool_duration_ms = Some(duration_ms);
-        input.tool_is_error = Some(output.is_error());
-        let _ = self.execute(input).await;
-    }
-}
-
-#[async_trait]
-impl PreLlmHook for ShellCommandHook {
-    async fn before_llm(&self, request: &ProviderRequest) -> HookOutcome {
-        if !self.should_fire(Some(request.model.as_str())) {
-            return HookOutcome::Proceed;
-        }
-        let mut input = self.base_input();
-        input.model = Some(request.model.clone());
-        input.message_count = Some(request.messages.len());
-        self.execute(input).await
-    }
-}
-
-#[async_trait]
-impl PostLlmHook for ShellCommandHook {
-    async fn after_llm(&self, _summary: &LlmCallSummary) {
-        // Post-LLM matcher input is the model name (D17). The current
-        // LlmCallSummary surface does not carry the model identifier — a
-        // configured matcher therefore cannot be evaluated here. Fall back
-        // to match-all (HookMatcher::All) and skip when the operator
-        // supplied a concrete pattern; wildcard matchers still fire. This
-        // mirrors the documented matcher table without lying about input.
-        if matches!(self.matcher, HookMatcher::Pattern(_)) {
-            return;
-        }
-        let input = self.base_input();
-        let _ = self.execute(input).await;
-    }
-}
-
-#[async_trait]
-impl SessionEventHook for ShellCommandHook {
-    async fn on_event(&self, event: &SessionEvent) {
-        // Matcher gate must be applied synchronously so the spawn is
-        // skipped entirely when the variant name does not match.
-        if !self.should_fire(Some(session_event_variant_name(event))) {
-            return;
-        }
-        let mut input = self.base_input();
-        // Embed the event variant name as the tool/event discriminator so
-        // a script that only reads stdin (not env) can still branch on it.
-        input.tool_name = Some(session_event_variant_name(event).to_owned());
-
-        // Fire-and-forget per D15: clone the hook's state into a spawned
-        // task with its own timeout so slow loggers cannot bottleneck the
-        // calling async context (typically `append_and_notify`).
-        let hook = self.clone();
-        tokio::spawn(async move {
-            let _ = hook.execute(input).await;
-        });
-    }
-}
-
-#[async_trait]
-impl UserPromptHook for ShellCommandHook {
-    async fn on_user_prompt(&self, prompt: &str, session_id: &str) -> HookOutcome {
-        // user_prompt does not support a matcher (D17) — always fires.
-        let mut input = self.base_input();
-        // The dispatch site supplies its own session id; prefer it over the
-        // value captured at hook construction so cross-session reuse stays
-        // honest.
-        session_id.clone_into(&mut input.session_id);
-        // Reuse final_text to carry the prompt text — the JSON shape stays
-        // flat per HookInput's documented schema, and the hook script reads
-        // the value it needs by event-type discrimination on
-        // `hook_event_name`. Per `DESIGN.md` D12, prompt text rides on
-        // stdin; the field re-use here keeps HookInput's schema closed.
-        input.final_text = Some(prompt.to_owned());
-        self.execute(input).await
-    }
-}
-
-#[async_trait]
-impl StopHook for ShellCommandHook {
-    async fn on_stop(&self, final_text: &str) -> HookOutcome {
-        let mut input = self.base_input();
-        input.final_text = Some(final_text.to_owned());
-        self.execute(input).await
-    }
-}
-
-#[async_trait]
-impl SubagentHook for ShellCommandHook {
-    async fn on_subagent_start(&self, agent_id: &str, agent_type: &str) {
-        // A single ShellCommandHook instance is bound to a single
-        // HookEventType; the loader registers it under exactly one variant.
-        // If event_type is not SubagentStart, this dispatch is misrouted —
-        // silently return to keep dispatch symmetric without spawning.
-        if self.event_type != HookEventType::SubagentStart {
-            return;
-        }
-        if !self.should_fire(Some(agent_type)) {
-            return;
-        }
-        let mut input = self.base_input();
-        input.subagent_id = Some(agent_id.to_owned());
-        input.subagent_type = Some(agent_type.to_owned());
-        let _ = self.execute(input).await;
-    }
-
-    async fn on_subagent_stop(&self, agent_id: &str, agent_type: &str) -> HookOutcome {
-        if self.event_type != HookEventType::SubagentStop {
-            return HookOutcome::Proceed;
-        }
-        if !self.should_fire(Some(agent_type)) {
-            return HookOutcome::Proceed;
-        }
-        let mut input = self.base_input();
-        input.subagent_id = Some(agent_id.to_owned());
-        input.subagent_type = Some(agent_type.to_owned());
-        self.execute(input).await
-    }
-}
-
-#[async_trait]
-impl SessionLifecycleHook for ShellCommandHook {
-    async fn on_session_start(&self, session_id: &str) {
-        if self.event_type != HookEventType::SessionStart {
-            return;
-        }
-        // session_start does not support a matcher (D17) — always fires.
-        let mut input = self.base_input();
-        session_id.clone_into(&mut input.session_id);
-        let _ = self.execute(input).await;
-    }
-
-    async fn on_session_end(&self, session_id: &str) {
-        if self.event_type != HookEventType::SessionEnd {
-            return;
-        }
-        let mut input = self.base_input();
-        session_id.clone_into(&mut input.session_id);
-        let _ = self.execute(input).await;
-    }
-}
-
-#[async_trait]
-impl CompactionHook for ShellCommandHook {
-    async fn before_compaction(&self, event_count: usize) -> HookOutcome {
-        // pre_compaction does not support a matcher (D17) — always fires.
-        let mut input = self.base_input();
-        // Surface event_count via the message_count field so the schema
-        // stays flat; the hook script discriminates on hook_event_name.
-        input.message_count = Some(event_count);
-        self.execute(input).await
-    }
-}
-
-#[async_trait]
-impl PostToolFailureHook for ShellCommandHook {
-    async fn after_tool_failure(
-        &self,
-        envelope: &ToolEnvelope,
-        output: &ToolOutput,
-        _ctx: &ToolContext,
-    ) {
-        if !self.should_fire(Some(envelope.tool_name.as_str())) {
-            return;
-        }
-        let duration_ms = u64::try_from(output.duration.as_millis()).unwrap_or(u64::MAX);
-        let mut input = self.base_input();
-        input.tool_name = Some(envelope.tool_name.clone());
-        input.tool_input = Some(envelope.model_args.clone());
-        input.tool_call_id = Some(envelope.tool_call_id.clone());
-        input.tool_output = Some(output.content.clone());
-        input.tool_duration_ms = Some(duration_ms);
-        input.tool_is_error = Some(output.is_error());
-        let _ = self.execute(input).await;
     }
 }
 

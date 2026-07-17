@@ -58,7 +58,6 @@ fn every_nested_union_variant_persists_and_replays_verbatim() -> TestResult {
     drop(store);
 
     let replay = read_session_events(temp.path(), session_id)?;
-    assert_eq!(replay.skipped_lines, 0);
     let messages = events_to_messages(&replay.events);
     let request = ProviderRequest {
         messages,

@@ -201,13 +201,14 @@ fn fresh_session_at(dir: &Path, working_dir: &str) -> SessionIndexEntry {
         .entry
 }
 
-/// Register an index entry WITHOUT touching the session file at all —
-/// for tests that assert the file's absence or that a lower layer
-/// creates it.
+/// Register an index entry WITHOUT touching the session file at all.
+///
+/// This deliberately constructs an orphan for tests of fail-closed behavior.
 fn index_only_entry(dir: &Path) -> SessionIndexEntry {
     let now = Utc::now();
     let entry = SessionIndexEntry {
         id: uuid::Uuid::now_v7().to_string(),
+        generation: uuid::Uuid::new_v4(),
         name: None,
         model: "gpt-x".to_owned(),
         working_dir: "/work".to_owned(),
@@ -221,6 +222,8 @@ fn index_only_entry(dir: &Path) -> SessionIndexEntry {
         total_cache_read_tokens: 0,
         rel_path: None,
         parent_id: None,
+        fidelity: ResumeFidelity::Canonical,
+        origin: SessionRecordOrigin::Native,
     };
     append_index_entry(dir, &entry, None).unwrap();
     entry
@@ -254,48 +257,61 @@ fn new_session_files_and_directories_are_private() -> Result<(), Box<dyn std::er
         "atomic index replacement must publish a private temp inode",
     );
 
-    let nested = data_dir.join("root/children/child.jsonl");
+    let child_relative = format!("{}/children/child.jsonl", entry.id);
+    let nested = data_dir.join(&child_relative);
     drop(io::open_session_append(&nested)?);
-    assert_eq!(unix_mode(&data_dir.join("root"))?, 0o700);
-    assert_eq!(unix_mode(&data_dir.join("root/children"))?, 0o700);
+    assert_eq!(unix_mode(&data_dir.join(&entry.id))?, 0o700);
+    assert_eq!(
+        unix_mode(&data_dir.join(&entry.id).join("children"))?,
+        0o700
+    );
     assert_eq!(unix_mode(&nested)?, 0o600);
 
-    fs::set_permissions(data_dir.join("root"), fs::Permissions::from_mode(0o755))?;
+    fs::set_permissions(data_dir.join(&entry.id), fs::Permissions::from_mode(0o755))?;
     fs::set_permissions(
-        data_dir.join("root/children"),
+        data_dir.join(&entry.id).join("children"),
         fs::Permissions::from_mode(0o755),
     )?;
     fs::set_permissions(&nested, fs::Permissions::from_mode(0o644))?;
-    let mut child_entry = entry;
+    let mut child_entry = entry.clone();
     child_entry.id = "child".to_owned();
-    child_entry.rel_path = Some("root/children/child.jsonl".to_owned());
+    child_entry.generation = uuid::Uuid::new_v4();
+    child_entry.rel_path = Some(child_relative);
+    child_entry.parent_id = Some(entry.id.clone());
+    index::insert_child_index_entry(&data_dir, &child_entry, None)?;
     assert!(
         read_session_events_for_entry(&data_dir, &child_entry)?
             .events
             .is_empty()
     );
-    assert_eq!(unix_mode(&data_dir.join("root"))?, 0o700);
-    assert_eq!(unix_mode(&data_dir.join("root/children"))?, 0o700);
+    assert_eq!(unix_mode(&data_dir.join(&entry.id))?, 0o700);
+    assert_eq!(
+        unix_mode(&data_dir.join(&entry.id).join("children"))?,
+        0o700
+    );
     assert_eq!(unix_mode(&nested)?, 0o600);
     Ok(())
 }
 
 #[cfg(unix)]
 #[test]
-fn legacy_session_index_and_lock_modes_are_hardened_on_open()
+fn strict_session_index_and_lock_modes_are_hardened_on_open()
 -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::PermissionsExt as _;
 
     let tmp = tempfile::tempdir()?;
     let data_dir = tmp.path().join("sessions");
     fs::create_dir(&data_dir)?;
-    let session_path = session_file_path(&data_dir, "legacy");
+    let session_path = session_file_path(&data_dir, "strict");
+    let header = serde_json::to_string(&SessionFileHeader {
+        version: SESSION_FORMAT_VERSION,
+    })?;
     fs::write(
         &session_path,
-        format!("{}\n", serde_json::to_string(&user_msg("old"))?),
+        format!("{header}\n{}\n", serde_json::to_string(&user_msg("old"))?),
     )?;
     let index_path = index_file_path(&data_dir);
-    fs::write(&index_path, b"")?;
+    fs::write(&index_path, format!("{header}\n"))?;
     let lock_path = data_dir.join("index.lock");
     fs::write(&lock_path, b"")?;
 
@@ -304,7 +320,7 @@ fn legacy_session_index_and_lock_modes_are_hardened_on_open()
     fs::set_permissions(&index_path, fs::Permissions::from_mode(0o755))?;
     fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o644))?;
 
-    assert_eq!(read_session_events(&data_dir, "legacy")?.events.len(), 1);
+    assert_eq!(read_session_events(&data_dir, "strict")?.events.len(), 1);
     assert!(read_index(&data_dir)?.is_empty());
     drop(super::lock::lock_index(&data_dir, None)?);
     assert_eq!(unix_mode(&session_path)?, 0o600);
@@ -363,6 +379,7 @@ fn session_index_and_lock_opens_refuse_symlinks_and_non_regular_files()
     let lock_target = tmp.path().join("outside.lock");
     fs::write(&lock_target, b"outside")?;
     let lock_path = data_dir.join("index.lock");
+    fs::remove_file(&lock_path)?;
     symlink(&lock_target, &lock_path)?;
     let error = super::lock::lock_index(&data_dir, None)
         .err()
@@ -389,7 +406,6 @@ fn round_trip_all_nine_variants() {
     append_events(tmp.path(), &entry.id, &events, false).unwrap();
 
     let read = read_session_events(tmp.path(), &entry.id).unwrap();
-    assert_eq!(read.skipped_lines, 0);
     assert_eq!(read.events.len(), events.len());
     for (a, b) in events.iter().zip(read.events.iter()) {
         assert_event_eq(a, b);
@@ -437,7 +453,6 @@ fn round_trip_reasoning_items_through_disk() {
     append_events(tmp.path(), &entry.id, &events, false).unwrap();
 
     let read = read_session_events(tmp.path(), &entry.id).unwrap();
-    assert_eq!(read.skipped_lines, 0);
     assert_eq!(read.events.len(), 1);
     assert_event_eq(&events[0], &read.events[0]);
 
@@ -475,7 +490,7 @@ fn each_jsonl_line_ends_with_newline() {
     assert_eq!(line_count, one_of_each().len() + 1);
 }
 
-// ----- R4 (review): version header + tolerant reading -----
+// ----- Active format-2 header and fail-closed reading -----
 
 #[test]
 fn header_written_at_creation_and_surfaced_on_read() {
@@ -491,7 +506,6 @@ fn header_written_at_creation_and_surfaced_on_read() {
     let read = read_session_events(tmp.path(), &entry.id).unwrap();
     assert_eq!(read.format_version, Some(SESSION_FORMAT_VERSION));
     assert_eq!(read.events.len(), 1, "header must not be read as an event");
-    assert_eq!(read.skipped_lines, 0);
 }
 
 #[test]
@@ -509,7 +523,7 @@ fn header_written_once_across_batches() {
 }
 
 #[test]
-fn pre_header_file_still_loads() {
+fn pre_header_file_is_rejected_by_active_reader() {
     let tmp = tempfile::tempdir().unwrap();
     // A format-0 file: event lines only, no header.
     let events = [user_msg("old one"), user_msg("old two")];
@@ -520,10 +534,8 @@ fn pre_header_file_still_loads() {
     }
     fs::write(session_file_path(tmp.path(), "legacy"), body).unwrap();
 
-    let read = read_session_events(tmp.path(), "legacy").unwrap();
-    assert_eq!(read.format_version, None, "no header => pre-versioning");
-    assert_eq!(read.events.len(), 2);
-    assert_eq!(read.skipped_lines, 0);
+    let error = read_session_events(tmp.path(), "legacy").unwrap_err();
+    assert!(matches!(error, SessionPersistError::InvalidTimeline(_)));
 }
 
 #[test]
@@ -536,18 +548,16 @@ fn create_session_stamps_writer_format_version() {
 }
 
 #[test]
-fn index_entry_without_format_version_defaults_to_zero() {
+fn active_index_entry_requires_format_and_provenance_fields() {
     let json = r#"{"id":"s","name":null,"model":"m","working_dir":"/w",
         "created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
         "event_count":0,"status":"active"}"#;
-    let entry: SessionIndexEntry = serde_json::from_str(json).unwrap();
-    assert_eq!(entry.format_version, 0);
+    assert!(serde_json::from_str::<SessionIndexEntry>(json).is_err());
 }
 
-/// H19 regression: a torn FINAL line (ENOSPC / `kill -9` mid-write) must
-/// be skipped with a count — never brick the whole session.
+/// A syntactically incomplete final row is truncated before strict replay.
 #[test]
-fn torn_final_line_is_skipped_and_resume_succeeds() {
+fn torn_final_line_is_truncated_and_resume_succeeds() {
     let tmp = tempfile::tempdir().unwrap();
     let entry = fresh_session(tmp.path());
     let events: Vec<_> = one_of_each().into_iter().take(3).collect();
@@ -562,20 +572,16 @@ fn torn_final_line_is_skipped_and_resume_succeeds() {
 
     let read = read_session_events(tmp.path(), &entry.id).unwrap();
     assert_eq!(read.events.len(), 3, "intact events must all load");
-    assert_eq!(read.skipped_lines, 1, "the torn line is counted");
-
     let resumed = manager(tmp.path())
         .resume(&entry.id, DurabilityPolicy::Flush)
         .unwrap();
     assert_eq!(resumed.store.len(), 3);
     assert_eq!(resumed.replay.replayed_events, 3);
-    assert_eq!(resumed.replay.skipped_lines, 1);
 }
 
-/// R4 regression: an event variant from a newer writer is skipped with a
-/// warning; everything else still loads.
+/// Unknown event variants fail closed and block further appends.
 #[test]
-fn unknown_variant_line_is_skipped() {
+fn unknown_variant_line_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let entry = fresh_session(tmp.path());
     append_events(tmp.path(), &entry.id, &[user_msg("known")], false).unwrap();
@@ -585,16 +591,13 @@ fn unknown_variant_line_is_skipped() {
     file.write_all(b"{\"type\":\"hologram_sync\",\"data\":42}\n")
         .unwrap();
     drop(file);
-    append_events(tmp.path(), &entry.id, &[user_msg("after")], false).unwrap();
-
-    let read = read_session_events(tmp.path(), &entry.id).unwrap();
-    assert_eq!(read.events.len(), 2, "events around the unknown line load");
-    assert_eq!(read.skipped_lines, 1);
+    assert!(append_events(tmp.path(), &entry.id, &[user_msg("after")], false).is_err());
+    assert!(read_session_events(tmp.path(), &entry.id).is_err());
 }
 
-/// A corrupt MIDDLE line must not lose the events after it.
+/// Internal corruption fails closed instead of being skipped.
 #[test]
-fn corrupt_middle_line_is_skipped_with_count() {
+fn corrupt_middle_line_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let entry = fresh_session(tmp.path());
     append_events(tmp.path(), &entry.id, &[user_msg("first")], false).unwrap();
@@ -602,15 +605,12 @@ fn corrupt_middle_line_is_skipped_with_count() {
     let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
     file.write_all(b"not-json\n").unwrap();
     drop(file);
-    append_events(tmp.path(), &entry.id, &[user_msg("second")], false).unwrap();
-
-    let read = read_session_events(tmp.path(), &entry.id).unwrap();
-    assert_eq!(read.events.len(), 2);
-    assert_eq!(read.skipped_lines, 1);
+    assert!(append_events(tmp.path(), &entry.id, &[user_msg("second")], false).is_err());
+    assert!(read_session_events(tmp.path(), &entry.id).is_err());
 }
 
 #[test]
-fn empty_lines_are_skipped() {
+fn empty_lines_are_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let entry = fresh_session(tmp.path());
     let head: Vec<_> = one_of_each().into_iter().take(1).collect();
@@ -618,20 +618,16 @@ fn empty_lines_are_skipped() {
     let path = session_file_path(tmp.path(), &entry.id);
     let body = fs::read_to_string(&path).unwrap();
     fs::write(&path, format!("\n   \n{body}\n  \n")).unwrap();
-    let read = read_session_events(tmp.path(), &entry.id).unwrap();
-    assert_eq!(read.events.len(), 1);
-    assert_eq!(read.skipped_lines, 0);
+    assert!(read_session_events(tmp.path(), &entry.id).is_err());
 }
 
 #[test]
-fn empty_file_returns_empty_vec() {
+fn empty_existing_file_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let path = session_file_path(tmp.path(), "missing");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, "").unwrap();
-    let read = read_session_events(tmp.path(), "missing").unwrap();
-    assert!(read.events.is_empty());
-    assert_eq!(read.format_version, None);
+    assert!(read_session_events(tmp.path(), "missing").is_err());
 }
 
 #[test]
@@ -639,7 +635,6 @@ fn missing_file_returns_empty_vec() {
     let tmp = tempfile::tempdir().unwrap();
     let read = read_session_events(tmp.path(), "does-not-exist").unwrap();
     assert!(read.events.is_empty());
-    assert_eq!(read.skipped_lines, 0);
 }
 
 // ----- R3: index maintenance -----
@@ -662,7 +657,10 @@ fn index_jsonl_each_line_parses() {
     let _ = fresh_session(tmp.path());
     let _ = fresh_session(tmp.path());
     let body = fs::read_to_string(index_file_path(tmp.path())).unwrap();
-    for line in body.lines().filter(|l| !l.trim().is_empty()) {
+    let mut lines = body.lines();
+    let header: SessionFileHeader = serde_json::from_str(lines.next().unwrap()).unwrap();
+    assert_eq!(header.version, SESSION_FORMAT_VERSION);
+    for line in lines {
         let _: SessionIndexEntry = serde_json::from_str(line).unwrap();
     }
 }
@@ -685,16 +683,17 @@ fn no_stale_tmp_files_after_successful_atomic_write() {
 }
 
 #[test]
-fn stray_tmp_file_does_not_corrupt_canonical_index() {
+fn foreign_index_tmp_lookalike_fails_closed_without_changing_canonical_index() {
     let tmp = tempfile::tempdir().unwrap();
-    let entry = fresh_session(tmp.path());
+    let _entry = fresh_session(tmp.path());
     let canonical_before = fs::read(index_file_path(tmp.path())).unwrap();
-    // Drop a bogus .tmp file to mimic a previous crash mid-write.
+    // A prefix lookalike is not evidence that this writer owns the bytes.
     fs::write(tmp.path().join("index.jsonl.tmp.stale"), "garbage\n").unwrap();
-    // Canonical file is unaffected; subsequent reads still succeed.
-    let index = read_index(tmp.path()).unwrap();
-    assert_eq!(index.len(), 1);
-    assert_eq!(index[0].id, entry.id);
+    let error = read_index(tmp.path()).unwrap_err();
+    assert!(matches!(
+        error,
+        SessionPersistError::IndexArtifactConflict { .. }
+    ));
     let canonical_after = fs::read(index_file_path(tmp.path())).unwrap();
     assert_eq!(canonical_before, canonical_after);
 }
@@ -750,10 +749,11 @@ fn disabled_append_leaves_filesystem_untouched() {
 }
 
 #[test]
-fn append_creates_missing_directory() {
+fn session_publication_creates_missing_directory_before_append() {
     let tmp = tempfile::tempdir().unwrap();
     let nested = tmp.path().join("nested").join("deeper");
-    let entry = index_only_entry(&nested);
+    assert!(!nested.exists());
+    let entry = fresh_session(&nested);
     let only = vec![user_msg("hi")];
     append_events(&nested, &entry.id, &only, false).unwrap();
     assert!(session_file_path(&nested, &entry.id).exists());
@@ -839,14 +839,15 @@ fn resolve_latest_in_working_dir_ignores_newer_other_directory() {
 }
 
 #[test]
-fn resolve_latest_in_working_dir_uses_canonical_match_when_available() {
-    let tmp = tempfile::tempdir().unwrap();
-    let project = tmp.path().join("project");
+fn resolve_latest_in_working_dir_matches_normalized_stored_path() {
+    let store = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let project = workspace.path().join("project");
     fs::create_dir(&project).unwrap();
-    let stored_path = project.join(".");
-    let entry = fresh_session_at(tmp.path(), &stored_path.to_string_lossy());
+    let stored_path = project.canonicalize().unwrap();
+    let entry = fresh_session_at(store.path(), &stored_path.to_string_lossy());
 
-    let resolved = resolve_latest_session_in_working_dir(tmp.path(), &project).unwrap();
+    let resolved = resolve_latest_session_in_working_dir(store.path(), &project).unwrap();
     assert_eq!(resolved.id, entry.id);
 }
 
@@ -892,6 +893,7 @@ fn resume_ambiguous_prefix_returns_error() {
     for tail in ["3456-7890-abcd-ef1234567890", "3456-7890-abcd-ef1234567891"] {
         entries.push(SessionIndexEntry {
             id: format!("{shared_prefix}-{tail}"),
+            generation: uuid::Uuid::new_v4(),
             name: None,
             model: "gpt".to_owned(),
             working_dir: "/w".to_owned(),
@@ -905,6 +907,8 @@ fn resume_ambiguous_prefix_returns_error() {
             total_cache_read_tokens: 0,
             rel_path: None,
             parent_id: None,
+            fidelity: ResumeFidelity::Canonical,
+            origin: SessionRecordOrigin::Native,
         });
     }
     write_index_atomic(tmp.path(), &entries).unwrap();
@@ -1289,10 +1293,6 @@ fn torn_final_line_is_healed_on_batch_reopen() {
         3,
         "the post-crash append must parse — the torn line must not absorb it"
     );
-    assert_eq!(
-        read.skipped_lines, 1,
-        "the torn line is exactly one skipped line"
-    );
     match read.events.last().unwrap() {
         SessionEvent::UserMessage { content, .. } => assert_eq!(content, "after-crash"),
         other => panic!("expected the post-crash user message last, got {other:?}"),
@@ -1319,9 +1319,8 @@ fn torn_final_line_is_healed_on_sink_reopen() {
         .unwrap();
     assert_eq!(
         resumed.replay.replayed_events, 1,
-        "torn line skipped on resume"
+        "the intact event survives tail truncation"
     );
-    assert_eq!(resumed.replay.skipped_lines, 1);
     resumed.store.append(user_msg("after-crash")).unwrap();
     drop(resumed);
 
@@ -1331,43 +1330,29 @@ fn torn_final_line_is_healed_on_sink_reopen() {
         2,
         "sink reopen must heal the tear so the new event parses"
     );
-    assert_eq!(read.skipped_lines, 1);
 }
 
-// ----- Duplicate EventId tolerance (crash-retry artifacts) -----
+// ----- Duplicate EventId prevention and retry idempotence -----
 
-/// A duplicated event line (the documented-safe retry after a failure
-/// that actually persisted the first attempt) must be skipped on read:
-/// first occurrence kept, later occurrences counted like other skipped
-/// lines.
+/// Replaying an exact already-durable batch is an idempotent no-op.
 #[test]
-fn duplicate_event_lines_are_skipped_on_read() {
+fn exact_batch_retry_does_not_write_duplicate_event_lines() {
     let tmp = tempfile::tempdir().unwrap();
     let entry = fresh_session(tmp.path());
     let a = user_msg("a");
     append_events(tmp.path(), &entry.id, std::slice::from_ref(&a), false).unwrap();
-    // Retry artifact: the exact same event appended again.
+    // Exact retry: the durable suffix is recognised and not written twice.
     append_events(tmp.path(), &entry.id, std::slice::from_ref(&a), false).unwrap();
     append_events(tmp.path(), &entry.id, &[user_msg("b")], false).unwrap();
 
     let read = read_session_events(tmp.path(), &entry.id).unwrap();
-    assert_eq!(
-        read.events.len(),
-        2,
-        "duplicate must be dropped, first kept"
-    );
-    assert_eq!(
-        read.skipped_lines, 1,
-        "duplicate accounted like a skipped line"
-    );
+    assert_eq!(read.events.len(), 2);
     assert_event_eq(&read.events[0], &a);
 }
 
-/// Resume and fork must both survive a duplicated event line instead of
-/// hard-failing on the `EventStore` duplicate-ID guard (which made a
-/// transient hiccup permanently brick the session).
+/// Resume and fork see one event after an exact retry, never a duplicate row.
 #[test]
-fn resume_and_fork_tolerate_duplicate_event_lines() {
+fn resume_and_fork_see_idempotent_batch_retry_once() {
     let tmp = tempfile::tempdir().unwrap();
     let entry = fresh_session(tmp.path());
     let a = user_msg("a");
@@ -1717,6 +1702,7 @@ fn reserved_ids_rejected_at_every_persistence_boundary() {
     let now = Utc::now();
     let smuggled = SessionIndexEntry {
         id: "index".to_owned(),
+        generation: uuid::Uuid::new_v4(),
         name: None,
         model: "gpt-x".to_owned(),
         working_dir: "/work".to_owned(),
@@ -1730,6 +1716,8 @@ fn reserved_ids_rejected_at_every_persistence_boundary() {
         total_cache_read_tokens: 0,
         rel_path: None,
         parent_id: None,
+        fidelity: ResumeFidelity::Canonical,
+        origin: SessionRecordOrigin::Native,
     };
 
     // Index insertion: a reserved id must never enter the index.
@@ -1803,7 +1791,7 @@ fn reserved_id_rule_covers_stem_family_only() {
 
 // ----- Single-pass replay (ReplayArtifacts) --------------------------------
 
-/// `Read` wrapper counting every byte served to the tolerant reader.
+/// `Read` wrapper counting every byte served to the strict reader.
 struct CountingReader<R> {
     inner: R,
     bytes_served: std::sync::Arc<std::sync::atomic::AtomicUsize>,
@@ -1820,8 +1808,7 @@ impl<R: std::io::Read> std::io::Read for CountingReader<R> {
 
 /// A representative session history: header, a user message, an
 /// assistant message carrying usage and an envelope-bearing tool call,
-/// the matching tool result, a compaction superseding the user message,
-/// and one torn (corrupt) trailing line.
+/// the matching tool result, and a compaction superseding the user message.
 fn replay_fixture() -> (Vec<u8>, EventId) {
     let user = user_msg("hello");
     let superseded_id = user.base().id.clone();
@@ -1876,16 +1863,14 @@ fn replay_fixture() -> (Vec<u8>, EventId) {
         data.extend_from_slice(serde_json::to_string(event).unwrap().as_bytes());
         data.push(b'\n');
     }
-    data.extend_from_slice(br#"{"type":"user_message","content":"tor"#);
-    data.push(b'\n');
     (data, superseded_id)
 }
 
 /// The core R1 guarantee: ONE traversal of the byte stream yields every
 /// resume artifact — the events, the usage rollup, the compaction
 /// supersession marks, the action-log rebuild inputs, and the
-/// skipped-line summary. The instrumented reader proves each byte of the
-/// history was served exactly once.
+/// strict format metadata. The instrumented reader proves each byte of the
+/// healthy history was served exactly once.
 #[test]
 fn single_pass_reader_yields_every_artifact_from_one_traversal() {
     let (data, superseded_id) = replay_fixture();
@@ -1904,9 +1889,8 @@ fn single_pass_reader_yields_every_artifact_from_one_traversal() {
          second traversal would double the count",
     );
 
-    // Events + skip summary.
+    // Events + strict format summary.
     assert_eq!(artifacts.events.len(), 4);
-    assert_eq!(artifacts.skipped_lines, 1, "the torn line is counted");
     assert_eq!(artifacts.format_version, Some(SESSION_FORMAT_VERSION));
 
     // Usage rollup matches the reference summation over the same events.
@@ -1964,8 +1948,7 @@ fn from_events_matches_file_reader_derivations() {
         from_file.superseded_event_ids
     );
     assert!(from_events.superseded_event_ids.contains(&superseded_id));
-    // File-recovery fields do not apply to the in-memory path.
-    assert_eq!(from_events.skipped_lines, 0);
+    // File-format metadata does not apply to the in-memory path.
     assert_eq!(from_events.format_version, None);
 }
 
@@ -2136,8 +2119,8 @@ fn current_thread_count() -> Option<usize> {
 
 /// Regression: the first open used check-then-write ("len == 0 → write
 /// header"), so two processes racing the first open could BOTH stamp a
-/// header line; the tolerant reader then counted the second one as a
-/// corrupt skipped line forever. Creation is now `O_EXCL`-style: exactly
+/// header line; the strict reader would then reject the file. Creation is
+/// now `O_EXCL`-style: exactly
 /// one opener creates the file and stamps exactly one header.
 #[test]
 fn concurrent_first_opens_stamp_exactly_one_header() {
@@ -2168,7 +2151,6 @@ fn concurrent_first_opens_stamp_exactly_one_header() {
     assert_eq!(content.lines().count(), 1, "nothing but the header");
 
     let artifacts = io::read_session_events(tmp.path(), "race-header").unwrap();
-    assert_eq!(artifacts.skipped_lines, 0, "no corrupt duplicate header");
     assert_eq!(artifacts.format_version, Some(SESSION_FORMAT_VERSION));
 }
 
@@ -2218,52 +2200,34 @@ fn concurrent_first_opens_keep_the_header_first() {
         .count();
     assert_eq!(header_lines, 1, "exactly one header line: {content:?}");
 
-    // The reader stamps the version and recovers every event, with the
-    // header never counted as a corrupt/skipped line.
+    // The reader stamps the version and recovers every event.
     let artifacts = io::read_session_events(tmp.path(), "header-first").unwrap();
     assert_eq!(artifacts.format_version, Some(SESSION_FORMAT_VERSION));
     assert_eq!(artifacts.events.len(), openers, "all events recovered");
-    assert_eq!(
-        artifacts.skipped_lines, 0,
-        "the header never becomes a skipped corrupt line",
-    );
 }
 
-/// A pre-existing EMPTY session file (creator crashed before the header
-/// landed, or external truncation) is never retro-stamped — writing a
-/// header on "observed empty" would reopen the check-then-write race.
-/// The file simply loads as pre-versioning format.
+/// A pre-existing empty file cannot be adopted as an active timeline.
 #[test]
-fn preexisting_empty_file_is_not_retro_stamped_with_header() {
+fn preexisting_empty_file_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let path = session_file_path(tmp.path(), "empty-pre");
     fs::create_dir_all(tmp.path()).unwrap();
     fs::File::create(&path).unwrap();
 
-    let mut sink = JsonlSink::open(&path).unwrap();
+    let error = JsonlSink::open(&path).err().unwrap();
+    assert!(matches!(error, SessionPersistError::InvalidTimeline(_)));
     assert_eq!(
         fs::metadata(&path).unwrap().len(),
         0,
-        "open must not stamp a header into a pre-existing empty file",
-    );
-    sink.persist(&user_msg("first")).unwrap();
-    drop(sink);
-
-    let artifacts = io::read_session_events(tmp.path(), "empty-pre").unwrap();
-    assert_eq!(artifacts.events.len(), 1);
-    assert_eq!(artifacts.skipped_lines, 0);
-    assert_eq!(
-        artifacts.format_version, None,
-        "a headerless file reads as pre-versioning format",
+        "a rejected empty file must not be retro-stamped",
     );
 }
 
 /// Gap 2 closure: the `Fork` variant was deleted with `SessionTree`. A
-/// stray test-era file carrying a persisted `"type":"Fork"` line must
-/// degrade gracefully — the tolerant reader skips the unknown variant,
-/// counts it, and every other event still loads.
+/// stray test-era file carrying a persisted `"type":"Fork"` line is not
+/// valid in the active strict store.
 #[test]
-fn deleted_fork_variant_line_is_skipped_by_tolerant_reader() {
+fn deleted_fork_variant_line_is_rejected_by_strict_reader() {
     let tmp = tempfile::tempdir().unwrap();
     let entry = fresh_session(tmp.path());
     append_events(tmp.path(), &entry.id, &[user_msg("before")], false).unwrap();
@@ -2281,64 +2245,48 @@ fn deleted_fork_variant_line_is_skipped_by_tolerant_reader() {
     let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
     writeln!(file, "{stray}").unwrap();
     drop(file);
-    append_events(tmp.path(), &entry.id, &[user_msg("after")], false).unwrap();
-
-    let artifacts = io::read_session_events(tmp.path(), &entry.id).unwrap();
-    assert_eq!(
-        artifacts.skipped_lines, 1,
-        "the deleted variant's line must be counted as skipped",
-    );
-    assert_eq!(
-        artifacts.events.len(),
-        2,
-        "every surrounding event still loads",
-    );
+    assert!(append_events(tmp.path(), &entry.id, &[user_msg("after")], false).is_err());
+    assert!(io::read_session_events(tmp.path(), &entry.id).is_err());
 }
 
-/// Child index rows (`rel_path` + `parent_id`) are additive: legacy rows
-/// without the fields deserialize with `None` and keep resolving to the
-/// flat path; new rows resolve through `rel_path`.
+/// Active root rows resolve through their flat id path while child rows use
+/// their explicit `rel_path` plus `parent_id` relationship.
 #[test]
-fn rel_path_rows_resolve_nested_and_legacy_rows_stay_flat() {
+fn rel_path_rows_resolve_nested_and_root_rows_stay_flat() {
     let tmp = tempfile::tempdir().unwrap();
-    let legacy = fresh_session(tmp.path());
-    assert_eq!(legacy.rel_path, None);
+    let root = fresh_session(tmp.path());
+    assert_eq!(root.rel_path, None);
     assert_eq!(
-        io::resolved_session_file_path(tmp.path(), &legacy),
-        session_file_path(tmp.path(), &legacy.id),
-        "legacy rows keep the flat derivation",
+        io::resolved_session_file_path(tmp.path(), &root),
+        session_file_path(tmp.path(), &root.id),
+        "active root rows use the flat derivation",
     );
 
-    let mut child = legacy.clone();
+    let mut child = root.clone();
     child.id = "11111111-2222-4333-8444-555555555555".to_owned();
-    child.rel_path = Some(format!("{}/children/fork-1a2b3c4d.jsonl", legacy.id));
-    child.parent_id = Some(legacy.id.clone());
+    child.rel_path = Some(format!("{}/children/fork-1a2b3c4d.jsonl", root.id));
+    child.parent_id = Some(root.id.clone());
     index::insert_child_index_entry(tmp.path(), &child, None).unwrap();
     assert_eq!(
         io::resolved_session_file_path(tmp.path(), &child),
         tmp.path()
-            .join(&legacy.id)
+            .join(&root.id)
             .join("children")
             .join("fork-1a2b3c4d.jsonl"),
     );
 
-    // Round-trip through the index file: the optional fields survive and
-    // legacy rows still parse.
+    // Round-trip through the strict index: optional child fields survive.
     let rows = index::read_index(tmp.path()).unwrap();
     let reread = rows.iter().find(|e| e.id == child.id).unwrap();
     assert_eq!(reread.rel_path, child.rel_path);
-    assert_eq!(reread.parent_id.as_deref(), Some(legacy.id.as_str()));
+    assert_eq!(reread.parent_id.as_deref(), Some(root.id.as_str()));
 }
 
 // -- Session-fidelity Gap 8: durable context marks in replay ------------
 
-/// A session file written **before** the `ContextMark` variant and the
-/// `loop.step_stopped` / `loop.partial_output` records existed must still
-/// load in full: raw JSONL lines exactly as an old binary wrote them —
-/// no new variants anywhere — parse with zero skips and empty
-/// suppressed/injected artifact sets.
+/// Legacy timeline bytes are migration input, never active-reader input.
 #[test]
-fn old_format_session_file_without_new_variants_still_loads() {
+fn old_format_session_file_requires_migration() {
     let file = concat!(
         r#"{"norn_session_format":1}"#,
         "\n",
@@ -2351,26 +2299,12 @@ fn old_format_session_file_without_new_variants_still_loads() {
         r#"{"type":"Custom","base":{"id":"old-x1","parent_id":null,"timestamp":"2026-01-02T03:04:08Z"},"event_type":"loop.truncated","data":{"stop_reason":"max_tokens"}}"#,
         "\n",
     );
-    let artifacts = io::read_session_events_from(
+    let error = io::read_session_events_from(
         std::io::BufReader::new(std::io::Cursor::new(file.as_bytes().to_vec())),
         "old-format",
     )
-    .unwrap();
-
-    assert_eq!(artifacts.skipped_lines, 0, "every old line must parse");
-    assert_eq!(artifacts.events.len(), 4);
-    let superseded: EventId = "old-u1".parse().unwrap();
-    assert!(artifacts.superseded_event_ids.contains(&superseded));
-    assert!(
-        artifacts.suppressed_event_ids.is_empty(),
-        "an old file carries no suppress marks",
-    );
-    assert!(
-        artifacts.injected_event_ids.is_empty(),
-        "an old file carries no inject marks",
-    );
-    assert_eq!(artifacts.usage.input_tokens, 3);
-    assert_eq!(artifacts.usage.output_tokens, 2);
+    .unwrap_err();
+    assert!(matches!(error, SessionPersistError::InvalidTimeline(_)));
 }
 
 /// Persisted `ContextMark` lines rebuild the suppressed and injected
@@ -2379,7 +2313,7 @@ fn old_format_session_file_without_new_variants_still_loads() {
 #[test]
 fn context_mark_lines_rebuild_suppress_and_inject_sets() {
     let file = concat!(
-        r#"{"norn_session_format":1}"#,
+        r#"{"norn_session_format":2}"#,
         "\n",
         r#"{"type":"UserMessage","base":{"id":"m-u1","parent_id":null,"timestamp":"2026-07-06T00:00:01Z"},"content":"keep"}"#,
         "\n",
@@ -2398,7 +2332,6 @@ fn context_mark_lines_rebuild_suppress_and_inject_sets() {
     )
     .unwrap();
 
-    assert_eq!(artifacts.skipped_lines, 0);
     assert_eq!(artifacts.events.len(), 5);
     let suppressed: EventId = "m-u2".parse().unwrap();
     let injected: EventId = "m-u3".parse().unwrap();

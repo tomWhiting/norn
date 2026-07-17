@@ -1066,8 +1066,8 @@ mod tests {
     /// narrow `~/.norn/{skills,profiles,rules}` subdirs; it never contains a
     /// settings-declared `skills.search_paths` entry (Finding 1: those are
     /// model-writable and would be a persistent escape), nor the `~/.norn/`
-    /// root itself or `~/.norn/sessions/` (Finding 2: sessions hold
-    /// transcripts for ALL workspaces).
+    /// root itself or either session namespace (Finding 2: the active store
+    /// and legacy source hold transcripts for ALL workspaces).
     #[test]
     #[serial_test::serial]
     #[allow(clippy::unwrap_used)]
@@ -1077,7 +1077,7 @@ mod tests {
 
         // The convention subdirs must exist on disk — the context setter
         // canonicalizes and drops non-existent exempt roots.
-        for sub in ["skills", "profiles", "rules", "sessions"] {
+        for sub in ["skills", "profiles", "rules", "session-store", "sessions"] {
             std::fs::create_dir(norn_home.path().join(sub)).expect("mk norn subdir");
         }
 
@@ -1135,12 +1135,17 @@ mod tests {
             "home rules dir must be exempt: {roots:?}",
         );
 
-        let sessions = canon(&norn_home.path().join("sessions"));
+        let session_store = canon(&norn_home.path().join("session-store"));
+        let legacy_sessions = canon(&norn_home.path().join("sessions"));
         let norn_root = canon(norn_home.path());
         let settings_path = canon(&outside_skills);
         assert!(
-            !roots.contains(&sessions),
-            "sessions dir must NEVER be exempt (holds all-workspace transcripts): {roots:?}",
+            !roots.contains(&session_store),
+            "active session store must NEVER be exempt: {roots:?}",
+        );
+        assert!(
+            !roots.contains(&legacy_sessions),
+            "legacy sessions dir must NEVER be exempt: {roots:?}",
         );
         assert!(
             !roots.contains(&norn_root),
@@ -3469,9 +3474,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let sessions = tempfile::tempdir().expect("session dir");
         let manager = manager_in(sessions.path());
-        let spec = || SessionSpec::OpenOrResume {
-            id: "wf-7.step-2".to_owned(),
-        };
+        let spec = || SessionSpec::open_or_resume("wf-7.step-2");
 
         let first = AgentBuilder::new(provider_with(text_completion("first")))
             .model("test-model")
@@ -3566,9 +3569,7 @@ mod tests {
             .working_dir(std::env::temp_dir())
             .open_session(
                 &manager,
-                SessionSpec::Resume {
-                    id_or_name: "does-not-exist".to_owned(),
-                },
+                SessionSpec::resume("does-not-exist"),
                 DurabilityPolicy::Flush,
             )
             .build();
@@ -3612,10 +3613,7 @@ mod tests {
             .working_dir(temp.path())
             .open_session(
                 &manager,
-                SessionSpec::Fork {
-                    source: source_id.clone(),
-                    name: Some("fork".to_owned()),
-                },
+                SessionSpec::fork(source_id.clone(), Some("fork".to_owned())),
                 DurabilityPolicy::Flush,
             )
             .build()

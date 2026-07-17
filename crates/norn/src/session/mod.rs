@@ -11,11 +11,14 @@ pub mod action_log_tree;
 pub mod artifacts;
 pub mod branch;
 pub mod context_edit;
+mod context_edit_compaction;
+mod context_edit_plan;
 pub mod conversion;
 mod event_projection;
 pub mod events;
 mod jsonl_sink;
 pub mod manager;
+pub mod migration;
 pub mod mutation_ledger;
 pub mod persistence;
 pub mod resume_repair;
@@ -33,17 +36,25 @@ pub use branch::{
 pub(crate) use event_projection::{
     apply_local_tool_event, unresolved_local_tool_calls, without_orphan_local_tool_outputs,
 };
-pub use manager::{CreateSessionOptions, OpenSession, ReplaySummary, SessionManager};
+pub use manager::{CreateSessionOptions, OpenSession, ReplaySummary, ResumePolicy, SessionManager};
+pub use migration::{
+    LegacyClassificationReason, LegacySessionMigrationRecord, MigrationCounts,
+    SessionMigrationManifest, SessionMigrationOutcome, export_legacy_session_raw,
+    migrate_legacy_sessions, read_legacy_migration_manifest, verify_legacy_session_cutover,
+    verify_legacy_session_migration,
+};
 pub use mutation_ledger::{
     DiffStats, MutationLedger, MutationLedgerEntry, MutationOp, RecordedMutation, RevertStatus,
 };
+#[cfg(test)]
+pub(crate) use persistence::read_session_events;
+#[cfg(test)]
+pub(crate) use persistence::update_index_entry;
 pub use persistence::{
-    RESERVED_SESSION_ID_STEMS, ReplayArtifacts, SESSION_FORMAT_VERSION, SessionFileHeader,
-    SessionIndexEntry, SessionPersistError, SessionStatus, append_events, append_index_entry,
-    index_file_path, insert_index_entry_if_absent, is_reserved_session_id, read_index,
-    read_session_events, read_session_events_for_entry, remove_index_entry,
+    RESERVED_SESSION_ID_STEMS, ReplayArtifacts, ResumeFidelity, SESSION_FORMAT_VERSION,
+    SessionFileHeader, SessionIndexEntry, SessionPersistError, SessionRecordOrigin, SessionStatus,
+    is_reserved_session_id, read_index, read_session_events_for_entry,
     resolve_latest_session_in_working_dir, resolve_session, sum_usage_from_events,
-    update_index_entry, update_session_index, write_index_atomic,
 };
 pub(crate) use resume_repair::is_interrupted_tool_result;
 pub use resume_repair::repair_dangling_tool_calls;
@@ -56,3 +67,5 @@ mod canonical_persistence_tests;
 mod canonical_tool_resolution_tests;
 #[cfg(test)]
 mod canonical_transcript_tests;
+#[cfg(test)]
+mod provider_epoch_tests;

@@ -7,9 +7,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::process::{ProcessManager, Spool};
-use crate::resource::descriptor_snapshot;
+use crate::resource::{PRIVATE_FS_OPERATION_PEAK, descriptor_snapshot};
 use crate::session::events::{EventBase, SessionEvent};
-use crate::session::{DurabilityPolicy, JsonlSink, PersistenceSink};
+use crate::session::persistence::index::{
+    DeleteCheckpoint, delete_session_transaction_with_hook, publish_new_child_session,
+    publish_new_session, read_index,
+};
+use crate::session::{
+    DurabilityPolicy, JsonlSink, PersistenceSink, ResumeFidelity, SESSION_FORMAT_VERSION,
+    SessionIndexEntry, SessionRecordOrigin, SessionStatus,
+};
 
 const CHILD_CASE_ENV: &str = "NORN_FD_RETENTION_CASE";
 const CHILD_HOME_ENV: &str = "NORN_FD_RETENTION_HOME";
@@ -122,6 +129,62 @@ async fn active_process_permits_release_on_terminal_paths() -> Result<(), Box<dy
     Ok(())
 }
 
+#[test]
+fn descendant_deletion_stays_within_private_fs_peak() -> Result<(), Box<dyn std::error::Error>> {
+    const NAME: &str =
+        "tests::descriptor_retention::descendant_deletion_stays_within_private_fs_peak";
+    if child_case()?.as_deref() != Some("session_deletion") {
+        return run_child(NAME, "session_deletion");
+    }
+    lower_nofile_limit()?;
+    let data_dir = child_home()?.join("session-store");
+    let root = deletion_entry("low-fd-root", None, None);
+    let target = deletion_entry(
+        "low-fd-target",
+        Some(format!("{}/children/target.jsonl", root.id)),
+        Some(root.id.clone()),
+    );
+    publish_new_session(&data_dir, &root, &[], None)?;
+    publish_new_child_session(&data_dir, &target, &[], root.generation, None)?;
+    for ordinal in 0..64 {
+        let descendant = deletion_entry(
+            &format!("low-fd-descendant-{ordinal}"),
+            Some(format!("{}/children/descendant-{ordinal}.jsonl", root.id)),
+            Some(target.id.clone()),
+        );
+        publish_new_child_session(&data_dir, &descendant, &[], target.generation, None)?;
+    }
+
+    let governor = crate::resource::DescriptorGovernor::global()?;
+    let baseline = governor.available();
+    let operation_peak = usize::try_from(PRIVATE_FS_OPERATION_PEAK)?;
+    let reserve_weight = baseline.checked_sub(operation_peak).ok_or_else(|| {
+        io::Error::other(format!(
+            "descriptor budget {baseline} cannot retain the private-fs peak {operation_peak}"
+        ))
+    })?;
+    let reserve = governor.try_acquire(u32::try_from(reserve_weight)?)?;
+    let mut checkpoints = 0;
+    let mut observe = |_: DeleteCheckpoint| {
+        checkpoints += 1;
+        if governor.available() != 0 {
+            return Err(io::Error::other(format!(
+                "deletion retained {} unclaimed descriptor permits",
+                governor.available()
+            ))
+            .into());
+        }
+        Ok(())
+    };
+    delete_session_transaction_with_hook(&data_dir, &target.id, None, &mut observe)?;
+    assert_eq!(checkpoints, 2);
+    assert_eq!(governor.available(), operation_peak);
+    assert_eq!(read_index(&data_dir)?, vec![root]);
+    drop(reserve);
+    assert_eq!(governor.available(), baseline);
+    Ok(())
+}
+
 #[tokio::test]
 async fn lazy_spool_reopen_rejects_replaced_inode() -> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
@@ -187,12 +250,40 @@ fn run_child(test_name: &str, case: &str) -> Result<(), Box<dyn std::error::Erro
 fn child_case() -> Result<Option<String>, Box<dyn std::error::Error>> {
     let value = std::env::var(CHILD_CASE_ENV).ok();
     match value.as_deref() {
-        Some("sessions" | "spools" | "processes" | "active_processes") | None => Ok(value),
+        Some("sessions" | "spools" | "processes" | "active_processes" | "session_deletion")
+        | None => Ok(value),
         Some(other) => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("unknown descriptor-retention child case: {other}"),
         )
         .into()),
+    }
+}
+
+fn deletion_entry(
+    id: &str,
+    rel_path: Option<String>,
+    parent_id: Option<String>,
+) -> SessionIndexEntry {
+    let now = chrono::Utc::now();
+    SessionIndexEntry {
+        id: id.to_owned(),
+        generation: uuid::Uuid::new_v4(),
+        name: None,
+        model: "gpt-test".to_owned(),
+        working_dir: "/workspace".to_owned(),
+        created_at: now,
+        updated_at: now,
+        event_count: 0,
+        status: SessionStatus::Active,
+        format_version: SESSION_FORMAT_VERSION,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_cache_read_tokens: 0,
+        rel_path,
+        parent_id,
+        fidelity: ResumeFidelity::Canonical,
+        origin: SessionRecordOrigin::Native,
     }
 }
 

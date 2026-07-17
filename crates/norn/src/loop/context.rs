@@ -111,7 +111,7 @@ fn tag_for_event(event: &SessionEvent) -> Option<ContentTag> {
         SessionEvent::Compaction { .. } => Some(ContentTag::Compaction),
         SessionEvent::Custom { event_type, .. } => Some(ContentTag::Custom(event_type.clone())),
         SessionEvent::RuleInjection { rule_id, .. } => Some(ContentTag::Rule(rule_id.clone())),
-        SessionEvent::ContextMark { .. } => None,
+        SessionEvent::ContextMark { .. } | SessionEvent::ProviderEpochBoundary { .. } => None,
     }
 }
 
@@ -207,7 +207,7 @@ mod tests {
 
     /// Gap 8 closure: suppress and injection marks applied live must
     /// survive a process restart. The live history is round-tripped
-    /// through the JSONL wire format and the tolerant reader (the same
+    /// through the JSONL wire format and the strict reader (the same
     /// path `SessionManager::resume` uses), a fresh store and tracker are
     /// rebuilt from the [`ReplayArtifacts`], and the *effective* prompt
     /// view — event ids, tags, and rendered provider messages — must be
@@ -244,15 +244,14 @@ mod tests {
         let live_view = construct_prompt(&store, &edits);
 
         // Process restart: serialize every event as a JSONL line and read
-        // it back through the tolerant reader.
+        // it back through the strict reader.
         let mut file = Vec::new();
         for event in store.events() {
             serde_json::to_writer(&mut file, &event).expect("serialize line");
             file.push(b'\n');
         }
         let artifacts = read_session_events_from(std::io::Cursor::new(file), "restart-test")
-            .expect("tolerant read");
-        assert_eq!(artifacts.skipped_lines, 0, "every line must parse");
+            .expect("strict read");
 
         let resumed_store = EventStore::new();
         for event in artifacts.events.clone() {

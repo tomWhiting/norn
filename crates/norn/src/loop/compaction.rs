@@ -139,6 +139,7 @@ fn estimate_event_tokens(
             }
             SessionEvent::Compaction { summary, .. } => estimator.estimate(summary),
             SessionEvent::ModelChange { .. }
+            | SessionEvent::ProviderEpochBoundary { .. }
             | SessionEvent::ChildBranch { .. }
             | SessionEvent::ForkComplete { .. }
             | SessionEvent::Label { .. }

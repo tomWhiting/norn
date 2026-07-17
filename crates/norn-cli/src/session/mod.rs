@@ -7,10 +7,10 @@
 //! engine primitives the CLI's command surface and tests still touch
 //! directly.
 
-pub use norn::session::{
-    CreateSessionOptions, OpenSession, SessionIndexEntry, SessionManager, SessionPersistError,
-    SessionStatus, append_events, append_index_entry, read_index, read_session_events,
-    write_index_atomic,
+#[cfg(test)]
+pub(crate) use norn::session::read_index;
+pub(crate) use norn::session::{
+    CreateSessionOptions, SessionIndexEntry, SessionManager, SessionPersistError, SessionStatus,
 };
 
 #[cfg(test)]

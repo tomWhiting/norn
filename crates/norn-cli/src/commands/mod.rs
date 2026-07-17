@@ -13,6 +13,7 @@ pub mod mcp;
 mod mcp_config;
 pub mod session;
 pub mod session_export;
+mod session_legacy;
 pub mod slash;
 
 pub use auth::run_auth;

@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
 
+use crate::session::persistence::index::with_registered_generation;
 use crate::session::persistence::io::ensure_session_id_path_safe;
-use crate::session::persistence::{SessionPersistError, acquire_private_fs};
+use crate::session::persistence::{SessionIndexEntry, SessionPersistError};
+use crate::session::spool::registered_root_session_id;
 use crate::session::store::DurabilityPolicy;
 use crate::util::PrivateRoot;
 
@@ -21,7 +23,9 @@ const FETCHED_DIR_NAME: &str = "fetched";
 #[derive(Debug)]
 pub struct SessionArtifactStore {
     data_dir: PathBuf,
+    registered: SessionIndexEntry,
     root_session_id: String,
+    index_lock_deadline: Option<std::time::Duration>,
     fsync: bool,
 }
 
@@ -29,18 +33,23 @@ impl SessionArtifactStore {
     /// Create the private artifact tree for an owning root session.
     pub(crate) fn for_session(
         data_dir: &Path,
-        root_session_id: &str,
+        registered: &SessionIndexEntry,
         durability: DurabilityPolicy,
+        index_lock_deadline: Option<std::time::Duration>,
     ) -> Result<Self, SessionPersistError> {
+        let root_session_id = registered_root_session_id(registered);
         ensure_session_id_path_safe(root_session_id)?;
-        let _permit = acquire_private_fs()?;
-        let data_root = PrivateRoot::create(data_dir)?;
         let store = Self {
             data_dir: data_dir.to_path_buf(),
+            registered: registered.clone(),
             root_session_id: root_session_id.to_owned(),
+            index_lock_deadline,
             fsync: durability != DurabilityPolicy::Flush,
         };
-        data_root.create_dir_all(&store.artifacts_relative_dir())?;
+        with_registered_generation(data_dir, registered, index_lock_deadline, |root| {
+            root.create_dir_all(&store.artifacts_relative_dir())?;
+            Ok(())
+        })?;
         Ok(store)
     }
 
@@ -59,10 +68,22 @@ impl SessionArtifactStore {
         source_url: &str,
         content: &str,
     ) -> Result<PathBuf, SessionPersistError> {
-        let _permit = acquire_private_fs()?;
+        with_registered_generation(
+            &self.data_dir,
+            &self.registered,
+            self.index_lock_deadline,
+            |root| self.write_fetched_under(root, source_url, content),
+        )
+    }
+
+    fn write_fetched_under(
+        &self,
+        data_root: &PrivateRoot,
+        source_url: &str,
+        content: &str,
+    ) -> Result<PathBuf, SessionPersistError> {
         let artifacts_dir = self.artifacts_relative_dir();
         let fetched_dir = artifacts_dir.join(FETCHED_DIR_NAME);
-        let data_root = PrivateRoot::open(&self.data_dir)?;
         data_root.create_dir_all(&fetched_dir)?;
 
         let filename = format!("{}.md", Uuid::new_v4());

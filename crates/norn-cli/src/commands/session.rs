@@ -33,28 +33,41 @@ use super::session_export;
 /// outer [`Cli`] so resume/fork can mutate it before forwarding to the
 /// agent path implemented in `main.rs`.
 ///
-/// Lock discipline: `list`, `show`, `export`, and the pre-forward
+/// `migrate` resolves the trusted Norn root directly and never preflights the
+/// active session store. Lock discipline: `list`, `show`, `export`, and the pre-forward
 /// `resolve` in `resume`/`fork` only *read* the index (no inter-process
 /// lock), and the forwarded resume/fork run re-resolves its own deadline
 /// inside `builder_from_cli`. `remove` is the one subcommand that
 /// mutates the index directly, so it — and only it — resolves the
 /// settings-backed index-lock deadline here before touching the lock.
 pub fn run_session(cli: Cli, cmd: SessionCmd, agent: AgentEntry<'_>) -> ExitCode {
-    let data_dir = match session_data_dir() {
-        Ok(path) => path,
-        Err(error) => {
-            let error = BuildError::from(error);
-            eprintln!("norn: {error}");
-            return error.exit_code();
-        }
-    };
     match cmd {
-        SessionCmd::List { all, limit, format } => run_list(&data_dir, all, limit, format),
-        SessionCmd::Show { id } => run_show(&data_dir, &id),
-        SessionCmd::Resume { id } => run_resume(cli, &data_dir, &id, agent),
-        SessionCmd::Fork { id } => run_fork(cli, &data_dir, &id, agent),
-        SessionCmd::Export { id, format } => session_export::run_export(&data_dir, &id, format),
-        SessionCmd::Remove { id } => {
+        SessionCmd::Migrate => run_migrate(),
+        SessionCmd::Legacy { command } => super::session_legacy::run(&command),
+        SessionCmd::List { all, limit, format } => {
+            with_session_data_dir(|data_dir| run_list(data_dir, all, limit, format))
+        }
+        SessionCmd::Show { id } => with_session_data_dir(|data_dir| run_show(data_dir, &id)),
+        SessionCmd::Resume {
+            id,
+            allow_degraded_session,
+        } => {
+            let mut cli = cli;
+            cli.allow_degraded_session |= allow_degraded_session;
+            with_session_data_dir(|data_dir| run_resume(cli, data_dir, &id, agent))
+        }
+        SessionCmd::Fork {
+            id,
+            allow_degraded_session,
+        } => {
+            let mut cli = cli;
+            cli.allow_degraded_session |= allow_degraded_session;
+            with_session_data_dir(|data_dir| run_fork(cli, data_dir, &id, agent))
+        }
+        SessionCmd::Export { id, format } => {
+            with_session_data_dir(|data_dir| session_export::run_export(data_dir, &id, format))
+        }
+        SessionCmd::Remove { id } => with_session_data_dir(|data_dir| {
             let deadline = match resolve_subcommand_lock_deadline(&cli) {
                 Ok(deadline) => deadline,
                 Err(err) => {
@@ -62,9 +75,51 @@ pub fn run_session(cli: Cli, cmd: SessionCmd, agent: AgentEntry<'_>) -> ExitCode
                     return err.exit_code();
                 }
             };
-            run_remove(&data_dir, &id, deadline)
+            run_remove(data_dir, &id, deadline)
+        }),
+    }
+}
+
+fn with_session_data_dir(run: impl FnOnce(&Path) -> ExitCode) -> ExitCode {
+    match session_data_dir() {
+        Ok(path) => run(&path),
+        Err(error) => {
+            let error = BuildError::from(error);
+            eprintln!("norn: {error}");
+            error.exit_code()
         }
     }
+}
+
+fn run_migrate() -> ExitCode {
+    let norn_root = match crate::config::paths::session_norn_root() {
+        Ok(root) => root,
+        Err(error) => {
+            eprintln!("norn: session migration failed: {error}");
+            return ExitCode::AgentError;
+        }
+    };
+    match norn::session::migrate_legacy_sessions(&norn_root) {
+        Ok(norn::session::SessionMigrationOutcome::Migrated { counts, .. }) => {
+            println!("{}", migration_summary("migrated", counts));
+            ExitCode::Success
+        }
+        Ok(norn::session::SessionMigrationOutcome::AlreadyMigrated { counts, .. }) => {
+            println!("{}", migration_summary("already-migrated", counts));
+            ExitCode::Success
+        }
+        Err(error) => {
+            eprintln!("norn: session migration failed: {error}");
+            ExitCode::AgentError
+        }
+    }
+}
+
+fn migration_summary(status: &str, counts: norn::session::MigrationCounts) -> String {
+    format!(
+        "session migration: {status}; canonical={}; fresh_epoch_projection={}; inspect_only={}",
+        counts.canonical, counts.fresh_epoch_projection, counts.inspect_only,
+    )
 }
 
 /// Resolve the index-lock deadline for a session subcommand that
@@ -374,10 +429,7 @@ fn report_persist_error(err: &SessionPersistError) -> ExitCode {
 mod tests {
     use super::*;
     use crate::cli::SessionExportFormat;
-    use crate::session::{
-        CreateSessionOptions, SessionStatus, append_events, session_file_path, write_index_atomic,
-    };
-    use chrono::Utc;
+    use crate::session::{CreateSessionOptions, session_file_path};
     use clap::Parser;
     use norn::session::DurabilityPolicy;
     use norn::session::events::{EventBase, SessionEvent};
@@ -417,6 +469,46 @@ mod tests {
             matches: vec!["abcdefgh-1".to_owned(), "abcdefgh-2".to_owned()],
         };
         assert_eq!(report_persist_error(&err), ExitCode::AgentError);
+    }
+
+    #[test]
+    fn migration_summary_is_stable_and_complete() {
+        let summary = migration_summary(
+            "already-migrated",
+            norn::session::MigrationCounts {
+                canonical: 2,
+                fresh_epoch_projection: 3,
+                inspect_only: 5,
+            },
+        );
+        assert_eq!(
+            summary,
+            "session migration: already-migrated; canonical=2; fresh_epoch_projection=3; inspect_only=5"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn migrate_dispatches_offline_and_is_idempotent() {
+        let norn_home = tempfile::tempdir().unwrap();
+        std::fs::create_dir(norn_home.path().join("sessions")).unwrap();
+
+        let run = || {
+            let mut cli = Cli::try_parse_from(["norn", "session", "migrate"]).unwrap();
+            let Some(crate::cli::Command::Session { command }) = cli.command.take() else {
+                panic!("expected parsed session command");
+            };
+            run_session(cli, command, &|_| {
+                panic!("session migration must not enter the agent path")
+            })
+        };
+
+        temp_env::with_var("NORN_HOME", Some(norn_home.path().as_os_str()), || {
+            assert_eq!(run(), ExitCode::Success);
+            assert!(norn_home.path().join("session-store").is_dir());
+            assert!(norn_home.path().join("sessions").is_dir());
+            assert_eq!(run(), ExitCode::Success);
+        });
     }
 
     #[test]
@@ -461,40 +553,39 @@ mod tests {
     #[test]
     fn list_all_sorts_newest_first() {
         let tmp = tempfile::tempdir().unwrap();
-        let now = Utc::now();
-        let older = SessionIndexEntry {
-            id: "11111111-1111-7111-8111-111111111111".to_owned(),
-            name: None,
-            model: "gpt-old".to_owned(),
-            working_dir: "/a".to_owned(),
-            created_at: now,
-            updated_at: now,
-            event_count: 0,
-            status: SessionStatus::Active,
-            total_input_tokens: 0,
-            total_output_tokens: 0,
-            total_cache_read_tokens: 0,
-            format_version: 0,
-            rel_path: None,
-            parent_id: None,
-        };
-        let newer = SessionIndexEntry {
-            id: "22222222-2222-7222-8222-222222222222".to_owned(),
-            name: None,
-            model: "gpt-new".to_owned(),
-            working_dir: "/b".to_owned(),
-            created_at: now,
-            updated_at: now + chrono::Duration::seconds(10),
-            event_count: 1,
-            status: SessionStatus::Active,
-            total_input_tokens: 0,
-            total_output_tokens: 0,
-            total_cache_read_tokens: 0,
-            format_version: 0,
-            rel_path: None,
-            parent_id: None,
-        };
-        write_index_atomic(tmp.path(), &[older, newer]).unwrap();
+        let manager = SessionManager::new(tmp.path());
+        let older = manager
+            .create_with_id(
+                "11111111-1111-7111-8111-111111111111",
+                CreateSessionOptions {
+                    model: "gpt-old".to_owned(),
+                    working_dir: "/a".to_owned(),
+                    name: None,
+                },
+                DurabilityPolicy::Flush,
+            )
+            .unwrap();
+        drop(older);
+        std::thread::sleep(Duration::from_millis(5));
+        let newer = manager
+            .create_with_id(
+                "22222222-2222-7222-8222-222222222222",
+                CreateSessionOptions {
+                    model: "gpt-new".to_owned(),
+                    working_dir: "/b".to_owned(),
+                    name: None,
+                },
+                DurabilityPolicy::Flush,
+            )
+            .unwrap();
+        newer
+            .store
+            .append(SessionEvent::UserMessage {
+                base: EventBase::new(None),
+                content: "newest".to_owned(),
+            })
+            .unwrap();
+        drop(newer);
 
         let code = run_list(tmp.path(), true, None, Some(SessionListFormat::Table));
         assert_eq!(code, ExitCode::Success);
@@ -519,16 +610,17 @@ mod tests {
     fn remove_deletes_index_entry() {
         let tmp = tempfile::tempdir().unwrap();
         let entry = fresh(tmp.path(), "gpt", "/work");
-        append_events(
-            tmp.path(),
-            &entry.id,
-            &[SessionEvent::UserMessage {
+        let opened = SessionManager::new(tmp.path())
+            .resume(&entry.id, DurabilityPolicy::Flush)
+            .unwrap();
+        opened
+            .store
+            .append(SessionEvent::UserMessage {
                 base: EventBase::new(None),
                 content: "hi".to_owned(),
-            }],
-            false,
-        )
-        .unwrap();
+            })
+            .unwrap();
+        drop(opened);
         let code = run_remove(tmp.path(), &entry.id, TEST_LOCK_DEADLINE);
         assert_eq!(code, ExitCode::Success);
         let index = crate::session::read_index(tmp.path()).unwrap();
@@ -680,5 +772,17 @@ mod tests {
         let code = run_resume(parsed, tmp.path(), "ghost", agent);
         assert_eq!(code, ExitCode::AgentError);
         assert!(!*invoked.lock().unwrap());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn migrate_rejects_relative_norn_home_before_fallback() {
+        temp_env::with_var(
+            "NORN_HOME",
+            Some(std::ffi::OsStr::new("relative-home")),
+            || {
+                assert_eq!(run_migrate(), ExitCode::AgentError);
+            },
+        );
     }
 }

@@ -1162,7 +1162,35 @@ untouched as the migration source and backup. Norn does not introduce a
 - A corrupt or ambiguous legacy session is inspect/export-only. It cannot be
   resumed or silently repaired into a canonical history.
 
-This section records policy only. The strict namespace, offline migrator,
-classification tests, retained evidence, and independent P3/P4 acceptance were
-not completed by this ruling. The frozen `6e279a3..07bf9c1` P3/P4 source
-candidate remains unchanged and unaccepted.
+**Implementation status:** An in-flight D2 candidate now represents this ruling
+without adding a compatibility path:
+
+- strict format-2 index and timeline codecs fail closed on missing, legacy,
+  newer, malformed, non-canonical, duplicate, unknown-field, and unknown-event
+  input;
+- `norn session migrate` performs the explicit offline transaction, publishes a
+  digest-addressed immutable private backup and a separately staged strict store
+  with no-replace directory publication, and leaves `~/.norn/sessions/`
+  untouched;
+- normal startup observes legacy-path metadata only and, when legacy data is
+  present, validates a fixed-size cutover receipt, exact ownership marker, and
+  required regular-file presence inside `session-store`; it does not hash or
+  decode legacy history, the backup, the manifest, timelines, or the mutable
+  live index;
+- `norn session legacy verify` is the separate history-proportional offline audit
+  over publication evidence, the strict store, immutable backup, manifest source
+  selectors, and current legacy tree; inspect-only catalog entries can be listed,
+  shown, and exported byte-for-byte from the verified backup;
+- migrated resumable entries record their fidelity and origin, acquire a fresh
+  provider-epoch boundary before execution, and require explicit
+  `--allow-degraded-session` approval for a flattened but coherent projection;
+  inspect-only entries cannot resume; and
+- `SessionManager::standard()` and the shared checked path resolver give the CLI
+  and library embedders the same bounded cutover guard. `SessionManager::new`
+  remains the explicit constructor for a custom store whose authority the
+  embedder owns.
+
+This status is not D2 or P3/P4 acceptance. The D2 source range, retained final
+Gate C evidence, independent persistence/protocol review, response-scoped audio,
+and exhaustive lifecycle matrix remain open. The frozen `6e279a3..07bf9c1`
+transcript/streaming range remains unchanged and unaccepted.

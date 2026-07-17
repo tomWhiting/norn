@@ -165,6 +165,76 @@ pub(super) fn rename_new_relative_file(
     ))
 }
 
+#[cfg(any(target_vendor = "apple", target_os = "linux", target_os = "android"))]
+pub(super) fn publish_new_relative_directory(
+    root: &PrivateRoot,
+    from: &Path,
+    to: &Path,
+) -> io::Result<()> {
+    publish_new_relative_directory_with_hooks(root, from, to, || {})
+}
+
+#[cfg(any(target_vendor = "apple", target_os = "linux", target_os = "android"))]
+pub(super) fn publish_new_relative_directory_with_hooks(
+    root: &PrivateRoot,
+    from: &Path,
+    to: &Path,
+    before_mutation: impl FnOnce(),
+) -> io::Result<()> {
+    use rustix::fs::{Mode, RenameFlags, fstat, openat, renameat_with};
+
+    let (from_parent_path, from_name) = split_file_path(from)?;
+    let (to_parent_path, to_name) = split_file_path(to)?;
+    let from_parent = open_relative_directory(root, &from_parent_path)?;
+    let to_parent = open_relative_directory(root, &to_parent_path)?;
+    let source = openat(
+        &from_parent,
+        from_name,
+        super::directory_flags(),
+        Mode::empty(),
+    )
+    .map_err(io::Error::from)?;
+    super::harden_directory(&source, false)?;
+    before_mutation();
+
+    let current = openat(
+        &from_parent,
+        from_name,
+        super::directory_flags(),
+        Mode::empty(),
+    )
+    .map_err(io::Error::from)?;
+    let source_stat = fstat(&source).map_err(io::Error::from)?;
+    let current_stat = fstat(&current).map_err(io::Error::from)?;
+    if source_stat.st_dev != current_stat.st_dev || source_stat.st_ino != current_stat.st_ino {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "private directory source changed before publication",
+        ));
+    }
+
+    renameat_with(
+        &from_parent,
+        from_name,
+        &to_parent,
+        to_name,
+        RenameFlags::NOREPLACE,
+    )
+    .map_err(io::Error::from)
+}
+
+#[cfg(not(any(target_vendor = "apple", target_os = "linux", target_os = "android")))]
+pub(super) fn publish_new_relative_directory(
+    _root: &PrivateRoot,
+    _from: &Path,
+    _to: &Path,
+) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "atomic no-replace directory publication is unavailable on this target",
+    ))
+}
+
 #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
 pub(super) fn publish_new_relative_file(
     root: &PrivateRoot,

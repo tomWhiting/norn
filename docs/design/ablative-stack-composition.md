@@ -17,10 +17,11 @@ The current Norn Responses candidate at `07bf9c1` now inventories and validates
 all 28 public output-item discriminators, preserves the shipped non-audio nested
 content/tool shapes and caller lineage canonically, and exercises representative
 real spawn/fork replay. This is an implementation candidate, not phase
-acceptance: D2 is decided but its strict store and offline migrator are not
-implemented; response-scoped audio, the exhaustive all-lifecycle media matrix,
-retained evidence, and independent P3/P4 review remain open. The candidate
-source range remains frozen for that review.
+acceptance: an in-flight D2 candidate now provides the versionless strict
+format-2 store, explicit offline migration, bounded cutover guard, deep verifier,
+three fidelity classes, and standard library constructor. Its source range and
+retained evidence are not yet frozen. Response-scoped audio, the exhaustive
+all-lifecycle media matrix, and independent P3/P4 review remain open.
 
 ## 1. Executive position
 
@@ -693,14 +694,18 @@ substrate; it must not introduce a second lossy transcript representation.
 JSONL remains the current storage engine. Under the owner-decided Responses D2
 contract, all new strict runtime sessions belong under the versionless
 `~/.norn/session-store/` path. The legacy `~/.norn/sessions/` tree remains
-untouched as source and backup; there is no `sessions-v2` path, in-place
-upgrade, runtime dual-read, or dual-write period. A separate explicit offline
-migration is atomic, idempotent, interruption-recoverable, and classifies each
-session before publication. Canonically complete sessions may resume from a
-fresh provider-state epoch; flattened but coherent sessions require an explicit
-degraded/fresh-epoch resume with recorded fidelity loss; corrupt or ambiguous
-sessions are inspect/export-only. This contract is decided but not yet
-implemented or accepted.
+untouched as the offline source; a separate immutable digest-addressed private
+backup is published during migration. There is no `sessions-v2` path, in-place
+upgrade, runtime dual-read, or dual-write period. The in-flight implementation
+stages and validates the destination before atomic no-replace publication,
+recovers interrupted owned stages, and classifies every source before
+publication. Canonically complete sessions begin a fresh provider-state epoch;
+flattened but coherent sessions require an explicit degraded/fresh-epoch resume
+with recorded fidelity loss; corrupt or ambiguous sessions are
+inspect/export-only. Normal startup performs a bounded cutover proof, while
+complete source/backup/store verification is an explicit offline operation.
+This contract is implemented as a candidate but not yet frozen, independently
+reviewed, or accepted.
 
 Haematite integration follows a later session-store manager seam and its own
 explicit offline import path. The target Haematite model uses append-only
@@ -871,8 +876,9 @@ These require owner and repository-specific review before implementation:
 Responses D2 is no longer an open decision. On 2026-07-17 the owner selected the
 versionless strict `~/.norn/session-store/` namespace, untouched legacy
 `~/.norn/sessions/`, and explicit offline migration with canonical,
-degraded/fresh-epoch, and inspect/export-only outcomes. Implementation and
-acceptance remain open in the Responses plan.
+degraded/fresh-epoch, and inspect/export-only outcomes. An in-flight
+implementation candidate now represents that decision; final retained evidence,
+independent review, and acceptance remain open in the Responses plan.
 
 1. The canonical encoding and digest construction for `EventRecordV1`.
 2. Which repository owns the shared contract crate and TypeScript bindings.

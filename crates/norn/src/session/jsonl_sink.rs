@@ -2,17 +2,19 @@
 
 use std::io::Write as _;
 use std::num::NonZeroU64;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::provider::usage::Usage;
 use crate::session::events::SessionEvent;
-use crate::session::persistence::SessionPersistError;
-use crate::session::persistence::index::{sum_usage_from_events, update_session_index};
-use crate::session::persistence::io::{
-    AdmittedSessionFile, open_session_append, open_session_append_bound,
-    open_session_append_for_entry, open_session_append_for_entry_bound,
+use crate::session::persistence::index::{
+    open_registered_timeline_bound, read_index_with_deadline, reconcile_registered_timeline,
+    registered_timeline_identity,
 };
+use crate::session::persistence::io::{ExistingEventInspection, ExistingEventState};
+#[cfg(test)]
+use crate::session::persistence::io::{open_session_append, open_session_append_bound};
+use crate::session::persistence::{IndexCounters, LockedTimelineFile, SessionPersistError};
 use crate::util::PrivateFileIdentity;
 
 use super::store::PersistenceSink;
@@ -35,49 +37,41 @@ pub enum DurabilityPolicy {
 #[derive(Debug)]
 struct IndexRegistration {
     data_dir: PathBuf,
-    session_id: String,
-    pending_events: u64,
-    pending_usage: Usage,
+    entry: Box<crate::session::persistence::SessionIndexEntry>,
+    timeline_identity: PrivateFileIdentity,
+    pending: IndexCounters,
     lock_deadline: Option<Duration>,
 }
 
 impl IndexRegistration {
-    fn accumulate(&mut self, event: &SessionEvent) {
-        self.pending_events = self.pending_events.saturating_add(1);
-        let usage = sum_usage_from_events(std::slice::from_ref(event));
-        self.pending_usage.input_tokens = self
-            .pending_usage
-            .input_tokens
-            .saturating_add(usage.input_tokens);
-        self.pending_usage.output_tokens = self
-            .pending_usage
-            .output_tokens
-            .saturating_add(usage.output_tokens);
-        self.pending_usage.cache_read_tokens = self
-            .pending_usage
-            .cache_read_tokens
-            .saturating_add(usage.cache_read_tokens);
+    fn accumulate(&mut self, event: &SessionEvent) -> Result<(), SessionPersistError> {
+        self.pending = self.pending.checked_with(event).map_err(|overflow| {
+            SessionPersistError::IndexCounterOverflow {
+                id: self.entry.id.clone(),
+                field: overflow.field(),
+            }
+        })?;
+        Ok(())
     }
 
     fn flush(&mut self) -> Result<(), SessionPersistError> {
-        if self.pending_events == 0 {
+        if self.pending.event_count == 0 {
             return Ok(());
         }
-        update_session_index(
+        reconcile_registered_timeline(
             &self.data_dir,
-            &self.session_id,
-            self.pending_events,
-            &self.pending_usage,
+            &self.entry,
+            self.timeline_identity,
             self.lock_deadline,
         )?;
-        self.pending_events = 0;
-        self.pending_usage = Usage::default();
+        self.pending = IndexCounters::default();
         Ok(())
     }
 }
 
 #[derive(Debug)]
 enum JsonlTarget {
+    #[cfg(test)]
     Path(PathBuf),
     Registered {
         data_dir: PathBuf,
@@ -86,24 +80,67 @@ enum JsonlTarget {
 }
 
 impl JsonlTarget {
-    fn open_initial(&self) -> Result<AdmittedSessionFile, SessionPersistError> {
-        match self {
-            Self::Path(path) => open_session_append(path),
-            Self::Registered { data_dir, entry } => open_session_append_for_entry(data_dir, entry),
-        }
-    }
-
     fn reopen_bound(
         &self,
         identity: PrivateFileIdentity,
-    ) -> Result<AdmittedSessionFile, SessionPersistError> {
+        candidate_id: &str,
+        candidate_line: &[u8],
+        lock_deadline: Option<Duration>,
+    ) -> Result<(LockedTimelineFile, ExistingEventInspection), SessionPersistError> {
         match self {
-            Self::Path(path) => open_session_append_bound(path, identity),
+            #[cfg(test)]
+            Self::Path(path) => {
+                open_session_append_bound(path, identity, candidate_id, candidate_line)
+            }
+            Self::Registered { data_dir, entry } => open_registered_timeline_bound(
+                data_dir,
+                entry,
+                identity,
+                candidate_id,
+                candidate_line,
+                lock_deadline,
+            ),
+        }
+    }
+
+    fn revalidate_registration(
+        &self,
+        lock_deadline: Option<Duration>,
+        candidate_id: &str,
+    ) -> Result<(), SessionPersistError> {
+        match self {
+            #[cfg(test)]
+            Self::Path(_) => Ok(()),
             Self::Registered { data_dir, entry } => {
-                open_session_append_for_entry_bound(data_dir, entry, identity)
+                let entries = read_index_with_deadline(data_dir, lock_deadline)?;
+                let current = entries
+                    .iter()
+                    .find(|current| current.id == entry.id)
+                    .ok_or_else(|| SessionPersistError::GenerationChanged {
+                        id: entry.id.clone(),
+                    })?;
+                if current.generation != entry.generation {
+                    return Err(SessionPersistError::GenerationChanged {
+                        id: entry.id.clone(),
+                    });
+                }
+                if current.rel_path != entry.rel_path {
+                    return Err(SessionPersistError::EventAppendConflict {
+                        event_id: candidate_id.to_owned(),
+                        reason: "the registered session path changed after the sink was opened",
+                    });
+                }
+                Ok(())
             }
         }
     }
+}
+
+#[derive(Debug)]
+struct PendingWrite {
+    event_id: String,
+    line: Vec<u8>,
+    at_sync_boundary: Option<bool>,
 }
 
 /// JSONL sink that retains an inode identity rather than an open descriptor.
@@ -117,6 +154,9 @@ pub struct JsonlSink {
     durability: DurabilityPolicy,
     events_since_sync: u64,
     index: Option<IndexRegistration>,
+    pending_write: Option<PendingWrite>,
+    #[cfg(test)]
+    fail_after_write_once: bool,
 }
 
 impl JsonlSink {
@@ -126,7 +166,8 @@ impl JsonlSink {
     ///
     /// Returns an error when the private session file cannot be opened,
     /// created, healed, or identity-bound.
-    pub fn open(path: &Path) -> Result<Self, SessionPersistError> {
+    #[cfg(test)]
+    pub(crate) fn open(path: &Path) -> Result<Self, SessionPersistError> {
         Self::open_with(path, DurabilityPolicy::Flush)
     }
 
@@ -136,18 +177,22 @@ impl JsonlSink {
     ///
     /// Returns an error when the private session file cannot be opened,
     /// created, healed, or identity-bound.
-    pub fn open_with(
+    #[cfg(test)]
+    pub(crate) fn open_with(
         path: &Path,
         durability: DurabilityPolicy,
     ) -> Result<Self, SessionPersistError> {
         let target = JsonlTarget::Path(path.to_path_buf());
-        let file = target.open_initial()?;
+        let file = open_session_append(path)?;
         Ok(Self {
             target,
             identity: PrivateFileIdentity::capture(&file)?,
             durability,
             events_since_sync: 0,
             index: None,
+            pending_write: None,
+            #[cfg(test)]
+            fail_after_write_once: false,
         })
     }
 
@@ -168,20 +213,62 @@ impl JsonlSink {
             data_dir: data_dir.to_path_buf(),
             entry: Box::new(entry.clone()),
         };
-        let file = target.open_initial()?;
+        let timeline_identity = registered_timeline_identity(data_dir, entry, index_lock_deadline)?;
+        target.revalidate_registration(
+            index_lock_deadline,
+            "binding registered session timeline identity",
+        )?;
         Ok(Self {
             target,
-            identity: PrivateFileIdentity::capture(&file)?,
+            identity: timeline_identity,
             durability,
             events_since_sync: 0,
             index: Some(IndexRegistration {
                 data_dir: data_dir.to_path_buf(),
-                session_id: entry.id.clone(),
-                pending_events: 0,
-                pending_usage: Usage::default(),
+                entry: Box::new(entry.clone()),
+                timeline_identity,
+                pending: IndexCounters::default(),
                 lock_deadline: index_lock_deadline,
             }),
+            pending_write: None,
+            #[cfg(test)]
+            fail_after_write_once: false,
         })
+    }
+
+    fn remember_ambiguous(&mut self, event_id: &str, line: &[u8], at_sync_boundary: Option<bool>) {
+        self.pending_write = Some(PendingWrite {
+            event_id: event_id.to_owned(),
+            line: line.to_vec(),
+            at_sync_boundary,
+        });
+    }
+
+    fn advance_durability_cadence(&mut self, event_id: &str) -> Result<bool, SessionPersistError> {
+        match self.durability {
+            DurabilityPolicy::Flush => Ok(false),
+            DurabilityPolicy::FsyncPerEvent => Ok(true),
+            DurabilityPolicy::FsyncEveryEvents(n) => {
+                let next = self.events_since_sync.checked_add(1).ok_or_else(|| {
+                    SessionPersistError::EventAppendConflict {
+                        event_id: event_id.to_owned(),
+                        reason: "durability cadence counter overflowed",
+                    }
+                })?;
+                if next >= n.get() {
+                    self.events_since_sync = 0;
+                    Ok(true)
+                } else {
+                    self.events_since_sync = next;
+                    Ok(false)
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_after_write_once(&mut self) {
+        self.fail_after_write_once = true;
     }
 }
 
@@ -191,9 +278,9 @@ impl Drop for JsonlSink {
             && let Err(error) = registration.flush()
         {
             tracing::error!(
-                session_id = %registration.session_id,
+                session_id = %registration.entry.id,
                 %error,
-                pending_events = registration.pending_events,
+                pending_events = registration.pending.event_count,
                 "failed to flush pending session index delta on sink close; index remains stale",
             );
         }
@@ -221,37 +308,101 @@ impl PersistenceSink for JsonlSink {
     fn persist(&mut self, event: &SessionEvent) -> Result<(), SessionPersistError> {
         let mut line = serde_json::to_vec(event)?;
         line.push(b'\n');
-        let mut file = self.target.reopen_bound(self.identity)?;
-        file.write_all(&line)?;
-        let at_boundary = match self.durability {
-            DurabilityPolicy::Flush => false,
-            DurabilityPolicy::FsyncPerEvent => {
-                file.sync_all()?;
-                true
-            }
-            DurabilityPolicy::FsyncEveryEvents(n) => {
-                self.events_since_sync = self.events_since_sync.saturating_add(1);
-                if self.events_since_sync >= n.get() {
-                    file.sync_all()?;
-                    self.events_since_sync = 0;
-                    true
-                } else {
-                    false
+        let event_id = event.base().id.as_str();
+        if let Some(pending) = &self.pending_write
+            && (pending.event_id != event_id || pending.line != line)
+        {
+            return Err(SessionPersistError::EventAppendConflict {
+                event_id: event_id.to_owned(),
+                reason: "a different event was supplied after an ambiguous write",
+            });
+        }
+        let lock_deadline = self.index.as_ref().and_then(|index| index.lock_deadline);
+        let counter_session_id = self
+            .index
+            .as_ref()
+            .map_or(event_id, |index| index.entry.id.as_str())
+            .to_owned();
+        let (mut file, inspection) =
+            self.target
+                .reopen_bound(self.identity, event_id, &line, lock_deadline)?;
+        match inspection.state {
+            ExistingEventState::Absent => {
+                inspection
+                    .counters
+                    .checked_with(event)
+                    .map_err(|overflow| SessionPersistError::IndexCounterOverflow {
+                        id: counter_session_id,
+                        field: overflow.field(),
+                    })?;
+                if let Err(error) = file.write_all(&line) {
+                    let cadence = self
+                        .pending_write
+                        .as_ref()
+                        .and_then(|pending| pending.at_sync_boundary);
+                    self.remember_ambiguous(event_id, &line, cadence);
+                    return Err(error.into());
                 }
             }
+            ExistingEventState::ExactTail if self.pending_write.is_some() => {}
+            ExistingEventState::ExactTail => {
+                return Err(SessionPersistError::EventAppendConflict {
+                    event_id: event_id.to_owned(),
+                    reason: "the event is already durable without an in-process retry record",
+                });
+            }
+            ExistingEventState::ExactNotTail => {
+                return Err(SessionPersistError::EventAppendConflict {
+                    event_id: event_id.to_owned(),
+                    reason: "the event already exists before the durable timeline tail",
+                });
+            }
+            ExistingEventState::ConflictingId => {
+                return Err(SessionPersistError::EventAppendConflict {
+                    event_id: event_id.to_owned(),
+                    reason: "the event id is already durable with different content",
+                });
+            }
+        }
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_after_write_once) {
+            let cadence = self
+                .pending_write
+                .as_ref()
+                .and_then(|pending| pending.at_sync_boundary);
+            self.remember_ambiguous(event_id, &line, cadence);
+            return Err(std::io::Error::other("injected ambiguous session write").into());
+        }
+        let at_boundary = match self
+            .pending_write
+            .as_ref()
+            .and_then(|pending| pending.at_sync_boundary)
+        {
+            Some(at_boundary) => at_boundary,
+            None => self.advance_durability_cadence(event_id)?,
         };
+        if at_boundary && let Err(error) = file.sync_all() {
+            self.remember_ambiguous(event_id, &line, Some(at_boundary));
+            return Err(error.into());
+        }
+        // Index operations never nest beneath a timeline transaction. Delete
+        // and publication take the opposite (index-before-timeline) order.
         drop(file);
         if let Some(registration) = &mut self.index {
-            registration.accumulate(event);
+            if let Err(error) = registration.accumulate(event) {
+                self.remember_ambiguous(event_id, &line, Some(at_boundary));
+                return Err(error);
+            }
             if at_boundary && let Err(error) = registration.flush() {
                 tracing::error!(
-                    session_id = %registration.session_id,
+                    session_id = %registration.entry.id,
                     %error,
-                    pending_events = registration.pending_events,
+                    pending_events = registration.pending.event_count,
                     "event persisted but session index delta remains pending",
                 );
             }
         }
+        self.pending_write = None;
         Ok(())
     }
 

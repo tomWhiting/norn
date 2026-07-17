@@ -160,7 +160,8 @@ win in the last week, not hypothesized.
 - **Session-persistence review:** verify write-through-before-memory
   ordering; enumerate every kill-9 window between paired durable writes
   (name reservation vs artifact creation — the Q2 lesson: reservation
-  FIRST); check tolerant-reader compatibility for any event-schema change;
+  FIRST); check strict-reader compatibility for any event-schema change and
+  require an explicit migration for any incompatible persisted shape;
   check both id spaces (session ids vs agent path addresses) stay disciplined;
   any embedder-visible event change requires a meridian pin-bump ticket.
 - **Agent-loop review:** where does the context window come from (catalog
@@ -256,8 +257,10 @@ win in the last week, not hypothesized.
 - Persistence ordering doctrine: **reservation before artifact** — the
   durable record that a name/address is taken is written before anything
   keyed by it exists on disk.
-- Event-schema changes: tolerant reader preserved; embedder-visible changes
-  ship with a meridian pin-bump ticket in the same breath.
+- Event-schema changes: active format-2 readers remain exact and fail closed;
+  incompatible persisted shapes require an explicit offline migration.
+  Embedder-visible changes ship with a meridian pin-bump ticket in the same
+  breath.
 - Tests never `#[ignore]`; runtime-gate with an env var and a logged skip.
 - Review gate: adversarial review at Fable tier before commit — never a
   lighter model (owner ruling). No finding is minor; everything is dealt

@@ -326,8 +326,9 @@ impl AgentBuilder {
     ///   [`ResolvedAgentInfo::session_id`](crate::agent::ResolvedAgentInfo::session_id),
     /// - the index entry and replay summary are surfaced via
     ///   [`Agent::session_entry`](crate::agent::Agent::session_entry) /
-    ///   [`Agent::session_replay`](crate::agent::Agent::session_replay); tolerant-reader
-    ///   skips are additionally logged at warn level.
+    ///   [`Agent::session_replay`](crate::agent::Agent::session_replay). Active
+    ///   format-2 timelines fail closed on malformed, unknown, duplicate, or
+    ///   non-canonical rows; no history row is silently skipped.
     ///
     /// The new index entry records the *resolved* model and working
     /// directory (after profile resolution and overrides), so the

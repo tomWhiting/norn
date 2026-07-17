@@ -24,8 +24,8 @@ use norn::agent::SessionSpec;
 use norn::config::NornSettings;
 use norn::profile::Profile;
 use norn::provider::traits::Provider;
-use norn::session::SessionManager;
 use norn::session::store::{DurabilityPolicy, EventStore};
+use norn::session::{ResumePolicy, SessionManager};
 use norn::tool::context::SharedWorkingDir;
 
 use crate::cli::{BuildError, Cli};
@@ -33,7 +33,6 @@ use crate::config::{
     AppliedOverrides, ConfigOverrides, apply_config_overrides_to_loop, apply_loop_config_overrides,
     apply_settings_to_agent_config, default_agent_loop_config, load_rule_engine,
     merge_event_schemas, parse_inline_or_file, parse_kv, resolve_index_lock_deadline,
-    session_data_dir,
 };
 use crate::runtime::build_write_tool;
 
@@ -172,8 +171,8 @@ pub fn builder_from_cli(
     if cli.no_session {
         builder = builder.session(std::sync::Arc::new(EventStore::new()));
     } else if let Some(spec) = session_spec_from_cli(cli, &cwd) {
-        let manager = SessionManager::new(session_data_dir()?)
-            .with_index_lock_deadline(Some(index_lock_deadline));
+        let manager =
+            SessionManager::standard()?.with_index_lock_deadline(Some(index_lock_deadline));
         builder = builder.open_session(&manager, spec, DurabilityPolicy::Flush);
     }
 
@@ -199,34 +198,30 @@ fn session_spec_from_cli(cli: &Cli, working_dir: &std::path::Path) -> Option<Ses
         return None;
     }
     let working_dir_string = || working_dir.display().to_string();
+    let resume_policy = if cli.allow_degraded_session {
+        ResumePolicy::ApproveFreshEpochProjection
+    } else {
+        ResumePolicy::RequireCanonical
+    };
     if let Some(source) = cli.resume.as_deref() {
         let trimmed = source.trim();
         return Some(if trimmed.is_empty() {
-            SessionSpec::ResumeLatestInWorkingDir {
-                working_dir: working_dir_string(),
-            }
+            SessionSpec::resume_latest_with_policy(working_dir_string(), resume_policy)
         } else {
-            SessionSpec::Resume {
-                id_or_name: trimmed.to_owned(),
-            }
+            SessionSpec::resume_with_policy(trimmed, resume_policy)
         });
     }
     if let Some(source) = cli.fork.as_deref() {
         let trimmed = source.trim();
         return Some(if trimmed.is_empty() {
-            SessionSpec::ForkLatestInWorkingDir {
-                working_dir: working_dir_string(),
-            }
+            SessionSpec::fork_latest_with_policy(working_dir_string(), resume_policy)
         } else {
-            SessionSpec::Fork {
-                source: trimmed.to_owned(),
-                name: None,
-            }
+            SessionSpec::fork_with_policy(trimmed, None, resume_policy)
         });
     }
     if let Some(id) = cli.session_id.as_deref() {
         return Some(if cli.resume_if_exists {
-            SessionSpec::OpenOrResume { id: id.to_owned() }
+            SessionSpec::open_or_resume_with_policy(id, resume_policy)
         } else {
             SessionSpec::CreateWithId {
                 id: id.to_owned(),
@@ -275,7 +270,25 @@ mod tests {
     fn resume_maps_to_resume_spec() {
         let cli = cli_with(|c| c.resume = Some("abc123".to_owned()));
         match spec_for(&cli) {
-            Some(SessionSpec::Resume { id_or_name }) => assert_eq!(id_or_name, "abc123"),
+            Some(SessionSpec::Resume { id_or_name, policy }) => {
+                assert_eq!(id_or_name, "abc123");
+                assert_eq!(policy, ResumePolicy::RequireCanonical);
+            }
+            other => panic!("expected Resume, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn degraded_session_approval_reaches_resume_policy() {
+        let cli = cli_with(|c| {
+            c.resume = Some("abc123".to_owned());
+            c.allow_degraded_session = true;
+        });
+        match spec_for(&cli) {
+            Some(SessionSpec::Resume { id_or_name, policy }) => {
+                assert_eq!(id_or_name, "abc123");
+                assert_eq!(policy, ResumePolicy::ApproveFreshEpochProjection);
+            }
             other => panic!("expected Resume, got {other:?}"),
         }
     }
@@ -289,8 +302,12 @@ mod tests {
     fn empty_resume_maps_to_working_dir_scoped_sentinel() {
         let cli = cli_with(|c| c.resume = Some(String::new()));
         match spec_for(&cli) {
-            Some(SessionSpec::ResumeLatestInWorkingDir { working_dir }) => {
+            Some(SessionSpec::ResumeLatestInWorkingDir {
+                working_dir,
+                policy,
+            }) => {
                 assert_eq!(working_dir, "/repo/current");
+                assert_eq!(policy, ResumePolicy::RequireCanonical);
             }
             other => panic!("expected ResumeLatestInWorkingDir, got {other:?}"),
         }
@@ -300,9 +317,14 @@ mod tests {
     fn fork_maps_to_fork_spec() {
         let cli = cli_with(|c| c.fork = Some("src-sess".to_owned()));
         match spec_for(&cli) {
-            Some(SessionSpec::Fork { source, name }) => {
+            Some(SessionSpec::Fork {
+                source,
+                name,
+                policy,
+            }) => {
                 assert_eq!(source, "src-sess");
                 assert!(name.is_none());
+                assert_eq!(policy, ResumePolicy::RequireCanonical);
             }
             other => panic!("expected Fork, got {other:?}"),
         }
@@ -314,8 +336,12 @@ mod tests {
     fn empty_fork_maps_to_working_dir_scoped_sentinel() {
         let cli = cli_with(|c| c.fork = Some("   ".to_owned()));
         match spec_for(&cli) {
-            Some(SessionSpec::ForkLatestInWorkingDir { working_dir }) => {
+            Some(SessionSpec::ForkLatestInWorkingDir {
+                working_dir,
+                policy,
+            }) => {
                 assert_eq!(working_dir, "/repo/current");
+                assert_eq!(policy, ResumePolicy::RequireCanonical);
             }
             other => panic!("expected ForkLatestInWorkingDir, got {other:?}"),
         }
@@ -337,7 +363,10 @@ mod tests {
             c.resume_if_exists = true;
         });
         match spec_for(&cli) {
-            Some(SessionSpec::OpenOrResume { id }) => assert_eq!(id, "fixed-id"),
+            Some(SessionSpec::OpenOrResume { id, policy }) => {
+                assert_eq!(id, "fixed-id");
+                assert_eq!(policy, ResumePolicy::RequireCanonical);
+            }
             other => panic!("expected OpenOrResume, got {other:?}"),
         }
     }

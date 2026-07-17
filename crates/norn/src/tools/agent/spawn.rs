@@ -851,7 +851,7 @@ mod tests {
                 root_session_id.clone(),
                 DurabilityPolicy::Flush,
             )),
-            root_session_id.clone(),
+            &opened.entry,
             &[],
         ));
         let infra = Arc::new(AgentToolInfra {

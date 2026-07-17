@@ -1,5 +1,14 @@
 # V2 — Child persistence, storage layout, path addressing — DESIGN NOTE
 
+> **Historical design note (superseded for local session persistence).** This
+> document preserves the July 2026 child-persistence design record. Its tolerant
+> reader and flat-layout compatibility assumptions predate Responses D2. The
+> active runtime uses strict format-2 files under the versionless
+> `~/.norn/session-store/` namespace, and legacy `~/.norn/sessions/` data enters
+> only through the explicit offline migration contract in
+> `docs/RESPONSES-API-REMEDIATION-PLAN.md`. The historical "V2" label is not a
+> runtime directory or current format name.
+
 Author: Dr. Spaceman (V2 owner) · 2026-07-04 · **Status: for Sable's review before any code**
 
 Scope: the four deliverables Sable named — (a) branch/session-mint primitive API,

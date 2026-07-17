@@ -2,7 +2,7 @@
 //! yields every derived artifact resume needs.
 //!
 //! Before this module existed, opening a persisted session walked the
-//! full event history four to five times: the tolerant reader parsed
+//! full event history four to five times: the timeline reader parsed
 //! every line, the index self-heal re-summed usage, the action-log
 //! rebuild walked the events twice (tool-call metadata, then tool
 //! results), and the context-edit restore walked them again for
@@ -16,14 +16,17 @@
 //! [`ReplayArtifacts::from_events`] — also a single traversal.
 
 use std::collections::HashSet;
+use std::path::Path;
 
 use crate::provider::usage::Usage;
 use crate::session::events::{EventId, SessionEvent};
+use crate::session::persistence::IndexCounters;
+use crate::session::persistence::strict::StrictStoreError;
 
 /// Everything a session open derives from the event history, produced
 /// by exactly one traversal.
 ///
-/// Produced by the tolerant session-file reader
+/// Produced by the strict session-file reader
 /// ([`read_session_events`](super::io::read_session_events)) and by
 /// [`Self::from_events`] for in-memory histories. Each consumer of a
 /// resumed session reads its slice of state from here instead of
@@ -37,22 +40,15 @@ use crate::session::events::{EventId, SessionEvent};
 /// * [`Self::events`] — the action-log rebuild
 ///   ([`rebuild_action_log`](crate::agent::rebuild_action_log), itself
 ///   a single traversal of the slice);
-/// * [`Self::skipped_lines`] / [`Self::format_version`] — the replay
-///   summary surfaced to callers.
+/// * [`Self::format_version`] — the replay format surfaced to callers.
 #[derive(Debug, Default)]
 pub struct ReplayArtifacts {
     /// Every recovered event, in history order (file order for a read,
     /// slice order for [`Self::from_events`]).
     pub events: Vec<SessionEvent>,
-    /// Number of non-empty lines the tolerant reader skipped:
-    /// unparseable as a [`SessionEvent`] (torn write, invalid JSON,
-    /// unknown variant) or carrying an [`EventId`] already seen earlier
-    /// in the file. `0` for a healthy file and always `0` for
-    /// [`Self::from_events`] (in-memory events have no line-level
-    /// corruption to skip).
-    pub skipped_lines: u64,
     /// Schema version from the file's header line; `None` for a
-    /// pre-versioning (format `0`) file and for [`Self::from_events`].
+    /// history derived in memory by [`Self::from_events`]. Active files
+    /// are strict format 2; legacy files are handled only by migration.
     pub format_version: Option<u32>,
     /// Rollup of `AssistantMessage` usage across the history. Only the
     /// three fields the session index tracks (`input_tokens`,
@@ -84,41 +80,54 @@ impl ReplayArtifacts {
     /// embedders (and the agent assembly) holding an
     /// [`EventStore`](crate::session::store::EventStore) snapshot use it
     /// to restore compaction marks and rebuild the action log without
-    /// walking the history once per consumer. [`Self::skipped_lines`] is
-    /// `0` and [`Self::format_version`] is `None` — those describe file
-    /// recovery, which does not apply here.
+    /// walking the history once per consumer. This in-memory convenience path
+    /// caps usage totals at `u64::MAX`; active format-2 readers use the checked
+    /// private constructor instead, so capped values never become persisted
+    /// index authority. [`Self::format_version`] is `None` because no file
+    /// decoding occurred.
     #[must_use]
     pub fn from_events(events: Vec<SessionEvent>) -> Self {
         let mut artifacts = Self::default();
         for event in &events {
-            artifacts.absorb(event);
+            artifacts.absorb_in_memory(event);
         }
         artifacts.events = events;
         artifacts
     }
 
-    /// Fold one event into every derived accumulator, then take
-    /// ownership of it. The tolerant reader calls this once per
-    /// recovered line — the single traversal that replaces the
-    /// per-consumer re-walks.
-    pub(crate) fn push(&mut self, event: SessionEvent) {
-        self.absorb(&event);
-        self.events.push(event);
+    pub(crate) fn from_strict_events(
+        events: Vec<SessionEvent>,
+        display_path: &Path,
+    ) -> Result<Self, StrictStoreError> {
+        let counters = IndexCounters::try_from_events(&events).map_err(|overflow| {
+            StrictStoreError::IndexCounterOverflow {
+                path: display_path.to_path_buf(),
+                field: overflow.field(),
+            }
+        })?;
+        let mut artifacts = Self::default();
+        for event in &events {
+            artifacts.absorb_markers(event);
+        }
+        artifacts.events = events;
+        artifacts.usage = counters.tracked_usage();
+        Ok(artifacts)
     }
 
-    /// Fold one event into the derived accumulators without storing it.
-    fn absorb(&mut self, event: &SessionEvent) {
+    fn absorb_in_memory(&mut self, event: &SessionEvent) {
+        if let SessionEvent::AssistantMessage { usage, .. } = event {
+            self.usage.input_tokens = self.usage.input_tokens.saturating_add(usage.input_tokens);
+            self.usage.output_tokens = self.usage.output_tokens.saturating_add(usage.output_tokens);
+            self.usage.cache_read_tokens = self
+                .usage
+                .cache_read_tokens
+                .saturating_add(usage.cache_read_tokens);
+        }
+        self.absorb_markers(event);
+    }
+
+    fn absorb_markers(&mut self, event: &SessionEvent) {
         match event {
-            SessionEvent::AssistantMessage { usage, .. } => {
-                self.usage.input_tokens =
-                    self.usage.input_tokens.saturating_add(usage.input_tokens);
-                self.usage.output_tokens =
-                    self.usage.output_tokens.saturating_add(usage.output_tokens);
-                self.usage.cache_read_tokens = self
-                    .usage
-                    .cache_read_tokens
-                    .saturating_add(usage.cache_read_tokens);
-            }
             SessionEvent::Compaction {
                 replaced_event_ids, ..
             } => {
@@ -142,8 +151,10 @@ impl ReplayArtifacts {
             // forces a decision here instead of silently contributing
             // nothing.
             SessionEvent::UserMessage { .. }
+            | SessionEvent::AssistantMessage { .. }
             | SessionEvent::ToolResult { .. }
             | SessionEvent::ModelChange { .. }
+            | SessionEvent::ProviderEpochBoundary { .. }
             | SessionEvent::ChildBranch { .. }
             | SessionEvent::ForkComplete { .. }
             | SessionEvent::Label { .. }

@@ -164,7 +164,6 @@ async fn hosted_search_survives_runner_tool_continuation_and_persisted_resume() 
     store.checkpoint()?;
     drop(store);
     let artifacts = crate::session::read_session_events(temp.path(), session_id)?;
-    assert_eq!(artifacts.skipped_lines, 0);
     let mut resumed_request = requests
         .first()
         .cloned()

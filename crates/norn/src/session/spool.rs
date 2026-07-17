@@ -44,8 +44,9 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::session::events::EventId;
-use crate::session::persistence::SessionPersistError;
+use crate::session::persistence::index::with_registered_generation;
 use crate::session::persistence::io::ensure_session_id_path_safe;
+use crate::session::persistence::{SessionIndexEntry, SessionPersistError};
 use crate::session::store::DurabilityPolicy;
 use crate::util::PrivateRoot;
 
@@ -61,27 +62,42 @@ const SPOOL_FILE_EXTENSION: &str = "bin";
 /// every store it opens and attached via
 /// [`EventStore::attach_spool`](crate::session::store::EventStore::attach_spool).
 /// Each write produces one immutable file named by the referencing
-/// event's [`EventId`]; files are never rewritten, so concurrent writers
-/// of *distinct* events need no locking.
+/// event's [`EventId`]; files are never rewritten. The owning session's index
+/// transaction coordinates each rare write with deletion, without adding a
+/// separate spool lock or descriptor reservation.
 #[derive(Debug)]
 pub struct SpoolWriter {
     data_dir: PathBuf,
-    session_id: String,
+    registered: SessionIndexEntry,
+    root_session_id: String,
+    index_lock_deadline: Option<std::time::Duration>,
     fsync: bool,
 }
 
 impl SpoolWriter {
-    /// Build a writer for `session_id`'s spool directory under
-    /// `data_dir`, matching the durability of the session's event sink:
+    /// Build a writer bound to one registered session generation. Payloads
+    /// live beneath the owning root derived from `registered`, while every
+    /// write first verifies that it is still the current index row. The index
+    /// transaction is held through publication so deletion cannot remove and
+    /// recreate the same id underneath a stale writer.
+    ///
+    /// The writer matches the durability of the session's event sink:
     /// policies that fsync event lines also fsync spool files, so a
     /// fsynced event can never outlive the payload it references across
     /// a power loss; [`DurabilityPolicy::Flush`] hands spool bytes to
     /// the OS exactly like event lines.
     #[must_use]
-    pub fn for_session(data_dir: &Path, session_id: &str, durability: DurabilityPolicy) -> Self {
+    pub fn for_session(
+        data_dir: &Path,
+        registered: &SessionIndexEntry,
+        durability: DurabilityPolicy,
+        index_lock_deadline: Option<std::time::Duration>,
+    ) -> Self {
         Self {
             data_dir: data_dir.to_path_buf(),
-            session_id: session_id.to_owned(),
+            registered: registered.clone(),
+            root_session_id: registered_root_session_id(registered).to_owned(),
+            index_lock_deadline,
             fsync: durability != DurabilityPolicy::Flush,
         }
     }
@@ -89,7 +105,9 @@ impl SpoolWriter {
     /// Absolute path of this session's spool directory.
     #[must_use]
     pub fn spool_dir(&self) -> PathBuf {
-        self.data_dir.join(&self.session_id).join(SPOOL_DIR_NAME)
+        self.data_dir
+            .join(&self.root_session_id)
+            .join(SPOOL_DIR_NAME)
     }
 
     /// Write `output` verbatim (its exact serialized JSON bytes) as the
@@ -119,31 +137,48 @@ impl SpoolWriter {
     /// append must not proceed with a spool claim.
     pub fn write(&self, event_id: &EventId, output: &Value) -> Result<String, SessionPersistError> {
         let bytes = serde_json::to_vec(output)?;
-        ensure_session_id_path_safe(&self.session_id)?;
-        let _permit = crate::session::persistence::acquire_private_fs()?;
-        let root = PrivateRoot::create(&self.data_dir)?;
-        let session_dir = PathBuf::from(&self.session_id);
+        ensure_session_id_path_safe(&self.root_session_id)?;
+        with_registered_generation(
+            &self.data_dir,
+            &self.registered,
+            self.index_lock_deadline,
+            |root| self.write_under(root, event_id, &bytes),
+        )
+    }
+
+    fn write_under(
+        &self,
+        root: &PrivateRoot,
+        event_id: &EventId,
+        bytes: &[u8],
+    ) -> Result<String, SessionPersistError> {
+        let session_dir = PathBuf::from(&self.root_session_id);
         let dir = session_dir.join(SPOOL_DIR_NAME);
         root.create_dir_all(&dir)?;
         let file_name = format!("{event_id}.{SPOOL_FILE_EXTENSION}");
         let path = dir.join(&file_name);
         let mut file = root.create_new(&path)?;
-        file.write_all(&bytes)?;
+        file.write_all(bytes)?;
         if self.fsync {
             file.sync_all()?;
-            // Persist the directory entries that name the freshly written
-            // file. `create_dir_all` may have minted any of these on this
-            // very write, and even a pre-existing `spool/` holds a new
-            // entry for the file itself; syncing the full chain keeps the
-            // no-dangling-reference guarantee true across power loss. The
-            // cost is three directory fsyncs, paid only on over-budget
-            // outputs.
             root.sync_dir(&dir)?;
             root.sync_dir(&session_dir)?;
             root.sync_dir(Path::new(""))?;
         }
-        Ok(format!("{}/{SPOOL_DIR_NAME}/{file_name}", self.session_id))
+        Ok(format!(
+            "{}/{SPOOL_DIR_NAME}/{file_name}",
+            self.root_session_id
+        ))
     }
+}
+
+/// Root directory that owns spool and fetched artifacts for `registered`.
+pub(crate) fn registered_root_session_id(registered: &SessionIndexEntry) -> &str {
+    registered
+        .rel_path
+        .as_deref()
+        .and_then(|relative| relative.split('/').next())
+        .unwrap_or(&registered.id)
 }
 
 /// Resolve a persisted spool reference to the full tool output it names.
@@ -158,9 +193,10 @@ impl SpoolWriter {
 ///
 /// [`SessionPersistError::InvalidSpoolRef`] when the reference does not
 /// have the exact `<session-id>/spool/<file>.bin` shape produced by
-/// [`SpoolWriter::write`] (session files are parsed tolerantly, so a
-/// hand-edited or corrupted reference must never traverse outside the
-/// data directory); [`SessionPersistError::Io`] when the spool file
+/// [`SpoolWriter::write`]. Active session timelines are decoded strictly, but
+/// the reference is still validated independently so no caller can use this
+/// lower-level API to traverse outside the data directory;
+/// [`SessionPersistError::Io`] when the spool file
 /// cannot be read; [`SessionPersistError::Serde`] when its bytes do not
 /// parse back into a JSON value.
 pub fn read_spooled_output(data_dir: &Path, spool_ref: &str) -> Result<Value, SessionPersistError> {
@@ -247,11 +283,35 @@ fn is_path_safe_component(component: &str) -> bool {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use crate::session::manager::{CreateSessionOptions, SessionManager};
+
+    fn writer(
+        data_dir: &Path,
+        id: &str,
+        durability: DurabilityPolicy,
+    ) -> Result<SpoolWriter, SessionPersistError> {
+        let manager = SessionManager::new(data_dir);
+        let opened = manager.create_with_id(
+            id,
+            CreateSessionOptions {
+                model: "test-model".to_owned(),
+                working_dir: "/work".to_owned(),
+                name: None,
+            },
+            durability,
+        )?;
+        Ok(SpoolWriter::for_session(
+            data_dir,
+            &opened.entry,
+            durability,
+            None,
+        ))
+    }
 
     #[test]
-    fn write_then_read_round_trips_verbatim() {
+    fn write_then_read_round_trips_verbatim() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir().unwrap();
-        let writer = SpoolWriter::for_session(tmp.path(), "sess-1", DurabilityPolicy::Flush);
+        let writer = writer(tmp.path(), "sess-1", DurabilityPolicy::Flush)?;
         let event_id = EventId::new();
         let full = Value::String("x".repeat(200_000));
 
@@ -265,25 +325,27 @@ mod tests {
             "spool bytes must be the verbatim serialized output",
         );
         assert_eq!(read_spooled_output(tmp.path(), &spool_ref).unwrap(), full);
+        Ok(())
     }
 
     #[test]
-    fn fsync_policies_also_round_trip() {
+    fn fsync_policies_also_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir().unwrap();
-        let writer = SpoolWriter::for_session(tmp.path(), "s2", DurabilityPolicy::FsyncPerEvent);
+        let writer = writer(tmp.path(), "s2", DurabilityPolicy::FsyncPerEvent)?;
         let event_id = EventId::new();
         let full = serde_json::json!({ "stdout": "data", "exit_code": 0 });
         let spool_ref = writer.write(&event_id, &full).unwrap();
         assert_eq!(read_spooled_output(tmp.path(), &spool_ref).unwrap(), full);
+        Ok(())
     }
 
     #[test]
-    fn write_failure_is_a_typed_error() {
+    fn write_failure_is_a_typed_error() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir().unwrap();
         // Occupy the session directory path with a regular FILE so the
         // spool directory cannot be created underneath it.
         std::fs::write(tmp.path().join("blocked"), b"not a directory").unwrap();
-        let writer = SpoolWriter::for_session(tmp.path(), "blocked", DurabilityPolicy::Flush);
+        let writer = writer(tmp.path(), "blocked", DurabilityPolicy::Flush)?;
 
         let err = writer
             .write(&EventId::new(), &Value::String("payload".to_owned()))
@@ -292,6 +354,7 @@ mod tests {
             matches!(err, SessionPersistError::Io(_)),
             "expected a typed Io error, got {err:?}",
         );
+        Ok(())
     }
 
     #[test]
@@ -329,6 +392,47 @@ mod tests {
         assert!(matches!(err, SessionPersistError::Io(_)));
     }
 
+    #[test]
+    fn stale_writer_cannot_publish_into_recreated_session_id()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let manager = SessionManager::new(tmp.path());
+        let options = || CreateSessionOptions {
+            model: "test-model".to_owned(),
+            working_dir: "/work".to_owned(),
+            name: None,
+        };
+        let first = manager.create_with_id("sess-aba", options(), DurabilityPolicy::Flush)?;
+        let stale =
+            SpoolWriter::for_session(tmp.path(), &first.entry, DurabilityPolicy::Flush, None);
+        let first_generation = first.entry.generation;
+        drop(first.store);
+        manager.delete("sess-aba")?;
+        let replacement = manager.create_with_id("sess-aba", options(), DurabilityPolicy::Flush)?;
+        assert_ne!(first_generation, replacement.entry.generation);
+
+        let event_id = EventId::new();
+        let error = stale
+            .write(&event_id, &serde_json::json!({ "stale": true }))
+            .err()
+            .ok_or_else(|| std::io::Error::other("stale spool write unexpectedly succeeded"))?;
+        assert!(matches!(
+            error,
+            SessionPersistError::GenerationChanged { .. }
+        ));
+        assert!(!tmp.path().join("sess-aba/spool").exists());
+
+        let current = SpoolWriter::for_session(
+            tmp.path(),
+            &replacement.entry,
+            DurabilityPolicy::Flush,
+            None,
+        );
+        current.write(&event_id, &serde_json::json!({ "current": true }))?;
+        assert!(tmp.path().join("sess-aba/spool").exists());
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn spool_directories_and_payloads_are_private_and_legacy_files_harden()
@@ -338,7 +442,7 @@ mod tests {
 
         let tmp = tempfile::tempdir()?;
         let data_dir = tmp.path().join("sessions");
-        let writer = SpoolWriter::for_session(&data_dir, "sess", DurabilityPolicy::Flush);
+        let writer = writer(&data_dir, "sess", DurabilityPolicy::Flush)?;
         let event_id = EventId::new();
         let spool_ref = writer.write(&event_id, &serde_json::json!({ "secret": true }))?;
         let payload = resolve_spool_ref(&data_dir, &spool_ref)?;
@@ -401,7 +505,7 @@ mod tests {
         assert!(matches!(error, SessionPersistError::Io(_)));
         assert_eq!(fs::read(&target)?, br#"{"outside":true}"#);
 
-        let writer = SpoolWriter::for_session(tmp.path(), "sess", DurabilityPolicy::Flush);
+        let writer = writer(tmp.path(), "sess", DurabilityPolicy::Flush)?;
         let event_id = EventId::new();
         let occupied = spool_dir.join(format!("{event_id}.bin"));
         symlink(&target, &occupied)?;

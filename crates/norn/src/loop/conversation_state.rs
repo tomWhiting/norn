@@ -37,20 +37,25 @@ pub(super) fn latest_response_anchor(
         if event_produces_prompt_message(event, include_compactions) {
             message_index = message_index.saturating_add(1);
         }
-        if let SessionEvent::AssistantMessage { response_id, .. } = event
-            && let Some(response_id) = response_id.as_ref().filter(|id| !id.is_empty())
-        {
-            anchor = Some(ResponseThreadAnchor {
-                response_id: response_id.clone(),
-                input_start: message_index,
-            });
-        } else if crate::session::is_interrupted_tool_result(event) {
-            // Resume repair appends this result locally after a hard kill. It
-            // is absent from the provider-side state named by the preceding
-            // response ID, so sending it as a delta can produce a 400. Full
-            // replay heals both views; the next response establishes a fresh
-            // anchor through the normal observe_response path.
-            anchor = None;
+        match event {
+            SessionEvent::AssistantMessage { response_id, .. }
+                if response_id.as_ref().is_some_and(|id| !id.is_empty()) =>
+            {
+                anchor = response_id
+                    .as_ref()
+                    .map(|response_id| ResponseThreadAnchor {
+                        response_id: response_id.clone(),
+                        input_start: message_index,
+                    });
+            }
+            SessionEvent::ProviderEpochBoundary { .. } => anchor = None,
+            _ if crate::session::is_interrupted_tool_result(event) => {
+                // Resume repair appends this result locally after a hard kill.
+                // It is absent from the provider state named by the preceding
+                // response ID, so full replay must establish a fresh anchor.
+                anchor = None;
+            }
+            _ => {}
         }
     }
     anchor
@@ -87,6 +92,7 @@ pub(super) fn event_produces_prompt_message(
             .format_conversation_content(rule_id, content)
             .is_some(),
         SessionEvent::ModelChange { .. }
+        | SessionEvent::ProviderEpochBoundary { .. }
         | SessionEvent::ChildBranch { .. }
         | SessionEvent::ForkComplete { .. }
         | SessionEvent::Label { .. }
@@ -304,7 +310,9 @@ mod tests {
     use crate::provider::request::MessageRole;
     use crate::provider::request::ToolCallKind;
     use crate::rules::types::{DeliveryMode, TriggerTiming};
-    use crate::session::events::{EventBase, EventUsage, ToolCallEvent};
+    use crate::session::events::{
+        EventBase, EventUsage, ProviderEpochBoundaryReason, ToolCallEvent,
+    };
     use crate::session::store::EventStore;
 
     /// `event_produces_prompt_message` must agree exactly with the message
@@ -406,6 +414,52 @@ mod tests {
             MessageRole::Developer,
             "the tail managed message must ride the threaded delta",
         );
+    }
+
+    #[test]
+    fn provider_epoch_boundary_clears_old_anchor_and_allows_new_anchor()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store = EventStore::new();
+        store.append(SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
+            base: EventBase::new(None),
+            content: "legacy answer".to_owned(),
+            thinking: String::new(),
+            reasoning: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: EventUsage::default(),
+            stop_reason: "end_turn".to_owned(),
+            response_id: Some("resp_legacy".to_owned()),
+        })?;
+        let boundary = SessionEvent::ProviderEpochBoundary {
+            base: EventBase::new(None),
+            reason: ProviderEpochBoundaryReason::MigratedLegacy,
+        };
+        store.append(boundary.clone())?;
+
+        assert!(!event_produces_prompt_message(&boundary, true));
+        assert!(crate::session::conversion::events_to_messages(&[boundary]).is_empty());
+        assert!(latest_response_anchor(&store.events(), 1, false).is_none());
+
+        store.append(SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
+            base: EventBase::new(None),
+            content: "native answer".to_owned(),
+            thinking: String::new(),
+            reasoning: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: EventUsage::default(),
+            stop_reason: "end_turn".to_owned(),
+            response_id: Some("resp_native".to_owned()),
+        })?;
+        let Some(anchor) = latest_response_anchor(&store.events(), 1, false) else {
+            return Err(
+                std::io::Error::other("native response did not establish an anchor").into(),
+            );
+        };
+        assert_eq!(anchor.response_id, "resp_native");
+        assert_eq!(anchor.input_start, 3);
+        Ok(())
     }
 
     #[test]

@@ -209,7 +209,6 @@ fn persisted_hosted_search_turn_replays_exactly_into_stateless_continuation() ->
     drop(store);
 
     let replay = read_session_events(temp.path(), session_id)?;
-    assert_eq!(replay.skipped_lines, 0);
     let request = ProviderRequest {
         messages: events_to_messages(&replay.events),
         tools: Vec::new(),

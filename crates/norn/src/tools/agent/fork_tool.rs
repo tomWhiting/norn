@@ -1584,6 +1584,7 @@ mod tests {
             )
             .expect("create root session");
         let root_id = opened.entry.id.clone();
+        let root_entry = opened.entry.clone();
         let parent_store = Arc::new(opened.store);
         let inherited_items =
             historical_non_audio_items("fork_inherited", "Inherited canonical context.");
@@ -1611,7 +1612,7 @@ mod tests {
                 root_id.clone(),
                 DurabilityPolicy::Flush,
             )),
-            root_id.clone(),
+            &root_entry,
             &[],
         ));
 

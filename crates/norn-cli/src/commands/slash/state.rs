@@ -74,9 +74,8 @@ pub struct SlashState {
     /// the rotated ID.
     pub session_id: Arc<Mutex<Option<String>>>,
 
-    /// Filesystem location of the session JSONL store. Read by `/name`
-    /// when it persists the new name through
-    /// [`update_index_entry`](crate::session::update_index_entry).
+    /// Filesystem location of the session JSONL store. Read by `/name` when it
+    /// persists the new name through [`SessionManager::rename`](crate::session::SessionManager::rename).
     pub data_dir: PathBuf,
 
     /// Whether `--no-session` is active. When `true`, `/name` skips the

@@ -23,7 +23,7 @@ pub(super) struct OpenedRootSession {
     /// The session's index entry, recording the values the agent
     /// actually runs with.
     pub(super) entry: SessionIndexEntry,
-    /// Replay summary from the tolerant reader.
+    /// Replay summary from strict format-2 decoding.
     pub(super) replay: ReplaySummary,
     /// The replayed, sink-equipped event store.
     pub(super) store: Arc<EventStore>,
@@ -64,14 +64,6 @@ pub(super) fn open_root_session(
     let opened = request
         .open(model, working_dir)
         .map_err(|error| map_session_open_error("open_session failed", error))?;
-    if opened.replay.skipped_lines > 0 {
-        tracing::warn!(
-            session_id = %opened.entry.id,
-            skipped_lines = opened.replay.skipped_lines,
-            "open_session: tolerant reader skipped lines — the replayed \
-             session history is incomplete",
-        );
-    }
     // Heal a transcript killed mid-turn before the first provider request is
     // ever assembled from it: a persisted assistant turn whose tool result
     // never landed (hard kill in the window between the assistant turn and
@@ -94,22 +86,21 @@ pub(super) fn open_root_session(
              well-formed",
         );
     }
-    let root_for_children = opened
-        .entry
-        .rel_path
-        .as_deref()
-        .and_then(|rel| rel.split('/').next())
-        .map_or_else(|| opened.entry.id.clone(), str::to_owned);
+    let root_for_children =
+        crate::session::spool::registered_root_session_id(&opened.entry).to_owned();
     let artifacts = Arc::new(
-        SessionArtifactStore::for_session(manager.data_dir(), &root_for_children, durability)
-            .map_err(|error| {
-                map_session_open_error("open_session artifact storage failed", error)
-            })?,
+        SessionArtifactStore::for_session(
+            manager.data_dir(),
+            &opened.entry,
+            durability,
+            manager.index_lock_deadline(),
+        )
+        .map_err(|error| map_session_open_error("open_session artifact storage failed", error))?,
     );
     let brancher = Arc::new(SessionBrancher::new(manager, root_for_children, durability));
     let binding = Arc::new(SessionBinding::persistent_root(
         brancher,
-        opened.entry.id.clone(),
+        &opened.entry,
         &opened.store.events(),
     ));
     Ok(OpenedRootSession {

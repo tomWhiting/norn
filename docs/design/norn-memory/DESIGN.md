@@ -132,7 +132,8 @@ Runs between turns (or at configurable boundaries). Steps:
 
 When Tier 3 activates:
 1. Look up the lantern's session reference (session ID + event range)
-2. Load the session file (JSONL under ~/.norn/sessions/)
+2. Load the strict session file from the registered path under
+   `~/.norn/session-store/`
 3. Fork with that session's events as the child's context
 4. Add "welcome to the future" preamble — brief summary of what's changed since the lantern was lit
 5. The ancestor speaks. Its response is delivered through the ChildResultChannel like any fork result.

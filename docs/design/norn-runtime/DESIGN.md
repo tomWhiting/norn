@@ -6,6 +6,14 @@ title: Norn as Primary Runtime
 
 # Norn as Primary Runtime
 
+> **Historical design note (superseded for local session persistence).** This
+> document records the June 2026 runtime proposal. The active local runtime now
+> uses registered strict format-2 timelines under `~/.norn/session-store/` and
+> the explicit offline migration contract in
+> `docs/RESPONSES-API-REMEDIATION-PLAN.md`. References below to tolerant/raw
+> JSONL handling or `~/.norn/sessions/` describe the earlier proposal, not the
+> current persistence API.
+
 ## Intention
 
 Norn becomes the primary runtime for all member-facing work in Meridian.

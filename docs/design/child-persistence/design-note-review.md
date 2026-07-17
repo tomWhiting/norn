@@ -1,5 +1,11 @@
 # Review: child-persistence design note
 
+> **Historical review (superseded for local session persistence).** Findings
+> about the then-current tolerant reader and flat session layout describe the
+> reviewed July 2026 snapshot. Responses D2 now owns the strict format-2
+> `~/.norn/session-store/` runtime and explicit offline handling of legacy
+> `~/.norn/sessions/`; see `docs/RESPONSES-API-REMEDIATION-PLAN.md`.
+
 Reviewer: Sable Nightwick (Fable) · 2026-07-05
 Subject: `docs/design/child-persistence/V2-design-note.md` (Dr. Spaceman)
 Process: my line-by-line pass, then an independent Fable red-team instructed to
