@@ -14,6 +14,10 @@ This document records the architecture discussed with the owner. It is a
 direction and compatibility contract, not a claim that every described runtime
 surface exists today. The incremental Norn execution plan lives in
 [`../NORN-STACK-INTEGRATION-PLAN.md`](../NORN-STACK-INTEGRATION-PLAN.md).
+The revision-pinned current-state identifier candidate lives in
+[`ablative-stack-identity-inventory.md`](ablative-stack-identity-inventory.md);
+it records reviewed scoped authorities and absences without claiming exhaustive
+enumeration or freezing the proposed cross-domain identity contract.
 
 The current combined Norn Responses candidate at `0512953` inventories and
 validates all 28 public output-item discriminators, preserves the shipped

@@ -9,6 +9,9 @@ review gate is complete.
 
 **Architecture:** [`design/ablative-stack-composition.md`](design/ablative-stack-composition.md)
 
+**Identity inventory:**
+[`design/ablative-stack-identity-inventory.md`](design/ablative-stack-identity-inventory.md)
+
 **Protocol dependency:** [`RESPONSES-API-REMEDIATION-PLAN.md`](RESPONSES-API-REMEDIATION-PLAN.md)
 
 ## Purpose
@@ -233,10 +236,17 @@ decoders; it creates no Norn production integration or shared runtime crate.
 - [x] Record the local Frame node, browser ABI, hot-upgrade, action, storage,
   and transport boundaries.
 - [x] Record the operating Aion/Yggdrasil/Norn baseline without reopening it.
-- [ ] Inventory the existing Rust and TypeScript identifiers that could be
+- [x] Produce a revision-pinned source-inventory candidate for the existing Rust
+  and TypeScript identifiers that could be
   confused with component, producer, participant, schema, artifact, stream,
   signing, session, agent, workspace, snapshot, change, diagnostic, action
-  principal, or replacement-epoch identities.
+  principal, or replacement-epoch identities. The candidate records implemented
+  authorities, aliases, absences, and collision risks found by bounded semantic
+  source review without selecting the future shared contract or claiming an
+  exhaustive mechanical sweep.
+- [ ] Complete the exhaustive mechanical identity sweep before NS0 contract
+  freeze. Retain exact Rust/TypeScript source selection, discovery queries,
+  exclusions, and one disposition per candidate with zero unresolved results.
 - [ ] Ask the current Yggdrasil, Aion, Chiron, and Norn owners to name the
   authoritative `WorkspaceRef`, `SnapshotRef`, `ChangeRef`, `DiagnosticRef`,
   `SessionRef`, and `AgentRef`; Norn may not mint substitute cross-domain IDs.
@@ -957,8 +967,9 @@ The critical and parallel paths are:
 
 1. Complete P1 acceptance.
 2. Complete P2 retained evidence and acceptance.
-3. In parallel, complete NS0A's authority and identity inventory without
-   editing the P3/P4 transcript implementation.
+3. In parallel, retain NS0A's revision-pinned candidate, complete its
+   reproducible identity sweep and owner decisions, and do not edit the P3/P4
+   transcript implementation from that arm.
 4. Close P3's remaining exhaustive lifecycle-fixture, full-range evidence, and
    independent-review gates, then obtain P3 acceptance.
 5. Close P4's remaining exhaustive lifecycle-matrix, full-range evidence, and
