@@ -132,14 +132,23 @@ run_gate() {
 }
 
 run_gate fmt null cargo +1.94.0 fmt --all -- --check
+run_gate diff_check null git diff --check "$review_commit" "$source_commit"
 run_gate clippy null cargo +1.94.0 --locked clippy --workspace --all-targets -- -D warnings
 run_gate norn_lib 3994 cargo +1.94.0 --locked test -p norn --lib --no-fail-fast
 run_gate response_reconciler 113 \
   cargo +1.94.0 --locked test -p norn response_reconciler --lib --no-fail-fast
 run_gate response_audio 41 \
   cargo +1.94.0 --locked test -p norn response_audio --lib --no-fail-fast
-run_gate m1_fixed_width_and_equality 2 \
-  cargo +1.94.0 --locked test -p norn frame_signatures_ --lib --no-fail-fast
+run_gate m1_fixed_width 1 \
+  cargo +1.94.0 --locked test -p norn \
+  frame_signatures_are_fixed_width_copy_values --lib --no-fail-fast
+run_gate m1_value_equality 1 \
+  cargo +1.94.0 --locked test -p norn \
+  frame_signatures_preserve_value_equality_and_cover_all_content \
+  --lib --no-fail-fast
+run_gate m1_object_order 1 \
+  cargo +1.94.0 --locked test -p norn \
+  reordered_object_keys_remain_an_identical_duplicate --lib --no-fail-fast
 run_gate m1_audio_duplicate_semantics 1 \
   cargo +1.94.0 --locked test -p norn \
   audio_delta_exact_duplicate_is_idempotent_but_changed_payload_conflicts \
@@ -156,7 +165,15 @@ changed_rust=$(git diff --name-only "$review_commit" "$source_commit" -- '*.rs')
 changed_rust_count=$(printf '%s\n' "$changed_rust" | awk 'NF {count++} END {print count + 0}')
 diff_inventory=$(git diff --name-only "$review_commit" "$source_commit" | LC_ALL=C sort)
 diff_inventory_count=$(printf '%s\n' "$diff_inventory" | awk 'NF {count++} END {print count + 0}')
-diff_inventory_sha256=$(printf '%s\n' "$diff_inventory" | shasum -a 256 | awk '{print $1}')
+diff_inventory_sha256=$(
+  git diff --name-only -z "$review_commit" "$source_commit" |
+    shasum -a 256 | awk '{print $1}'
+)
+diff_inventory_json=$(printf '%s\n' "$diff_inventory" | jq -Rsc 'split("\n") | map(select(length > 0))')
+rust_source_manifest_sha256=$(
+  git ls-tree -r "$source_commit" | awk '$4 ~ /\.rs$/ {print}' |
+    shasum -a 256 | awk '{print $1}'
+)
 
 policy_matches=$(
   git diff -U0 "$review_commit" "$source_commit" -- '*.rs' |
@@ -175,8 +192,10 @@ while IFS= read -r path; do
     /^#\[cfg\(test\)\]$/ { print NR - 1; found = 1; exit }
     END { if (!found) print NR }
   ')
-  entry=$(jq -n --arg path "$path" --argjson production_loc "$production_loc" \
-    '{path: $path, production_loc: $production_loc}')
+  source_sha256=$(git show "$source_commit:$path" | shasum -a 256 | awk '{print $1}')
+  entry=$(jq -n --arg path "$path" --arg source_sha256 "$source_sha256" \
+    --argjson production_loc "$production_loc" \
+    '{path: $path, source_sha256: $source_sha256, production_loc: $production_loc}')
   loc_inventory=$(jq --argjson entry "$entry" '. + [$entry]' <<<"$loc_inventory")
   if ((production_loc >= 500)); then
     loc_violations=$(jq --argjson entry "$entry" '. + [$entry]' <<<"$loc_violations")
@@ -198,6 +217,7 @@ jq -n \
   --arg review_commit "$review_commit" \
   --arg source_commit "$source_commit" \
   --arg source_tree "$source_tree" \
+  --arg rust_source_manifest_sha256 "$rust_source_manifest_sha256" \
   --arg runner_commit "$runner_commit" \
   --arg runner_path "$runner_path" \
   --arg runner_observed_sha256 "$runner_observed_sha256" \
@@ -209,12 +229,15 @@ jq -n \
   --argjson changed_rust_count "$changed_rust_count" \
   --argjson diff_inventory_count "$diff_inventory_count" \
   --arg diff_inventory_sha256 "$diff_inventory_sha256" \
+  --argjson diff_inventory "$diff_inventory_json" \
   --argjson policy_match_count "$policy_match_count" \
   --argjson loc_inventory "$loc_inventory" \
   --argjson loc_violations "$loc_violations" \
   '{schema: $schema, generated_at: $generated_at,
     review: {commit: $review_commit, verdict: "NOT READY", findings: ["M-1", "F-2"]},
-    source: {commit: $source_commit, tree: $source_tree, frozen_committed_rust: true},
+    source: {commit: $source_commit, tree: $source_tree,
+      rust_manifest_sha256: $rust_source_manifest_sha256,
+      frozen_committed_rust: true},
     runner: {commit: $runner_commit, path: $runner_path,
       observed_sha256: $runner_observed_sha256},
     environment: {toolchain: $toolchain,
@@ -224,7 +247,9 @@ jq -n \
     correction_scope: {result: $static_result,
       changed_rust_paths: $changed_rust_count,
       complete_diff_paths: $diff_inventory_count,
+      complete_diff_inventory_encoding: "NUL-delimited git diff --name-only -z",
       complete_diff_inventory_sha256: $diff_inventory_sha256,
+      complete_diff_inventory: $diff_inventory,
       prohibited_added_line_matches: $policy_match_count},
     production_loc: {method: "prefix before first exact #[cfg(test)]",
       violations_at_or_above_500: $loc_violations, inventory: $loc_inventory}}' >"$partial"
