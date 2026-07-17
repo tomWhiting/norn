@@ -490,10 +490,10 @@ mod tests {
     }
 
     #[test]
-    fn degraded_session_approval_parses_on_agent_and_session_resume_paths() {
+    fn degraded_session_approval_parses_on_agent_and_session_resume_paths()
+    -> Result<(), clap::Error> {
         let agent =
-            Cli::try_parse_from(["norn", "--resume", "abcd1234", "--allow-degraded-session"])
-                .unwrap();
+            Cli::try_parse_from(["norn", "--resume", "abcd1234", "--allow-degraded-session"])?;
         assert!(agent.allow_degraded_session);
 
         let subcommand = Cli::try_parse_from([
@@ -502,8 +502,7 @@ mod tests {
             "resume",
             "abcd1234",
             "--allow-degraded-session",
-        ])
-        .unwrap();
+        ])?;
         assert!(matches!(
             subcommand.command,
             Some(Command::Session {
@@ -513,6 +512,7 @@ mod tests {
                 },
             })
         ));
+        Ok(())
     }
 
     #[test]
@@ -542,26 +542,26 @@ mod tests {
     }
 
     #[test]
-    fn session_migrate_subcommand_parses() {
-        let cli = Cli::try_parse_from(["norn", "session", "migrate"]).unwrap();
+    fn session_migrate_subcommand_parses() -> Result<(), clap::Error> {
+        let cli = Cli::try_parse_from(["norn", "session", "migrate"])?;
         assert!(matches!(
             cli.command,
             Some(Command::Session {
                 command: SessionCmd::Migrate,
             })
         ));
+        Ok(())
     }
 
     #[test]
-    fn session_legacy_export_subcommand_parses() {
+    fn session_legacy_export_subcommand_parses() -> Result<(), clap::Error> {
         let cli = Cli::try_parse_from([
             "norn",
             "session",
             "legacy",
             "export",
             "legacy-0123456789abcdef",
-        ])
-        .unwrap();
+        ])?;
         assert!(matches!(
             cli.command,
             Some(Command::Session {
@@ -570,6 +570,7 @@ mod tests {
                 },
             }) if catalog_id == "legacy-0123456789abcdef"
         ));
+        Ok(())
     }
 
     #[test]

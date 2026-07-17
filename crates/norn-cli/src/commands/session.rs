@@ -489,26 +489,29 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn migrate_dispatches_offline_and_is_idempotent() {
-        let norn_home = tempfile::tempdir().unwrap();
-        std::fs::create_dir(norn_home.path().join("sessions")).unwrap();
+    fn migrate_dispatches_offline_and_is_idempotent() -> Result<(), Box<dyn std::error::Error>> {
+        let norn_home = tempfile::tempdir()?;
+        std::fs::create_dir(norn_home.path().join("sessions"))?;
 
-        let run = || {
-            let mut cli = Cli::try_parse_from(["norn", "session", "migrate"]).unwrap();
+        let run = || -> Result<ExitCode, Box<dyn std::error::Error>> {
+            let mut cli = Cli::try_parse_from(["norn", "session", "migrate"])?;
             let Some(crate::cli::Command::Session { command }) = cli.command.take() else {
-                panic!("expected parsed session command");
+                return Err(std::io::Error::other(
+                    "parsed migration command had the wrong command shape",
+                )
+                .into());
             };
-            run_session(cli, command, &|_| {
-                panic!("session migration must not enter the agent path")
-            })
+            Ok(run_session(cli, command, &|_| ExitCode::AgentError))
         };
 
         temp_env::with_var("NORN_HOME", Some(norn_home.path().as_os_str()), || {
-            assert_eq!(run(), ExitCode::Success);
+            assert_eq!(run()?, ExitCode::Success);
             assert!(norn_home.path().join("session-store").is_dir());
             assert!(norn_home.path().join("sessions").is_dir());
-            assert_eq!(run(), ExitCode::Success);
-        });
+            assert_eq!(run()?, ExitCode::Success);
+            Ok::<_, Box<dyn std::error::Error>>(())
+        })?;
+        Ok(())
     }
 
     #[test]
@@ -551,44 +554,38 @@ mod tests {
     }
 
     #[test]
-    fn list_all_sorts_newest_first() {
-        let tmp = tempfile::tempdir().unwrap();
+    fn list_all_sorts_newest_first() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
         let manager = SessionManager::new(tmp.path());
-        let older = manager
-            .create_with_id(
-                "11111111-1111-7111-8111-111111111111",
-                CreateSessionOptions {
-                    model: "gpt-old".to_owned(),
-                    working_dir: "/a".to_owned(),
-                    name: None,
-                },
-                DurabilityPolicy::Flush,
-            )
-            .unwrap();
+        let older = manager.create_with_id(
+            "11111111-1111-7111-8111-111111111111",
+            CreateSessionOptions {
+                model: "gpt-old".to_owned(),
+                working_dir: "/a".to_owned(),
+                name: None,
+            },
+            DurabilityPolicy::Flush,
+        )?;
         drop(older);
         std::thread::sleep(Duration::from_millis(5));
-        let newer = manager
-            .create_with_id(
-                "22222222-2222-7222-8222-222222222222",
-                CreateSessionOptions {
-                    model: "gpt-new".to_owned(),
-                    working_dir: "/b".to_owned(),
-                    name: None,
-                },
-                DurabilityPolicy::Flush,
-            )
-            .unwrap();
-        newer
-            .store
-            .append(SessionEvent::UserMessage {
-                base: EventBase::new(None),
-                content: "newest".to_owned(),
-            })
-            .unwrap();
+        let newer = manager.create_with_id(
+            "22222222-2222-7222-8222-222222222222",
+            CreateSessionOptions {
+                model: "gpt-new".to_owned(),
+                working_dir: "/b".to_owned(),
+                name: None,
+            },
+            DurabilityPolicy::Flush,
+        )?;
+        newer.store.append(SessionEvent::UserMessage {
+            base: EventBase::new(None),
+            content: "newest".to_owned(),
+        })?;
         drop(newer);
 
         let code = run_list(tmp.path(), true, None, Some(SessionListFormat::Table));
         assert_eq!(code, ExitCode::Success);
+        Ok(())
     }
 
     #[test]
@@ -607,25 +604,21 @@ mod tests {
     }
 
     #[test]
-    fn remove_deletes_index_entry() {
-        let tmp = tempfile::tempdir().unwrap();
+    fn remove_deletes_index_entry() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
         let entry = fresh(tmp.path(), "gpt", "/work");
-        let opened = SessionManager::new(tmp.path())
-            .resume(&entry.id, DurabilityPolicy::Flush)
-            .unwrap();
-        opened
-            .store
-            .append(SessionEvent::UserMessage {
-                base: EventBase::new(None),
-                content: "hi".to_owned(),
-            })
-            .unwrap();
+        let opened = SessionManager::new(tmp.path()).resume(&entry.id, DurabilityPolicy::Flush)?;
+        opened.store.append(SessionEvent::UserMessage {
+            base: EventBase::new(None),
+            content: "hi".to_owned(),
+        })?;
         drop(opened);
         let code = run_remove(tmp.path(), &entry.id, TEST_LOCK_DEADLINE);
         assert_eq!(code, ExitCode::Success);
-        let index = crate::session::read_index(tmp.path()).unwrap();
+        let index = crate::session::read_index(tmp.path())?;
         assert!(index.iter().all(|e| e.id != entry.id));
         assert!(!session_file_path(tmp.path(), &entry.id).exists());
+        Ok(())
     }
 
     #[test]

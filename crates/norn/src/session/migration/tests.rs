@@ -12,7 +12,9 @@ use crate::session::persistence::{
 };
 
 use super::stage_ownership::{StageKind, replace_owned_stage};
-use super::transaction::{BACKUP_STAGE, STRICT_STAGE};
+use super::transaction::{
+    BACKUP_STAGE, MigrationCheckpoint, STRICT_STAGE, migrate_legacy_sessions_with_hook,
+};
 use super::types::{LegacyClassificationReason, SessionMigrationManifest, SessionMigrationOutcome};
 use super::{
     MIGRATION_MANIFEST_FILE, export_legacy_session_raw, migrate_legacy_sessions,
@@ -373,6 +375,8 @@ fn changed_source_after_interruption_replaces_stable_stages() -> Result<(), Box<
     );
     Ok(())
 }
+
+include!("tests/recovery.rs");
 
 fn write_legacy_fixture(
     root: &Path,

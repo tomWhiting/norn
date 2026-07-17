@@ -523,19 +523,22 @@ fn header_written_once_across_batches() {
 }
 
 #[test]
-fn pre_header_file_is_rejected_by_active_reader() {
-    let tmp = tempfile::tempdir().unwrap();
+fn pre_header_file_is_rejected_by_active_reader() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
     // A format-0 file: event lines only, no header.
     let events = [user_msg("old one"), user_msg("old two")];
     let mut body = String::new();
     for event in &events {
-        body.push_str(&serde_json::to_string(event).unwrap());
+        body.push_str(&serde_json::to_string(event)?);
         body.push('\n');
     }
-    fs::write(session_file_path(tmp.path(), "legacy"), body).unwrap();
+    fs::write(session_file_path(tmp.path(), "legacy"), body)?;
 
-    let error = read_session_events(tmp.path(), "legacy").unwrap_err();
+    let error = read_session_events(tmp.path(), "legacy")
+        .err()
+        .ok_or_else(|| std::io::Error::other("headerless timeline unexpectedly loaded"))?;
     assert!(matches!(error, SessionPersistError::InvalidTimeline(_)));
+    Ok(())
 }
 
 #[test]
@@ -651,18 +654,22 @@ fn append_three_events_leaves_index_count_three() {
 }
 
 #[test]
-fn index_jsonl_each_line_parses() {
-    let tmp = tempfile::tempdir().unwrap();
+fn index_jsonl_each_line_parses() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
     let _ = fresh_session(tmp.path());
     let _ = fresh_session(tmp.path());
     let _ = fresh_session(tmp.path());
-    let body = fs::read_to_string(index_file_path(tmp.path())).unwrap();
+    let body = fs::read_to_string(index_file_path(tmp.path()))?;
     let mut lines = body.lines();
-    let header: SessionFileHeader = serde_json::from_str(lines.next().unwrap()).unwrap();
+    let first = lines
+        .next()
+        .ok_or_else(|| std::io::Error::other("strict index has no header"))?;
+    let header: SessionFileHeader = serde_json::from_str(first)?;
     assert_eq!(header.version, SESSION_FORMAT_VERSION);
     for line in lines {
-        let _: SessionIndexEntry = serde_json::from_str(line).unwrap();
+        let _: SessionIndexEntry = serde_json::from_str(line)?;
     }
+    Ok(())
 }
 
 #[test]
@@ -683,19 +690,23 @@ fn no_stale_tmp_files_after_successful_atomic_write() {
 }
 
 #[test]
-fn foreign_index_tmp_lookalike_fails_closed_without_changing_canonical_index() {
-    let tmp = tempfile::tempdir().unwrap();
+fn foreign_index_tmp_lookalike_fails_closed_without_changing_canonical_index()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
     let _entry = fresh_session(tmp.path());
-    let canonical_before = fs::read(index_file_path(tmp.path())).unwrap();
+    let canonical_before = fs::read(index_file_path(tmp.path()))?;
     // A prefix lookalike is not evidence that this writer owns the bytes.
-    fs::write(tmp.path().join("index.jsonl.tmp.stale"), "garbage\n").unwrap();
-    let error = read_index(tmp.path()).unwrap_err();
+    fs::write(tmp.path().join("index.jsonl.tmp.stale"), "garbage\n")?;
+    let error = read_index(tmp.path())
+        .err()
+        .ok_or_else(|| std::io::Error::other("foreign index temporary was silently accepted"))?;
     assert!(matches!(
         error,
         SessionPersistError::IndexArtifactConflict { .. }
     ));
-    let canonical_after = fs::read(index_file_path(tmp.path())).unwrap();
+    let canonical_after = fs::read(index_file_path(tmp.path()))?;
     assert_eq!(canonical_before, canonical_after);
+    Ok(())
 }
 
 #[test]
@@ -839,16 +850,18 @@ fn resolve_latest_in_working_dir_ignores_newer_other_directory() {
 }
 
 #[test]
-fn resolve_latest_in_working_dir_matches_normalized_stored_path() {
-    let store = tempfile::tempdir().unwrap();
-    let workspace = tempfile::tempdir().unwrap();
+fn resolve_latest_in_working_dir_matches_normalized_stored_path()
+-> Result<(), Box<dyn std::error::Error>> {
+    let store = tempfile::tempdir()?;
+    let workspace = tempfile::tempdir()?;
     let project = workspace.path().join("project");
-    fs::create_dir(&project).unwrap();
-    let stored_path = project.canonicalize().unwrap();
+    fs::create_dir(&project)?;
+    let stored_path = project.canonicalize()?;
     let entry = fresh_session_at(store.path(), &stored_path.to_string_lossy());
 
-    let resolved = resolve_latest_session_in_working_dir(store.path(), &project).unwrap();
+    let resolved = resolve_latest_session_in_working_dir(store.path(), &project)?;
     assert_eq!(resolved.id, entry.id);
+    Ok(())
 }
 
 #[test]
@@ -2208,19 +2221,22 @@ fn concurrent_first_opens_keep_the_header_first() {
 
 /// A pre-existing empty file cannot be adopted as an active timeline.
 #[test]
-fn preexisting_empty_file_is_rejected() {
-    let tmp = tempfile::tempdir().unwrap();
+fn preexisting_empty_file_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
     let path = session_file_path(tmp.path(), "empty-pre");
-    fs::create_dir_all(tmp.path()).unwrap();
-    fs::File::create(&path).unwrap();
+    fs::create_dir_all(tmp.path())?;
+    fs::File::create(&path)?;
 
-    let error = JsonlSink::open(&path).err().unwrap();
+    let error = JsonlSink::open(&path)
+        .err()
+        .ok_or_else(|| std::io::Error::other("empty timeline was unexpectedly adopted"))?;
     assert!(matches!(error, SessionPersistError::InvalidTimeline(_)));
     assert_eq!(
-        fs::metadata(&path).unwrap().len(),
+        fs::metadata(&path)?.len(),
         0,
         "a rejected empty file must not be retro-stamped",
     );
+    Ok(())
 }
 
 /// Gap 2 closure: the `Fork` variant was deleted with `SessionTree`. A
@@ -2286,7 +2302,7 @@ fn rel_path_rows_resolve_nested_and_root_rows_stay_flat() {
 
 /// Legacy timeline bytes are migration input, never active-reader input.
 #[test]
-fn old_format_session_file_requires_migration() {
+fn old_format_session_file_requires_migration() -> Result<(), Box<dyn std::error::Error>> {
     let file = concat!(
         r#"{"norn_session_format":1}"#,
         "\n",
@@ -2303,8 +2319,10 @@ fn old_format_session_file_requires_migration() {
         std::io::BufReader::new(std::io::Cursor::new(file.as_bytes().to_vec())),
         "old-format",
     )
-    .unwrap_err();
+    .err()
+    .ok_or_else(|| std::io::Error::other("legacy timeline unexpectedly loaded as active"))?;
     assert!(matches!(error, SessionPersistError::InvalidTimeline(_)));
+    Ok(())
 }
 
 /// Persisted `ContextMark` lines rebuild the suppressed and injected

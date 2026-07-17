@@ -279,18 +279,19 @@ mod tests {
     }
 
     #[test]
-    fn degraded_session_approval_reaches_resume_policy() {
+    fn degraded_session_approval_reaches_resume_policy() -> Result<(), std::io::Error> {
         let cli = cli_with(|c| {
             c.resume = Some("abc123".to_owned());
             c.allow_degraded_session = true;
         });
-        match spec_for(&cli) {
-            Some(SessionSpec::Resume { id_or_name, policy }) => {
-                assert_eq!(id_or_name, "abc123");
-                assert_eq!(policy, ResumePolicy::ApproveFreshEpochProjection);
-            }
-            other => panic!("expected Resume, got {other:?}"),
-        }
+        let Some(SessionSpec::Resume { id_or_name, policy }) = spec_for(&cli) else {
+            return Err(std::io::Error::other(
+                "degraded approval did not produce a resume specification",
+            ));
+        };
+        assert_eq!(id_or_name, "abc123");
+        assert_eq!(policy, ResumePolicy::ApproveFreshEpochProjection);
+        Ok(())
     }
 
     /// Regression (F1): an empty `--resume` maps to the working-dir-scoped

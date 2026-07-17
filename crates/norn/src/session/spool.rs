@@ -342,10 +342,14 @@ mod tests {
     #[test]
     fn write_failure_is_a_typed_error() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir().unwrap();
+        let writer = writer(tmp.path(), "blocked", DurabilityPolicy::Flush)?;
         // Occupy the session directory path with a regular FILE so the
         // spool directory cannot be created underneath it.
-        std::fs::write(tmp.path().join("blocked"), b"not a directory").unwrap();
-        let writer = writer(tmp.path(), "blocked", DurabilityPolicy::Flush)?;
+        let blocked = tmp.path().join("blocked");
+        if blocked.is_dir() {
+            std::fs::remove_dir_all(&blocked)?;
+        }
+        std::fs::write(blocked, b"not a directory")?;
 
         let err = writer
             .write(&EventId::new(), &Value::String("payload".to_owned()))
@@ -492,6 +496,7 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let tmp = tempfile::tempdir()?;
+        let writer = writer(tmp.path(), "sess", DurabilityPolicy::Flush)?;
         let spool_dir = tmp.path().join("sess/spool");
         fs::create_dir_all(&spool_dir)?;
         let target = tmp.path().join("outside.bin");
@@ -505,7 +510,6 @@ mod tests {
         assert!(matches!(error, SessionPersistError::Io(_)));
         assert_eq!(fs::read(&target)?, br#"{"outside":true}"#);
 
-        let writer = writer(tmp.path(), "sess", DurabilityPolicy::Flush)?;
         let event_id = EventId::new();
         let occupied = spool_dir.join(format!("{event_id}.bin"));
         symlink(&target, &occupied)?;

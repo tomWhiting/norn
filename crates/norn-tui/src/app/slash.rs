@@ -639,22 +639,24 @@ mod tests {
     }
 
     #[test]
-    fn create_new_session_store_attaches_registered_sink() {
+    fn create_new_session_store_attaches_registered_sink() -> Result<(), Box<dyn std::error::Error>>
+    {
         // Events appended after rotation must reach disk through the
         // registered sink, and the index entry must track them — the
         // raw-sink path bypassed index maintenance entirely.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir()?;
         let (id, store, _binding) =
-            create_new_session_store(tmp.path(), TEST_LOCK_DEADLINE, "test-model").unwrap();
-        store
-            .append(SessionEvent::UserMessage {
-                base: EventBase::new(None),
-                content: "hello after rotation".to_owned(),
-            })
-            .unwrap();
-        let registered = read_index(tmp.path()).unwrap();
-        let entry = registered.iter().find(|entry| entry.id == id).unwrap();
-        let read = read_session_events_for_entry(tmp.path(), entry).unwrap();
+            create_new_session_store(tmp.path(), TEST_LOCK_DEADLINE, "test-model")?;
+        store.append(SessionEvent::UserMessage {
+            base: EventBase::new(None),
+            content: "hello after rotation".to_owned(),
+        })?;
+        let registered = read_index(tmp.path())?;
+        let entry = registered
+            .iter()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| std::io::Error::other("created session is absent from the index"))?;
+        let read = read_session_events_for_entry(tmp.path(), entry)?;
         assert_eq!(read.events.len(), 1, "appended event must be on disk");
         assert!(matches!(
             &read.events[0],
@@ -663,12 +665,16 @@ mod tests {
         // Drop before the index assertion so any deferred index
         // maintenance in the sink has flushed.
         drop(store);
-        let index = read_index(tmp.path()).unwrap();
-        let entry = index.iter().find(|e| e.id == id).unwrap();
+        let index = read_index(tmp.path())?;
+        let entry = index
+            .iter()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| std::io::Error::other("appended session is absent from the index"))?;
         assert_eq!(
             entry.event_count, 1,
             "registered sink must keep the index event count current",
         );
+        Ok(())
     }
 
     #[test]

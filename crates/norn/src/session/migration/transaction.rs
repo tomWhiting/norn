@@ -26,6 +26,31 @@ const MIGRATION_LOCK_FILE: &str = "session-migration.lock";
 pub(super) const BACKUP_STAGE: &str = ".session-backup-stage";
 pub(super) const STRICT_STAGE: &str = ".session-store-stage";
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum MigrationCheckpoint {
+    BackupPrepared,
+    BackupPublished,
+    BackupDurable,
+    StrictStorePrepared,
+    StrictStorePublished,
+    StrictStoreDurable,
+}
+
+#[cfg(test)]
+impl MigrationCheckpoint {
+    pub(super) const fn evidence_name(self) -> &'static str {
+        match self {
+            Self::BackupPrepared => "backup_prepared",
+            Self::BackupPublished => "backup_published",
+            Self::BackupDurable => "backup_durable",
+            Self::StrictStorePrepared => "strict_store_prepared",
+            Self::StrictStorePublished => "strict_store_published",
+            Self::StrictStoreDurable => "strict_store_durable",
+        }
+    }
+}
+
 /// Explicitly migrate the legacy `sessions` tree into the strict versionless store.
 ///
 /// This entry point never resolves environment variables or default paths. The
@@ -33,6 +58,28 @@ pub(super) const STRICT_STAGE: &str = ".session-store-stage";
 /// operation; normal session reads never call it.
 pub fn migrate_legacy_sessions(
     norn_root: &Path,
+) -> Result<SessionMigrationOutcome, SessionMigrationError> {
+    #[cfg(test)]
+    {
+        migrate_legacy_sessions_inner(norn_root, &mut |_| Ok(()))
+    }
+    #[cfg(not(test))]
+    {
+        migrate_legacy_sessions_inner(norn_root)
+    }
+}
+
+#[cfg(test)]
+pub(super) fn migrate_legacy_sessions_with_hook(
+    norn_root: &Path,
+    checkpoint: &mut impl FnMut(MigrationCheckpoint) -> Result<(), SessionMigrationError>,
+) -> Result<SessionMigrationOutcome, SessionMigrationError> {
+    migrate_legacy_sessions_inner(norn_root, checkpoint)
+}
+
+fn migrate_legacy_sessions_inner(
+    norn_root: &Path,
+    #[cfg(test)] checkpoint: &mut impl FnMut(MigrationCheckpoint) -> Result<(), SessionMigrationError>,
 ) -> Result<SessionMigrationOutcome, SessionMigrationError> {
     validate_norn_root(norn_root)?;
     let descriptor_permit =
@@ -167,6 +214,8 @@ pub fn migrate_legacy_sessions(
     }
 
     if matches!(final_backup, BackupSnapshot::Staged(_)) {
+        #[cfg(test)]
+        checkpoint(MigrationCheckpoint::BackupPrepared)?;
         let backup_container = backup_container_relative(&source_sha256);
         root.create_dir_all(Path::new(BACKUP_DIRECTORY))
             .map_err(|error| {
@@ -184,6 +233,8 @@ pub fn migrate_legacy_sessions(
                     error,
                 )
             })?;
+        #[cfg(test)]
+        checkpoint(MigrationCheckpoint::BackupPublished)?;
         root.sync_dir(Path::new(BACKUP_DIRECTORY))
             .map_err(|error| {
                 SessionMigrationError::mutation(
@@ -192,7 +243,11 @@ pub fn migrate_legacy_sessions(
                     error,
                 )
             })?;
+        #[cfg(test)]
+        checkpoint(MigrationCheckpoint::BackupDurable)?;
     }
+    #[cfg(test)]
+    checkpoint(MigrationCheckpoint::StrictStorePrepared)?;
     root.publish_new_dir(&strict_stage, Path::new(STRICT_SESSION_DIRECTORY))
         .map_err(|error| {
             SessionMigrationError::mutation(
@@ -201,9 +256,13 @@ pub fn migrate_legacy_sessions(
                 error,
             )
         })?;
+    #[cfg(test)]
+    checkpoint(MigrationCheckpoint::StrictStorePublished)?;
     root.sync_dir(Path::new("")).map_err(|error| {
         SessionMigrationError::mutation("synchronizing Norn root", norn_root, error)
     })?;
+    #[cfg(test)]
+    checkpoint(MigrationCheckpoint::StrictStoreDurable)?;
 
     let counts = MigrationCounts::from_manifest(&manifest);
     drop(migration_lock);

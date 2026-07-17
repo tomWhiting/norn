@@ -213,9 +213,11 @@ mod tests {
     /// view — event ids, tags, and rendered provider messages — must be
     /// identical to the pre-restart one.
     #[test]
-    fn restart_shaped_resume_rebuilds_identical_prompt_view() {
+    fn restart_shaped_resume_rebuilds_identical_prompt_view()
+    -> Result<(), Box<dyn std::error::Error>> {
         use crate::session::conversion::prompt_events_to_messages;
         use crate::session::persistence::io::read_session_events_from;
+        use crate::session::{SESSION_FORMAT_VERSION, SessionFileHeader};
 
         // Live session: content, a suppression, an injection, and a
         // compaction, all through the real edit surfaces.
@@ -245,13 +247,15 @@ mod tests {
 
         // Process restart: serialize every event as a JSONL line and read
         // it back through the strict reader.
-        let mut file = Vec::new();
+        let mut file = serde_json::to_vec(&SessionFileHeader {
+            version: SESSION_FORMAT_VERSION,
+        })?;
+        file.push(b'\n');
         for event in store.events() {
-            serde_json::to_writer(&mut file, &event).expect("serialize line");
+            serde_json::to_writer(&mut file, &event)?;
             file.push(b'\n');
         }
-        let artifacts = read_session_events_from(std::io::Cursor::new(file), "restart-test")
-            .expect("strict read");
+        let artifacts = read_session_events_from(std::io::Cursor::new(file), "restart-test")?;
 
         let resumed_store = EventStore::new();
         for event in artifacts.events.clone() {
@@ -292,6 +296,7 @@ mod tests {
                 .all(|m| m.content.as_deref() != Some("noisy aside")),
             "the suppressed event must not resurface",
         );
+        Ok(())
     }
 
     /// The other resume shape: a fresh tracker over the same live store

@@ -169,8 +169,20 @@ fn is_auxiliary_for_root(path: &Path, root_ids: &BTreeSet<String>) -> bool {
     let Some(Component::Normal(family)) = components.next() else {
         return false;
     };
-    root.to_str().is_some_and(|root| root_ids.contains(root))
-        && matches!(family.to_str(), Some("spool" | "artifacts"))
+    if !root.to_str().is_some_and(|root| root_ids.contains(root)) {
+        return false;
+    }
+    match family.to_str() {
+        Some("spool") => matches!(components.next(), Some(Component::Normal(_))),
+        Some("artifacts") => match components.next() {
+            Some(Component::Normal(name)) if name == "fetched" => {
+                matches!(components.next(), Some(Component::Normal(_)))
+            }
+            Some(Component::Normal(_)) => true,
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 fn require_same_totals(

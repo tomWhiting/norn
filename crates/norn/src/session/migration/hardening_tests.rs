@@ -267,6 +267,47 @@ fn legacy_provider_epoch_boundary_is_inspect_only_and_cannot_preserve_anchor()
     Ok(())
 }
 
+#[test]
+fn native_auxiliary_directory_collisions_remain_backup_only() -> Result<(), Box<dyn Error>> {
+    for collision in ["spool", "artifacts", "artifacts/fetched"] {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().canonicalize()?;
+        let first = SessionEvent::UserMessage {
+            base: EventBase::new(None),
+            content: "first canonical turn".to_owned(),
+        };
+        let second = SessionEvent::UserMessage {
+            base: EventBase::new(Some(first.base().id.clone())),
+            content: "second canonical turn".to_owned(),
+        };
+        write_indexed_legacy_store(&root, &legacy_timeline(&[first, second])?)?;
+        let legacy_collision = root.join("sessions").join(SESSION_ID).join(collision);
+        let parent = legacy_collision
+            .parent()
+            .ok_or_else(|| io::Error::other("collision fixture has no parent"))?;
+        fs::create_dir_all(parent)?;
+        fs::write(&legacy_collision, b"legacy collision bytes")?;
+
+        let (_, destination, backup) = migrated_paths(migrate_legacy_sessions(&root)?)?;
+        assert_eq!(
+            fs::read(backup.join(SESSION_ID).join(collision))?,
+            b"legacy collision bytes"
+        );
+        assert!(!destination.join(SESSION_ID).join(collision).is_file());
+        assert_eq!(read_index(&destination)?.len(), 1);
+
+        let active = crate::util::PrivateRoot::open(&destination)?;
+        let native_directory = if collision == "spool" {
+            PathBuf::from(SESSION_ID).join("spool")
+        } else {
+            PathBuf::from(SESSION_ID).join("artifacts/fetched")
+        };
+        active.create_dir_all(&native_directory)?;
+        assert!(destination.join(native_directory).is_dir());
+    }
+    Ok(())
+}
+
 fn write_empty_legacy_store(root: &Path) -> Result<(), Box<dyn Error>> {
     let sessions = root.join("sessions");
     fs::create_dir(&sessions)?;

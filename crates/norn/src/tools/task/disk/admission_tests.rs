@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::resource::DescriptorGovernor;
+use crate::resource::{DescriptorGovernor, PRIVATE_FS_OPERATION_PEAK};
 
 fn entry(id: &str) -> TaskEntry {
     let now = Utc::now();
@@ -41,7 +41,7 @@ fn every_transaction_requires_the_full_private_filesystem_weight()
 -> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
     let root = temporary.path().join("tasks");
-    let (store, _governor) = governed_store(root.clone(), 4);
+    let (store, _governor) = governed_store(root.clone(), PRIVATE_FS_OPERATION_PEAK - 1);
 
     require_admission_error(store.create(entry("new")))?;
     require_admission_error(store.get("missing"))?;
@@ -64,7 +64,7 @@ fn exact_weight_supports_nested_work_without_nested_admission()
 -> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
     let root = temporary.path().join("tasks");
-    let (store, _governor) = governed_store(root.clone(), 5);
+    let (store, _governor) = governed_store(root.clone(), PRIVATE_FS_OPERATION_PEAK);
 
     store.create(entry("task"))?;
     let completed = store.complete("task")?;
@@ -83,7 +83,7 @@ fn exact_weight_supports_nested_work_without_nested_admission()
 fn missing_storage_is_distinct_from_storage_failure() -> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
     let root = temporary.path().join("missing");
-    let (store, _governor) = governed_store(root, 5);
+    let (store, _governor) = governed_store(root, PRIVATE_FS_OPERATION_PEAK);
 
     assert!(store.get("task")?.is_none());
     assert!(store.list(None)?.is_empty());
@@ -92,7 +92,7 @@ fn missing_storage_is_distinct_from_storage_failure() -> Result<(), Box<dyn std:
 
     let blocked_root = temporary.path().join("blocked");
     std::fs::write(&blocked_root, b"not a directory")?;
-    let (blocked, _governor) = governed_store(blocked_root, 5);
+    let (blocked, _governor) = governed_store(blocked_root, PRIVATE_FS_OPERATION_PEAK);
     assert!(blocked.list_groups().is_err());
     Ok(())
 }
@@ -102,7 +102,7 @@ fn corrupt_task_data_propagates_instead_of_looking_empty() -> Result<(), Box<dyn
 {
     let temporary = tempfile::tempdir()?;
     let root = temporary.path().join("tasks");
-    let (store, _governor) = governed_store(root.clone(), 5);
+    let (store, _governor) = governed_store(root.clone(), PRIVATE_FS_OPERATION_PEAK);
     store.create(entry("task"))?;
     std::fs::write(root.join("group/task.json"), b"{broken")?;
 

@@ -282,8 +282,9 @@ mod tests {
     /// session *for the given working directory*, never the globally
     /// most-recently-updated session in another directory.
     #[test]
-    fn resume_latest_in_working_dir_spec_ignores_global_latest_elsewhere() {
-        let tmp = tempfile::tempdir().unwrap();
+    fn resume_latest_in_working_dir_spec_ignores_global_latest_elsewhere()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
         let manager = SessionManager::new(tmp.path());
         let current_id = seed(&manager, "/repo/current", "current work");
 
@@ -291,12 +292,12 @@ mod tests {
         let other_id = seed(&manager, "/repo/other", "other work");
 
         let opened = request(&manager, SessionSpec::resume_latest("/repo/current"))
-            .open("test-model", "/repo/current")
-            .unwrap();
+            .open("test-model", "/repo/current")?;
         assert_eq!(
             opened.entry.id, current_id,
             "must resume the current-dir session, not globally newer {other_id}",
         );
+        Ok(())
     }
 
     /// Regression (F1): the empty-`--fork` sentinel routes through
@@ -304,8 +305,9 @@ mod tests {
     /// *for the given working directory*, copying that session's history
     /// into the new fork — never a globally newer session elsewhere.
     #[test]
-    fn fork_latest_in_working_dir_spec_forks_current_directory_source() {
-        let tmp = tempfile::tempdir().unwrap();
+    fn fork_latest_in_working_dir_spec_forks_current_directory_source()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
         let manager = SessionManager::new(tmp.path());
         let current_id = seed(&manager, "/repo/current", "current source");
 
@@ -313,8 +315,7 @@ mod tests {
         let _other_id = seed(&manager, "/repo/other", "other source");
 
         let opened = request(&manager, SessionSpec::fork_latest("/repo/current"))
-            .open("test-model", "/repo/current")
-            .unwrap();
+            .open("test-model", "/repo/current")?;
         assert_ne!(opened.entry.id, current_id, "fork mints a new session id");
         let events = opened.store.events();
         assert!(
@@ -325,6 +326,7 @@ mod tests {
             )),
             "fork must copy the current-directory source history, not the other dir",
         );
+        Ok(())
     }
 
     #[test]
