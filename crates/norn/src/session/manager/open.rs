@@ -178,12 +178,7 @@ impl SessionManager {
             entry,
             self.index_lock_deadline,
         )?;
-        referenced_response_audio_artifacts(&artifacts.events).map_err(|_error| {
-            SessionPersistError::InvalidResponseAudioArtifact {
-                artifact_id: "<transcript>".to_owned(),
-                reason: "the transcript response-audio association was invalid",
-            }
-        })?;
+        referenced_response_audio_artifacts(&artifacts.events)?;
         let entry = revalidate_registered_entry(&self.data_dir, entry, self.index_lock_deadline)?;
         let actual_count = u64::try_from(artifacts.events.len()).map_err(|error| {
             SessionPersistError::EventStore(format!(

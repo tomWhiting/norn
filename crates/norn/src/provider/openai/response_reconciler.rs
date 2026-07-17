@@ -17,6 +17,7 @@ mod audio;
 mod authoritative;
 mod call_identity;
 mod channels;
+mod frame_signature;
 mod item_channels;
 mod model;
 mod roles;
@@ -25,6 +26,7 @@ mod wire;
 use audio::ResponseAudioState;
 use authoritative::reconcile_authoritative_deltas;
 use channels::channel_matches_item_type;
+use frame_signature::FrameSignature;
 use item_channels::ItemChannelState;
 pub use model::{
     DeltaReconciliation, DeltaReconciliationDisposition, ReconcileUpdate, ResponseDeltaChannel,
@@ -36,12 +38,6 @@ use wire::{
     output_item_support, parse_item, parse_terminal_items, required_object,
     required_sequence_number, required_u64, validate_output_text_delta_logprobs,
 };
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct FrameSignature {
-    event_type: String,
-    data: Value,
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AddedItem {
@@ -130,10 +126,7 @@ impl ResponseReconciler {
         event: &SseEvent,
     ) -> Result<Option<u64>, ResponseReconciliationError> {
         let sequence_number = required_sequence_number(event)?;
-        let signature = FrameSignature {
-            event_type: event.event_type.clone(),
-            data: event.data.clone(),
-        };
+        let signature = FrameSignature::new(&event.event_type, &event.data);
         if let Some(prior) = self.frames.get(&sequence_number) {
             return if *prior == signature {
                 Ok(None)

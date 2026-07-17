@@ -19,18 +19,8 @@ enum ReferenceBinding {
 pub(super) fn collect_reference_requirements(
     events: &[SessionEvent],
 ) -> Result<Vec<ReferenceRequirement>, SessionPersistError> {
-    let references = referenced_response_audio_artifacts(events).map_err(|_error| {
-        SessionPersistError::InvalidResponseAudioArtifact {
-            artifact_id: "<transcript>".to_owned(),
-            reason: "the transcript response-audio association was invalid",
-        }
-    })?;
-    let links = response_audio_artifact_links(events).map_err(|_error| {
-        SessionPersistError::InvalidResponseAudioArtifact {
-            artifact_id: "<transcript>".to_owned(),
-            reason: "the transcript response-audio association was invalid",
-        }
-    })?;
+    let references = referenced_response_audio_artifacts(events)?;
+    let links = response_audio_artifact_links(events)?;
     let mut linked = BTreeMap::<String, Option<String>>::new();
     for link in links {
         let name = link.reference().file_name();

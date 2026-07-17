@@ -8,8 +8,8 @@ use super::events::{ChildBranchKind, EventBase, EventUsage, SessionEvent};
 use super::{
     ChildBranchRequest, ChildDurability, CreateSessionOptions, DurabilityPolicy,
     ResponseAudioArtifactLink, ResponseAudioArtifactRef, ResponseAudioArtifactState,
-    ResponseAudioStore, SessionBinding, SessionBrancher, SessionManager,
-    response_audio_artifact_links,
+    ResponseAudioReferenceError, ResponseAudioStore, SessionBinding, SessionBrancher,
+    SessionManager, SessionPersistError, response_audio_artifact_links,
 };
 use crate::provider::openai::response_stream_event::ResponseStreamEvent;
 use crate::provider::response_audio::ResponseAudioEvent;
@@ -103,6 +103,57 @@ fn root_resume_preserves_and_resolves_response_audio() -> TestResult {
         .read_linked(&link)?;
     assert_eq!(artifact.transcript, "durable speech");
     assert_eq!(artifact.state, ResponseAudioArtifactState::Sealed);
+    Ok(())
+}
+
+#[test]
+fn resume_preserves_duplicate_audio_artifact_reference_diagnostic() -> TestResult {
+    let directory = tempdir()?;
+    let manager = SessionManager::new(directory.path());
+    let opened = manager.create_with_id(
+        "audio-resume-duplicate-reference",
+        options("model"),
+        DurabilityPolicy::Flush,
+    )?;
+    let reference = write_audio(
+        opened
+            .store
+            .response_audio()
+            .ok_or_else(|| std::io::Error::other("root audio store missing"))?,
+    )?;
+    for _ in 0..2 {
+        for event in audio_turn(opened.store.last_event_id(), reference)? {
+            opened.store.append(event)?;
+        }
+    }
+    drop(opened);
+
+    let Err(error) = manager.resume("audio-resume-duplicate-reference", DurabilityPolicy::Flush)
+    else {
+        return Err(std::io::Error::other(
+            "resume accepted a duplicate response-audio artifact reference",
+        )
+        .into());
+    };
+    let expected_artifact_id = reference.to_string();
+    match &error {
+        SessionPersistError::InvalidResponseAudioReference(
+            ResponseAudioReferenceError::DuplicateArtifactLink { artifact_id },
+        ) => assert_eq!(artifact_id, &expected_artifact_id),
+        other => {
+            return Err(std::io::Error::other(format!(
+                "resume returned an unexpected error: {other}"
+            ))
+            .into());
+        }
+    }
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "invalid response-audio transcript association: multiple response.audio.artifact \
+             events claim sidecar {expected_artifact_id}"
+        )
+    );
     Ok(())
 }
 

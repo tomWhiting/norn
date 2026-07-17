@@ -115,6 +115,10 @@ pub enum SessionPersistError {
         reason: &'static str,
     },
 
+    /// A transcript-side response-audio association was structurally invalid.
+    #[error("invalid response-audio transcript association: {0}")]
+    InvalidResponseAudioReference(#[from] crate::session::ResponseAudioReferenceError),
+
     /// A caller-supplied session ID failed validation. Session IDs become
     /// file names (`{id}.jsonl`), so the explicit-ID path
     /// ([`SessionManager::open_or_resume`](crate::session::SessionManager::open_or_resume))

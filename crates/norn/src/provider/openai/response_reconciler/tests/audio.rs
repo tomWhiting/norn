@@ -76,6 +76,29 @@ fn duplicate_sequence_is_idempotent_but_new_sequence_repeated_done_fails() -> Te
 }
 
 #[test]
+fn audio_delta_exact_duplicate_is_idempotent_but_changed_payload_conflicts() -> TestResult {
+    let first = event("response.audio.delta", 1, json!({"delta": "YXVkaW8="}));
+    let mut duplicate = ResponseReconciler::new();
+    assert!(matches!(
+        duplicate.ingest(&first)?,
+        ReconcileUpdate::ResponseAudio { .. }
+    ));
+    assert_eq!(
+        duplicate.ingest(&first)?,
+        ReconcileUpdate::DuplicateSequence { sequence_number: 1 }
+    );
+    assert_eq!(
+        duplicate.ingest(&event(
+            "response.audio.delta",
+            1,
+            json!({"delta": "Y2hhbmdlZA=="}),
+        )),
+        Err(ResponseReconciliationError::ConflictingDuplicateSequence { sequence_number: 1 })
+    );
+    Ok(())
+}
+
+#[test]
 fn audio_and_transcript_done_state_are_independent() -> TestResult {
     let mut reconciler = ResponseReconciler::new();
     reconciler.ingest(&event("response.audio.done", 1, json!({})))?;

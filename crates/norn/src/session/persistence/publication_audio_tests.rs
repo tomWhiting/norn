@@ -14,7 +14,7 @@ use crate::session::persistence::types::{
 use crate::session::store::DurabilityPolicy;
 use crate::session::{
     ResponseAudioArtifactLink, ResponseAudioArtifactRef, ResponseAudioArtifactState,
-    ResponseAudioStore,
+    ResponseAudioReferenceError, ResponseAudioStore,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -280,6 +280,51 @@ fn stale_source_generation_is_rejected_before_any_stage_is_created() -> TestResu
         result,
         Err(SessionPersistError::GenerationChanged { id }) if id == source.id
     ));
+    assert!(!has_audio_publication_stage(directory.path())?);
+    Ok(())
+}
+
+#[test]
+fn fork_preserves_response_audio_link_order_diagnostic() -> TestResult {
+    let directory = tempdir()?;
+    let (source, reference) = source_with_audio(directory.path(), "source")?;
+    let destination = entry("destination");
+    let [link, assistant] = linked_turn(reference, Some("resp_audio"))?;
+    let assistant_event_id = assistant.base().id.as_str().to_owned();
+    let events = [assistant, link];
+
+    let error = publish_new_fork_session(directory.path(), &destination, &events, &source, None)
+        .err()
+        .ok_or_else(|| {
+            std::io::Error::other("fork accepted a response-audio link after its assistant")
+        })?;
+    match &error {
+        SessionPersistError::InvalidResponseAudioReference(
+            ResponseAudioReferenceError::LinkDoesNotPrecedeAssistant {
+                assistant_event_id: actual,
+            },
+        ) => assert_eq!(actual, &assistant_event_id),
+        other => {
+            return Err(std::io::Error::other(format!(
+                "fork returned an unexpected error: {other}"
+            ))
+            .into());
+        }
+    }
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "invalid response-audio transcript association: response.audio.artifact does not \
+             precede assistant event {assistant_event_id}"
+        )
+    );
+    assert!(!directory.path().join(&destination.id).exists());
+    assert!(
+        !directory
+            .path()
+            .join(format!("{}.jsonl", destination.id))
+            .exists()
+    );
     assert!(!has_audio_publication_stage(directory.path())?);
     Ok(())
 }
