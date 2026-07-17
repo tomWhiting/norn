@@ -1,0 +1,665 @@
+{
+  "schema": "norn.response_audio.lifecycle_distributions.v1",
+  "generated_at": "2026-07-17T19:05:01Z",
+  "source": {
+    "commit": "f252cbb17f1dc909eb1af060c2407c6aacf49dd1",
+    "tree": "3ec9515813ab5e95adac4e6412af83765b5aed4b",
+    "rust_manifest_sha256": "95be803c9122593dfafccc8c03f92abd0de2951b640fad9538419e0f2ffd2bb6",
+    "frozen_committed_rust": true
+  },
+  "runner": {
+    "path": "docs/reviews/evidence/p3-p4-audio/run_response_audio_lifecycle_distributions.sh",
+    "observed_sha256": "398b6098930ceb0c6ac3c0402b58cdb314a02303b7b56fd1a200d2c30269927e"
+  },
+  "environment": {
+    "toolchain": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo_target_directory": "/Users/tom/Developer/ablative/norn/target"
+  },
+  "distribution_policy": {
+    "repeated_case_minimum": 20,
+    "repeated_case_iterations": 20,
+    "deterministic_case_iterations": 1
+  },
+  "coverage": {
+    "semantic_cases": 6,
+    "test_invocations": 7
+  },
+  "result": "pass",
+  "totals": {
+    "passed": 64,
+    "failed": 0
+  },
+  "cases": [
+    {
+      "semantic_case_id": "absent_response_id_lifecycle",
+      "test_name": "absent_response_id_survives_sidecar_link_assistant_and_resume",
+      "class": "deterministic",
+      "source": {
+        "path": "crates/norn/src/loop/response_audio_lifecycle_loop_tests.rs",
+        "sha256": "df28aa3a01e520fe794c19953285ae4359b64c79e0c489aa52018c32a497f25c"
+      },
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn absent_response_id_survives_sidecar_link_assistant_and_resume --lib --no-fail-fast",
+      "command_sha256": "b950a6c7f811bdcf4b903326100e9bb8c4744c25b9150fa3f3c0fa8f45cb64cc",
+      "iterations": 1,
+      "passed": 1,
+      "failed": 0,
+      "observations_sha256": "7a120c925725bd72acb71c4df727cbddb92e8f85518ab4419113a239e6d4b43a",
+      "observations": [
+        {
+          "iteration": 1,
+          "started_at": "2026-07-17T19:04:01Z",
+          "finished_at": "2026-07-17T19:04:02Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "ce992c354db0f28ab85b7b06c0280ef40522c5249455d6efc24847de1c233d55"
+        }
+      ]
+    },
+    {
+      "semantic_case_id": "single_final_terminal_record",
+      "test_name": "completed_audio_step_writes_one_final_terminal_jsonl_record",
+      "class": "deterministic",
+      "source": {
+        "path": "crates/norn/src/loop/response_audio_lifecycle_loop_tests.rs",
+        "sha256": "df28aa3a01e520fe794c19953285ae4359b64c79e0c489aa52018c32a497f25c"
+      },
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn completed_audio_step_writes_one_final_terminal_jsonl_record --lib --no-fail-fast",
+      "command_sha256": "4d9336542f9465cbcb1e74181ba250f9784f5b643b9468838b0cae719922e7f7",
+      "iterations": 1,
+      "passed": 1,
+      "failed": 0,
+      "observations_sha256": "2d59aeed4121a6d0227168e70ef78c0c1e91a32abb43fde9329287b8e17ac8ec",
+      "observations": [
+        {
+          "iteration": 1,
+          "started_at": "2026-07-17T19:04:02Z",
+          "finished_at": "2026-07-17T19:04:03Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "e67fa060898d4b9b7a4cef19a5b1aa38f80641990c4b34bcde973c76aab4e9ce"
+        }
+      ]
+    },
+    {
+      "semantic_case_id": "malformed_delta_symmetry",
+      "test_name": "invalid_delta_shapes_and_audio_base64_are_typed",
+      "class": "deterministic",
+      "source": {
+        "path": "crates/norn/src/provider/response_audio.rs",
+        "sha256": "01eb21b0bed281918a6e53851df7b4281b6469b67f7b6b1c4a398b0486b37112"
+      },
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn invalid_delta_shapes_and_audio_base64_are_typed --lib --no-fail-fast",
+      "command_sha256": "3d6d26acca99aac24f4a1acd18dee117c28ac1bc19f6362833e1b5e52335e5e8",
+      "iterations": 1,
+      "passed": 1,
+      "failed": 0,
+      "observations_sha256": "aa849c2baa4ad12108a24e4272373e63c5aef8dd899c5dd288ca8bb315a8883b",
+      "observations": [
+        {
+          "iteration": 1,
+          "started_at": "2026-07-17T19:04:03Z",
+          "finished_at": "2026-07-17T19:04:03Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "276109558a79be87a62c6c6dee135080779fdf8d7dec3322a8fd2fdbf0a6188d"
+        }
+      ]
+    },
+    {
+      "semantic_case_id": "malformed_delta_symmetry",
+      "test_name": "malformed_audio_and_transcript_delta_payloads_fail_typed",
+      "class": "deterministic",
+      "source": {
+        "path": "crates/norn/src/provider/openai/response_reconciler/tests/audio.rs",
+        "sha256": "ea8782d600268787223c736d6ae7cc6e405ece7eff94443c6ba82d388fbb67e2"
+      },
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn malformed_audio_and_transcript_delta_payloads_fail_typed --lib --no-fail-fast",
+      "command_sha256": "824760f9e4541e575338132cc3e4d2ebfac9c2e7a4f92ad46e490168bda253e9",
+      "iterations": 1,
+      "passed": 1,
+      "failed": 0,
+      "observations_sha256": "df27ac04dcf44285e4471b26697dcacdb9416aa637296b2630e2bb4286de7fef",
+      "observations": [
+        {
+          "iteration": 1,
+          "started_at": "2026-07-17T19:04:03Z",
+          "finished_at": "2026-07-17T19:04:04Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "452523cbf2d4c7c91c79ab380a8ec775918204702c0660e63a5e84122c2cb4db"
+        }
+      ]
+    },
+    {
+      "semantic_case_id": "post_llm_hard_cut",
+      "test_name": "post_llm_hard_cut_preserves_sealed_audio_without_publishing_turn",
+      "class": "repeated",
+      "source": {
+        "path": "crates/norn/src/loop/response_audio_lifecycle_loop_tests.rs",
+        "sha256": "df28aa3a01e520fe794c19953285ae4359b64c79e0c489aa52018c32a497f25c"
+      },
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn post_llm_hard_cut_preserves_sealed_audio_without_publishing_turn --lib --no-fail-fast",
+      "command_sha256": "d7a46a65be742a1e2281da43e2c8af70f899e16b1b7e5f83ed17aa6856c6219d",
+      "iterations": 20,
+      "passed": 20,
+      "failed": 0,
+      "observations_sha256": "c986b0a1085dcbda7f762a6fcca084876b3e7811e649f0934359532ac39ab94b",
+      "observations": [
+        {
+          "iteration": 1,
+          "started_at": "2026-07-17T19:04:04Z",
+          "finished_at": "2026-07-17T19:04:05Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "a8ac4c155dd730cb0839570268807f113a59abe1b03d03ac448e31a9920ed8b1"
+        },
+        {
+          "iteration": 2,
+          "started_at": "2026-07-17T19:04:05Z",
+          "finished_at": "2026-07-17T19:04:05Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "01277999f4c160d1942f548237ca56e7be3b0c7b5da88d196685d573063ccde9"
+        },
+        {
+          "iteration": 3,
+          "started_at": "2026-07-17T19:04:05Z",
+          "finished_at": "2026-07-17T19:04:06Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "5318059279397a2090cacc9317887398611c23762dd5a6d81962f4dc114722ff"
+        },
+        {
+          "iteration": 4,
+          "started_at": "2026-07-17T19:04:06Z",
+          "finished_at": "2026-07-17T19:04:07Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "5318059279397a2090cacc9317887398611c23762dd5a6d81962f4dc114722ff"
+        },
+        {
+          "iteration": 5,
+          "started_at": "2026-07-17T19:04:07Z",
+          "finished_at": "2026-07-17T19:04:07Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "874d4d619e748ab24eb1b563a7d32a7ab1cb34131f45c27693355b4f3671a207"
+        },
+        {
+          "iteration": 6,
+          "started_at": "2026-07-17T19:04:07Z",
+          "finished_at": "2026-07-17T19:04:08Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "e562a58cfd4871d49820764578f00c9a9e914e5439a1cc319574e9be3447b880"
+        },
+        {
+          "iteration": 7,
+          "started_at": "2026-07-17T19:04:08Z",
+          "finished_at": "2026-07-17T19:04:09Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "ccbb8bfb599b73bbded4beb4f1650f3cf3533b4437243d72e0afc3b7ba5b4421"
+        },
+        {
+          "iteration": 8,
+          "started_at": "2026-07-17T19:04:09Z",
+          "finished_at": "2026-07-17T19:04:09Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "008529bc3c9b6d7d1535174d1acc19330cd71210464fafeb9c4b649148ba0660"
+        },
+        {
+          "iteration": 9,
+          "started_at": "2026-07-17T19:04:09Z",
+          "finished_at": "2026-07-17T19:04:10Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "0624f54e21dbceb465e7d0e0c82e2b5171905a5569b336b8dc462845782d8822"
+        },
+        {
+          "iteration": 10,
+          "started_at": "2026-07-17T19:04:10Z",
+          "finished_at": "2026-07-17T19:04:11Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "544e36fd0623e6aa0aa692b5feae0ebb1af7c08136ec3a9eda5fca9df9edb00c"
+        },
+        {
+          "iteration": 11,
+          "started_at": "2026-07-17T19:04:11Z",
+          "finished_at": "2026-07-17T19:04:12Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "90627b6065940eb4caefb529daf650606d2fdbdec0b602367941c3be4959f36f"
+        },
+        {
+          "iteration": 12,
+          "started_at": "2026-07-17T19:04:12Z",
+          "finished_at": "2026-07-17T19:04:13Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "fd516060e782323b571507033daf2b3bc491f55886cdb11c57694f3eddfd323f"
+        },
+        {
+          "iteration": 13,
+          "started_at": "2026-07-17T19:04:13Z",
+          "finished_at": "2026-07-17T19:04:14Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "f638baa55ae3b29c503c4601960def5c9ac10fef723663b45a16c0be68722d41"
+        },
+        {
+          "iteration": 14,
+          "started_at": "2026-07-17T19:04:14Z",
+          "finished_at": "2026-07-17T19:04:14Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "008529bc3c9b6d7d1535174d1acc19330cd71210464fafeb9c4b649148ba0660"
+        },
+        {
+          "iteration": 15,
+          "started_at": "2026-07-17T19:04:14Z",
+          "finished_at": "2026-07-17T19:04:15Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "5318059279397a2090cacc9317887398611c23762dd5a6d81962f4dc114722ff"
+        },
+        {
+          "iteration": 16,
+          "started_at": "2026-07-17T19:04:15Z",
+          "finished_at": "2026-07-17T19:04:16Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "5318059279397a2090cacc9317887398611c23762dd5a6d81962f4dc114722ff"
+        },
+        {
+          "iteration": 17,
+          "started_at": "2026-07-17T19:04:16Z",
+          "finished_at": "2026-07-17T19:04:16Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "cdb046c8668e508adbcd4bc5476eb71a9b765e7ed8deecd910a4a8c51d355fbd"
+        },
+        {
+          "iteration": 18,
+          "started_at": "2026-07-17T19:04:16Z",
+          "finished_at": "2026-07-17T19:04:17Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "cdb046c8668e508adbcd4bc5476eb71a9b765e7ed8deecd910a4a8c51d355fbd"
+        },
+        {
+          "iteration": 19,
+          "started_at": "2026-07-17T19:04:17Z",
+          "finished_at": "2026-07-17T19:04:18Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "7458b3d46e3dc8f898bbb4dabba29e26d941ce51336ab11b7a6e6881dddf2cb0"
+        },
+        {
+          "iteration": 20,
+          "started_at": "2026-07-17T19:04:18Z",
+          "finished_at": "2026-07-17T19:04:18Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "5407c269f26ef6fcb25cdf54a96eb2987ed42969d1b4ee2e83541a2811f0a716"
+        }
+      ]
+    },
+    {
+      "semantic_case_id": "multi_artifact_ownership_fork",
+      "test_name": "top_level_fork_resolves_two_audio_artifacts_after_source_deletion",
+      "class": "repeated",
+      "source": {
+        "path": "crates/norn/src/session/manager/tests/fork_audio.rs",
+        "sha256": "c0ce2ca38e147cbeb1990f3bea8de01eec62311db59519130abf4796b7c41340"
+      },
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn top_level_fork_resolves_two_audio_artifacts_after_source_deletion --lib --no-fail-fast",
+      "command_sha256": "18431fc15a575b88538586f5f5cc96d5b541580183845496a785e3542042a32f",
+      "iterations": 20,
+      "passed": 20,
+      "failed": 0,
+      "observations_sha256": "1dfe378c2ecc8acc2c3d183a79310b8187de1fb381b5d016463df5b0d9b886ea",
+      "observations": [
+        {
+          "iteration": 1,
+          "started_at": "2026-07-17T19:04:18Z",
+          "finished_at": "2026-07-17T19:04:19Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "9b283bea1a5a4e854c35c5925eff8e2b67dfb93e5be51ef24756570cc0e39a28"
+        },
+        {
+          "iteration": 2,
+          "started_at": "2026-07-17T19:04:19Z",
+          "finished_at": "2026-07-17T19:04:20Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "09dbfc8578d6fa03069b84725240640aea2ddc2a276af6fee303785cedd4d1c6"
+        },
+        {
+          "iteration": 3,
+          "started_at": "2026-07-17T19:04:20Z",
+          "finished_at": "2026-07-17T19:04:21Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "a64d9b1638f1ace41e7cc0e4250c3a6b2ece0f9d5a4b7fee10ce3788af054057"
+        },
+        {
+          "iteration": 4,
+          "started_at": "2026-07-17T19:04:21Z",
+          "finished_at": "2026-07-17T19:04:22Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "a487400aece004af548d676fc4fa59828a2b31dd1c9c032a0acbe526cefe1154"
+        },
+        {
+          "iteration": 5,
+          "started_at": "2026-07-17T19:04:22Z",
+          "finished_at": "2026-07-17T19:04:23Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "7819cb3649d9a234073501a1f81ce9edc7b478e32556371e92acb8d45ad87548"
+        },
+        {
+          "iteration": 6,
+          "started_at": "2026-07-17T19:04:24Z",
+          "finished_at": "2026-07-17T19:04:24Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "82e85859cd9da9b9a5725e3f219501452e8ad750d4715aff31d69c766c94f231"
+        },
+        {
+          "iteration": 7,
+          "started_at": "2026-07-17T19:04:24Z",
+          "finished_at": "2026-07-17T19:04:25Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "d46174b330959e530a6ed536195103a3697af58f4091741d84d80eabb32fec51"
+        },
+        {
+          "iteration": 8,
+          "started_at": "2026-07-17T19:04:25Z",
+          "finished_at": "2026-07-17T19:04:26Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "125c74aed741d93c6135fbd19fc8eb1768363108857e15201851f2c062201d7b"
+        },
+        {
+          "iteration": 9,
+          "started_at": "2026-07-17T19:04:26Z",
+          "finished_at": "2026-07-17T19:04:27Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "47cab6cd64b6023d9ef803116199c5041ca3e370b193b859bbc46992786ab610"
+        },
+        {
+          "iteration": 10,
+          "started_at": "2026-07-17T19:04:27Z",
+          "finished_at": "2026-07-17T19:04:27Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "75ffe1358eaa0216c27eb4cd5e527727612f2a097d3d2dd1ff6cce5de1dc0833"
+        },
+        {
+          "iteration": 11,
+          "started_at": "2026-07-17T19:04:27Z",
+          "finished_at": "2026-07-17T19:04:28Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "23c3517d143e94608c62566e11a475d14164403d48dda61faf25eba7d9fecc30"
+        },
+        {
+          "iteration": 12,
+          "started_at": "2026-07-17T19:04:28Z",
+          "finished_at": "2026-07-17T19:04:29Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "38b5e492aa50226ba7159e220071320f93d55654ef30178b7cfe32787595cbf5"
+        },
+        {
+          "iteration": 13,
+          "started_at": "2026-07-17T19:04:29Z",
+          "finished_at": "2026-07-17T19:04:30Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "38b5e492aa50226ba7159e220071320f93d55654ef30178b7cfe32787595cbf5"
+        },
+        {
+          "iteration": 14,
+          "started_at": "2026-07-17T19:04:30Z",
+          "finished_at": "2026-07-17T19:04:30Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "38b5e492aa50226ba7159e220071320f93d55654ef30178b7cfe32787595cbf5"
+        },
+        {
+          "iteration": 15,
+          "started_at": "2026-07-17T19:04:30Z",
+          "finished_at": "2026-07-17T19:04:31Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "06721447ee1cd0303541a48ebb2b45c4241e9cea16751315cb3fb873964a4ff6"
+        },
+        {
+          "iteration": 16,
+          "started_at": "2026-07-17T19:04:31Z",
+          "finished_at": "2026-07-17T19:04:32Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "47a351cf6e704ff08b57b0afaa336234e24bb243d495d80b15e19ad2d1838155"
+        },
+        {
+          "iteration": 17,
+          "started_at": "2026-07-17T19:04:32Z",
+          "finished_at": "2026-07-17T19:04:33Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "43a5035d52c8010227459edd96971be04f7000d769cec3383489cd909d22b97f"
+        },
+        {
+          "iteration": 18,
+          "started_at": "2026-07-17T19:04:33Z",
+          "finished_at": "2026-07-17T19:04:33Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "e3c9a235586db775fb262476f36bd90d30b369d097c9a2b105651ce7f22df7e6"
+        },
+        {
+          "iteration": 19,
+          "started_at": "2026-07-17T19:04:33Z",
+          "finished_at": "2026-07-17T19:04:34Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "b4db2abc46f96150a75a211d82df562368243654c115f54945a14911351e6f3b"
+        },
+        {
+          "iteration": 20,
+          "started_at": "2026-07-17T19:04:34Z",
+          "finished_at": "2026-07-17T19:04:35Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "24778aa2fa9c484eaa84c10b2a9b08ec4f31466f730b73035e5b31ff798d1722"
+        }
+      ]
+    },
+    {
+      "semantic_case_id": "fork_tool_inherited_audio",
+      "test_name": "fork_under_persistent_parent_persists_child_timeline",
+      "class": "repeated",
+      "source": {
+        "path": "crates/norn/src/tools/agent/fork_tool.rs",
+        "sha256": "8bbe061395a2f6215dd3cc4931d58769ced32e08b60d242898d476dc2416a78d"
+      },
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn fork_under_persistent_parent_persists_child_timeline --lib --no-fail-fast",
+      "command_sha256": "b0ac09bc2ca928a45d12b1da4585994a27a9f0eb84732f804770cc23bddd71d3",
+      "iterations": 20,
+      "passed": 20,
+      "failed": 0,
+      "observations_sha256": "6a474c3cc5664408831d06a09ef0e9c00eeb286c164f2b122f91c20a773f5a78",
+      "observations": [
+        {
+          "iteration": 1,
+          "started_at": "2026-07-17T19:04:35Z",
+          "finished_at": "2026-07-17T19:04:36Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "abcf3e8d9872b7a6e3095756610164dfe839dd6d3792aa8cbb720c8913d224cf"
+        },
+        {
+          "iteration": 2,
+          "started_at": "2026-07-17T19:04:36Z",
+          "finished_at": "2026-07-17T19:04:37Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "97d4ecb3785a8aacf267acfbca2260d8e6b64411391813ba4c639a90f7ab0317"
+        },
+        {
+          "iteration": 3,
+          "started_at": "2026-07-17T19:04:37Z",
+          "finished_at": "2026-07-17T19:04:38Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "81dc7eec88bded383a2be3ec86acc05ea714db3696fffb756e621c4c508a004d"
+        },
+        {
+          "iteration": 4,
+          "started_at": "2026-07-17T19:04:38Z",
+          "finished_at": "2026-07-17T19:04:39Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "b88da7d9cf08fbdf16b95a8fba59e021bac288194a806e7ee74868c0713ea758"
+        },
+        {
+          "iteration": 5,
+          "started_at": "2026-07-17T19:04:39Z",
+          "finished_at": "2026-07-17T19:04:40Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "7af93f26690aa2b061f149342070a2c612ac29d40cab336c98ffd14b7d6867d5"
+        },
+        {
+          "iteration": 6,
+          "started_at": "2026-07-17T19:04:40Z",
+          "finished_at": "2026-07-17T19:04:41Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "f0bebde8bea1466d71d6df5917a8a510ac00bdf1ef5ce3d3c57274cae2084cef"
+        },
+        {
+          "iteration": 7,
+          "started_at": "2026-07-17T19:04:41Z",
+          "finished_at": "2026-07-17T19:04:42Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "d1a5e1e61463c564759fa96acf862d4a0a301e6823c3706960eaf009095544e9"
+        },
+        {
+          "iteration": 8,
+          "started_at": "2026-07-17T19:04:42Z",
+          "finished_at": "2026-07-17T19:04:43Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "eface21aece237f5fdbda792fc48280ac26b727a244812a71af13258efcd224e"
+        },
+        {
+          "iteration": 9,
+          "started_at": "2026-07-17T19:04:43Z",
+          "finished_at": "2026-07-17T19:04:43Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "64d9cd6ac1d880017ada60b72c4372bb3a65c3fbed8e79c4f13e42ca1ec67108"
+        },
+        {
+          "iteration": 10,
+          "started_at": "2026-07-17T19:04:43Z",
+          "finished_at": "2026-07-17T19:04:44Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "06bd30111e1e4ac0d03fd6f7fc2ab437554d4e2efc531f2fd90a507bd71910b5"
+        },
+        {
+          "iteration": 11,
+          "started_at": "2026-07-17T19:04:45Z",
+          "finished_at": "2026-07-17T19:04:46Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "094e70b56dbce9261a877d5e3bb7c2d8fdf1b269f5bc269c3bcff9dd68688e4b"
+        },
+        {
+          "iteration": 12,
+          "started_at": "2026-07-17T19:04:46Z",
+          "finished_at": "2026-07-17T19:04:47Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "c51c6167b37b695f9cd7261411c49c0fc1e69db4befa7baa09bdc6cb26d2acd9"
+        },
+        {
+          "iteration": 13,
+          "started_at": "2026-07-17T19:04:47Z",
+          "finished_at": "2026-07-17T19:04:48Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "0590f6db7a89b911dbe2b9c9952ad4e215682560c1a6a07ba82cd3f09f57d4db"
+        },
+        {
+          "iteration": 14,
+          "started_at": "2026-07-17T19:04:48Z",
+          "finished_at": "2026-07-17T19:04:49Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "165ca336cd791fa586601b045bd08aa8cdd0af383285954dc6d38700f7c85232"
+        },
+        {
+          "iteration": 15,
+          "started_at": "2026-07-17T19:04:49Z",
+          "finished_at": "2026-07-17T19:04:50Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "9af32dfd644587990817d8c31e6d65c58d0dfa8c99ec58d1eb9f49e6a1d0493f"
+        },
+        {
+          "iteration": 16,
+          "started_at": "2026-07-17T19:04:50Z",
+          "finished_at": "2026-07-17T19:04:52Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "1f8d02ac5538701eb986ebac0f551e0c7c0ac081f7843f94a4aa960e8a235c1b"
+        },
+        {
+          "iteration": 17,
+          "started_at": "2026-07-17T19:04:52Z",
+          "finished_at": "2026-07-17T19:04:54Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "1659ab05e3c315d744b1ebd7401ee96edafd2009d6771e7b3625bb4873bede80"
+        },
+        {
+          "iteration": 18,
+          "started_at": "2026-07-17T19:04:54Z",
+          "finished_at": "2026-07-17T19:04:56Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "7a2d884fb9db34cc7dfe791f96795c76423f1d2e88ceaeee5e8f65186737d5c4"
+        },
+        {
+          "iteration": 19,
+          "started_at": "2026-07-17T19:04:56Z",
+          "finished_at": "2026-07-17T19:04:58Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "804a4d7587a496a5e3bf2c0f70d95b7a1bb169c665552a741c4111360091f6b1"
+        },
+        {
+          "iteration": 20,
+          "started_at": "2026-07-17T19:04:58Z",
+          "finished_at": "2026-07-17T19:05:00Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "f6c6794f0c3bef1881699eea0ca2b51e5ca2972cf8a9d7e4661efd09c8b66783"
+        }
+      ]
+    }
+  ]
+}
