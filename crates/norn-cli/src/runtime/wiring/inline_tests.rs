@@ -12,7 +12,7 @@ mod tests {
 
     use crate::cli::BuildError;
     use crate::runtime::wiring::{
-        DEFAULT_DELEGATION_DEPTH, SlashStateInputs, build_slash_state_from_bundle,
+        DEFAULT_DELEGATION_DEPTH, SlashStateInputs, build_slash_state_from_bundle_at,
         cli_coordination_envelope, length_limit_from_profile,
     };
 
@@ -220,13 +220,15 @@ mod tests {
         let cli = Cli::try_parse_from(["norn"])?;
         let parts = built_parts();
         let store = Arc::new(EventStore::new());
-        let (state, registry) = build_slash_state_from_bundle(
+        let norn_home = tempfile::tempdir()?;
+        let (state, registry) = build_slash_state_from_bundle_at(
             &cli,
             slash_inputs(&parts),
             Arc::clone(&store),
             None,
             TEST_LOCK_DEADLINE,
-        )?;
+            norn_home.path().join("session-store"),
+        );
         assert_eq!(state.model_snapshot(), parts.model);
         for name in cli_builtin_names() {
             assert!(registry.get(name).is_some(), "missing /{name}");
@@ -243,13 +245,15 @@ mod tests {
         let cli = Cli::try_parse_from(["norn", "--variables", "project=yggdrasil"])?;
         let parts = built_parts();
         let store = Arc::new(EventStore::new());
-        let (state, _registry) = build_slash_state_from_bundle(
+        let norn_home = tempfile::tempdir()?;
+        let (state, _registry) = build_slash_state_from_bundle_at(
             &cli,
             slash_inputs(&parts),
             store,
             None,
             TEST_LOCK_DEADLINE,
-        )?;
+            norn_home.path().join("session-store"),
+        );
         assert_eq!(
             state.variable_pairs,
             vec![("project".to_owned(), "yggdrasil".to_owned())],
@@ -265,13 +269,15 @@ mod tests {
         let cli = Cli::try_parse_from(["norn", "-s", r#"{"type":"object"}"#])?;
         let parts = built_parts();
         let store = Arc::new(EventStore::new());
-        let (state, _registry) = build_slash_state_from_bundle(
+        let norn_home = tempfile::tempdir()?;
+        let (state, _registry) = build_slash_state_from_bundle_at(
             &cli,
             slash_inputs(&parts),
             store,
             None,
             TEST_LOCK_DEADLINE,
-        )?;
+            norn_home.path().join("session-store"),
+        );
         assert_eq!(
             state.output_schema_snapshot(),
             Some(serde_json::json!({"type": "object"})),
@@ -322,25 +328,23 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn slash_state_builder_threads_session_id() -> Result<(), Box<dyn std::error::Error>> {
         use clap::Parser;
 
         use crate::cli::Cli;
         let norn_home = tempfile::tempdir()?;
-        temp_env::with_var("NORN_HOME", Some(norn_home.path().as_os_str()), || {
-            let cli = Cli::try_parse_from(["norn"])?;
-            let parts = built_parts();
-            let store = Arc::new(EventStore::new());
-            let (state, _registry) = build_slash_state_from_bundle(
-                &cli,
-                slash_inputs(&parts),
-                store,
-                Some("abc-123".to_owned()),
-                TEST_LOCK_DEADLINE,
-            )?;
-            assert_eq!(state.current_session_id().as_deref(), Some("abc-123"));
-            Ok(())
-        })
+        let cli = Cli::try_parse_from(["norn"])?;
+        let parts = built_parts();
+        let store = Arc::new(EventStore::new());
+        let (state, _registry) = build_slash_state_from_bundle_at(
+            &cli,
+            slash_inputs(&parts),
+            store,
+            Some("abc-123".to_owned()),
+            TEST_LOCK_DEADLINE,
+            norn_home.path().join("session-store"),
+        );
+        assert_eq!(state.current_session_id().as_deref(), Some("abc-123"));
+        Ok(())
     }
 }

@@ -235,7 +235,35 @@ pub fn build_slash_state_from_bundle(
     session_id: Option<String>,
     index_lock_deadline: std::time::Duration,
 ) -> Result<(SlashState, SlashCommandRegistry), BuildError> {
-    build_slash_state_inner(cli, inputs, store, session_id, index_lock_deadline, None)
+    Ok(build_slash_state_inner(
+        cli,
+        inputs,
+        store,
+        session_id,
+        index_lock_deadline,
+        None,
+        session_data_dir()?,
+    ))
+}
+
+#[cfg(test)]
+fn build_slash_state_from_bundle_at(
+    cli: &Cli,
+    inputs: SlashStateInputs<'_>,
+    store: Arc<EventStore>,
+    session_id: Option<String>,
+    index_lock_deadline: std::time::Duration,
+    data_dir: std::path::PathBuf,
+) -> (SlashState, SlashCommandRegistry) {
+    build_slash_state_inner(
+        cli,
+        inputs,
+        store,
+        session_id,
+        index_lock_deadline,
+        None,
+        data_dir,
+    )
 }
 
 /// Variant that accepts a pre-parsed output schema, avoiding a
@@ -249,14 +277,15 @@ pub fn build_slash_state_with_schema(
     index_lock_deadline: std::time::Duration,
     output_schema: Option<Value>,
 ) -> Result<(SlashState, SlashCommandRegistry), BuildError> {
-    build_slash_state_inner(
+    Ok(build_slash_state_inner(
         cli,
         inputs,
         store,
         session_id,
         index_lock_deadline,
         output_schema,
-    )
+        session_data_dir()?,
+    ))
 }
 
 fn build_slash_state_inner(
@@ -266,7 +295,8 @@ fn build_slash_state_inner(
     session_id: Option<String>,
     index_lock_deadline: std::time::Duration,
     output_schema_override: Option<Value>,
-) -> Result<(SlashState, SlashCommandRegistry), BuildError> {
+    data_dir: std::path::PathBuf,
+) -> (SlashState, SlashCommandRegistry) {
     let tools: Vec<(String, String)> = inputs
         .registry
         .names()
@@ -289,7 +319,7 @@ fn build_slash_state_inner(
         output_schema,
         session_name: cli.session_name.clone(),
         session_id,
-        data_dir: session_data_dir()?,
+        data_dir,
         no_session: cli.no_session,
         index_lock_deadline,
         variable_pairs,
@@ -298,7 +328,7 @@ fn build_slash_state_inner(
     };
     let state = SlashState::new(seed);
     let registry = build_slash_registry(&state, None);
-    Ok((state, registry))
+    (state, registry)
 }
 
 fn parse_variable_pairs(raw: &[String]) -> Vec<(String, String)> {
