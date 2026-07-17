@@ -145,6 +145,13 @@ fn migrate_legacy_sessions_inner(
             &root,
             &backup_stage.join(LEGACY_SESSION_DIRECTORY),
         )?;
+        root.sync_dir(&backup_stage).map_err(|error| {
+            SessionMigrationError::mutation(
+                "synchronizing backup migration stage",
+                &backup_stage,
+                error,
+            )
+        })?;
         let staged_path = norn_root.join(&backup_stage).join(LEGACY_SESSION_DIRECTORY);
         let staged = open_verified_tree(&staged_path, &source_sha256)?.ok_or_else(|| {
             SessionMigrationError::BackupConflict {
