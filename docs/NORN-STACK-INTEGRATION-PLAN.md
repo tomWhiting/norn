@@ -5,6 +5,8 @@ review gate is complete.
 
 **Date:** 2026-07-16
 
+**Last reconciled:** 2026-07-18
+
 **Architecture:** [`design/ablative-stack-composition.md`](design/ablative-stack-composition.md)
 
 **Protocol dependency:** [`RESPONSES-API-REMEDIATION-PLAN.md`](RESPONSES-API-REMEDIATION-PLAN.md)
@@ -57,7 +59,9 @@ independent recovery evidence.
 
 ## 3. Relationship to the Responses plan
 
-The dependency is direct:
+The acceptance dependency is direct. This is not a chronology of when source
+candidates were developed: candidate work may exist ahead of an unmet gate, but
+it cannot close the dependent phase or authorize downstream production work.
 
 ```text
 Responses P1 accepted
@@ -959,8 +963,15 @@ The critical and parallel paths are:
    independent-review gates, then obtain P3 acceptance.
 5. Close P4's remaining exhaustive lifecycle-matrix, full-range evidence, and
    independent-review gates, then obtain P4 acceptance.
-6. Complete the post-P4 NS0B contract freeze.
-7. Stop at M1 and confirm that the canonical event substrate is sufficient for
+6. After P2-P4 acceptance, prepare P5 as the next Responses arm. Its first
+   compact review boundary is HTTP producer ownership; starting that isolated
+   source slice before D3/D8 are decided requires the scoped owner disposition
+   recorded by the Responses plan. Codex turn semantics and the eventual D3/D8
+   state and role contracts remain outside NS2's read-only event projection.
+7. Complete the post-P4 NS0B contract freeze. P5 and NS0B may proceed in
+   parallel only while their file ownership and authority contracts remain
+   disjoint.
+8. Stop at M1 and confirm that the canonical event substrate is sufficient for
    Norn's tree/session projection before beginning NS2.
 
 Under the current owner ruling, P1 work and its deterministic local gate proceed

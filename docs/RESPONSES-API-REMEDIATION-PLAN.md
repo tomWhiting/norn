@@ -30,8 +30,9 @@
   now holds unconditional Gate D `READY`. The four response-audio events,
   private sidecar persistence/reload, cancellation and retry handling, and
   ownership-changing fork publication are implemented and evidenced at
-  `0512953`. The exhaustive all-lifecycle media matrix, full-range final P3/P4
-  evidence, and independent P3/P4 acceptance remain open.
+  `0512953`, frozen and packaged at `192756e`. Its focused independent
+  implementation review, the six enumerated lifecycle cases, full-range final
+  P3/P4 evidence, and separate P3 then P4 acceptance reviews remain open.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -427,9 +428,9 @@ artifacts to the same clean head with zero errors.
 | P0. Credential and workspace authority containment | [x] Accepted by focused Gate D review `7ce29d7` on 2026-07-15 | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] Gate A complete at base `2917c8e`; Gate B foundation next; D0 remote enforcement deferred to exit | The program has executable contracts and protected quality gates. |
 | P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; retained Gate C, live A/B/A, P1 dependency, and independent acceptance open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
-| P3. Canonical ordered transcript | [ ] Combined transcript/audio implementation candidate through `0512953`, plus accepted D2 strict-store source `e9755fe`: the exact 28-item union, canonical model/replay/persistence, caller ownership, exact second-request, representative real spawn/fork paths, strict format-2 store, offline migration, explicit resume classifications, and response-scoped private audio artifacts are implemented; corrected D2 holds unconditional Gate D `READY`; the exhaustive lifecycle matrix, final P3 gates, and review remain open | Responses items survive stream, persistence, resume, and replay in order. |
-| P4. Streaming and replay conformance | [ ] Combined streaming/audio implementation candidate through `0512953`, plus accepted D2 persistence source `e9755fe`; public/Codex manifests, explicit validators for all 28 output discriminators, identity/channel/item reconciliation, terminal parsing, refusal, hosted-search replay, authoritative UI repair, raw CLI events, and lossless response-audio receive/reconciliation are implemented; corrected D2 holds unconditional Gate D `READY`; the exhaustive lifecycle matrix, final P4 gates, and review remain open | Supported events/items are complete, reconciled, and fail closed. |
-| P5. Conversation and Codex turn semantics | [ ] | Local/provider history and turn-scoped state have explicit lifetimes. |
+| P3. Canonical ordered transcript | [ ] Combined transcript/audio implementation candidate through `0512953`, packaged at `192756e`, plus accepted D2 strict-store source `e9755fe`: the exact 28-item union, canonical model/replay/persistence, caller ownership, exact second-request, representative real spawn/fork paths, strict format-2 store, offline migration, explicit resume classifications, and response-scoped private audio artifacts are implemented; corrected D2 holds unconditional Gate D `READY`; focused audio review, six enumerated lifecycle cases, final P3 gates, and acceptance review remain open | Responses items survive stream, persistence, resume, and replay in order. |
+| P4. Streaming and replay conformance | [ ] Combined streaming/audio implementation candidate through `0512953`, packaged at `192756e`, plus accepted D2 persistence source `e9755fe`; public/Codex manifests, explicit validators for all 28 output discriminators, identity/channel/item reconciliation, terminal parsing, refusal, hosted-search replay, authoritative UI repair, raw CLI events, and lossless response-audio receive/reconciliation are implemented; corrected D2 holds unconditional Gate D `READY`; focused audio review, six enumerated lifecycle cases, final P4 gates, and acceptance review remain open | Supported events/items are complete, reconciled, and fail closed. |
+| P5. Conversation and Codex turn semantics | [ ] Behavior audit and first implementation slice specified; source work not started | Local/provider history and turn-scoped state have explicit lifetimes. |
 | P6. Transport, retry, and usage | [ ] | Retries terminate once; observed and unknown attempt usage remain explicit. |
 | P7. Request, schema, and model controls | [ ] | Advertised capabilities match validated payload and tool behavior. |
 | P8. Prompt-cache measurement and policy | [ ] | Cache policy is observable, backend-specific, and empirically justified. |
@@ -1497,10 +1498,11 @@ are not pass claims.
 ## P3. Canonical ordered transcript
 
 **Status:** [ ] Combined transcript/audio implementation candidate through
-`0512953`, with accepted D2 strict-store source `e9755fe`; response-scoped
+`0512953`, packaged at `192756e`, with accepted D2 strict-store source `e9755fe`; response-scoped
 audio receive, private sidecar persistence, cancellation/retry handling, and
 ownership-changing fork publication are implemented and evidenced; the
-exhaustive lifecycle matrix, final P3 gates, and independent review remain open;
+focused audio review, six enumerated lifecycle cases, final P3 gates, and
+independent acceptance review remain open;
 **foundation for:** `STATE-01`, `EVT-02`;
 **dependencies:** P0-P2; the owner-decided D2 contract is implemented, corrected,
 re-evidenced, and accepted with unconditional Gate D `READY`.
@@ -1525,9 +1527,10 @@ retained 10/10 gates, 280/280 process-isolated distributions, and a
 zero-violation policy report. Gate D at `59dc244` returned `READY` contingent;
 the same coordinator closed F1 at `26b4e28`, making corrected D2
 unconditionally `READY`. The response-scoped audio slice is implemented at
-`0512953` without inventing an output-item identity or terminal media payload.
-The exhaustive all-lifecycle media matrix, full-range final P3 evidence, and
-independent P3 review still block phase acceptance.
+`0512953` without inventing an output-item identity or terminal media payload;
+its source/evidence package is frozen at `192756e`. Focused audio review, the six
+enumerated lifecycle cases, full-range final P3 evidence, and independent P3
+acceptance review still block phase acceptance.
 
 The replay normalization allowlist is empty for the pinned public contract.
 Current official conversation-state and compaction guidance requires clients
@@ -1612,6 +1615,20 @@ not change their order or invent missing semantics.
   permutation through uninterrupted, persistence, reload, stateless replay,
   spawn, and fork, and separately covers the D2-compatible response audio
   sidecar. The representative matrix above does not imply this broader claim.
+- [ ] A hard cut after a response-audio sidecar is sealed but before its link is
+  appended retains one readable sealed partial reference and resumes without
+  fabricating the missing link or assistant event.
+- [ ] A real end-to-end step with no provider response ID preserves `None`
+  through the sidecar, link, assistant event, reload, and read path.
+- [ ] A sealed response-audio sidecar contains exactly one terminal row, and it
+  is the final JSONL record.
+- [ ] One ownership-changing top-level fork copies and resolves multiple
+  distinct response-audio artifacts after the source session is unavailable.
+- [ ] The real `ForkTool` path seeds a child from a parent audio link and the
+  child resolves that inherited artifact under the accepted ownership rules.
+- [ ] Missing, non-string, and otherwise malformed transcript deltas fail with
+  the exact typed parser and reconciler outcomes, symmetrically with audio
+  deltas.
 - [x] A sequence containing reasoning, commentary, call, further reasoning, and
   final answer remains in that exact order after persistence and resume.
 - [x] The second `store:false` request replays the preceding `response.output`
@@ -1648,10 +1665,10 @@ not change their order or invent missing semantics.
 ## P4. Streaming and replay conformance
 
 **Status:** [ ] Combined streaming/audio implementation candidate through
-`0512953`, plus accepted D2 persistence source `e9755fe`; response-scoped
+`0512953`, packaged at `192756e`, plus accepted D2 persistence source `e9755fe`; response-scoped
 audio reconciliation and durable artifact handling are implemented and
-evidenced; the exhaustive lifecycle matrix, full-range final P4 evidence, and
-independent P4 review still block acceptance;
+evidenced; focused audio review, the six enumerated lifecycle cases, full-range
+final P4 evidence, and independent P4 acceptance review still block acceptance;
 **candidate coverage:** `STATE-01`, `EVT-01` through
 `EVT-07`; **dependencies:** P3.
 
@@ -1742,9 +1759,10 @@ authoritative completed content part is preserved canonically.
   interleaved, missing-delta, and append-only authoritative-repair cases.
 - [x] Response-scoped audio receives stream-to-private-artifact
   persistence/reload, completion-marker, corruption, cancellation, resume,
-  spawn, and fork fixtures through its D2-compatible sidecar. No terminal audio
-  payload or output-item correlation is fabricated. The broader exhaustive
-  optional-shape/lifecycle matrix remains open under P3.
+  representative persistent-spawn, context-filter, and manager-fork fixtures
+  through its D2-compatible sidecar. No terminal audio payload or output-item
+  correlation is fabricated. The six-case exhaustive lifecycle ledger remains
+  open under P3, including the real seeded `ForkTool` path.
 - [x] Interleaved calls prove call two cannot complete call one. Exact duplicate
   frames are idempotent; conflicting duplicates, delta-only calls, and missing
   authoritative completion cannot execute.
@@ -1765,9 +1783,17 @@ authoritative completed content part is preserved canonically.
 
 ## P5. Conversation and Codex turn semantics
 
-**Status:** [ ] Not started; **findings closed:** `STATE-02`, `STATE-03`,
-`ROLE-01`, `CODEX-01`, `CODEX-02`, `TRANS-01`; **dependencies:** P2-P4 and
-D3/D8/D9.
+**Status:** [ ] Behavior audit and first implementation slice specified; source
+work not started; **findings owned:** `STATE-02`, `STATE-03`, `ROLE-01`,
+`CODEX-01`, `CODEX-02`, `TRANS-01`; **dependencies:** P2-P4 and D3/D8/D9.
+
+No P5 finding is closed. The current behavior audit distinguishes prerequisites from closure. The
+ChatGPT/Codex `store:false` versus public Responses threading split and
+stateless encrypted-reasoning replay foundation exist. Stable top-level
+instruction resend and compaction-anchor invalidation are only partial.
+`end_turn`, Codex turn-state capture/replay, account-bound anchors, producer
+ownership, D8 role authority, and Codex `client_metadata` remain behaviorally
+open.
 
 ### What this phase fixes
 
@@ -1809,6 +1835,8 @@ credential identity and cannot cross an account switch.
   and define its interaction with calls, refusals, and no-output continuation.
 - [ ] Capture `x-codex-turn-state` from headers/metadata, replay it within the
   same turn, and clear it at the turn boundary.
+- [ ] Emit the exact Codex `client_metadata` request shape only on the approved
+  Codex profile; public Responses and incompatible profiles omit it.
 - [ ] Bind response anchors and Codex turn state to the opaque P2 credential
   identity. A mismatch fails before request construction rather than carrying
   account-scoped state into another account.
@@ -1819,6 +1847,36 @@ credential identity and cannot cross an account switch.
 - [ ] Preserve replayable reasoning for every supported anchor reset, or reject
   local replay and use server compaction/a semantically fresh thread. Never claim
   continuity after reconstructing a stored thread without its reasoning state.
+
+### First reviewable implementation slice: `TRANS-01`
+
+The returned provider stream owns its producer task. One crate-private stream
+wrapper owns the existing bounded receiver and producer task; dropping the
+stream aborts the producer. Both the Responses and OpenAI-compatible providers
+use the same wrapper. The public `ProviderStream` type, `StreamExecutor`, request
+types, retry behavior, and pre-existing channel capacity remain unchanged. This
+slice adds no production timeout, polling cadence, grace period, or other
+operational limit.
+
+Dropping the stream therefore cancels rate-limiter waits, response-header waits,
+429 sleeps, error-body drains, silent SSE reads, and blocked channel sends.
+User cancellation remains `Cancelled`, step timeout remains `TimedOut`, and a
+directly dropped stream emits no synthetic provider error. OAuth refresh workers
+retain their separate supervised lifecycle; only the abandoned request waiter is
+dropped.
+
+Focused evidence uses synchronized local raw-TCP fixtures, not sleeps or server
+task abortion, to prove producer completion and peer-observed socket closure
+while waiting for headers, reading silent SSE, draining an error body, and
+sleeping in 429 backoff. Parity coverage includes the compatible provider, real
+loop cancellation, real step timeout, and a primitive producer-task drop probe.
+Each of these concurrency/socket cases runs at least 20 times with the complete
+distribution retained.
+
+D3 and D8 remain open and therefore still block whole-P5 Gate A. `TRANS-01` is
+specified as an isolated first slice because it does not decide either policy;
+starting its source work before those decisions requires an explicit scoped
+owner disposition and cannot be represented as P5 Gate B completion.
 
 ### Phase-specific evidence
 
@@ -1836,6 +1894,8 @@ credential identity and cannot cross an account switch.
   identities, including explicit account selection and resumed sessions.
 - [ ] A conflicting second turn-state value follows a documented tested rule
   rather than silently replacing or leaking the first value.
+- [ ] Codex request fixtures prove the exact `client_metadata` shape and prove
+  its absence from public Responses and incompatible profiles.
 - [ ] A controllable local server promptly observes producer/socket termination on
   receiver drop, cancellation, and timeout, with no surviving task.
 - [ ] Compaction and anchor-reset tests show local and provider-visible history
@@ -1851,7 +1911,7 @@ credential identity and cannot cross an account switch.
 
 ## P6. Transport, retry, and usage
 
-**Status:** [ ] Not started; **findings closed:** `TRANS-02`, `USAGE-01`,
+**Status:** [ ] Not started; **findings owned:** `TRANS-02`, `USAGE-01`,
 `NF-3`, `NF-5`, `ROUTE-01`; **foundation for:** `CACHE-02`; **dependencies:**
 P5, D4, and D10.
 
@@ -1859,7 +1919,7 @@ P5, D4, and D10.
 
 HTTP and in-stream rate limits have different retry paths, mapped errors do not
 immediately stop the producer, and failed/missing/cache-write usage is discarded
-or collapsed to zero. P5 has already made cancellation own the producer; this
+or collapsed to zero. P5 must first make cancellation own the producer; this
 phase makes retry, terminal network shutdown, and attempt accounting consistent.
 It also records whether applicable current product terms and an authoritative
 product/contract interpretation permit account switching in response to
@@ -1916,7 +1976,8 @@ automatic rotation remains unsupported while P2 manual selection remains.
 ### Phase-specific evidence
 
 - [ ] A controllable local server promptly observes task/socket termination after
-  a mapped terminal error; P5 cancellation tests remain green.
+  a mapped terminal error; the P5 cancellation regressions remain green once
+  established.
 - [ ] No producer task remains after a mapped terminal event.
 - [ ] HTTP 429 and streamed `rate_limit_exceeded` consume the configured retry
   budget exactly once and honor provider `Retry-After` where applicable.
@@ -1942,7 +2003,7 @@ automatic rotation remains unsupported while P2 manual selection remains.
 
 ## P7. Request, schema, and model controls
 
-**Status:** [ ] Not started; **findings closed:** `MODEL-01`, `ROLE-02`,
+**Status:** [ ] Not started; **findings owned:** `MODEL-01`, `ROLE-02`,
 `TOOL-01`, `REQ-01`, `SCHEMA-01`, `STRUCT-01`; **dependencies:** P0-P2, P4,
 P6, and D5.
 
@@ -2020,7 +2081,7 @@ commands cannot invent provider history.
 
 ## P8. Prompt-cache measurement and policy
 
-**Status:** [ ] Not started; **findings closed:** `CACHE-01` through `CACHE-05`;
+**Status:** [ ] Not started; **findings owned:** `CACHE-01` through `CACHE-05`;
 **dependencies:** P4, P6, P7, D6, and D10.
 
 ### What this phase fixes
@@ -2110,7 +2171,7 @@ than inference.
 
 ## P9. Integrated conformance and release review
 
-**Status:** [ ] Not started; **findings closed:** all remaining integrated risk;
+**Status:** [ ] Not started; **closure scope:** all remaining integrated risk;
 **dependencies:** P0-P8 and D7.
 
 ### What this phase fixes
@@ -2187,6 +2248,7 @@ ledger prematurely.
 | P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and the bounded source fixture matrices are present | Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks; retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle | Record the historical missing-phase-base disposition, resolve the P1 dependency, run the live A/B/A validity experiment, execute and retain the complete candidate gates, then obtain P2 acceptance |
 | P3 | Combined canonical transcript/audio candidate through `0512953`, plus accepted D2 source `e9755fe`: all 28 public output discriminators and shipped non-audio nested/tool schemas have explicit validation and actionability; exact completed items and caller ownership drive derived views and survive persistence, exact second-request replay, representative real persistent spawn/fork, reload, and manager resume paths; strict format-2 storage and migration are accepted; response audio is retained as a response-scoped private sidecar linked without changing the format-2 assistant codec | Accepted D2 evidence remains as previously recorded. The [`response-audio handoff`](reviews/2026-07-17-p3-p4-response-audio-handoff.md) binds source `0512953` to a 9/9 source-bound gate with a disclosed test-only overlay, 100/100 repeated lifecycle observations, a complete 64-Rust-path LOC inventory, zero matches for the enumerated prohibited-addition policy, and unchanged D2 production codec hashes | Complete the exhaustive all-lifecycle matrix, retain the full-range final P3 evidence, then obtain protocol and persistence review |
 | P4 | Combined streaming/reconciliation/audio candidate through `0512953`, plus accepted D2 persistence source `e9755fe`: 53-event/28-item manifests, one authoritative validator per output discriminator, schema-before-capability ordering, 20 inert/6 executable/2 conditional classifications, identity-safe and frame-atomic completion, item-scoped image/MCP/code/search reconciliation, terminal parsing, refusal outcomes, hosted-search replay, append-only UI repair, and the four response-audio stream events with lossless private-artifact persistence | Accepted D2 evidence and the pre-audio source reviews remain as previously recorded. The [`response-audio handoff`](reviews/2026-07-17-p3-p4-response-audio-handoff.md) records the source-bound workspace gate and disclosed test-only overlay, focused suites, retained distributions, policy/LOC inventory, and consumer behavior | Complete the exhaustive lifecycle matrix, obtain independent P4 review, and close the final full-range phase gates; P6 separately owns usage-presence projection and retry-attempt UI cleanup |
+| P5 | Read-only current-state audit complete: Codex `store:false` and public threaded request shapes are distinct and stateless encrypted-reasoning replay exists; instruction resend and compaction-anchor invalidation are partial; producer ownership, `end_turn`, Codex turn state, credential-bound state, `client_metadata`, and D8 role authority are missing | The first `TRANS-01` slice and synchronized nine-case transport/cancellation evidence matrix are specified; no source or acceptance evidence exists | Obtain the scoped entry disposition if D3/D8 remain open; implement and review `TRANS-01`; then resolve the Codex turn overlay, D3 state/account binding, and D8 provenance/role contract before whole-phase gates |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|
