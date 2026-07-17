@@ -1,0 +1,233 @@
+{
+  "schema": "norn.response_audio.correction_gate.v1",
+  "generated_at": "2026-07-17T22:35:07Z",
+  "review": {
+    "commit": "50115bff5ba615dde9a02631fbc4ee1b3ef30d1b",
+    "verdict": "NOT READY",
+    "findings": [
+      "M-1",
+      "F-2"
+    ]
+  },
+  "source": {
+    "commit": "df47e9ed09a9e5241206d7ee7a8835f884c8f95c",
+    "tree": "c87706ee79bb633838e41f5c0a1ca36fe2104e77",
+    "rust_manifest_sha256": "f00ae24121da91e3b8844c4f2d374dbac0cfbf423e1117edb16c7610fe6ab365",
+    "frozen_committed_rust": true
+  },
+  "runner": {
+    "commit": "47270d89ca240524e1bdf6c8f985385f172dbc40",
+    "path": "docs/reviews/evidence/p3-p4-audio/run_response_audio_correction_gate.sh",
+    "observed_sha256": "7e3cb2a2b6755f567738cce82846a6162f5a548f93c97cf25277934ae091936f"
+  },
+  "environment": {
+    "toolchain": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo_target_directory": "/Users/tom/Developer/ablative/norn/target"
+  },
+  "result": "pass",
+  "gate_failures": 0,
+  "gates": [
+    {
+      "gate_id": "fmt",
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 fmt --all -- --check",
+      "started_at": "2026-07-17T22:33:49Z",
+      "finished_at": "2026-07-17T22:33:51Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": null,
+      "observed_passed": null,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "gate_id": "diff_check",
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target git diff --check 50115bff5ba615dde9a02631fbc4ee1b3ef30d1b df47e9ed09a9e5241206d7ee7a8835f884c8f95c",
+      "started_at": "2026-07-17T22:33:51Z",
+      "finished_at": "2026-07-17T22:33:51Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": null,
+      "observed_passed": null,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "gate_id": "clippy",
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked clippy --workspace --all-targets -- -D warnings",
+      "started_at": "2026-07-17T22:33:52Z",
+      "finished_at": "2026-07-17T22:33:54Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": null,
+      "observed_passed": null,
+      "output_sha256": "e20efcb6f8e75e095337bfb1bbf2d5fdb02ebeb94c8073dede1b9a5c8c368bd3"
+    },
+    {
+      "gate_id": "norn_lib",
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn --lib --no-fail-fast",
+      "started_at": "2026-07-17T22:33:54Z",
+      "finished_at": "2026-07-17T22:34:54Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 3994,
+      "observed_passed": 3994,
+      "output_sha256": "0698eda611b2de116710446fe7424f9c31a9c013bfae986199492912038c7fc7"
+    },
+    {
+      "gate_id": "response_reconciler",
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn response_reconciler --lib --no-fail-fast",
+      "started_at": "2026-07-17T22:34:54Z",
+      "finished_at": "2026-07-17T22:34:57Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 113,
+      "observed_passed": 113,
+      "output_sha256": "c844c78561eba51ee2e5debf7c56579c8bd503006ff573391e775821efbf42f3"
+    },
+    {
+      "gate_id": "response_audio",
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn response_audio --lib --no-fail-fast",
+      "started_at": "2026-07-17T22:34:57Z",
+      "finished_at": "2026-07-17T22:35:02Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 41,
+      "observed_passed": 41,
+      "output_sha256": "88c31a3370fc439be711dcb18ca11c0459a71ceae949bf4c25bd9f65adbef90c"
+    },
+    {
+      "gate_id": "m1_fixed_width",
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn frame_signatures_are_fixed_width_copy_values --lib --no-fail-fast",
+      "started_at": "2026-07-17T22:35:02Z",
+      "finished_at": "2026-07-17T22:35:02Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 1,
+      "observed_passed": 1,
+      "output_sha256": "53be7a89afd6cacc01ce5169efeac26cbad01566c3e13000962ce1e08de1f593"
+    },
+    {
+      "gate_id": "m1_value_equality",
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn frame_signatures_preserve_value_equality_and_cover_all_content --lib --no-fail-fast",
+      "started_at": "2026-07-17T22:35:02Z",
+      "finished_at": "2026-07-17T22:35:03Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 1,
+      "observed_passed": 1,
+      "output_sha256": "c11b2d41b7c2f5078a830c4c5a4725c837f14ca940404eeae9dcefe055b24978"
+    },
+    {
+      "gate_id": "m1_object_order",
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn reordered_object_keys_remain_an_identical_duplicate --lib --no-fail-fast",
+      "started_at": "2026-07-17T22:35:03Z",
+      "finished_at": "2026-07-17T22:35:04Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 1,
+      "observed_passed": 1,
+      "output_sha256": "9d4d892734aba72ffcc6a09976631030e150fd3aad0abe722647ceb58cce9ff5"
+    },
+    {
+      "gate_id": "m1_audio_duplicate_semantics",
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn audio_delta_exact_duplicate_is_idempotent_but_changed_payload_conflicts --lib --no-fail-fast",
+      "started_at": "2026-07-17T22:35:04Z",
+      "finished_at": "2026-07-17T22:35:04Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 1,
+      "observed_passed": 1,
+      "output_sha256": "eead546ff4a40bda75d3bb90009402a9baecac4fff6d798a5afe0c9cd6ec57bc"
+    },
+    {
+      "gate_id": "f2_resume_diagnostic",
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn resume_preserves_duplicate_audio_artifact_reference_diagnostic --lib --no-fail-fast",
+      "started_at": "2026-07-17T22:35:04Z",
+      "finished_at": "2026-07-17T22:35:05Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 1,
+      "observed_passed": 1,
+      "output_sha256": "752d5431111b570fa70f4049cb9782c1bee31e85e10ccc3410933bac91dd978f"
+    },
+    {
+      "gate_id": "f2_fork_diagnostic",
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 --locked test -p norn fork_preserves_response_audio_link_order_diagnostic --lib --no-fail-fast",
+      "started_at": "2026-07-17T22:35:05Z",
+      "finished_at": "2026-07-17T22:35:06Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 1,
+      "observed_passed": 1,
+      "output_sha256": "d644909fbd875c32f0f8456afd04de8382f9eb1837beea6b5ec99a9365b2d54b"
+    }
+  ],
+  "correction_scope": {
+    "result": "pass",
+    "changed_rust_paths": 9,
+    "complete_diff_paths": 9,
+    "complete_diff_inventory_encoding": "NUL-delimited git diff --name-only -z",
+    "complete_diff_inventory_sha256": "6b0800774e74fdd80661cd5331bcf5d2478ca4f927519a3ffd32fe61a33602b2",
+    "complete_diff_inventory": [
+      "crates/norn/src/provider/openai/response_reconciler.rs",
+      "crates/norn/src/provider/openai/response_reconciler/frame_signature.rs",
+      "crates/norn/src/provider/openai/response_reconciler/tests/audio.rs",
+      "crates/norn/src/provider/openai/response_reconciler/tests/sequence.rs",
+      "crates/norn/src/session/manager/open.rs",
+      "crates/norn/src/session/persistence/publication_audio_links.rs",
+      "crates/norn/src/session/persistence/publication_audio_tests.rs",
+      "crates/norn/src/session/persistence/types.rs",
+      "crates/norn/src/session/response_audio_lifecycle_tests.rs"
+    ],
+    "prohibited_added_line_matches": 0
+  },
+  "production_loc": {
+    "method": "prefix before first exact #[cfg(test)]",
+    "violations_at_or_above_500": [],
+    "inventory": [
+      {
+        "path": "crates/norn/src/provider/openai/response_reconciler.rs",
+        "source_sha256": "9da5a2e46b3044fd2bdf562508dbf0f67560dd95d8b5f12647f66cb4eea85cff",
+        "production_loc": 492
+      },
+      {
+        "path": "crates/norn/src/provider/openai/response_reconciler/frame_signature.rs",
+        "source_sha256": "fa71999f3a2f7d7c044de1387bda4d1f0a7d70e5c409e5b87fd0b1a2a5f79825",
+        "production_loc": 70
+      },
+      {
+        "path": "crates/norn/src/provider/openai/response_reconciler/tests/audio.rs",
+        "source_sha256": "3d3743960806e5e29d986734c69ed95e821e4357d99c1b0de6963fde3a4a5663",
+        "production_loc": 205
+      },
+      {
+        "path": "crates/norn/src/provider/openai/response_reconciler/tests/sequence.rs",
+        "source_sha256": "cfc77f64c2e809a3890eea39151ff64b3c3885cd3f02da23bed1bda26a941e70",
+        "production_loc": 164
+      },
+      {
+        "path": "crates/norn/src/session/manager/open.rs",
+        "source_sha256": "71c581608d8386a50ddb63954f17f8d8f6976d8b9b996bc7f79f58426b778eb8",
+        "production_loc": 288
+      },
+      {
+        "path": "crates/norn/src/session/persistence/publication_audio_links.rs",
+        "source_sha256": "42856fb61e698e80a511e88b95328b52f8e65ef841657703cb9998b73ea19c75",
+        "production_loc": 83
+      },
+      {
+        "path": "crates/norn/src/session/persistence/publication_audio_tests.rs",
+        "source_sha256": "708ac89afeb1672c2d5f554a356ad788fb64a4273a8660e7755788ae96ab49b9",
+        "production_loc": 495
+      },
+      {
+        "path": "crates/norn/src/session/persistence/types.rs",
+        "source_sha256": "bdf7788959c3a6c06da11321ec6b1be2ae925f5ffca463d061aa3fc8ea595d7b",
+        "production_loc": 498
+      },
+      {
+        "path": "crates/norn/src/session/response_audio_lifecycle_tests.rs",
+        "source_sha256": "874ada80fe8da53873e5386fb28e4001a4cbc4366d5d488c21137b2850729070",
+        "production_loc": 292
+      }
+    ]
+  }
+}
