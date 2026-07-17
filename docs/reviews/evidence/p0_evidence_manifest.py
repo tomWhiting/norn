@@ -9,7 +9,7 @@ EVIDENCE_SELF_TEST_MODULES: Final = (
     "test_p0_test_output.py",
 )
 # Updated deliberately whenever the pinned module inventory changes.
-EVIDENCE_SELF_TEST_COUNT: Final = 43
+EVIDENCE_SELF_TEST_COUNT: Final = 44
 
 
 DOCTEST_NAMES: Final = (

@@ -17,6 +17,7 @@ import p0_evidence_paths as paths
 import p0_evidence_policy as policy_contract
 import p0_evidence_support as support
 import p0_evidence_toolchain as toolchain_support
+import p0_policy_rust as policy_rust
 
 
 SHA256 = "0" * 64
@@ -372,6 +373,21 @@ class PolicyContractTests(unittest.TestCase):
         self.assertEqual(result, {"error": "policy_read_failed"})
         self.assertFalse(passed)
         self.assertFalse(disclosure.contains_absolute_path(result))
+
+
+class PolicyRustCfgTests(unittest.TestCase):
+    def test_non_item_test_cfg_is_retained_conservatively(self) -> None:
+        evidence_root = Path(__file__).resolve().parent
+        repository = evidence_root.parents[2]
+        source = evidence_root / "fixtures/cfg_test/non_item.rs"
+        rule = evidence_root / "p0-rust-items.yml"
+
+        ranges, _modules = policy_rust.test_only_ranges(repository, rule, source)
+        stripped = policy_rust.strip_ranges(source.read_text(encoding="utf-8"), ranges)
+
+        self.assertIn("test_only_statement();", stripped)
+        self.assertIn("trailing_test_only_statement();", stripped)
+        self.assertNotIn("fn test_only_item", stripped)
 
 
 if __name__ == "__main__":

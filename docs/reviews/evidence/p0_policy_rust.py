@@ -182,14 +182,17 @@ def test_only_ranges(
         attr_start, attr_end = _byte_range(attribute)
         item = next((entry for entry in items if entry[0][0] >= attr_end), None)
         if item is None:
-            raise RuntimeError(f"{source}: cfg(test) has no following Rust item")
+            # The attribute can decorate a trailing statement, field, or
+            # parameter. Retain it rather than understating production LOC.
+            continue
         (item_start, item_end), item_text = item
         gap = data[attr_end:item_start].decode("utf-8")
         residue = re.sub(r"#\[[^\]]*\]", "", gap, flags=re.DOTALL).strip()
         if residue:
-            raise RuntimeError(
-                f"{source}: non-attribute text between cfg(test) and item: {residue!r}"
-            )
+            # A cfg may decorate a statement, field, or parameter that is not in
+            # the item inventory. Retaining it makes the production count a
+            # conservative upper bound instead of misclassifying a later item.
+            continue
         ranges.append((attr_start, item_end))
         if re.fullmatch(
             r"(?:pub(?:\([^)]*\))?\s+)?mod\s+[A-Za-z_][A-Za-z0-9_]*\s*;", item_text
