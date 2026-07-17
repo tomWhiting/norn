@@ -1605,6 +1605,45 @@ mod tests {
             stop_reason: "end_turn".to_owned(),
             response_id: Some("resp_fork_inherited".to_owned()),
         })?;
+        let inherited_audio_reference = {
+            let audio_store = parent_store
+                .response_audio()
+                .ok_or_else(|| std::io::Error::other("persistent parent audio store is missing"))?;
+            let mut writer = audio_store.begin(1)?;
+            let raw =
+                crate::provider::openai::response_stream_event::ResponseStreamEvent::from_raw(
+                    json!({
+                        "type": "response.audio.delta",
+                        "sequence_number": 1,
+                        "delta": "aW5oZXJpdGVkIGZvcmsgYXVkaW8=",
+                    }),
+                )?;
+            let event =
+                crate::provider::response_audio::ResponseAudioEvent::from_stream_event(&raw)?
+                    .ok_or_else(|| std::io::Error::other("fork audio fixture was not audio"))?;
+            writer.append(&raw, &event)?;
+            writer.seal(Some("resp_fork_inherited_audio"))?
+        };
+        let audio_link_base = EventBase::new(parent_store.last_event_id());
+        let audio_assistant_base = EventBase::new(Some(audio_link_base.id.clone()));
+        let audio_link = crate::session::ResponseAudioArtifactLink::new(
+            audio_assistant_base.id.clone(),
+            inherited_audio_reference,
+            Some("resp_fork_inherited_audio".to_owned()),
+        )
+        .into_custom_event(audio_link_base)?;
+        parent_store.append(audio_link)?;
+        parent_store.append(SessionEvent::AssistantMessage {
+            response_items: Vec::new(),
+            base: audio_assistant_base,
+            content: String::new(),
+            thinking: String::new(),
+            reasoning: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: EventUsage::default(),
+            stop_reason: "end_turn".to_owned(),
+            response_id: Some("resp_fork_inherited_audio".to_owned()),
+        })?;
         parent_store.checkpoint()?;
         let binding = Arc::new(SessionBinding::persistent_root(
             Arc::new(SessionBrancher::new(
@@ -1747,6 +1786,18 @@ mod tests {
             inherited_items,
             "SessionManager::resume must retain the fork's inherited canonical history",
         );
+        let inherited_audio_link = crate::session::response_audio_artifact_links(&resumed_events)?
+            .into_iter()
+            .find(|link| link.reference() == inherited_audio_reference)
+            .ok_or_else(|| std::io::Error::other("fork did not inherit its parent audio link"))?;
+        let inherited_audio = resumed
+            .store
+            .response_audio()
+            .ok_or_else(|| std::io::Error::other("resumed fork audio store is missing"))?
+            .read_linked(&inherited_audio_link)?;
+        assert_eq!(inherited_audio.audio, b"inherited fork audio");
+        assert_eq!(inherited_audio.owner_session_id, root_id);
+        assert_eq!(inherited_audio.owner_generation, root_entry.generation);
         let replay_input = stateless_payload_input(&resumed_events)?;
         let mut expected_replay = inherited_items;
         expected_replay.extend([

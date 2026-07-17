@@ -117,15 +117,26 @@ fn deltas_after_their_own_done_marker_fail_typed() -> TestResult {
 }
 
 #[test]
-fn malformed_audio_payloads_fail_typed() {
-    let mut missing = ResponseReconciler::new();
-    assert_eq!(
-        missing.ingest(&event("response.audio.delta", 1, json!({}))),
-        Err(ResponseReconciliationError::InvalidEnvelopeField {
-            event_type: "response.audio.delta",
-            field: "delta",
-        })
-    );
+fn malformed_audio_and_transcript_delta_payloads_fail_typed() {
+    for event_type in ["response.audio.delta", "response.audio.transcript.delta"] {
+        let mut missing = ResponseReconciler::new();
+        assert_eq!(
+            missing.ingest(&event(event_type, 1, json!({}))),
+            Err(ResponseReconciliationError::InvalidEnvelopeField {
+                event_type,
+                field: "delta",
+            })
+        );
+
+        let mut non_string = ResponseReconciler::new();
+        assert_eq!(
+            non_string.ingest(&event(event_type, 1, json!({"delta": 42}))),
+            Err(ResponseReconciliationError::InvalidEnvelopeField {
+                event_type,
+                field: "delta",
+            })
+        );
+    }
 
     let mut invalid = ResponseReconciler::new();
     assert_eq!(

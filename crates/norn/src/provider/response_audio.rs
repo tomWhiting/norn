@@ -265,21 +265,30 @@ mod tests {
     }
 
     #[test]
-    fn invalid_delta_shapes_and_base64_are_typed() -> TestResult {
-        let missing = ResponseStreamEvent::from_sse(
-            AUDIO_DELTA,
-            json!({"type": AUDIO_DELTA, "sequence_number": 1}),
-        )?;
-        assert_eq!(
-            ResponseAudioEvent::from_stream_event(&missing),
-            Err(ResponseAudioEventError::InvalidDelta {
-                event_type: AUDIO_DELTA,
-            })
-        );
+    fn invalid_delta_shapes_and_audio_base64_are_typed() -> TestResult {
+        for event_type in [AUDIO_DELTA, TRANSCRIPT_DELTA] {
+            let missing = ResponseStreamEvent::from_sse(
+                event_type,
+                json!({"type": event_type, "sequence_number": 1}),
+            )?;
+            assert_eq!(
+                ResponseAudioEvent::from_stream_event(&missing),
+                Err(ResponseAudioEventError::InvalidDelta { event_type })
+            );
+
+            let non_string = ResponseStreamEvent::from_sse(
+                event_type,
+                json!({"type": event_type, "sequence_number": 2, "delta": 42}),
+            )?;
+            assert_eq!(
+                ResponseAudioEvent::from_stream_event(&non_string),
+                Err(ResponseAudioEventError::InvalidDelta { event_type })
+            );
+        }
 
         let invalid = ResponseStreamEvent::from_sse(
             AUDIO_DELTA,
-            json!({"type": AUDIO_DELTA, "sequence_number": 2, "delta": "***"}),
+            json!({"type": AUDIO_DELTA, "sequence_number": 3, "delta": "***"}),
         )?;
         assert!(matches!(
             ResponseAudioEvent::from_stream_event(&invalid),
