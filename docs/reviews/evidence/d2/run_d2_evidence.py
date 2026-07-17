@@ -416,7 +416,7 @@ def cargo_target_dir(root: Path, requested: Path | None) -> Path:
     target = root / "target" if requested is None else requested
     if not target.is_absolute():
         target = root / target
-    return target.resolve()
+    return Path(os.path.abspath(target))
 
 
 def write_json(output: Path, payload: dict[str, object]) -> None:
@@ -460,6 +460,7 @@ def main() -> int:
         "toolchain": tool_metadata(root, environment),
         "execution_environment": {
             "cargo_target_dir": str(target_dir),
+            "cargo_target_dir_resolved": str(target_dir.resolve()),
             "cargo_incremental": "cargo_default",
             "removed_ambient_build_variables": removed_environment,
         },
