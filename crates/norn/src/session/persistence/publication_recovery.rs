@@ -7,8 +7,8 @@ use crate::util::{PrivateEntryKind, PrivateRoot};
 
 use super::SessionPersistError;
 use super::names::{
-    journal_id, journal_path, journal_temp_id, journal_temp_path, timeline_stage_id,
-    timeline_stage_path,
+    audio_stage_id, audio_stage_path, journal_id, journal_path, journal_temp_id, journal_temp_path,
+    timeline_stage_id, timeline_stage_path,
 };
 use super::publication_conflict::conflict;
 
@@ -36,6 +36,7 @@ pub(super) fn inventory_and_remove_orphans(
     let mut journal_ids = BTreeSet::new();
     let mut journal_temps = Vec::new();
     let mut timeline_stages = Vec::new();
+    let mut audio_stages = Vec::new();
 
     for entry in root.read_dir(Path::new(""))? {
         let artifact = if let Some(id) = journal_id(&entry.name) {
@@ -47,11 +48,14 @@ pub(super) fn inventory_and_remove_orphans(
         } else if let Some(id) = timeline_stage_id(&entry.name) {
             timeline_stages.push(id.clone());
             Some((id, ArtifactKind::TimelineStage))
+        } else if let Some(id) = audio_stage_id(&entry.name) {
+            audio_stages.push(id.clone());
+            Some((id, ArtifactKind::AudioStage))
         } else {
             None
         };
         if let Some((id, kind)) = artifact
-            && entry.kind != PrivateEntryKind::File
+            && entry.kind != kind.expected_entry_kind()
         {
             return Err(conflict(&id, kind.non_file_reason()));
         }
@@ -67,6 +71,12 @@ pub(super) fn inventory_and_remove_orphans(
     for id in timeline_stages {
         if !journal_ids.contains(&id) {
             remove_owned(root, &timeline_stage_path(&id))?;
+            removed_orphans = true;
+        }
+    }
+    for id in audio_stages {
+        if !journal_ids.contains(&id) {
+            remove_owned_directory(root, &audio_stage_path(&id))?;
             removed_orphans = true;
         }
     }
@@ -86,6 +96,7 @@ pub(super) fn allocate_transaction_id(root: &PrivateRoot) -> Result<String, Sess
         if !root.regular_file_exists(&journal_path(&transaction_id))?
             && !root.regular_file_exists(&journal_temp_path(&transaction_id))?
             && !root.regular_file_exists(&timeline_stage_path(&transaction_id))?
+            && !top_level_entry_exists(root, &audio_stage_path(&transaction_id))?
         {
             return Ok(transaction_id);
         }
@@ -108,14 +119,40 @@ fn remove_owned(root: &PrivateRoot, path: &Path) -> Result<(), SessionPersistErr
     }
 }
 
+fn remove_owned_directory(root: &PrivateRoot, path: &Path) -> Result<(), SessionPersistError> {
+    match root.remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn top_level_entry_exists(root: &PrivateRoot, path: &Path) -> Result<bool, SessionPersistError> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("publication artifact has no file name"))?;
+    Ok(root
+        .read_dir(Path::new(""))?
+        .iter()
+        .any(|entry| entry.name.as_os_str() == name))
+}
+
 #[derive(Clone, Copy, Debug)]
 enum ArtifactKind {
     Journal,
     JournalTemporary,
     TimelineStage,
+    AudioStage,
 }
 
 impl ArtifactKind {
+    const fn expected_entry_kind(self) -> PrivateEntryKind {
+        match self {
+            Self::AudioStage => PrivateEntryKind::Directory,
+            Self::Journal | Self::JournalTemporary | Self::TimelineStage => PrivateEntryKind::File,
+        }
+    }
+
     const fn non_file_reason(self) -> &'static str {
         match self {
             Self::Journal => "the owned publication-journal name is not a regular file",
@@ -124,6 +161,9 @@ impl ArtifactKind {
             }
             Self::TimelineStage => {
                 "the owned publication timeline-stage name is not a regular file"
+            }
+            Self::AudioStage => {
+                "the owned publication response-audio stage name is not a directory"
             }
         }
     }

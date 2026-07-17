@@ -61,3 +61,4 @@ include!("tests/lifecycle.rs");
 include!("tests/open_id.rs");
 include!("tests/admin.rs");
 include!("tests/resume_policy.rs");
+include!("tests/fork_audio.rs");

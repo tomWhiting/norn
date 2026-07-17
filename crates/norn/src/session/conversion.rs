@@ -259,6 +259,42 @@ mod tests {
         );
     }
 
+    #[test]
+    fn response_audio_link_custom_event_is_not_replayed_to_provider_messages() {
+        let reference: crate::session::ResponseAudioArtifactRef =
+            serde_json::from_value(serde_json::json!("123e4567-e89b-42d3-a456-426614174000"))
+                .expect("valid UUID reference");
+        let link_base = EventBase::new(None);
+        let assistant_base = EventBase::new(Some(link_base.id.clone()));
+        let link = crate::session::ResponseAudioArtifactLink::new(
+            assistant_base.id.clone(),
+            reference,
+            Some("resp_audio".to_owned()),
+        )
+        .into_custom_event(link_base)
+        .expect("serialize typed link");
+        let events = vec![
+            link,
+            SessionEvent::AssistantMessage {
+                response_items: Vec::new(),
+                base: assistant_base,
+                content: "answer".to_owned(),
+                thinking: String::new(),
+                reasoning: Vec::new(),
+                tool_calls: Vec::new(),
+                usage: EventUsage::default(),
+                stop_reason: "end_turn".to_owned(),
+                response_id: Some("resp_audio".to_owned()),
+            },
+        ];
+
+        let messages = events_to_messages(&events);
+        assert_eq!(messages.len(), 1);
+        let encoded = serde_json::to_string(&messages[0]).expect("serialize message");
+        assert!(!encoded.contains("response_audio"));
+        assert!(!encoded.contains(&reference.to_string()));
+    }
+
     /// A legacy `AssistantMessage` event without a `reasoning` field (and
     /// any event captured before the field existed) rebuilds with an empty
     /// reasoning set — no panic, no phantom items.

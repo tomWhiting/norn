@@ -58,6 +58,7 @@ pub mod loop_context;
 pub mod notifications;
 mod numeric;
 mod programmatic_calling;
+mod response_audio_capture;
 
 pub mod retry;
 mod rule_wiring;
@@ -65,6 +66,7 @@ pub mod runner;
 pub mod schema;
 mod stop_records;
 mod summarization;
+mod timeout_state;
 mod tool_dispatch;
 mod tool_result_repair;
 
@@ -75,3 +77,9 @@ mod canonical_tool_resolution_tests;
 
 #[cfg(test)]
 mod caller_propagation_tests;
+
+#[cfg(test)]
+mod classify_audio_tests;
+
+#[cfg(test)]
+mod response_audio_end_to_end_tests;

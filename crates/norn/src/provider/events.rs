@@ -3,6 +3,7 @@
 use super::openai::response_stream_event::ResponseStreamEvent;
 use super::reasoning::ReasoningItem;
 use super::request::ToolCallKind;
+use super::response_audio::ResponseAudioEvent;
 use super::response_item::ResponseTranscriptItem;
 use super::usage::Usage;
 use crate::error::ProviderError;
@@ -34,6 +35,21 @@ pub enum ProviderEvent {
     ResponseStreamEvent {
         /// Validated envelope retaining the exact provider JSON.
         event: Box<ResponseStreamEvent>,
+    },
+
+    /// One validated response-scoped audio or audio-transcript frame.
+    ///
+    /// The lossless [`ResponseStreamEvent`](Self::ResponseStreamEvent) is
+    /// emitted first. This typed projection is emitted only after response-level
+    /// lifecycle validation accepts the frame; exact duplicate sequences remain
+    /// raw-observable but do not produce a second actionable audio frame. The
+    /// source envelope is repeated here so persistence does not depend on event
+    /// adjacency in downstream queues.
+    ResponseAudioFrame {
+        /// Exact validated envelope from which the typed event was decoded.
+        stream_event: Box<ResponseStreamEvent>,
+        /// Typed event carrying decoded bytes or transcript text.
+        event: ResponseAudioEvent,
     },
 
     /// A chunk of text content from the model.

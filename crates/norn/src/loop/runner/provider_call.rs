@@ -4,7 +4,7 @@
 
 use serde_json::Value;
 
-use crate::error::{HookType, NornError};
+use crate::error::{HookType, NornError, SessionError};
 use crate::integration::hooks::{HookOutcome, LlmCallSummary};
 use crate::r#loop::assembly::AssembledResponse;
 use crate::r#loop::classify::call_provider_with_retry;
@@ -14,6 +14,7 @@ use crate::r#loop::iteration::evaluate_iteration;
 use crate::r#loop::programmatic_calling::validate_programmatic_callers;
 use crate::provider::events::StopReason;
 use crate::provider::request::{AssistantToolCall, Message, MessageRole, ProviderRequest};
+use crate::session::ResponseAudioArtifactLink;
 use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
 
 use super::machine::{StepFlow, StepMachine, StepState};
@@ -54,6 +55,7 @@ impl StepMachine<'_> {
                 // content recoverable for the exit path's
                 // `loop.partial_output` record (Gap 7).
                 Some(&self.timeout_state),
+                self.store.response_audio(),
             );
             match self.cancel.as_ref() {
                 Some(token) => tokio::select! {
@@ -154,11 +156,38 @@ impl StepMachine<'_> {
             Some(content.clone())
         };
 
+        let parent_id = self.store.last_event_id();
+        let (assistant_base, audio_link_event) = match response.response_audio {
+            Some(reference) => {
+                let link_base = EventBase::new(parent_id);
+                let assistant_base = EventBase::new(Some(link_base.id.clone()));
+                let link = ResponseAudioArtifactLink::new(
+                    assistant_base.id.clone(),
+                    reference,
+                    response.response_id.clone(),
+                );
+                let event = link.into_custom_event(link_base).map_err(|_source| {
+                    SessionError::StorageError {
+                        reason: "failed to encode the response-audio artifact link".to_owned(),
+                    }
+                })?;
+                (assistant_base, Some(event))
+            }
+            None => (EventBase::new(parent_id), None),
+        };
+
+        // Persist the sealed-artifact association first. A crash between the
+        // two appends leaves an explicit orphan precursor; it cannot leave a
+        // durable assistant turn whose audio association vanished silently.
+        if let Some(link_event) = audio_link_event {
+            append_and_notify(self.store, link_event, self.loop_context.hooks.as_deref()).await?;
+        }
+
         append_and_notify(
             self.store,
             SessionEvent::AssistantMessage {
                 response_items: response.response_items.clone(),
-                base: EventBase::new(self.store.last_event_id()),
+                base: assistant_base,
                 content,
                 thinking: thinking.clone(),
                 // Persist the captured reasoning items so a resumed session

@@ -299,7 +299,7 @@ async fn run_agent_step_common(
     // timeout branch has dropped that future.
     let step_budget = request.config.step_timeout;
     let max_iterations = request.config.max_iterations;
-    let result = if let Some(budget) = step_budget {
+    let mut result = if let Some(budget) = step_budget {
         let inner = run_agent_step_inner(
             request,
             Arc::clone(&timeout_state),
@@ -312,18 +312,21 @@ async fn run_agent_step_common(
         } else {
             let snapshot = timeout_state.lock();
             let in_flight_output = snapshot.in_flight_partial.as_ref().and_then(|partial| {
-                if partial.text.is_empty() {
-                    partial.refusal.clone()
-                } else {
-                    Some(partial.text.clone())
+                if !partial.text.is_empty() {
+                    return Some(Value::String(partial.text.clone()));
                 }
+                if let Some(refusal) = partial.refusal.clone() {
+                    return Some(Value::String(refusal));
+                }
+                partial
+                    .response_audio
+                    .map(|reference| serde_json::json!({"response_audio": reference}))
             });
             Ok(AgentStepResult::TimedOut {
                 elapsed: started.elapsed(),
                 iterations: snapshot.iterations,
                 partial_output: in_flight_output
-                    .or_else(|| snapshot.last_assistant_text.clone())
-                    .map(Value::String),
+                    .or_else(|| snapshot.last_assistant_text.clone().map(Value::String)),
                 usage: snapshot.usage.clone(),
                 children_usage: children_usage.snapshot(),
             })
@@ -380,7 +383,7 @@ async fn run_agent_step_common(
             step_timeout: step_budget,
             max_iterations,
         },
-        &result,
+        &mut result,
     )
     .await;
     // Update messages the sender was told were delivered buffer until a

@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 
 use thiserror::Error;
 
+use crate::provider::response_audio::ResponseAudioEvent;
 use crate::provider::response_item::ResponseTranscriptItem;
 
 /// Stable identity of one item within a response output.
@@ -101,6 +102,11 @@ pub struct DeltaReconciliation {
 pub enum ReconcileUpdate {
     /// A relevant frame changed reconciliation state.
     Accepted,
+    /// One validated response-scoped audio frame is ready for projection.
+    ResponseAudio {
+        /// Typed audio event with decoded media or transcript content.
+        event: ResponseAudioEvent,
+    },
     /// A known or future frame required no reconciliation state.
     Ignored,
     /// An identical frame with the same sequence number was already applied.
@@ -168,9 +174,21 @@ pub enum ResponseReconciliationError {
     /// A pinned public event had no reconciliation-role entry.
     #[error("pinned Responses event had no reconciliation role")]
     UnclassifiedPublicEvent,
-    /// Response-scoped audio cannot be persisted by the current transcript.
-    #[error("Responses stream media is not yet supported end to end")]
-    UnsupportedResponseMedia,
+    /// An audio delta was not independently valid standard Base64.
+    #[error("response.audio.delta carried invalid Base64 audio data")]
+    InvalidAudioDeltaBase64,
+    /// An audio delta arrived after the audio channel completed.
+    #[error("response.audio.delta followed response.audio.done")]
+    AudioDeltaAfterDone,
+    /// A second audio completion used a new stream sequence.
+    #[error("response.audio.done occurred more than once")]
+    RepeatedAudioDone,
+    /// A transcript delta arrived after the transcript channel completed.
+    #[error("response.audio.transcript.delta followed response.audio.transcript.done")]
+    AudioTranscriptDeltaAfterDone,
+    /// A second transcript completion used a new stream sequence.
+    #[error("response.audio.transcript.done occurred more than once")]
+    RepeatedAudioTranscriptDone,
     /// A required envelope field was absent or had the wrong type.
     #[error("{event_type} missing or invalid {field}")]
     InvalidEnvelopeField {

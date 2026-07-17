@@ -20,6 +20,7 @@ use crate::error::ProviderError;
 use crate::provider::events::ProviderEvent;
 use crate::provider::exec::{SseEventMapper, StreamExecutor};
 use crate::provider::request::ProviderRequest;
+use crate::provider::response_audio::is_response_audio_event;
 
 /// Per-request sender state cloned out of the provider.
 pub(super) struct SenderProvider {
@@ -95,6 +96,8 @@ impl SseEventMapper for ResponsesMapper {
             }
         };
         let manifest = envelope.manifest();
+        let audio_source =
+            is_response_audio_event(envelope.event_type()).then(|| Box::new(envelope.clone()));
         let mut mapped = vec![Ok(ProviderEvent::ResponseStreamEvent {
             event: Box::new(envelope),
         })];
@@ -120,9 +123,6 @@ impl SseEventMapper for ResponsesMapper {
                     | ResponseReconciliationError::UnsupportedExecutableItem { .. } => {
                         ProviderError::UnsupportedResponseItem
                     }
-                    ResponseReconciliationError::UnsupportedResponseMedia => {
-                        ProviderError::UnsupportedResponseMedia
-                    }
                     _ => ProviderError::ResponseProtocolViolation { source: error },
                 };
                 self.finish();
@@ -140,6 +140,20 @@ impl SseEventMapper for ResponsesMapper {
             return mapped;
         }
 
+        if let ReconcileUpdate::ResponseAudio { event } = &update {
+            let Some(stream_event) = audio_source else {
+                self.finish();
+                mapped.push(Err(ProviderError::ResponseProtocolViolation {
+                    source: ResponseReconciliationError::UnclassifiedPublicEvent,
+                }));
+                return mapped;
+            };
+            mapped.push(Ok(ProviderEvent::ResponseAudioFrame {
+                stream_event,
+                event: event.clone(),
+            }));
+        }
+
         if let Err(error) = append_reconciliation_repairs(&update, &mut mapped) {
             self.finish();
             mapped.push(Err(error));
@@ -155,6 +169,7 @@ impl SseEventMapper for ResponsesMapper {
         let terminal_items = match &update {
             ReconcileUpdate::Terminal { items, .. } => Some(items.as_slice()),
             ReconcileUpdate::Accepted
+            | ReconcileUpdate::ResponseAudio { .. }
             | ReconcileUpdate::Ignored
             | ReconcileUpdate::DuplicateSequence { .. }
             | ReconcileUpdate::DuplicateCompletion { .. }
@@ -245,6 +260,7 @@ fn append_reconciliation_repairs(
             Ok(())
         }
         ReconcileUpdate::Accepted
+        | ReconcileUpdate::ResponseAudio { .. }
         | ReconcileUpdate::Ignored
         | ReconcileUpdate::DuplicateSequence { .. }
         | ReconcileUpdate::DuplicateCompletion { .. }

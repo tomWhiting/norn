@@ -15,6 +15,7 @@ use crate::session::persistence::{
 };
 use crate::session::spool::SpoolWriter;
 use crate::session::store::{DurabilityPolicy, EventStore, JsonlSink};
+use crate::session::{ResponseAudioStore, referenced_response_audio_artifacts};
 
 use super::resume_policy::{authorize_resume, ensure_migrated_epoch_boundary, lock_migrated_epoch};
 use super::{CreateSessionOptions, OpenSession, ReplaySummary, ResumePolicy, SessionManager};
@@ -151,6 +152,12 @@ impl SessionManager {
             durability,
             self.index_lock_deadline,
         ));
+        store.attach_response_audio(ResponseAudioStore::for_session(
+            &self.data_dir,
+            &entry,
+            durability,
+            self.index_lock_deadline,
+        ));
         Ok(OpenSession {
             store,
             entry,
@@ -171,6 +178,12 @@ impl SessionManager {
             entry,
             self.index_lock_deadline,
         )?;
+        referenced_response_audio_artifacts(&artifacts.events).map_err(|_error| {
+            SessionPersistError::InvalidResponseAudioArtifact {
+                artifact_id: "<transcript>".to_owned(),
+                reason: "the transcript response-audio association was invalid",
+            }
+        })?;
         let entry = revalidate_registered_entry(&self.data_dir, entry, self.index_lock_deadline)?;
         let actual_count = u64::try_from(artifacts.events.len()).map_err(|error| {
             SessionPersistError::EventStore(format!(
@@ -196,6 +209,12 @@ impl SessionManager {
         };
         let mut store = EventStore::with_sink_and_events(Box::new(sink), artifacts.events);
         store.attach_spool(SpoolWriter::for_session(
+            &self.data_dir,
+            &entry,
+            durability,
+            self.index_lock_deadline,
+        ));
+        store.attach_response_audio(ResponseAudioStore::for_session(
             &self.data_dir,
             &entry,
             durability,

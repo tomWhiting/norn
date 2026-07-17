@@ -40,7 +40,9 @@ pub(crate) use codec::{index_file_path, write_index_atomic};
 pub(crate) use deletion::delete_session_transaction;
 #[cfg(test)]
 pub(crate) use deletion::{DeleteCheckpoint, delete_session_transaction_with_hook};
-pub(crate) use publication::{publish_new_child_session, publish_new_session};
+pub(crate) use publication::{
+    publish_new_child_session, publish_new_fork_session, publish_new_session,
+};
 pub use resolve::{resolve_latest_session_in_working_dir, resolve_session};
 pub(crate) use resolve::{
     resolve_latest_session_in_working_dir_with_deadline, resolve_session_with_deadline,

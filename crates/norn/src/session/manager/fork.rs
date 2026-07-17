@@ -1,9 +1,10 @@
 use uuid::Uuid;
 
+use crate::session::ResponseAudioStore;
 use crate::session::branch::ROOT_PATH_ADDRESS;
 use crate::session::events::{ChildBranchKind, EventBase, SessionEvent};
 use crate::session::persistence::index::{
-    publish_new_session, resolve_latest_session_in_working_dir_with_deadline,
+    publish_new_fork_session, resolve_latest_session_in_working_dir_with_deadline,
     resolve_session_with_deadline, revalidate_registered_entry,
 };
 use crate::session::persistence::read_session_events_for_entry_with_deadline;
@@ -111,10 +112,11 @@ impl SessionManager {
             parent_event_anchor: Some(last_event_id),
             kind: ChildBranchKind::Fork,
         });
-        let entry = publish_new_session(
+        let entry = publish_new_fork_session(
             &self.data_dir,
             &new_entry,
             &events,
+            source_entry,
             self.index_lock_deadline,
         )?;
         let sink = JsonlSink::open_registered(
@@ -128,6 +130,12 @@ impl SessionManager {
         };
         let mut store = EventStore::with_sink_and_events(Box::new(sink), events);
         store.attach_spool(SpoolWriter::for_session(
+            &self.data_dir,
+            &entry,
+            durability,
+            self.index_lock_deadline,
+        ));
+        store.attach_response_audio(ResponseAudioStore::for_session(
             &self.data_dir,
             &entry,
             durability,

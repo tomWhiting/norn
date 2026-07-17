@@ -20,6 +20,7 @@ pub use self::request::{
     AssistantToolCall, Message, MessageRole, ProviderConfig, ProviderOptions, ProviderRequest,
     ReasoningEffort, ReasoningSummary, SecretString, ServiceTier, ToolCallCaller, ToolDefinition,
 };
+pub use self::response_audio::{ResponseAudioEvent, ResponseAudioEventError};
 pub use self::response_item::{
     OpaqueResponseItem, ResponseCompactionItem, ResponseContentPart, ResponseCustomToolCallItem,
     ResponseFunctionCallItem, ResponseItem, ResponseItemError, ResponseMessageItem,
@@ -54,6 +55,7 @@ pub mod openai_compatible;
 pub mod openai_oauth;
 pub mod reasoning;
 pub mod request;
+pub mod response_audio;
 pub mod response_item;
 pub(crate) mod startup_trace;
 pub mod surface;

@@ -21,6 +21,7 @@ pub mod manager;
 pub mod migration;
 pub mod mutation_ledger;
 pub mod persistence;
+pub mod response_audio;
 pub mod resume_repair;
 pub mod spool;
 pub mod store;
@@ -56,6 +57,11 @@ pub use persistence::{
     is_reserved_session_id, read_index, read_session_events_for_entry,
     resolve_latest_session_in_working_dir, resolve_session, sum_usage_from_events,
 };
+pub use response_audio::{
+    RESPONSE_AUDIO_ARTIFACT_EVENT_TYPE, ResponseAudioArtifact, ResponseAudioArtifactLink,
+    ResponseAudioArtifactRef, ResponseAudioArtifactState, ResponseAudioReferenceError,
+    ResponseAudioStore, referenced_response_audio_artifacts, response_audio_artifact_links,
+};
 pub(crate) use resume_repair::is_interrupted_tool_result;
 pub use resume_repair::repair_dangling_tool_calls;
 pub use spool::{SpoolWriter, read_spooled_output, resolve_spool_ref};
@@ -69,3 +75,5 @@ mod canonical_tool_resolution_tests;
 mod canonical_transcript_tests;
 #[cfg(test)]
 mod provider_epoch_tests;
+#[cfg(test)]
+mod response_audio_lifecycle_tests;

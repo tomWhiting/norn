@@ -40,6 +40,11 @@ use super::tool_calls::{
     accumulate_tool_call_delta, handle_tool_call_complete, handle_tool_result,
 };
 
+mod finalization;
+
+pub use finalization::extract_usage;
+pub(super) use finalization::write_error_line;
+
 /// Dispatch a tagged [`AgentEvent`] by routing on payload kind and
 /// agent identity.
 ///
@@ -397,6 +402,7 @@ pub fn handle_provider_event(
         | ProviderEvent::ReasoningItemDone { .. }
         | ProviderEvent::ResponseItemDone { .. }
         | ProviderEvent::ResponseStreamEvent { .. }
+        | ProviderEvent::ResponseAudioFrame { .. }
         | ProviderEvent::Compaction { .. } => Ok(()),
     }
 }
@@ -479,40 +485,6 @@ fn set_complete_from_step(state: &mut AppState, step: &AgentStepResult) {
         .map_or(Duration::ZERO, |start| start.elapsed());
     let summary = format_usage_summary(&usage, elapsed);
     state.mark_complete(summary, Instant::now());
-}
-
-/// Extract the `Usage` field from any [`AgentStepResult`] variant.
-pub fn extract_usage(result: &AgentStepResult) -> Usage {
-    match result {
-        AgentStepResult::Completed { usage, .. }
-        | AgentStepResult::Refused { usage, .. }
-        | AgentStepResult::SchemaUnreachable { usage, .. }
-        | AgentStepResult::MaxIterationsReached { usage, .. }
-        | AgentStepResult::Cancelled { usage, .. }
-        | AgentStepResult::TimedOut { usage, .. }
-        | AgentStepResult::Truncated { usage, .. } => usage.clone(),
-    }
-}
-
-/// Write a red `error: {message}` line into the scroll region.
-///
-/// `pub(super)` so [`super::slash`] can surface command failures (e.g.
-/// `/new` session-creation errors) in the same style as provider and
-/// turn errors.
-pub(super) fn write_error_line(
-    state: &AppState,
-    guard: &mut TerminalGuard,
-    message: &str,
-) -> Result<(), TuiError> {
-    let red = crate::render::style::colour_for(
-        termina::style::RgbColor::new(200, 80, 80),
-        &state.terminal_caps,
-    );
-    let reset = termina::escape::csi::Csi::Sgr(termina::escape::csi::Sgr::Reset).to_string();
-    let line = format!("{red}error: {message}{reset}\n");
-    write_to_scroll(&line, guard.terminal_mut())?;
-    guard.note_scroll_newlines(&line)?;
-    flush_terminal(guard)
 }
 
 #[cfg(test)]

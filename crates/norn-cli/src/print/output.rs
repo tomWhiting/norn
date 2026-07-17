@@ -32,11 +32,17 @@ use std::sync::Arc;
 
 use norn::agent_loop::config::AgentStepResult;
 use norn::integration::{DiagnosticCollector, NornDiagnostic};
-use norn::provider::events::ProviderEvent;
 use norn::provider::usage::Usage;
 use norn::session::events::SessionEvent;
 use serde::Serialize;
 use serde_json::{Value, json};
+
+mod provider_events;
+
+pub(crate) use provider_events::agent_event_method;
+use provider_events::{
+    is_delta_event, message_event_to_value, provider_event_to_value, subagent_event_to_value,
+};
 
 /// Result of writing the final output. Errors propagate up so the
 /// orchestrator can report them.
@@ -401,258 +407,6 @@ pub(crate) fn agent_event_to_value(
     }
 }
 
-/// Derive the JSON-RPC `event/*` method name for an [`AgentEvent`] from the
-/// same [`AgentEventKind`] discrimination the payload mapping uses
-/// (`DRIVEN-PROTOCOL.md` "Event notifications").
-///
-/// The mapping is intentionally coarse — it groups the fine-grained
-/// [`ProviderEvent`] variants into the design's locked `event/*` method set
-/// (`event/message`, `event/toolCall`, `event/toolResult`, `event/progress`,
-/// `event/stop`) plus `event/raw` for anything without a dedicated method —
-/// so the `method` carries the semantic category while the `params` (from
-/// [`agent_event_to_value`]) carry the byte-identical native payload.
-#[must_use]
-pub(crate) fn agent_event_method(agent_event: &norn::provider::AgentEvent) -> &'static str {
-    use norn::provider::AgentEventKind;
-    use norn::provider::events::ProviderEvent;
-    match &agent_event.event {
-        AgentEventKind::Provider(event) => match event {
-            ProviderEvent::TextComplete { .. }
-            | ProviderEvent::ThinkingComplete { .. }
-            | ProviderEvent::RefusalComplete { .. } => "event/message",
-            ProviderEvent::ToolCallComplete { .. } => "event/toolCall",
-            ProviderEvent::ToolResult { .. } => "event/toolResult",
-            ProviderEvent::TextDelta { .. }
-            | ProviderEvent::ThinkingDelta { .. }
-            | ProviderEvent::RefusalDelta { .. }
-            | ProviderEvent::ToolCallDelta { .. } => "event/progress",
-            ProviderEvent::Done { .. } => "event/stop",
-            ProviderEvent::Compaction { .. }
-            | ProviderEvent::ReasoningItemDone { .. }
-            | ProviderEvent::ResponseItemDone { .. }
-            | ProviderEvent::ResponseStreamEvent { .. }
-            | ProviderEvent::Error { .. } => "event/raw",
-        },
-        AgentEventKind::Message(_) => "event/message",
-        AgentEventKind::UsageEstimate(_) | AgentEventKind::StreamRetry(_) => "event/progress",
-        AgentEventKind::Subagent(_) | AgentEventKind::Compaction(_) => "event/raw",
-    }
-}
-
-/// Translate a typed [`norn::provider::SubagentLifecycle`] event into the
-/// NDJSON payload `Value`: the event's stable serde form (`snake_case`
-/// `phase` / `kind` tags) under `"type": "subagent_started"` /
-/// `"subagent_completed"`.
-fn subagent_event_to_value(lifecycle: &norn::provider::SubagentLifecycle) -> Option<Value> {
-    let type_label = match lifecycle {
-        norn::provider::SubagentLifecycle::Started { .. } => "subagent_started",
-        norn::provider::SubagentLifecycle::Completed { .. } => "subagent_completed",
-    };
-    let mut value = match serde_json::to_value(lifecycle) {
-        Ok(value) => value,
-        Err(err) => {
-            tracing::warn!("failed to serialize subagent lifecycle event to NDJSON: {err}");
-            return None;
-        }
-    };
-    if let Some(obj) = value.as_object_mut() {
-        obj.remove("phase");
-        obj.insert("type".to_owned(), json!(type_label));
-    }
-    Some(value)
-}
-
-/// Translate a typed [`norn::provider::AgentMessageLifecycle`] event
-/// into the NDJSON payload `Value`: the event's stable serde form under
-/// `"type": "agent_message_sent"` / `"agent_message_delivered"`.
-fn message_event_to_value(lifecycle: &norn::provider::AgentMessageLifecycle) -> Option<Value> {
-    let type_label = match lifecycle {
-        norn::provider::AgentMessageLifecycle::Sent { .. } => "agent_message_sent",
-        norn::provider::AgentMessageLifecycle::Delivered { .. } => "agent_message_delivered",
-    };
-    let mut value = match serde_json::to_value(lifecycle) {
-        Ok(value) => value,
-        Err(err) => {
-            tracing::warn!("failed to serialize agent message event to NDJSON: {err}");
-            return None;
-        }
-    };
-    if let Some(obj) = value.as_object_mut() {
-        obj.remove("phase");
-        obj.insert("type".to_owned(), json!(type_label));
-    }
-    Some(value)
-}
-
-fn is_delta_event(event: &ProviderEvent) -> bool {
-    match event {
-        ProviderEvent::TextDelta { .. }
-        | ProviderEvent::ThinkingDelta { .. }
-        | ProviderEvent::RefusalDelta { .. }
-        | ProviderEvent::ToolCallDelta { .. } => true,
-        ProviderEvent::ResponseStreamEvent { event } => {
-            event.manifest_stage()
-                == Some(norn::provider::openai::response_contract::StreamEventStage::Incremental)
-        }
-        ProviderEvent::TextComplete { .. }
-        | ProviderEvent::ThinkingComplete { .. }
-        | ProviderEvent::RefusalComplete { .. }
-        | ProviderEvent::ReasoningItemDone { .. }
-        | ProviderEvent::ResponseItemDone { .. }
-        | ProviderEvent::ToolCallComplete { .. }
-        | ProviderEvent::ToolResult { .. }
-        | ProviderEvent::Compaction { .. }
-        | ProviderEvent::Done { .. }
-        | ProviderEvent::Error { .. } => false,
-    }
-}
-
-fn stop_reason_label(reason: &norn::provider::events::StopReason) -> &'static str {
-    match reason {
-        norn::provider::events::StopReason::EndTurn => "end_turn",
-        norn::provider::events::StopReason::ToolUse => "tool_use",
-        norn::provider::events::StopReason::MaxTokens => "max_tokens",
-        norn::provider::events::StopReason::ContentFilter => "content_filter",
-    }
-}
-
-/// Translate a single [`ProviderEvent`] into the NDJSON payload `Value`
-/// documented in NC18. Returns [`None`] for variants that are not surfaced
-/// on the wire (e.g. `Error` is reported via the agent-error exit path).
-fn provider_event_to_value(event: &ProviderEvent) -> Option<Value> {
-    let value = match event {
-        ProviderEvent::TextDelta { text } => json!({
-            "type": "text_delta",
-            "text": text,
-        }),
-        ProviderEvent::ThinkingDelta { text } => json!({
-            "type": "thinking_delta",
-            "text": text,
-        }),
-        ProviderEvent::RefusalDelta {
-            item_id,
-            output_index,
-            content_index,
-            refusal,
-        } => json!({
-            "type": "refusal_delta",
-            "item_id": item_id,
-            "output_index": output_index,
-            "content_index": content_index,
-            "refusal": refusal,
-        }),
-        ProviderEvent::ToolCallDelta {
-            item_id,
-            call_id,
-            name,
-            arguments_delta,
-            kind,
-        } => json!({
-            "type": "tool_call_delta",
-            "item_id": item_id,
-            // C7: the `call_id` (`call_*`) an embedder correlates live tool
-            // input against — `null` when the provider has not surfaced it yet
-            // (Anthropic input fragments); always present on the Responses path.
-            "call_id": call_id,
-            "name": name,
-            "arguments_delta": arguments_delta,
-            "kind": kind,
-        }),
-        ProviderEvent::TextComplete { text } => json!({
-            "type": "text",
-            "text": text,
-        }),
-        ProviderEvent::ThinkingComplete { text } => json!({
-            "type": "thinking",
-            "text": text,
-        }),
-        ProviderEvent::RefusalComplete {
-            item_id,
-            output_index,
-            content_index,
-            refusal,
-        } => json!({
-            "type": "refusal",
-            "item_id": item_id,
-            "output_index": output_index,
-            "content_index": content_index,
-            "refusal": refusal,
-        }),
-        ProviderEvent::ToolCallComplete {
-            call_id,
-            name,
-            arguments,
-            kind,
-        } => {
-            let args: Value =
-                serde_json::from_str(arguments).unwrap_or(Value::String(arguments.clone()));
-            json!({
-                "type": "tool_call",
-                "call_id": call_id,
-                "name": name,
-                "arguments": args,
-                "kind": kind,
-            })
-        }
-        ProviderEvent::ToolResult {
-            tool_call_id,
-            tool_name,
-            output,
-            duration_ms,
-        } => json!({
-            "type": "tool_result",
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "output": output,
-            "duration_ms": duration_ms,
-        }),
-        ProviderEvent::Compaction {
-            item_type,
-            encrypted_content,
-        } => json!({
-            "type": "compaction",
-            "item_type": item_type,
-            "encrypted_content": encrypted_content,
-        }),
-        // Structured reasoning items exist for provider-side replay; the
-        // display text is already surfaced through the thinking events.
-        ProviderEvent::ReasoningItemDone { item } => json!({
-            "type": "reasoning_item",
-            "item": item,
-        }),
-        ProviderEvent::ResponseItemDone { item } => json!({
-            "type": "response_item",
-            "item": item,
-        }),
-        ProviderEvent::ResponseStreamEvent { event } => event.raw().clone(),
-        ProviderEvent::Done {
-            stop_reason,
-            usage,
-            response_id,
-        } => {
-            let mut obj = json!({
-                "type": "done",
-                "stop_reason": stop_reason_label(stop_reason),
-                "usage": {
-                    "input_tokens": usage.input_tokens,
-                    "output_tokens": usage.output_tokens,
-                    "cache_read_tokens": usage.cache_read_tokens,
-                    "cache_write_tokens": usage.cache_write_tokens,
-                },
-            });
-            if let Some(cost) = usage.cost_usd {
-                obj["usage"]["cost_usd"] = json!(cost);
-            }
-            if let Some(rid) = response_id {
-                obj["response_id"] = json!(rid);
-            }
-            obj
-        }
-        ProviderEvent::Error { .. } => return None,
-    };
-    Some(value)
-}
-
 /// Emit the `completed` NDJSON line plus any collected diagnostics.
 ///
 /// Per NC-003 R8: diagnostics are emitted as `{"type":"diagnostic",...}`
@@ -722,6 +476,7 @@ mod raw_stream_event_tests;
 mod tests {
     use super::*;
     use norn::integration::DiagnosticSeverity;
+    use norn::provider::events::ProviderEvent;
     use serde_json::json;
 
     /// Test-only shim preserving the pre-refactor `String`-returning shape

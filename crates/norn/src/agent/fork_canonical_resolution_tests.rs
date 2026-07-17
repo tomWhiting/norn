@@ -4,6 +4,10 @@ use crate::provider::openai::request::build_payload;
 use crate::provider::request::{ProviderRequest, ToolCallCaller, ToolCallKind};
 use crate::session::conversion::events_to_messages;
 use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
+use crate::session::{
+    RESPONSE_AUDIO_ARTIFACT_EVENT_TYPE, ResponseAudioArtifactLink, ResponseAudioArtifactRef,
+    response_audio_artifact_links,
+};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -26,6 +30,31 @@ fn canonical_assistant(
         stop_reason: "tool_use".to_owned(),
         response_id: None,
     })
+}
+
+fn response_audio_turn() -> Result<[SessionEvent; 2], Box<dyn std::error::Error>> {
+    let reference: ResponseAudioArtifactRef =
+        serde_json::from_value(serde_json::json!("123e4567-e89b-42d3-a456-426614174000"))?;
+    let link_base = EventBase::new(None);
+    let assistant_base = EventBase::new(Some(link_base.id.clone()));
+    let link = ResponseAudioArtifactLink::new(
+        assistant_base.id.clone(),
+        reference,
+        Some("resp_filtered_audio".to_owned()),
+    )
+    .into_custom_event(link_base)?;
+    let assistant = SessionEvent::AssistantMessage {
+        base: assistant_base,
+        response_items: Vec::new(),
+        content: "audio answer".to_owned(),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: EventUsage::default(),
+        stop_reason: "end_turn".to_owned(),
+        response_id: Some("resp_filtered_audio".to_owned()),
+    };
+    Ok([link, assistant])
 }
 
 #[test]
@@ -168,5 +197,47 @@ fn recent_filter_drops_outputs_whose_calls_precede_metadata_boundary() -> TestRe
     assert_eq!(filtered.len(), 2);
     assert!(matches!(filtered[0], SessionEvent::Custom { .. }));
     assert!(matches!(filtered[1], SessionEvent::UserMessage { .. }));
+    Ok(())
+}
+
+#[test]
+fn exclude_system_preserves_response_audio_link_with_its_assistant() -> TestResult {
+    let [link, assistant] = response_audio_turn()?;
+    let filtered = ContextFilter {
+        include_system: false,
+        include_recent_n: None,
+        exclude_tool_calls: false,
+    }
+    .apply(&[link, assistant]);
+
+    assert_eq!(filtered.len(), 2);
+    assert!(matches!(
+        &filtered[0],
+        SessionEvent::Custom { event_type, .. }
+            if event_type == RESPONSE_AUDIO_ARTIFACT_EVENT_TYPE
+    ));
+    assert!(matches!(filtered[1], SessionEvent::AssistantMessage { .. }));
+    assert_eq!(response_audio_artifact_links(&filtered)?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn recent_filter_restores_response_audio_precursor_as_an_atomic_companion() -> TestResult {
+    let [link, assistant] = response_audio_turn()?;
+    let filtered = ContextFilter {
+        include_system: true,
+        include_recent_n: Some(1),
+        exclude_tool_calls: false,
+    }
+    .apply(&[link, assistant]);
+
+    assert_eq!(filtered.len(), 2);
+    assert!(matches!(
+        &filtered[0],
+        SessionEvent::Custom { event_type, .. }
+            if event_type == RESPONSE_AUDIO_ARTIFACT_EVENT_TYPE
+    ));
+    assert!(matches!(filtered[1], SessionEvent::AssistantMessage { .. }));
+    assert_eq!(response_audio_artifact_links(&filtered)?.len(), 1);
     Ok(())
 }

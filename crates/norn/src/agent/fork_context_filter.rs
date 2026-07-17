@@ -1,5 +1,8 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::provider::response_item::{KnownResponseItemKind, ResponseItem};
-use crate::session::events::SessionEvent;
+use crate::session::ResponseAudioArtifactLink;
+use crate::session::events::{EventId, SessionEvent};
 
 /// Filter applied to parent context events before forking.
 ///
@@ -8,9 +11,12 @@ use crate::session::events::SessionEvent;
 #[derive(Clone, Debug)]
 pub struct ContextFilter {
     /// If `false`, drop ambient session events (`ModelChange`,
-    /// `Compaction`, `Fork`, `Label`, `Custom`).
+    /// `Compaction`, `Fork`, `Label`, `Custom`). A response-audio artifact
+    /// link is retained when its assistant event survives the filter.
     pub include_system: bool,
     /// If set, keep only the last `n` events after other filters apply.
+    /// Restoring a required response-audio precursor after the cut may make
+    /// the returned row count exceed `n`.
     pub include_recent_n: Option<usize>,
     /// If `true`, drop local tool results and strip canonical and projected
     /// local call/output items plus their coupled hosted-program lifecycle from
@@ -45,7 +51,7 @@ impl ContextFilter {
             filtered.drain(..cut);
             filtered = crate::session::without_orphan_local_tool_outputs(filtered);
         }
-        filtered
+        preserve_response_audio_pairs(events, filtered)
     }
 
     fn transform(&self, event: &SessionEvent) -> Option<SessionEvent> {
@@ -104,4 +110,60 @@ impl ContextFilter {
             other => Some(other.clone()),
         }
     }
+}
+
+fn preserve_response_audio_pairs(
+    source: &[SessionEvent],
+    filtered: Vec<SessionEvent>,
+) -> Vec<SessionEvent> {
+    // Format-2 stores the link as a separate Custom row. Rebuild in source
+    // order so generic system/recency filters cannot split that association.
+    let source_assistants = source
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::AssistantMessage { base, .. } => Some(base.id.clone()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    let retained_assistants = filtered
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::AssistantMessage { base, .. } => Some(base.id.clone()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    let mut required_links = HashSet::new();
+    let mut excluded_links = HashSet::new();
+    for event in source {
+        let Ok(Some(link)) = ResponseAudioArtifactLink::from_event(event) else {
+            continue;
+        };
+        if !source_assistants.contains(link.assistant_event_id()) {
+            continue;
+        }
+        if retained_assistants.contains(link.assistant_event_id()) {
+            required_links.insert(event.base().id.clone());
+        } else {
+            excluded_links.insert(event.base().id.clone());
+        }
+    }
+
+    let mut retained = filtered
+        .into_iter()
+        .map(|event| (event.base().id.clone(), event))
+        .collect::<HashMap<EventId, SessionEvent>>();
+    let mut paired = Vec::with_capacity(retained.len().saturating_add(required_links.len()));
+    for event in source {
+        let id = &event.base().id;
+        if excluded_links.contains(id) {
+            retained.remove(id);
+            continue;
+        }
+        if let Some(event) = retained.remove(id) {
+            paired.push(event);
+        } else if required_links.contains(id) {
+            paired.push(event.clone());
+        }
+    }
+    paired
 }

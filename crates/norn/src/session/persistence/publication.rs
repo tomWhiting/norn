@@ -1,74 +1,65 @@
 //! Crash-recoverable publication of seeded strict session timelines.
 
 use std::ffi::OsStr;
-use std::io::{self, BufReader, BufWriter, Write as _};
-use std::path::{Path, PathBuf};
+use std::io;
+use std::path::Path;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::provider::usage::Usage;
 use crate::session::events::SessionEvent;
 use crate::util::PrivateRoot;
 
 use super::super::io::session_file_relative;
-use super::super::strict::{StrictFormatHeader, validate_index_entries, visit_strict_event_file};
+use super::super::strict::validate_index_entries;
 use super::super::types::{SessionIndexEntry, SessionPersistError};
 use super::codec;
 
 #[path = "publication_names.rs"]
 mod names;
+#[path = "publication_audio.rs"]
+mod publication_audio;
+#[path = "publication_audio_links.rs"]
+mod publication_audio_links;
 #[path = "publication_conflict.rs"]
 mod publication_conflict;
 #[path = "publication_hash.rs"]
 mod publication_hash;
+#[path = "publication_journal.rs"]
+mod publication_journal;
 #[path = "publication_parent.rs"]
 mod publication_parent;
 #[path = "publication_recovery.rs"]
 mod publication_recovery;
+#[path = "publication_timeline.rs"]
+mod publication_timeline;
 #[path = "publication_timeline_error.rs"]
 mod publication_timeline_error;
-use names::{
-    journal_id, journal_path, journal_temp_id, journal_temp_path, timeline_stage_id,
-    timeline_stage_path,
+use names::{audio_stage_id, journal_id, journal_temp_id, timeline_stage_id, timeline_stage_path};
+use publication_audio::{
+    audio_stage_is_present, recover_audio_bundle, remove_verified_audio_stage, stage_audio_bundle,
+    validate_source_generation,
 };
 use publication_conflict::{conflict, path_occupied};
-use publication_hash::HashingReader;
+use publication_journal::{
+    AUDIO_PUBLICATION_VERSION, PublicationJournal, TIMELINE_PUBLICATION_VERSION, read_journal,
+    validate_journal_metadata, write_journal,
+};
 use publication_parent::{
     ParentPrecondition, child_precondition, validate_parent_generation,
     validate_parent_precondition_shape,
 };
-use publication_recovery::{
-    allocate_transaction_id, inventory_and_remove_orphans, remove_owned_after_failure,
+use publication_recovery::{allocate_transaction_id, inventory_and_remove_orphans};
+use publication_timeline::{
+    TimelineFacts, apply_timeline_facts, inspect_if_present, inspect_timeline, write_timeline_stage,
 };
-use publication_timeline_error::map_publication_timeline_error;
-
-const PUBLICATION_VERSION: u32 = 2;
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct PublicationJournal {
-    norn_session_publication: u32,
-    transaction_id: String,
-    parent_precondition: Option<ParentPrecondition>,
-    entry: SessionIndexEntry,
-    timeline_bytes: u64,
-    timeline_sha256: String,
-}
-
-#[derive(Debug)]
-struct TimelineFacts {
-    bytes: u64,
-    sha256: String,
-    event_count: u64,
-    usage: Usage,
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PublicationCheckpoint {
+    AudioStaged,
     TimelineStaged,
     JournalPublished,
+    AudioPublished,
     TimelinePublished,
     IndexPublished,
 }
@@ -77,6 +68,7 @@ pub(super) fn is_publication_artifact_name(name: &OsStr) -> bool {
     journal_id(name).is_some()
         || journal_temp_id(name).is_some()
         || timeline_stage_id(name).is_some()
+        || audio_stage_id(name).is_some()
 }
 
 pub(super) fn recover_pending_publications(root: &PrivateRoot) -> Result<(), SessionPersistError> {
@@ -116,8 +108,40 @@ pub(crate) fn publish_new_child_session(
         entry,
         events,
         Some(parent),
+        None,
         lock_deadline,
         &mut |_| Ok(()),
+    )
+}
+
+pub(crate) fn publish_new_fork_session(
+    data_dir: &Path,
+    entry: &SessionIndexEntry,
+    events: &[SessionEvent],
+    source: &SessionIndexEntry,
+    lock_deadline: Option<Duration>,
+) -> Result<SessionIndexEntry, SessionPersistError> {
+    publish_new_fork_session_with_hook(data_dir, entry, events, source, lock_deadline, &mut |_| {
+        Ok(())
+    })
+}
+
+fn publish_new_fork_session_with_hook(
+    data_dir: &Path,
+    entry: &SessionIndexEntry,
+    events: &[SessionEvent],
+    source: &SessionIndexEntry,
+    lock_deadline: Option<Duration>,
+    checkpoint: &mut impl FnMut(PublicationCheckpoint) -> Result<(), SessionPersistError>,
+) -> Result<SessionIndexEntry, SessionPersistError> {
+    publish_with_precondition(
+        data_dir,
+        entry,
+        events,
+        None,
+        Some(source),
+        lock_deadline,
+        checkpoint,
     )
 }
 
@@ -128,7 +152,15 @@ fn publish_new_session_with_hook(
     lock_deadline: Option<Duration>,
     checkpoint: &mut impl FnMut(PublicationCheckpoint) -> Result<(), SessionPersistError>,
 ) -> Result<SessionIndexEntry, SessionPersistError> {
-    publish_with_precondition(data_dir, entry, events, None, lock_deadline, checkpoint)
+    publish_with_precondition(
+        data_dir,
+        entry,
+        events,
+        None,
+        None,
+        lock_deadline,
+        checkpoint,
+    )
 }
 
 fn publish_with_precondition(
@@ -136,6 +168,7 @@ fn publish_with_precondition(
     entry: &SessionIndexEntry,
     events: &[SessionEvent],
     parent_precondition: Option<ParentPrecondition>,
+    artifact_source: Option<&SessionIndexEntry>,
     lock_deadline: Option<Duration>,
     checkpoint: &mut impl FnMut(PublicationCheckpoint) -> Result<(), SessionPersistError>,
 ) -> Result<SessionIndexEntry, SessionPersistError> {
@@ -145,9 +178,20 @@ fn publish_with_precondition(
     let root = lock.root();
     let mut entries = codec::read_index_in(root)?;
     validate_parent_generation(&entries, parent_precondition.as_ref())?;
+    if let Some(source) = artifact_source {
+        validate_source_generation(&entries, source)?;
+    }
     ensure_candidate_is_unclaimed(root, &entries, entry)?;
 
     let transaction_id = allocate_transaction_id(root)?;
+    let audio_bundle = if let Some(source) = artifact_source {
+        stage_audio_bundle(root, &transaction_id, source, entry, events)?
+    } else {
+        None
+    };
+    if audio_bundle.is_some() {
+        checkpoint(PublicationCheckpoint::AudioStaged)?;
+    }
     let stage_path = timeline_stage_path(&transaction_id);
     let facts = write_timeline_stage(root, &stage_path, events, &entry.id)?;
     checkpoint(PublicationCheckpoint::TimelineStaged)?;
@@ -159,12 +203,17 @@ fn publish_with_precondition(
     validate_index_entries(&candidate_entries)?;
 
     let journal = PublicationJournal {
-        norn_session_publication: PUBLICATION_VERSION,
+        norn_session_publication: if audio_bundle.is_some() {
+            AUDIO_PUBLICATION_VERSION
+        } else {
+            TIMELINE_PUBLICATION_VERSION
+        },
         transaction_id,
         parent_precondition,
         entry: committed_entry.clone(),
         timeline_bytes: facts.bytes,
         timeline_sha256: facts.sha256,
+        audio_bundle,
     };
     let journal_path = write_journal(root, &journal)?;
     checkpoint(PublicationCheckpoint::JournalPublished)?;
@@ -189,6 +238,22 @@ fn recover_one(
     validate_journal_metadata(&journal)?;
     validate_parent_generation(entries, journal.parent_precondition.as_ref())?;
 
+    let row_exists = ensure_recoverable_row(entries, &journal.entry)?;
+    let audio_stage_was_verified = if let Some(manifest) = &journal.audio_bundle {
+        let stage_was_verified =
+            recover_audio_bundle(root, &transaction_id, &journal.entry, manifest)?;
+        checkpoint(PublicationCheckpoint::AudioPublished)?;
+        stage_was_verified
+    } else {
+        if audio_stage_is_present(root, &transaction_id)? {
+            return Err(conflict(
+                &journal.entry.id,
+                "a timeline-only publication has an unexpected response-audio stage",
+            ));
+        }
+        false
+    };
+
     let stage_path = timeline_stage_path(&transaction_id);
     let final_path = session_file_relative(&journal.entry)?;
     let stage_facts = inspect_if_present(root, &stage_path, &journal.entry.id)?;
@@ -208,7 +273,6 @@ fn recover_one(
         )?;
     }
 
-    let row_exists = ensure_recoverable_row(entries, &journal.entry)?;
     if final_facts.is_none() {
         if stage_facts.is_none() {
             return Err(conflict(
@@ -237,7 +301,14 @@ fn recover_one(
         *entries = candidate_entries;
     }
     checkpoint(PublicationCheckpoint::IndexPublished)?;
-    remove_committed_transaction(root, &stage_path, journal_path, stage_facts.is_some())
+    remove_committed_transaction(
+        root,
+        &transaction_id,
+        &stage_path,
+        journal_path,
+        stage_facts.is_some(),
+        audio_stage_was_verified,
+    )
 }
 
 fn ensure_candidate_is_unclaimed(
@@ -288,78 +359,6 @@ fn ensure_recoverable_row(
     Ok(false)
 }
 
-fn write_timeline_stage(
-    root: &PrivateRoot,
-    stage_path: &Path,
-    events: &[SessionEvent],
-    session_id: &str,
-) -> Result<TimelineFacts, SessionPersistError> {
-    let result = (|| {
-        let file = root.create_new(stage_path)?;
-        let mut writer = BufWriter::new(file);
-        serde_json::to_writer(&mut writer, &StrictFormatHeader::current())?;
-        writer.write_all(b"\n")?;
-        for event in events {
-            serde_json::to_writer(&mut writer, event)?;
-            writer.write_all(b"\n")?;
-        }
-        writer.flush()?;
-        let file = writer
-            .into_inner()
-            .map_err(std::io::IntoInnerError::into_error)?;
-        file.sync_all()?;
-        root.sync_dir(Path::new(""))?;
-        inspect_timeline(root, stage_path, session_id)
-    })();
-    if result.is_err() {
-        remove_owned_after_failure(root, stage_path);
-    }
-    result
-}
-
-fn inspect_if_present(
-    root: &PrivateRoot,
-    path: &Path,
-    session_id: &str,
-) -> Result<Option<TimelineFacts>, SessionPersistError> {
-    match inspect_timeline(root, path, session_id) {
-        Ok(facts) => Ok(Some(facts)),
-        Err(SessionPersistError::Io(error)) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-fn inspect_timeline(
-    root: &PrivateRoot,
-    path: &Path,
-    session_id: &str,
-) -> Result<TimelineFacts, SessionPersistError> {
-    let file = root.open_read(path)?;
-    let initial_length = file.metadata()?.len();
-    let mut reader = HashingReader::new(file);
-    let (_, _, counters) =
-        visit_strict_event_file(BufReader::new(&mut reader), &root.display_path(path), drop)
-            .map_err(|error| map_publication_timeline_error(error, session_id))?;
-    let usage = counters.tracked_usage();
-    let final_length = reader.metadata_len()?;
-    if initial_length != final_length || reader.bytes_read() != final_length {
-        return Err(io::Error::other("timeline changed while it was being validated").into());
-    }
-    Ok(TimelineFacts {
-        bytes: final_length,
-        sha256: reader.finish_sha256(),
-        event_count: counters.event_count,
-        usage,
-    })
-}
-
-fn apply_timeline_facts(entry: &mut SessionIndexEntry, facts: &TimelineFacts) {
-    entry.event_count = facts.event_count;
-    entry.total_input_tokens = facts.usage.input_tokens;
-    entry.total_output_tokens = facts.usage.output_tokens;
-    entry.total_cache_read_tokens = facts.usage.cache_read_tokens;
-}
-
 fn ensure_timeline_matches(
     journal: &PublicationJournal,
     facts: &TimelineFacts,
@@ -376,69 +375,6 @@ fn ensure_timeline_matches(
     } else {
         Err(conflict(&journal.entry.id, reason))
     }
-}
-
-fn validate_journal_metadata(journal: &PublicationJournal) -> Result<(), SessionPersistError> {
-    if journal.norn_session_publication != PUBLICATION_VERSION {
-        return Err(conflict(
-            &journal.entry.id,
-            "the publication journal version is unsupported",
-        ));
-    }
-    if journal.timeline_sha256.len() != 64
-        || !journal
-            .timeline_sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-    {
-        return Err(conflict(
-            &journal.entry.id,
-            "the publication journal timeline digest is malformed",
-        ));
-    }
-    validate_parent_precondition_shape(&journal.entry, journal.parent_precondition.as_ref())
-}
-
-fn write_journal(
-    root: &PrivateRoot,
-    journal: &PublicationJournal,
-) -> Result<PathBuf, SessionPersistError> {
-    let temporary = journal_temp_path(&journal.transaction_id);
-    let final_path = journal_path(&journal.transaction_id);
-    let result = (|| {
-        let file = root.create_new(&temporary)?;
-        let mut writer = BufWriter::new(file);
-        serde_json::to_writer(&mut writer, journal)?;
-        writer.write_all(b"\n")?;
-        writer.flush()?;
-        let file = writer
-            .into_inner()
-            .map_err(std::io::IntoInnerError::into_error)?;
-        file.sync_all()?;
-        root.publish_new(&temporary, &final_path)?;
-        root.sync_dir(Path::new(""))?;
-        Ok(final_path.clone())
-    })();
-    if result.is_err() {
-        remove_owned_after_failure(root, &temporary);
-    }
-    result
-}
-
-fn read_journal(
-    root: &PrivateRoot,
-    path: &Path,
-    transaction_id: &str,
-) -> Result<PublicationJournal, SessionPersistError> {
-    let file = root.open_read(path)?;
-    let journal: PublicationJournal = serde_json::from_reader(BufReader::new(file))?;
-    if journal.transaction_id != transaction_id {
-        return Err(conflict(
-            &journal.entry.id,
-            "the publication journal transaction id does not match its owned file name",
-        ));
-    }
-    Ok(journal)
 }
 
 fn publish_staged_timeline(
@@ -465,9 +401,11 @@ fn sync_directory_chain(root: &PrivateRoot, directory: &Path) -> Result<(), Sess
 
 fn remove_committed_transaction(
     root: &PrivateRoot,
+    transaction_id: &str,
     stage_path: &Path,
     journal_path: &Path,
     stage_was_verified: bool,
+    audio_stage_was_verified: bool,
 ) -> Result<(), SessionPersistError> {
     if stage_was_verified
         && let Err(error) = root.remove_file(stage_path)
@@ -475,6 +413,7 @@ fn remove_committed_transaction(
     {
         return Err(error.into());
     }
+    remove_verified_audio_stage(root, transaction_id, audio_stage_was_verified)?;
     root.remove_file(journal_path)?;
     root.sync_dir(Path::new(""))?;
     Ok(())
@@ -483,3 +422,7 @@ fn remove_committed_transaction(
 #[cfg(test)]
 #[path = "publication_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "publication_audio_tests.rs"]
+mod audio_tests;

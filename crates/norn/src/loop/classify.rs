@@ -9,11 +9,13 @@ use crate::r#loop::assembly::{AssembledResponse, assemble_response};
 use crate::r#loop::compaction::{InFlightPartial, SharedTimeoutState};
 use crate::r#loop::config::TruncationKind;
 use crate::r#loop::helpers::append_and_notify;
+use crate::r#loop::response_audio_capture::ResponseAudioCapture;
 use crate::r#loop::schema::validate_against_schema;
 use crate::provider::agent_event::{AgentEventSender, AgentStreamRetry};
 use crate::provider::events::{ProviderEvent, StopReason};
 use crate::provider::request::ProviderRequest;
 use crate::provider::traits::Provider;
+use crate::session::ResponseAudioStore;
 use crate::session::events::{EventBase, SessionEvent};
 use crate::session::store::EventStore;
 use crate::tool::envelope::split_envelope_fields;
@@ -226,6 +228,8 @@ pub(super) async fn call_provider(
     request: ProviderRequest,
     event_tx: Option<&AgentEventSender>,
     partial_capture: Option<&SharedTimeoutState>,
+    audio_store: Option<&ResponseAudioStore>,
+    attempt: u32,
 ) -> Result<AssembledResponse, NornError> {
     if let Some(state) = partial_capture {
         // A fresh attempt discards any previous attempt's partials — the
@@ -234,6 +238,7 @@ pub(super) async fn call_provider(
     }
     let mut stream = provider.stream(request)?;
     let mut events: Vec<ProviderEvent> = Vec::new();
+    let mut audio = ResponseAudioCapture::new(audio_store, attempt);
 
     while let Some(result) = stream.next().await {
         let event = result?;
@@ -268,10 +273,24 @@ pub(super) async fn call_provider(
         if let ProviderEvent::Error { error } = event {
             return Err(NornError::Provider(error));
         }
-        events.push(event);
+        match &event {
+            ProviderEvent::ResponseStreamEvent { .. } => {}
+            ProviderEvent::ResponseAudioFrame {
+                stream_event,
+                event,
+            } => {
+                audio.append(stream_event, event)?;
+                if let Some(state) = partial_capture
+                    && let Some(partial) = state.lock().in_flight_partial.as_mut()
+                {
+                    partial.response_audio = audio.reference();
+                }
+            }
+            _ => events.push(event),
+        }
     }
 
-    let assembled = assemble_response(&events).ok_or_else(|| {
+    let mut assembled = assemble_response(&events).ok_or_else(|| {
         // Terminal by construction (`transient: None`): the transport-level
         // cutoff cases surface earlier as retryable `StreamInterrupted`
         // from the executor; a stream that yielded events but no `Done` is
@@ -281,6 +300,7 @@ pub(super) async fn call_provider(
             transient: None,
         })
     })?;
+    assembled.response_audio = audio.seal(assembled.response_id.as_deref())?;
     if let Some(state) = partial_capture {
         // Repair previews with the terminal, canonical projection. This is
         // load-bearing in the post-LLM/pre-persist window: a timeout there
@@ -290,6 +310,7 @@ pub(super) async fn call_provider(
             text: assembled.text.clone(),
             thinking: assembled.thinking.clone(),
             refusal: assembled.refusal.clone(),
+            response_audio: assembled.response_audio,
         });
     }
     // The capture is deliberately NOT cleared here: assembly is not
@@ -322,6 +343,7 @@ pub(super) async fn call_provider_with_retry(
     request: ProviderRequest,
     event_tx: Option<&AgentEventSender>,
     partial_capture: Option<&SharedTimeoutState>,
+    audio_store: Option<&ResponseAudioStore>,
 ) -> Result<AssembledResponse, NornError> {
     let attempts = std::sync::atomic::AtomicU32::new(0);
     crate::r#loop::retry::retry_with_backoff(policy, || {
@@ -335,7 +357,15 @@ pub(super) async fn call_provider_with_retry(
             {
                 sender.send_stream_retry(AgentStreamRetry { attempt });
             }
-            call_provider(provider, req, event_tx, partial_capture).await
+            call_provider(
+                provider,
+                req,
+                event_tx,
+                partial_capture,
+                audio_store,
+                attempt,
+            )
+            .await
         }
     })
     .await
@@ -367,6 +397,7 @@ mod tests {
             stop_reason: StopReason::ToolUse,
             usage: Usage::default(),
             response_id: None,
+            response_audio: None,
         }
     }
 
@@ -605,7 +636,7 @@ mod tests {
             },
         ]]);
 
-        let err = call_provider(&provider, empty_request(), None, None)
+        let err = call_provider(&provider, empty_request(), None, None, None, 1)
             .await
             .expect_err("in-band Error event must fail the call");
         match err {
@@ -643,10 +674,16 @@ mod tests {
         let (tx, mut rx) = tokio::sync::broadcast::channel::<AgentEvent>(32);
         let sender = AgentEventSender::new(tx, uuid::Uuid::nil(), "root".to_owned());
 
-        let response =
-            call_provider_with_retry(&policy, &provider, empty_request(), Some(&sender), None)
-                .await
-                .expect("second attempt succeeds");
+        let response = call_provider_with_retry(
+            &policy,
+            &provider,
+            empty_request(),
+            Some(&sender),
+            None,
+            None,
+        )
+        .await
+        .expect("second attempt succeeds");
         assert_eq!(response.text, "full answer");
 
         let mut received = Vec::new();
@@ -696,10 +733,16 @@ mod tests {
         let (tx, mut rx) = tokio::sync::broadcast::channel::<AgentEvent>(32);
         let sender = AgentEventSender::new(tx, uuid::Uuid::nil(), "root".to_owned());
 
-        let response =
-            call_provider_with_retry(&policy, &provider, empty_request(), Some(&sender), None)
-                .await
-                .expect("first attempt succeeds");
+        let response = call_provider_with_retry(
+            &policy,
+            &provider,
+            empty_request(),
+            Some(&sender),
+            None,
+            None,
+        )
+        .await
+        .expect("first attempt succeeds");
         assert_eq!(response.text, "clean");
 
         while let Ok(event) = rx.try_recv() {

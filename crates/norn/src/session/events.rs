@@ -637,6 +637,10 @@ mod tests {
             response_id: None,
         };
         let json = serde_json::to_string(&event).expect("serialize");
+        assert!(
+            !json.contains("response_audio"),
+            "a missing audio sidecar must preserve the legacy wire shape: {json}",
+        );
         let parsed: SessionEvent = serde_json::from_str(&json).expect("deserialize");
         match parsed {
             SessionEvent::AssistantMessage {

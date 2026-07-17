@@ -7,6 +7,7 @@ use crate::provider::reasoning::ReasoningItem;
 use crate::provider::request::{ToolCallCaller, ToolCallKind};
 use crate::provider::response_item::{ResponseContentPart, ResponseItem, ResponseTranscriptItem};
 use crate::provider::usage::Usage;
+use crate::session::ResponseAudioArtifactRef;
 
 /// A tool call accumulated from streaming deltas.
 #[derive(Clone, Debug)]
@@ -61,6 +62,11 @@ pub struct AssembledResponse {
     pub usage: Usage,
     /// Server-assigned response ID for conversation chaining.
     pub response_id: Option<String>,
+    /// Private response-scoped audio sidecar retained for this turn.
+    ///
+    /// This local reference is transcript metadata, not a replayable Responses
+    /// output item. It is populated only after the sidecar seals successfully.
+    pub response_audio: Option<ResponseAudioArtifactRef>,
 }
 
 /// In-progress assembly slot for one tool call.
@@ -238,6 +244,7 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
             | ProviderEvent::RefusalComplete { .. }
             | ProviderEvent::ToolResult { .. }
             | ProviderEvent::ResponseStreamEvent { .. }
+            | ProviderEvent::ResponseAudioFrame { .. }
             | ProviderEvent::Compaction { .. }
             | ProviderEvent::Error { .. } => {}
         }
@@ -282,6 +289,7 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
         stop_reason,
         usage,
         response_id,
+        response_audio: None,
     })
 }
 

@@ -13,6 +13,7 @@ use parking_lot::{Mutex, RwLock};
 use crate::error::SessionError;
 use crate::session::events::{EventId, SessionEvent};
 use crate::session::persistence::SessionPersistError;
+use crate::session::response_audio::ResponseAudioStore;
 use crate::session::spool::SpoolWriter;
 
 pub use super::jsonl_sink::{DurabilityPolicy, JsonlSink};
@@ -32,6 +33,7 @@ pub struct EventStore {
     inner: RwLock<StoreInner>,
     sink: Option<Mutex<Box<dyn PersistenceSink>>>,
     spool: Option<SpoolWriter>,
+    response_audio: Option<ResponseAudioStore>,
 }
 
 impl std::fmt::Debug for EventStore {
@@ -40,6 +42,7 @@ impl std::fmt::Debug for EventStore {
             .field("len", &self.inner.read().events.len())
             .field("has_sink", &self.sink.is_some())
             .field("has_spool", &self.spool.is_some())
+            .field("has_response_audio", &self.response_audio.is_some())
             .finish()
     }
 }
@@ -104,6 +107,7 @@ impl EventStore {
             }),
             sink: None,
             spool: None,
+            response_audio: None,
         }
     }
 
@@ -116,6 +120,7 @@ impl EventStore {
             }),
             sink: Some(Mutex::new(sink)),
             spool: None,
+            response_audio: None,
         }
     }
 
@@ -133,6 +138,7 @@ impl EventStore {
             inner: RwLock::new(StoreInner { events, index }),
             sink: Some(Mutex::new(sink)),
             spool: None,
+            response_audio: None,
         }
     }
 
@@ -153,6 +159,18 @@ impl EventStore {
     #[must_use]
     pub fn spool(&self) -> Option<&SpoolWriter> {
         self.spool.as_ref()
+    }
+
+    /// Attach the generation-bound response-audio artifact authority for this
+    /// managed timeline. Sink-less/embedder stores remain explicitly absent.
+    pub fn attach_response_audio(&mut self, store: ResponseAudioStore) {
+        self.response_audio = Some(store);
+    }
+
+    /// The response-audio authority attached to this managed timeline.
+    #[must_use]
+    pub fn response_audio(&self) -> Option<&ResponseAudioStore> {
+        self.response_audio.as_ref()
     }
 
     /// Append an event. Returns its [`EventId`].

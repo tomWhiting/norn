@@ -72,9 +72,10 @@ pub(super) struct StepStopContext<'a> {
 /// persists `loop.truncated`), schema-unreachable, and error returns.
 pub(super) async fn record_abnormal_step_stop(
     ctx: StepStopContext<'_>,
-    result: &Result<AgentStepResult, NornError>,
+    result: &mut Result<AgentStepResult, NornError>,
 ) {
-    let Ok(outcome) = result else {
+    checkpoint_hard_cut_response_audio(&ctx, result).await;
+    let Ok(outcome) = result.as_ref() else {
         // Hard errors propagate to the caller typed; they are not a
         // stop reason of the step machine.
         return;
@@ -115,6 +116,7 @@ pub(super) async fn record_abnormal_step_stop(
                     "text": partial.text,
                     "thinking": partial.thinking,
                     "refusal": partial.refusal,
+                    "response_audio": partial.response_audio,
                     "text_chars": partial.text.chars().count(),
                     "thinking_chars": partial.thinking.chars().count(),
                     "refusal_chars": refusal_chars,
@@ -169,4 +171,59 @@ pub(super) async fn record_abnormal_step_stop(
              leaves no trace in the session log",
         );
     }
+}
+
+async fn checkpoint_hard_cut_response_audio(
+    ctx: &StepStopContext<'_>,
+    result: &mut Result<AgentStepResult, NornError>,
+) {
+    if !matches!(
+        result.as_ref(),
+        Ok(AgentStepResult::TimedOut { .. } | AgentStepResult::Cancelled { .. })
+    ) {
+        return;
+    }
+    let reference = ctx
+        .timeout_state
+        .lock()
+        .in_flight_partial
+        .as_ref()
+        .and_then(|partial| partial.response_audio);
+    let Some(reference) = reference else {
+        return;
+    };
+    let checkpoint_error = match ctx.store.response_audio() {
+        Some(store) => {
+            let store = store.clone();
+            match tokio::task::spawn_blocking(move || store.checkpoint_reference(reference)).await {
+                Ok(Ok(())) => None,
+                Ok(Err(error)) => Some(error.to_string()),
+                Err(error) => Some(format!(
+                    "response-audio checkpoint task failed before reporting: {error}"
+                )),
+            }
+        }
+        None => Some("the event store has no response-audio authority".to_owned()),
+    };
+    let Some(error) = checkpoint_error else {
+        return;
+    };
+
+    if let Some(partial) = ctx.timeout_state.lock().in_flight_partial.as_mut()
+        && partial.response_audio == Some(reference)
+    {
+        partial.response_audio = None;
+    }
+    if let Ok(AgentStepResult::TimedOut { partial_output, .. }) = result
+        && partial_output.as_ref().is_some_and(|output| {
+            output.get("response_audio") == Some(&serde_json::json!(reference))
+        })
+    {
+        *partial_output = None;
+    }
+    tracing::error!(
+        %reference,
+        %error,
+        "failed to checkpoint hard-cut response audio; omitting its unsafe reference",
+    );
 }

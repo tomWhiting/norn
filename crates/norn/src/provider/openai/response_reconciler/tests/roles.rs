@@ -25,7 +25,7 @@ fn coarse_completed_stage_does_not_determine_reconciliation_semantics() {
     );
     assert_eq!(
         response_event_role("response.audio.done"),
-        Some(ResponseEventRole::UnsupportedMedia)
+        Some(ResponseEventRole::ResponseAudio)
     );
 }
 

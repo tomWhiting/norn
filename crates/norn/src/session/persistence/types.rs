@@ -104,6 +104,17 @@ pub enum SessionPersistError {
         reason: String,
     },
 
+    /// A response-audio sidecar reference or its strict JSONL contents did
+    /// not match the private artifact contract.
+    #[error("invalid response-audio artifact '{artifact_id}': {reason}")]
+    InvalidResponseAudioArtifact {
+        /// Locally minted artifact identifier, or the rejected reference.
+        artifact_id: String,
+        /// Static structural reason. Provider-controlled content is never
+        /// copied into this diagnostic.
+        reason: &'static str,
+    },
+
     /// A caller-supplied session ID failed validation. Session IDs become
     /// file names (`{id}.jsonl`), so the explicit-ID path
     /// ([`SessionManager::open_or_resume`](crate::session::SessionManager::open_or_resume))

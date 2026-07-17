@@ -17,10 +17,6 @@
 //! the most recent assistant text and iteration count to populate
 //! [`crate::agent_loop::runner::AgentStepResult::TimedOut`].
 
-use std::sync::Arc;
-
-use parking_lot::Mutex;
-
 use crate::error::SessionError;
 use crate::integration::hooks::{HookOutcome, HookRegistry};
 use crate::r#loop::summarization::request_compaction_summary;
@@ -30,6 +26,10 @@ use crate::provider::usage::Usage;
 use crate::session::context_edit::{AutoCompactionOutcome, ContextEdits, build_compaction_digest};
 use crate::session::events::SessionEvent;
 use crate::session::store::EventStore;
+
+pub use crate::r#loop::timeout_state::{
+    InFlightPartial, SharedTimeoutState, TimeoutState, shared_timeout_state,
+};
 
 /// Where the committed compaction summary came from.
 #[derive(Debug)]
@@ -429,70 +429,6 @@ fn fallback_digest(
     serde_json::to_string(&digest).map_err(|e| SessionError::EventAppendFailed {
         reason: format!("failed to serialise fallback compaction digest: {e}"),
     })
-}
-
-/// Text, refusal, and thinking deltas accumulated by an **in-flight** provider
-/// call — content the stream has produced but no assembled response has
-/// yet persisted.
-///
-/// Maintained by the runner's provider-call collector
-/// ([`call_provider`](crate::agent_loop::runner) via the shared
-/// [`TimeoutState`]): reset at the start of every stream attempt (a retry
-/// discards the failed attempt's partials, mirroring the live
-/// `StreamRetry` marker) and cleared only once the `AssistantMessage`
-/// event is durably appended (`persist_assistant_turn`) — assembly alone
-/// does not disarm it, because the post-LLM hook window between assembly
-/// and the append can still be hard-cut. When a step timeout or
-/// cancellation cuts the call mid-stream or in that window, this is the
-/// only surviving copy of what the model had said — the exit path
-/// persists it as a `loop.partial_output` record.
-#[derive(Clone, Debug, Default)]
-pub struct InFlightPartial {
-    /// Assistant text deltas accumulated so far, in stream order.
-    pub text: String,
-    /// Thinking/reasoning-summary deltas accumulated so far, in stream
-    /// order.
-    pub thinking: String,
-    /// Refusal content accumulated so far. `Some("")` is distinct from
-    /// absence: an explicitly empty refusal is still a refusal outcome.
-    pub refusal: Option<String>,
-}
-
-impl InFlightPartial {
-    /// Whether the stream had produced any content before the cut.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.text.is_empty() && self.thinking.is_empty() && self.refusal.is_none()
-    }
-}
-
-/// Mutable handle shared between the runner's main body and the outer
-/// `tokio::time::timeout` wrapper used by R2 (`step_timeout`). Stored
-/// behind a [`parking_lot::Mutex`] so the timeout closure can capture an
-/// `Arc` clone and read the latest values when the budget elapses.
-#[derive(Debug, Default)]
-pub struct TimeoutState {
-    /// Iterations completed so far in this step.
-    pub iterations: usize,
-    /// Most recent non-empty assistant text observed by the runner.
-    pub last_assistant_text: Option<String>,
-    /// Token usage accumulated so far in this step, kept in sync with the
-    /// runner's running total after every usage-bearing provider call so a
-    /// timed-out step still reports the spend it incurred.
-    pub usage: crate::provider::usage::Usage,
-    /// Partial content of the in-flight provider call, when one is
-    /// mid-stream. `None` between calls and after every completed
-    /// assembly; `Some` (possibly empty) while a stream attempt runs.
-    pub in_flight_partial: Option<InFlightPartial>,
-}
-
-/// Convenience alias for `Arc<Mutex<TimeoutState>>`.
-pub type SharedTimeoutState = Arc<Mutex<TimeoutState>>;
-
-/// Construct a fresh shared timeout-state handle.
-#[must_use]
-pub fn shared_timeout_state() -> SharedTimeoutState {
-    Arc::new(Mutex::new(TimeoutState::default()))
 }
 
 #[cfg(test)]

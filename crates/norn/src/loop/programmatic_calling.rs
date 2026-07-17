@@ -224,6 +224,7 @@ mod tests {
             stop_reason: StopReason::ToolUse,
             usage: Usage::default(),
             response_id: None,
+            response_audio: None,
         }
     }
 }

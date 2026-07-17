@@ -117,6 +117,7 @@ fn root_provider_event_needs_panel_redraw(event: &ProviderEvent) -> bool {
             | ProviderEvent::ReasoningItemDone { .. }
             | ProviderEvent::ResponseItemDone { .. }
             | ProviderEvent::ResponseStreamEvent { .. }
+            | ProviderEvent::ResponseAudioFrame { .. }
             | ProviderEvent::Compaction { .. }
     )
 }
@@ -134,6 +135,7 @@ fn child_provider_event_needs_panel_redraw(event: &ProviderEvent) -> bool {
             | ProviderEvent::ReasoningItemDone { .. }
             | ProviderEvent::ResponseItemDone { .. }
             | ProviderEvent::ResponseStreamEvent { .. }
+            | ProviderEvent::ResponseAudioFrame { .. }
             | ProviderEvent::Compaction { .. }
     )
 }
@@ -239,6 +241,7 @@ mod tests {
     use super::*;
     use norn::provider::openai::response_stream_event::ResponseStreamEvent;
     use norn::provider::request::ToolCallKind;
+    use norn::provider::response_audio::ResponseAudioEvent;
 
     #[test]
     fn root_text_deltas_do_not_force_panel_redraw() {
@@ -267,6 +270,25 @@ mod tests {
 
         assert!(!root_provider_event_needs_panel_redraw(&refusal_complete));
         assert!(!root_provider_event_needs_panel_redraw(&raw));
+        Ok(())
+    }
+
+    #[test]
+    fn actionable_audio_projection_does_not_force_panel_redraw()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let stream_event = ResponseStreamEvent::from_raw(serde_json::json!({
+            "type": "response.audio.done",
+            "sequence_number": 2
+        }))?;
+        let event = ResponseAudioEvent::from_stream_event(&stream_event)?
+            .ok_or_else(|| std::io::Error::other("audio event had no typed projection"))?;
+        let audio = ProviderEvent::ResponseAudioFrame {
+            stream_event: Box::new(stream_event),
+            event,
+        };
+
+        assert!(!root_provider_event_needs_panel_redraw(&audio));
+        assert!(!child_provider_event_needs_panel_redraw(&audio));
         Ok(())
     }
 

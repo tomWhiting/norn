@@ -3,6 +3,7 @@ use std::path::Path;
 
 use chrono::Utc;
 
+use super::names::journal_temp_path;
 use super::*;
 use crate::session::events::{EventBase, EventUsage};
 use crate::session::persistence::types::{
@@ -444,12 +445,13 @@ fn prepare_pending(
     let mut committed = candidate;
     apply_timeline_facts(&mut committed, &facts);
     let journal = PublicationJournal {
-        norn_session_publication: PUBLICATION_VERSION,
+        norn_session_publication: TIMELINE_PUBLICATION_VERSION,
         transaction_id,
         parent_precondition,
         entry: committed.clone(),
         timeline_bytes: facts.bytes,
         timeline_sha256: facts.sha256,
+        audio_bundle: None,
     };
     write_journal(root, &journal)?;
     Ok(committed)

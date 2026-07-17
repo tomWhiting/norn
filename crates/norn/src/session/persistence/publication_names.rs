@@ -9,6 +9,8 @@ pub(super) const JOURNAL_TEMP_PREFIX: &str = ".norn-publication-journal-";
 pub(super) const JOURNAL_TEMP_SUFFIX: &str = ".tmp";
 pub(super) const TIMELINE_STAGE_PREFIX: &str = ".norn-publication-timeline-";
 pub(super) const TIMELINE_STAGE_SUFFIX: &str = ".stage";
+pub(super) const AUDIO_STAGE_PREFIX: &str = ".norn-publication-audio-";
+pub(super) const AUDIO_STAGE_SUFFIX: &str = ".stage";
 
 pub(super) fn journal_path(transaction_id: &str) -> PathBuf {
     PathBuf::from(format!("{JOURNAL_PREFIX}{transaction_id}{JOURNAL_SUFFIX}"))
@@ -26,6 +28,12 @@ pub(super) fn timeline_stage_path(transaction_id: &str) -> PathBuf {
     ))
 }
 
+pub(super) fn audio_stage_path(transaction_id: &str) -> PathBuf {
+    PathBuf::from(format!(
+        "{AUDIO_STAGE_PREFIX}{transaction_id}{AUDIO_STAGE_SUFFIX}"
+    ))
+}
+
 pub(super) fn journal_id(name: &OsStr) -> Option<String> {
     owned_uuid(name, JOURNAL_PREFIX, JOURNAL_SUFFIX)
 }
@@ -36,6 +44,10 @@ pub(super) fn journal_temp_id(name: &OsStr) -> Option<String> {
 
 pub(super) fn timeline_stage_id(name: &OsStr) -> Option<String> {
     owned_uuid(name, TIMELINE_STAGE_PREFIX, TIMELINE_STAGE_SUFFIX)
+}
+
+pub(super) fn audio_stage_id(name: &OsStr) -> Option<String> {
+    owned_uuid(name, AUDIO_STAGE_PREFIX, AUDIO_STAGE_SUFFIX)
 }
 
 fn owned_uuid(name: &OsStr, prefix: &str, suffix: &str) -> Option<String> {
@@ -64,6 +76,10 @@ mod tests {
         assert_eq!(
             timeline_stage_path(id).to_string_lossy(),
             format!("{TIMELINE_STAGE_PREFIX}{id}{TIMELINE_STAGE_SUFFIX}")
+        );
+        assert_eq!(
+            audio_stage_path(id).to_string_lossy(),
+            format!("{AUDIO_STAGE_PREFIX}{id}{AUDIO_STAGE_SUFFIX}")
         );
         assert!(journal_id(OsStr::new(".norn-publication-not-a-uuid.json")).is_none());
     }

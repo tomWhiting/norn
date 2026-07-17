@@ -4,6 +4,7 @@ use std::io;
 use serde_json::{Value, json};
 
 use super::*;
+use crate::provider::response_audio::ResponseAudioEvent;
 
 mod equivalence;
 
@@ -321,7 +322,7 @@ fn output_text_delta_logprobs_remain_on_the_raw_preview_envelope() -> TestResult
 }
 
 #[test]
-fn known_audio_event_is_raw_then_precise_unsupported_media() -> TestResult {
+fn known_audio_event_is_raw_then_typed_with_decoded_bytes() -> TestResult {
     let raw = json!({
         "type": "response.audio.delta",
         "sequence_number": 12,
@@ -337,7 +338,14 @@ fn known_audio_event_is_raw_then_precise_unsupported_media() -> TestResult {
     let raw_event = match events.as_slice() {
         [
             Ok(ProviderEvent::ResponseStreamEvent { event }),
-            Err(ProviderError::UnsupportedResponseMedia),
+            Ok(ProviderEvent::ResponseAudioFrame {
+                stream_event: _,
+                event:
+                    ResponseAudioEvent::AudioDelta {
+                        sequence_number: 12,
+                        bytes: _,
+                    },
+            }),
         ] => event,
         other => {
             return Err(io::Error::other(format!(
@@ -348,7 +356,42 @@ fn known_audio_event_is_raw_then_precise_unsupported_media() -> TestResult {
         }
     };
     assert_eq!(raw_event.raw(), &raw);
+    let [
+        _,
+        Ok(ProviderEvent::ResponseAudioFrame {
+            stream_event,
+            event,
+        }),
+    ] = events.as_slice()
+    else {
+        return Err(io::Error::other("typed audio frame missing").into());
+    };
+    assert_eq!(stream_event.as_ref(), raw_event.as_ref());
+    assert_eq!(stream_event.raw(), raw_event.raw());
+    assert_eq!(event.sequence_number(), 12);
+    assert!(matches!(
+        event,
+        ResponseAudioEvent::AudioDelta { bytes, .. } if bytes == b"audio"
+    ));
     Ok(())
+}
+
+#[test]
+fn exact_duplicate_audio_sequence_remains_raw_only() {
+    let wire = SseEvent {
+        event_type: "response.audio.done".to_owned(),
+        data: json!({
+            "type": "response.audio.done",
+            "sequence_number": 1,
+        }),
+    };
+    let mut mapper = ResponsesMapper::default();
+    assert_eq!(mapper.map_event(&wire).len(), 2);
+    let duplicate = mapper.map_event(&wire);
+    assert!(matches!(
+        duplicate.as_slice(),
+        [Ok(ProviderEvent::ResponseStreamEvent { .. })]
+    ));
 }
 
 #[test]

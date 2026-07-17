@@ -47,7 +47,7 @@ pub(super) enum ResponseEventRole {
     ItemStringDelta(ItemStringKind),
     ItemStringDone(ItemStringKind),
     HostedLifecycle(HostedFamily, HostedPhase),
-    UnsupportedMedia,
+    ResponseAudio,
 }
 
 pub(super) fn response_event_role(event_type: &str) -> Option<ResponseEventRole> {
@@ -58,7 +58,7 @@ pub(super) fn response_event_role(event_type: &str) -> Option<ResponseEventRole>
         AnnotationAdded, ContentPartAdded, ContentPartDone, CoreStringDelta, CoreStringDone,
         HostedLifecycle, ImagePartial, ItemAdded, ItemDone, ItemStringDelta, ItemStringDone,
         ProviderError, RawPreviewOnly, ReasoningSummaryPartAdded, ReasoningSummaryPartDone,
-        TerminalAuthority, UnsupportedMedia,
+        ResponseAudio, TerminalAuthority,
     };
 
     match event_type {
@@ -133,7 +133,7 @@ pub(super) fn response_event_role(event_type: &str) -> Option<ResponseEventRole>
         "response.audio.delta"
         | "response.audio.done"
         | "response.audio.transcript.delta"
-        | "response.audio.transcript.done" => Some(UnsupportedMedia),
+        | "response.audio.transcript.done" => Some(ResponseAudio),
         "error" => Some(ProviderError),
         _ => None,
     }
@@ -169,9 +169,7 @@ impl ResponseReconciler {
             ResponseEventRole::HostedLifecycle(family, phase) => {
                 self.observe_hosted_lifecycle(event, family, phase)
             }
-            ResponseEventRole::UnsupportedMedia => {
-                Err(ResponseReconciliationError::UnsupportedResponseMedia)
-            }
+            ResponseEventRole::ResponseAudio => self.audio.accept(event, sequence_number),
         }
     }
 

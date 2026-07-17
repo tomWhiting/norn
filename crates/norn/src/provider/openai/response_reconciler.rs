@@ -13,6 +13,7 @@ use crate::provider::response_item::{
     ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
 };
 
+mod audio;
 mod authoritative;
 mod call_identity;
 mod channels;
@@ -21,6 +22,7 @@ mod model;
 mod roles;
 mod wire;
 
+use audio::ResponseAudioState;
 use authoritative::reconcile_authoritative_deltas;
 use channels::channel_matches_item_type;
 use item_channels::ItemChannelState;
@@ -61,6 +63,7 @@ pub struct ResponseReconciler {
     channel_reconciliations:
         BTreeMap<(ResponseItemIdentity, ResponseDeltaChannel), DeltaReconciliationDisposition>,
     item_channels: ItemChannelState,
+    audio: ResponseAudioState,
     completed: BTreeMap<ResponseItemIdentity, ResponseTranscriptItem>,
     terminal: bool,
     failed: bool,
@@ -74,9 +77,7 @@ impl ResponseReconciler {
     }
 
     /// Accept one parsed SSE frame.
-    ///
     /// # Errors
-    ///
     /// Returns a typed protocol error for missing/conflicting sequence or item
     /// identity, malformed authoritative items, or unresolved actionable calls.
     pub fn ingest(

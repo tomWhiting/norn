@@ -38,7 +38,7 @@ impl Read for HashingReader {
         self.bytes = self
             .bytes
             .checked_add(u64::try_from(read).map_err(io::Error::other)?)
-            .ok_or_else(|| io::Error::other("timeline byte count overflow"))?;
+            .ok_or_else(|| io::Error::other("publication byte count overflow"))?;
         Ok(read)
     }
 }

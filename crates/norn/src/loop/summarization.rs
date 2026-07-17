@@ -106,7 +106,7 @@ pub(super) async fn request_compaction_summary(
     // partial capture is None for the same reason — a hard-cut
     // summarization call is not assistant output and must not be
     // persisted as the step's partial content.
-    let response = call_provider(provider, request, None, None).await?;
+    let response = call_provider(provider, request, None, None, None, 1).await?;
     Ok(SummarizationResponse {
         text: response.text,
         usage: response.usage,

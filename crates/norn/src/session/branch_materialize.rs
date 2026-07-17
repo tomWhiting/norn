@@ -3,6 +3,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use uuid::Uuid;
 
+use crate::session::ResponseAudioStore;
 use crate::session::events::{EventBase, SessionEvent};
 use crate::session::persistence::index::publish_new_child_session;
 use crate::session::persistence::types::{
@@ -57,6 +58,12 @@ pub(super) fn materialize_child(
     )?;
     let mut store = EventStore::with_sink_and_events(Box::new(sink), vec![provenance]);
     store.attach_spool(SpoolWriter::for_session(
+        brancher.manager.data_dir(),
+        &entry,
+        brancher.durability,
+        brancher.manager.index_lock_deadline(),
+    ));
+    store.attach_response_audio(ResponseAudioStore::for_session(
         brancher.manager.data_dir(),
         &entry,
         brancher.durability,
