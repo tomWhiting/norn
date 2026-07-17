@@ -33,11 +33,15 @@
   `0512953`, frozen and packaged at `192756e`. The six enumerated lifecycle
   source fixtures and source-bound retained lifecycle evidence are complete at
   `f252cbb`: 64/64 across six semantic cases/seven test invocations, with each
-  sensitive case passing 20/20. Focused independent review of that successor
-  slice remains open. P1 and P2 are
-  not accepted, and the P3/P4 retrospective phase-base disposition, finite
-  optional-shape inventory, full-range final evidence, and separate P3 then P4
-  acceptance reviews also remain open.
+  sensitive case passing 20/20. Focused review at `50115bf` accepted all six
+  fixtures but returned `NOT READY` on M-1, with F-2 carried into the narrow
+  correction. Source `df47e9e` replaces full-payload duplicate signatures with
+  fixed-width digests and preserves typed link-validation errors; its 12/12
+  retained correction gate is committed at `12a50ab`. Same-reviewer
+  confirmation remains open. P1 and P2 are not accepted, and the P3/P4
+  retrospective phase-base disposition, finite optional-shape inventory,
+  full-range final evidence, and separate P3 then P4 acceptance reviews also
+  remain open.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -433,8 +437,8 @@ artifacts to the same clean head with zero errors.
 | P0. Credential and workspace authority containment | [x] Accepted by focused Gate D review `7ce29d7` on 2026-07-15 | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] Gate A complete at base `2917c8e`; Gate B foundation next; D0 remote enforcement deferred to exit | The program has executable contracts and protected quality gates. |
 | P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; retained Gate C, live A/B/A, P1 dependency, and independent acceptance open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
-| P3. Canonical ordered transcript | [ ] Combined transcript/audio implementation candidate through `0512953`, packaged at `192756e`, plus accepted D2 strict-store source `e9755fe`: the exact 28-item union, canonical model/replay/persistence, caller ownership, exact second-request, representative real spawn/fork paths, strict format-2 store, offline migration, explicit resume classifications, and response-scoped private audio artifacts are implemented; corrected D2 holds unconditional Gate D `READY`; six successor lifecycle fixtures and their source-bound 64/64 retained evidence are complete at `f252cbb`, while focused review, the finite optional-shape inventory, P1/P2 acceptance, the phase-base disposition, final P3 gates, and acceptance review remain open | Responses items survive stream, persistence, resume, and replay in order. |
-| P4. Streaming and replay conformance | [ ] Combined streaming/audio implementation candidate through `0512953`, packaged at `192756e`, plus accepted D2 persistence source `e9755fe`; public/Codex manifests, explicit validators for all 28 output discriminators, identity/channel/item reconciliation, terminal parsing, refusal, hosted-search replay, authoritative UI repair, raw CLI events, and lossless response-audio receive/reconciliation are implemented; corrected D2 holds unconditional Gate D `READY`; six successor lifecycle fixtures and their source-bound 64/64 retained evidence are complete at `f252cbb`, while focused review, P3 acceptance, the phase-base disposition, final P4 gates, and acceptance review remain open | Supported events/items are complete, reconciled, and fail closed. |
+| P3. Canonical ordered transcript | [ ] Combined transcript/audio implementation candidate through `0512953`, packaged at `192756e`, plus accepted D2 strict-store source `e9755fe`: the exact 28-item union, canonical model/replay/persistence, caller ownership, exact second-request, representative real spawn/fork paths, strict format-2 store, offline migration, explicit resume classifications, and response-scoped private audio artifacts are implemented; corrected D2 holds unconditional Gate D `READY`; six successor lifecycle fixtures and their source-bound 64/64 retained evidence are complete at `f252cbb`; focused review `50115bf` accepted the fixtures but returned `NOT READY` on M-1, and narrow M-1/F-2 correction `df47e9e` with retained 12/12 gate is awaiting same-reviewer confirmation; the finite optional-shape inventory, P1/P2 acceptance, phase-base disposition, final P3 gates, and acceptance review remain open | Responses items survive stream, persistence, resume, and replay in order. |
+| P4. Streaming and replay conformance | [ ] Combined streaming/audio implementation candidate through `0512953`, packaged at `192756e`, plus accepted D2 persistence source `e9755fe`; public/Codex manifests, explicit validators for all 28 output discriminators, identity/channel/item reconciliation, terminal parsing, refusal, hosted-search replay, authoritative UI repair, raw CLI events, and lossless response-audio receive/reconciliation are implemented; corrected D2 holds unconditional Gate D `READY`; six successor lifecycle fixtures and their source-bound 64/64 retained evidence are complete at `f252cbb`; focused review `50115bf` accepted the fixtures but returned `NOT READY` on M-1, and narrow M-1/F-2 correction `df47e9e` with retained 12/12 gate is awaiting same-reviewer confirmation; P3 acceptance, phase-base disposition, final P4 gates, and acceptance review remain open | Supported events/items are complete, reconciled, and fail closed. |
 | P5. Conversation and Codex turn semantics | [ ] Behavior audit and first implementation slice specified; source work not started | Local/provider history and turn-scoped state have explicit lifetimes. |
 | P6. Transport, retry, and usage | [ ] | Retries terminate once; observed and unknown attempt usage remain explicit. |
 | P7. Request, schema, and model controls | [ ] | Advertised capabilities match validated payload and tool behavior. |
@@ -1507,8 +1511,10 @@ are not pass claims.
 audio receive, private sidecar persistence, cancellation/retry handling, and
 ownership-changing fork publication are implemented and evidenced; the
 six enumerated lifecycle source fixtures and their source-bound retained
-evidence are complete at `f252cbb` with 64/64 passing; focused audio review,
-final P3 gates, and independent acceptance review remain open;
+evidence are complete at `f252cbb` with 64/64 passing; focused review `50115bf`
+accepted those fixtures but returned `NOT READY` on M-1; narrow M-1/F-2
+correction `df47e9e` and its retained 12/12 gate await same-reviewer
+confirmation; final P3 gates and independent acceptance review remain open;
 **foundation for:** `STATE-01`, `EVT-02`;
 **dependencies:** P0-P2; the owner-decided D2 contract is implemented, corrected,
 re-evidenced, and accepted with unconditional Gate D `READY`. P1 and P2 are not
@@ -1548,10 +1554,15 @@ source fixtures are implemented separately at `f252cbb`. The
 binds the review boundary, and the source-bound
 [`lifecycle distributions`](reviews/evidence/p3-p4-audio/2026-07-17-response-audio-lifecycle-distributions-f252cbb.json)
 record 64/64 passing across six semantic cases/seven test invocations, including
-20/20 for each sensitive repeated case. Focused review of that successor slice
-remains open. The finite optional-shape inventory, full-range final P3 evidence,
-P1/P2 acceptance, the retrospective Gate A disposition, and independent P3
-acceptance review still block phase acceptance.
+20/20 for each sensitive repeated case. Focused review at `50115bf` accepted the
+fixtures but found full-payload retention in the duplicate cache (M-1) and
+diagnostic loss at two link-validation seams (F-2). The narrow correction is
+frozen at `df47e9e`; its
+[`correction handoff`](reviews/2026-07-18-p3-p4-response-audio-correction-handoff.md)
+and 12/12 retained gate await same-reviewer confirmation. The finite
+optional-shape inventory, full-range final P3 evidence, P1/P2 acceptance, the
+retrospective Gate A disposition, and independent P3 acceptance review still
+block phase acceptance.
 
 The replay normalization allowlist is empty for the pinned public contract.
 Current official conversation-state and compaction guidance requires clients
@@ -1642,9 +1653,10 @@ not change their order or invent missing semantics.
 
 Source fixtures for the following six cases exist at `f252cbb`, and their
 source-bound retained evidence passes 64/64 across six semantic cases/seven test
-invocations, including 20/20 for each sensitive repeated case. Independent
-focused review remains pending. These closed case checks do not close the finite
-inventory above or accept P3/P4.
+invocations, including 20/20 for each sensitive repeated case. Review `50115bf`
+accepted all six fixtures for their named claims. Its separate M-1/F-2 source
+findings are corrected at `df47e9e` and await narrow confirmation. These closed
+case checks do not close the finite inventory above or accept P3/P4.
 
 - [x] A hard cut after a response-audio sidecar is sealed but before its link is
   appended retains one readable sealed partial reference and resumes without
@@ -1700,9 +1712,11 @@ inventory above or accept P3/P4.
 `0512953`, packaged at `192756e`, plus accepted D2 persistence source `e9755fe`; response-scoped
 audio reconciliation and durable artifact handling are implemented and
 evidenced; six enumerated lifecycle source fixtures and their source-bound
-retained evidence are complete at `f252cbb` with 64/64 passing; focused audio
-review, full-range final P4 evidence, and independent P4 acceptance review still
-block acceptance;
+retained evidence are complete at `f252cbb` with 64/64 passing; focused review
+`50115bf` accepted those fixtures but returned `NOT READY` on M-1; narrow
+M-1/F-2 correction `df47e9e` and its retained 12/12 gate await same-reviewer
+confirmation; full-range final P4 evidence and independent P4 acceptance review
+still block acceptance;
 **candidate coverage:** `STATE-01`, `EVT-01` through
 `EVT-07`; **dependencies:** P3. P3 is not accepted, and its transitive P1/P2
 acceptance and retrospective Gate A blockers therefore remain P4 blockers.
@@ -1797,9 +1811,12 @@ authoritative completed content part is preserved canonically.
   representative persistent-spawn, context-filter, and manager-fork fixtures
   through its D2-compatible sidecar. No terminal audio payload or output-item
   correlation is fabricated. The six successor source fixtures and their
-  source-bound 64/64 retained evidence are complete at `f252cbb`; focused review
-  remains open, and they do not close P3's future finite optional-shape
-  inventory.
+  source-bound 64/64 retained evidence are complete at `f252cbb` and were
+  accepted for their named claims by review `50115bf`. M-1/F-2 correction
+  `df47e9e` replaces full-payload duplicate retention with one fixed-width
+  digest per sequence and preserves typed link-validation diagnostics; narrow
+  confirmation remains open. These fixtures do not close P3's future finite
+  optional-shape inventory.
 - [x] Interleaved calls prove call two cannot complete call one. Exact duplicate
   frames are idempotent; conflicting duplicates, delta-only calls, and missing
   authoritative completion cannot execute.
@@ -2283,8 +2300,8 @@ ledger prematurely.
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
 | P1 | Gate A complete at base `2917c8e`; Gate B foundation not yet implemented | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A `READY` | Implement and independently review the executable foundation, complete and verify P1, then resolve D0 before acceptance |
 | P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and the bounded source fixture matrices are present | Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks; retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle | Record the historical missing-phase-base disposition, resolve the P1 dependency, run the live A/B/A validity experiment, execute and retain the complete candidate gates, then obtain P2 acceptance |
-| P3 | Combined canonical transcript/audio candidate through `0512953`, plus accepted D2 source `e9755fe`: all 28 public output discriminators and shipped non-audio nested/tool schemas have explicit validation and actionability; exact completed items and caller ownership drive derived views and survive persistence, exact second-request replay, representative real persistent spawn/fork, reload, and manager resume paths; strict format-2 storage and migration are accepted; response audio is retained as a response-scoped private sidecar linked without changing the format-2 assistant codec; six successor lifecycle source fixtures are implemented at `f252cbb` | Accepted D2 evidence remains as previously recorded. The [`response-audio handoff`](reviews/2026-07-17-p3-p4-response-audio-handoff.md) binds source `0512953` to a 9/9 source-bound gate with a disclosed test-only overlay, 100/100 repeated lifecycle observations, a complete 64-Rust-path LOC inventory, zero matches for the enumerated prohibited-addition policy, and unchanged D2 production codec hashes. The [`lifecycle closure handoff`](reviews/2026-07-18-p3-p4-audio-lifecycle-handoff.md) and source-bound [`lifecycle distributions`](reviews/evidence/p3-p4-audio/2026-07-17-response-audio-lifecycle-distributions-f252cbb.json) bind `f252cbb` and pass 64/64 across six semantic cases/seven test invocations, including 20/20 for each sensitive repeated case; focused external review remains open | Resolve the still-owner-unapproved retrospective phase-base/Gate A disposition and P1/P2 acceptance dependencies; publish and execute the finite optional-shape/lifecycle inventory; retain full-range final P3 evidence; then obtain protocol and persistence review |
-| P4 | Combined streaming/reconciliation/audio candidate through `0512953`, plus accepted D2 persistence source `e9755fe`: 53-event/28-item manifests, one authoritative validator per output discriminator, schema-before-capability ordering, 20 inert/6 executable/2 conditional classifications, identity-safe and frame-atomic completion, item-scoped image/MCP/code/search reconciliation, terminal parsing, refusal outcomes, hosted-search replay, append-only UI repair, and the four response-audio stream events with lossless private-artifact persistence; six successor lifecycle source fixtures are implemented at `f252cbb` | Accepted D2 evidence and the pre-audio source reviews remain as previously recorded. The [`response-audio handoff`](reviews/2026-07-17-p3-p4-response-audio-handoff.md) records the source-bound workspace gate and disclosed test-only overlay, focused suites, retained distributions, policy/LOC inventory, and consumer behavior. The [`lifecycle closure handoff`](reviews/2026-07-18-p3-p4-audio-lifecycle-handoff.md) and source-bound [`lifecycle distributions`](reviews/evidence/p3-p4-audio/2026-07-17-response-audio-lifecycle-distributions-f252cbb.json) bind `f252cbb` and pass 64/64 across six semantic cases/seven test invocations, including 20/20 for each sensitive repeated case; focused external review remains open | Resolve P3 and the still-owner-unapproved retrospective phase-base/Gate A disposition; execute the finite lifecycle inventory; obtain independent P4 review; and close the final full-range phase gates. P6 separately owns usage-presence projection and retry-attempt UI cleanup, which are non-blocking for P4 |
+| P3 | Combined canonical transcript/audio candidate through `0512953`, plus accepted D2 source `e9755fe`: all 28 public output discriminators and shipped non-audio nested/tool schemas have explicit validation and actionability; exact completed items and caller ownership drive derived views and survive persistence, exact second-request replay, representative real persistent spawn/fork, reload, and manager resume paths; strict format-2 storage and migration are accepted; response audio is retained as a response-scoped private sidecar linked without changing the format-2 assistant codec; six successor lifecycle source fixtures are implemented at `f252cbb`; M-1/F-2 correction is frozen at `df47e9e` | Accepted D2 evidence remains as previously recorded. The [`response-audio handoff`](reviews/2026-07-17-p3-p4-response-audio-handoff.md) binds source `0512953` to a 9/9 source-bound gate with a disclosed test-only overlay, 100/100 repeated lifecycle observations, a complete 64-Rust-path LOC inventory, zero matches for the enumerated prohibited-addition policy, and unchanged D2 production codec hashes. The [`lifecycle closure handoff`](reviews/2026-07-18-p3-p4-audio-lifecycle-handoff.md) and source-bound [`lifecycle distributions`](reviews/evidence/p3-p4-audio/2026-07-17-response-audio-lifecycle-distributions-f252cbb.json) bind `f252cbb` and pass 64/64 across six semantic cases/seven test invocations, including 20/20 for each sensitive repeated case. Review `50115bf` accepts those fixtures but returns `NOT READY` on M-1; the [`correction handoff`](reviews/2026-07-18-p3-p4-response-audio-correction-handoff.md) binds `df47e9e` to a 12/12 gate and awaits same-reviewer confirmation | Confirm the narrow correction; resolve the still-owner-unapproved retrospective phase-base/Gate A disposition and P1/P2 acceptance dependencies; publish and execute the finite optional-shape/lifecycle inventory; retain full-range final P3 evidence; then obtain protocol and persistence review |
+| P4 | Combined streaming/reconciliation/audio candidate through `0512953`, plus accepted D2 persistence source `e9755fe`: 53-event/28-item manifests, one authoritative validator per output discriminator, schema-before-capability ordering, 20 inert/6 executable/2 conditional classifications, identity-safe and frame-atomic completion, item-scoped image/MCP/code/search reconciliation, terminal parsing, refusal outcomes, hosted-search replay, append-only UI repair, and the four response-audio stream events with lossless private-artifact persistence; six successor lifecycle source fixtures are implemented at `f252cbb`; M-1/F-2 correction is frozen at `df47e9e` | Accepted D2 evidence and the pre-audio source reviews remain as previously recorded. The [`response-audio handoff`](reviews/2026-07-17-p3-p4-response-audio-handoff.md) records the source-bound workspace gate and disclosed test-only overlay, focused suites, retained distributions, policy/LOC inventory, and consumer behavior. The [`lifecycle closure handoff`](reviews/2026-07-18-p3-p4-audio-lifecycle-handoff.md) and source-bound [`lifecycle distributions`](reviews/evidence/p3-p4-audio/2026-07-17-response-audio-lifecycle-distributions-f252cbb.json) bind `f252cbb` and pass 64/64 across six semantic cases/seven test invocations, including 20/20 for each sensitive repeated case. Review `50115bf` accepts those fixtures but returns `NOT READY` on M-1; the [`correction handoff`](reviews/2026-07-18-p3-p4-response-audio-correction-handoff.md) binds `df47e9e` to a 12/12 gate and awaits same-reviewer confirmation | Confirm the narrow correction; resolve P3 and the still-owner-unapproved retrospective phase-base/Gate A disposition; execute the finite lifecycle inventory; obtain independent P4 review; and close the final full-range phase gates. P6 separately owns usage-presence projection and retry-attempt UI cleanup, which are non-blocking for P4 |
 | P5 | Read-only current-state audit complete: Codex `store:false` and public threaded request shapes are distinct and stateless encrypted-reasoning replay exists; instruction resend and compaction-anchor invalidation are partial; producer ownership, `end_turn`, Codex turn state, credential-bound state, `client_metadata`, and D8 role authority are missing | The first `TRANS-01` slice and synchronized nine-case transport/cancellation evidence matrix are specified; no source or acceptance evidence exists | Obtain the scoped entry disposition if D3/D8 remain open; implement and review `TRANS-01`; then resolve the Codex turn overlay, D3 state/account binding, and D8 provenance/role contract before whole-phase gates |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
