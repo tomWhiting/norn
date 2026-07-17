@@ -1,0 +1,398 @@
+{
+  "schema": "norn.response_audio.gate.v3",
+  "generated_at": "2026-07-17T14:25:41Z",
+  "base_commit": "460c192b5160fcabfa647418a75ecf29665f6743",
+  "source_commit": "0512953e650c4961e790f5987896c131e82ba4f3",
+  "source_tree": "1aeac724119bb525340cf7cef67dbac906131ac0",
+  "toolchain": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+  "target_directory": "target",
+  "working_tree_disclosure": {
+    "candidate_boundary": "committed response-audio source plus the disclosed test-only working-tree overlay",
+    "overlay_inputs_match_at_recorded_checkpoints": true,
+    "overlay_inputs": [
+      {
+        "path": "crates/norn/src/tools/diagnostics_check/tests.rs",
+        "committed_sha256": "ad94045c8bbc5c5bccc495781203ac09076ceab80bc69a0b1a41688000314b4c",
+        "observed_before_sha256": "7b6871677c045facbc5e40fe47ffd9f7435592418f4616a91acd6a6e33e1f455",
+        "observed_after_sha256": "7b6871677c045facbc5e40fe47ffd9f7435592418f4616a91acd6a6e33e1f455",
+        "effect": "adds two pre-existing diagnostics tests to the workspace test count"
+      },
+      {
+        "path": "CONVENTIONS.toml",
+        "committed_sha256": "9e5526c25854f3d47ea3c4e418d2b1f4d843a3f427a446d3e3360faae309d4e7",
+        "observed_before_sha256": "6b5b0adaf0bbba77069a1a3adf67b918a3fd606c0020cf94cff3eb9edb0657df",
+        "observed_after_sha256": "6b5b0adaf0bbba77069a1a3adf67b918a3fd606c0020cf94cff3eb9edb0657df",
+        "effect": "compiled into those two diagnostics tests through include_str; no response-audio production path reads it"
+      }
+    ],
+    "workspace_test_count_includes_two_tests_from_excluded_path": true
+  },
+  "result": "pass",
+  "gate_failures": 0,
+  "gates": [
+    {
+      "gate_id": "fmt",
+      "command": "cargo +1.94.0 fmt --all -- --check",
+      "started_at": "2026-07-17T14:24:05Z",
+      "result": "pass",
+      "exit_status": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "gate_id": "clippy",
+      "command": "cargo +1.94.0 --locked clippy --workspace --all-targets -- -D warnings",
+      "started_at": "2026-07-17T14:24:09Z",
+      "result": "pass",
+      "exit_status": 0,
+      "output_sha256": "9d3fd04b6c07411891c9861f72fb5226a8fb27fa649336d08c81f6d5b517657e"
+    },
+    {
+      "gate_id": "workspace_tests",
+      "command": "cargo +1.94.0 --locked test --workspace --all-targets --no-fail-fast",
+      "started_at": "2026-07-17T14:24:10Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 5345,
+      "observed_passed": 5345,
+      "output_sha256": "7c1d860a7e6ffe11fa0618a54a112ff41a217504dd862d911564f2a8b3ab155b"
+    },
+    {
+      "gate_id": "doctests",
+      "command": "cargo +1.94.0 --locked test --workspace --doc --no-fail-fast",
+      "started_at": "2026-07-17T14:25:21Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 8,
+      "observed_passed": 8,
+      "output_sha256": "6685af65cde52ed1f2f575291af3a2aef4317f920855c6feadeb491e058164a1"
+    },
+    {
+      "gate_id": "response_audio",
+      "command": "cargo +1.94.0 --locked test -p norn response_audio --lib --no-fail-fast",
+      "started_at": "2026-07-17T14:25:29Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 37,
+      "observed_passed": 37,
+      "output_sha256": "c9b644f192e53237d85608a8bbc2becf1f4d45794a1d4f26e958c383b2dbff7f"
+    },
+    {
+      "gate_id": "publication",
+      "command": "cargo +1.94.0 --locked test -p norn session::persistence::index::publication:: --lib --no-fail-fast",
+      "started_at": "2026-07-17T14:25:31Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 24,
+      "observed_passed": 24,
+      "output_sha256": "2cbbd3e80de5dbc661121a9752a61c7a18cb693966b4b498dccf49a628f7c7ed"
+    },
+    {
+      "gate_id": "filtered_fork",
+      "command": "cargo +1.94.0 --locked test -p norn fork_canonical_resolution_tests --lib --no-fail-fast",
+      "started_at": "2026-07-17T14:25:33Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 6,
+      "observed_passed": 6,
+      "output_sha256": "92516e9ffdc6c1f53d7ab8df8b125839601b0489c278e8743a7a1da4f61007c9"
+    },
+    {
+      "gate_id": "cli_audio_wire",
+      "command": "cargo +1.94.0 --locked test -p norn-cli actionable_audio_projection_does_not_duplicate_the_raw_wire_event --no-fail-fast",
+      "started_at": "2026-07-17T14:25:33Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 1,
+      "observed_passed": 1,
+      "output_sha256": "2c4905413c69557932a8e45361bdeee4b5d3d41df038edcc225bd3b7b5ef69ae"
+    },
+    {
+      "gate_id": "tui_audio_redraw",
+      "command": "cargo +1.94.0 --locked test -p norn-tui actionable_audio_projection_does_not_force_panel_redraw --no-fail-fast",
+      "started_at": "2026-07-17T14:25:35Z",
+      "result": "pass",
+      "exit_status": 0,
+      "expected_passed": 1,
+      "observed_passed": 1,
+      "output_sha256": "990a5b8b6abc8019bdf9617a5cbba179297690aec25103146daa710d2a490c86"
+    }
+  ],
+  "policy": {
+    "changed_rust_paths": 64,
+    "prohibited_added_line_matches": 0
+  },
+  "production_loc": {
+    "method": "prefix before first exact #[cfg(test)]",
+    "maximum": 499,
+    "maximum_path": "crates/norn/src/provider/openai/response_reconciler.rs",
+    "violations_at_or_above_500": [],
+    "inventory": [
+      {
+        "path": "crates/norn-cli/src/print/output.rs",
+        "production_loc": 469
+      },
+      {
+        "path": "crates/norn-cli/src/print/output/provider_events.rs",
+        "production_loc": 238
+      },
+      {
+        "path": "crates/norn-cli/src/print/output/raw_stream_event_tests.rs",
+        "production_loc": 157
+      },
+      {
+        "path": "crates/norn-tui/src/app/dispatch.rs",
+        "production_loc": 489
+      },
+      {
+        "path": "crates/norn-tui/src/app/dispatch/finalization.rs",
+        "production_loc": 39
+      },
+      {
+        "path": "crates/norn-tui/src/app/turn/mid.rs",
+        "production_loc": 238
+      },
+      {
+        "path": "crates/norn/src/agent/fork_canonical_resolution_tests.rs",
+        "production_loc": 243
+      },
+      {
+        "path": "crates/norn/src/agent/fork_context_filter.rs",
+        "production_loc": 169
+      },
+      {
+        "path": "crates/norn/src/loop/assembly.rs",
+        "production_loc": 393
+      },
+      {
+        "path": "crates/norn/src/loop/classify.rs",
+        "production_loc": 373
+      },
+      {
+        "path": "crates/norn/src/loop/classify_audio_tests.rs",
+        "production_loc": 459
+      },
+      {
+        "path": "crates/norn/src/loop/compaction.rs",
+        "production_loc": 433
+      },
+      {
+        "path": "crates/norn/src/loop/mod.rs",
+        "production_loc": 74
+      },
+      {
+        "path": "crates/norn/src/loop/programmatic_calling.rs",
+        "production_loc": 95
+      },
+      {
+        "path": "crates/norn/src/loop/response_audio_capture.rs",
+        "production_loc": 72
+      },
+      {
+        "path": "crates/norn/src/loop/response_audio_end_to_end_tests.rs",
+        "production_loc": 442
+      },
+      {
+        "path": "crates/norn/src/loop/retry.rs",
+        "production_loc": 222
+      },
+      {
+        "path": "crates/norn/src/loop/runner/entry.rs",
+        "production_loc": 454
+      },
+      {
+        "path": "crates/norn/src/loop/runner/provider_call.rs",
+        "production_loc": 278
+      },
+      {
+        "path": "crates/norn/src/loop/stop_records.rs",
+        "production_loc": 229
+      },
+      {
+        "path": "crates/norn/src/loop/summarization.rs",
+        "production_loc": 189
+      },
+      {
+        "path": "crates/norn/src/loop/timeout_state.rs",
+        "production_loc": 56
+      },
+      {
+        "path": "crates/norn/src/loop/tool_dispatch.rs",
+        "production_loc": 385
+      },
+      {
+        "path": "crates/norn/src/loop/tool_dispatch/batch.rs",
+        "production_loc": 336
+      },
+      {
+        "path": "crates/norn/src/provider/events.rs",
+        "production_loc": 232
+      },
+      {
+        "path": "crates/norn/src/provider/mod.rs",
+        "production_loc": 64
+      },
+      {
+        "path": "crates/norn/src/provider/openai/execute.rs",
+        "production_loc": 305
+      },
+      {
+        "path": "crates/norn/src/provider/openai/execute/reconciliation_tests.rs",
+        "production_loc": 464
+      },
+      {
+        "path": "crates/norn/src/provider/openai/response_reconciler.rs",
+        "production_loc": 499
+      },
+      {
+        "path": "crates/norn/src/provider/openai/response_reconciler/audio.rs",
+        "production_loc": 65
+      },
+      {
+        "path": "crates/norn/src/provider/openai/response_reconciler/model.rs",
+        "production_loc": 394
+      },
+      {
+        "path": "crates/norn/src/provider/openai/response_reconciler/roles.rs",
+        "production_loc": 200
+      },
+      {
+        "path": "crates/norn/src/provider/openai/response_reconciler/tests/audio.rs",
+        "production_loc": 171
+      },
+      {
+        "path": "crates/norn/src/provider/openai/response_reconciler/tests/roles.rs",
+        "production_loc": 35
+      },
+      {
+        "path": "crates/norn/src/provider/response_audio.rs",
+        "production_loc": 177
+      },
+      {
+        "path": "crates/norn/src/session/branch_materialize.rs",
+        "production_loc": 105
+      },
+      {
+        "path": "crates/norn/src/session/conversion.rs",
+        "production_loc": 201
+      },
+      {
+        "path": "crates/norn/src/session/events.rs",
+        "production_loc": 463
+      },
+      {
+        "path": "crates/norn/src/session/manager/fork.rs",
+        "production_loc": 150
+      },
+      {
+        "path": "crates/norn/src/session/manager/open.rs",
+        "production_loc": 293
+      },
+      {
+        "path": "crates/norn/src/session/manager/tests.rs",
+        "production_loc": 64
+      },
+      {
+        "path": "crates/norn/src/session/manager/tests/fork_audio.rs",
+        "production_loc": 69
+      },
+      {
+        "path": "crates/norn/src/session/mod.rs",
+        "production_loc": 49
+      },
+      {
+        "path": "crates/norn/src/session/persistence/index.rs",
+        "production_loc": 10
+      },
+      {
+        "path": "crates/norn/src/session/persistence/publication.rs",
+        "production_loc": 421
+      },
+      {
+        "path": "crates/norn/src/session/persistence/publication_audio.rs",
+        "production_loc": 425
+      },
+      {
+        "path": "crates/norn/src/session/persistence/publication_audio_links.rs",
+        "production_loc": 93
+      },
+      {
+        "path": "crates/norn/src/session/persistence/publication_audio_tests.rs",
+        "production_loc": 450
+      },
+      {
+        "path": "crates/norn/src/session/persistence/publication_hash.rs",
+        "production_loc": 44
+      },
+      {
+        "path": "crates/norn/src/session/persistence/publication_journal.rs",
+        "production_loc": 110
+      },
+      {
+        "path": "crates/norn/src/session/persistence/publication_names.rs",
+        "production_loc": 60
+      },
+      {
+        "path": "crates/norn/src/session/persistence/publication_recovery.rs",
+        "production_loc": 170
+      },
+      {
+        "path": "crates/norn/src/session/persistence/publication_tests.rs",
+        "production_loc": 483
+      },
+      {
+        "path": "crates/norn/src/session/persistence/publication_timeline.rs",
+        "production_loc": 94
+      },
+      {
+        "path": "crates/norn/src/session/persistence/types.rs",
+        "production_loc": 494
+      },
+      {
+        "path": "crates/norn/src/session/response_audio.rs",
+        "production_loc": 258
+      },
+      {
+        "path": "crates/norn/src/session/response_audio_lifecycle_tests.rs",
+        "production_loc": 241
+      },
+      {
+        "path": "crates/norn/src/session/response_audio_link.rs",
+        "production_loc": 303
+      },
+      {
+        "path": "crates/norn/src/session/response_audio_link_tests.rs",
+        "production_loc": 182
+      },
+      {
+        "path": "crates/norn/src/session/response_audio_reader.rs",
+        "production_loc": 405
+      },
+      {
+        "path": "crates/norn/src/session/response_audio_tests.rs",
+        "production_loc": 408
+      },
+      {
+        "path": "crates/norn/src/session/response_audio_validator.rs",
+        "production_loc": 343
+      },
+      {
+        "path": "crates/norn/src/session/response_audio_writer.rs",
+        "production_loc": 338
+      },
+      {
+        "path": "crates/norn/src/session/store.rs",
+        "production_loc": 5
+      }
+    ]
+  },
+  "d2_codec": {
+    "events": {
+      "base": "de8003fce3cd134330321e1738951ca06312ab03a50d535b765402471fd97415",
+      "source": "de8003fce3cd134330321e1738951ca06312ab03a50d535b765402471fd97415"
+    },
+    "strict_reader": {
+      "base": "e1e4a004c06f03d87f3b25abf20492fcd0fb5a3d71daae06ff462c9086a10e02",
+      "source": "e1e4a004c06f03d87f3b25abf20492fcd0fb5a3d71daae06ff462c9086a10e02"
+    }
+  }
+}

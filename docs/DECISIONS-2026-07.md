@@ -1204,3 +1204,85 @@ non-blocking D2 observations, including serialized quadratic append work, carry
 forward through the
 [`D2 Gate D review`](reviews/2026-07-17-d2-gate-d-review.md). The frozen
 `6e279a3..07bf9c1` transcript/streaming range remains unchanged and unaccepted.
+
+## 16. Responses response-audio receive and persistence contract (2026-07-17)
+
+**Implementation decision:** Norn accepts the four response-scoped audio stream
+events as a receive-side capability and preserves accepted frames in a private
+session artifact. It does not invent a twenty-ninth output item, item/content
+coordinates, codec, MIME type, voice, terminal media payload, request-side audio
+generation, playback, export, or WebSocket transport.
+
+The official contract was retrieved through the OpenAI Developer Docs MCP on
+2026-07-17:
+
+- [`response.audio.delta`](https://developers.openai.com/api/reference/resources/responses/streaming-events#response.audio.delta)
+  carries Base64 audio bytes and a response-stream sequence number.
+- [`response.audio.done`](https://developers.openai.com/api/reference/resources/responses/streaming-events#response.audio.done)
+  completes the audio channel and carries a sequence number.
+- [`response.audio.transcript.delta`](https://developers.openai.com/api/reference/resources/responses/streaming-events#response.audio.transcript.delta)
+  carries partial transcript text and a sequence number.
+- [`response.audio.transcript.done`](https://developers.openai.com/api/reference/resources/responses/streaming-events#response.audio.transcript.done)
+  completes the transcript channel and carries a sequence number.
+- The generated [`Responses create` reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
+  and the [`Responses benefits` guide](https://developers.openai.com/api/docs/guides/migrate-to-responses#responses-benefits)
+  do not establish a generally available outbound audio-generation contract;
+  the latter still labels Responses audio as coming soon. The candidate therefore
+  makes no outbound capability claim from the presence of receive event schemas.
+
+The implementation contract is:
+
+- The raw validated wire event is emitted first for observability. A typed
+  `ResponseAudioFrame` projection is emitted only after sequence and channel
+  reconciliation succeeds. Exact duplicate sequence frames remain visible in
+  the raw stream but do not mutate the artifact twice.
+- Sequence numbers are reconciled across the response stream. Audio and
+  transcript completion are independent channel states. A missing `.done` does
+  not fabricate completion and does not prevent an otherwise valid artifact
+  from being sealed with its actual completion flags.
+- The artifact is private JSONL at
+  `<root-session>/artifacts/response-audio/<uuid-v4>.jsonl`. It records a strict
+  header, each accepted raw envelope exactly once, and one terminal record with
+  counts, hashes, completion flags, optional response ID, and an integrity
+  digest. The digest detects corruption; it is not authentication, signing, or
+  attestation. The sidecar retains the exact raw wire envelopes, not a second
+  decoded durable media copy. Live reconciliation and the writer decode media
+  transiently for validation and hashing; the read API decodes the durable
+  envelope for callers.
+- Format-2 `AssistantMessage` serialization remains unchanged. Association is
+  represented by a versioned `response.audio.artifact` custom event containing
+  the future assistant event ID, artifact reference, and optional response ID.
+  The sidecar is sealed first, then the link is appended, then the assistant is
+  appended with the link as its parent. A session hook may append between the
+  link and assistant, so validation requires precedence and parentage rather
+  than adjacency. A crash after the link but before the assistant leaves an
+  honest orphan precursor rather than manufacturing success.
+- Existing pre-audio format-2 sessions remain readable. Pre-audio binaries can
+  parse and preserve the custom link row, but they cannot safely fork or delete
+  an audio-bearing session because they do not know how to copy its sidecar.
+  Operational downgrade for those mutations is unsupported.
+- Cancellation or hard cut after accepted audio persists only an unsealed
+  partial reference after its checkpoint is durable. A failed provider attempt
+  never becomes a success link; a retry uses a distinct artifact. Session-side
+  persistence failures are typed session failures and are not replayed as
+  provider retries.
+- Ordinary resume and in-root filtered agent forks remain structural
+  `O(events)` operations and share the root artifact namespace. They validate
+  media content when it is read. Only an ownership-changing top-level session
+  fork eagerly validates, manifests, copies, syncs, and crash-recovers its audio
+  bundle before publishing the new timeline and index row.
+- The CLI emits the lossless raw wire event and suppresses the typed projection
+  to avoid duplicating media or transcript bytes. The TUI consumes both
+  projections without redraw and does not yet render or play audio.
+- Top-level fork publication currently holds the global index lock while it
+  validates and copies referenced artifacts. Registered appends also retain the
+  accepted D2 full-timeline rescan behavior. Lock occupancy and quadratic
+  repeated-append cost remain explicit scale work for later P3/P4 optimization;
+  they are not hidden by this correctness slice.
+
+**Implementation status:** Candidate source `0512953` implements this contract.
+The retained source-bound gate, its disclosed test-only working-tree overlay,
+and repeated lifecycle evidence are recorded in the P3/P4 response-audio
+handoff. This section does not accept P3 or P4; the
+broader exhaustive lifecycle matrix, full-range phase evidence, and independent
+phase review remain open.

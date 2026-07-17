@@ -1,0 +1,774 @@
+{
+  "schema": "norn.response_audio.distributions.v3",
+  "generated_at": "2026-07-17T14:23:29Z",
+  "source_commit": "0512953e650c4961e790f5987896c131e82ba4f3",
+  "source_tree": "1aeac724119bb525340cf7cef67dbac906131ac0",
+  "toolchain": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+  "target_directory": "target",
+  "working_tree_disclosure": {
+    "candidate_boundary": "committed response-audio source plus the disclosed test-only working-tree overlay",
+    "overlay_inputs_match_at_recorded_checkpoints": true,
+    "overlay_inputs": [
+      {
+        "path": "crates/norn/src/tools/diagnostics_check/tests.rs",
+        "committed_sha256": "ad94045c8bbc5c5bccc495781203ac09076ceab80bc69a0b1a41688000314b4c",
+        "observed_before_sha256": "7b6871677c045facbc5e40fe47ffd9f7435592418f4616a91acd6a6e33e1f455",
+        "observed_after_sha256": "7b6871677c045facbc5e40fe47ffd9f7435592418f4616a91acd6a6e33e1f455",
+        "effect": "compiled into the test binary but none of the five repeated response-audio tests executes this module"
+      },
+      {
+        "path": "CONVENTIONS.toml",
+        "committed_sha256": "9e5526c25854f3d47ea3c4e418d2b1f4d843a3f427a446d3e3360faae309d4e7",
+        "observed_before_sha256": "6b5b0adaf0bbba77069a1a3adf67b918a3fd606c0020cf94cff3eb9edb0657df",
+        "observed_after_sha256": "6b5b0adaf0bbba77069a1a3adf67b918a3fd606c0020cf94cff3eb9edb0657df",
+        "effect": "compiled into the diagnostics test module through include_str; no repeated response-audio test reads it"
+      }
+    ]
+  },
+  "totals": {
+    "passed": 100,
+    "failed": 0
+  },
+  "cases": [
+    {
+      "test_name": "cancellation_after_audio_frame_persists_only_unsealed_partial_reference",
+      "iterations": 20,
+      "passed": 20,
+      "failed": 0,
+      "observations": [
+        {
+          "iteration": 1,
+          "started_at": "2026-07-17T14:22:13Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "053174ffdb269b9550c6ec1f079d53dcbf189198716c6738f56910981003dd3b"
+        },
+        {
+          "iteration": 2,
+          "started_at": "2026-07-17T14:22:15Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "0552c107691b41168f6d4c20b7e4c27be25ecb3127b4c662a069c3808c1fcc0d"
+        },
+        {
+          "iteration": 3,
+          "started_at": "2026-07-17T14:22:16Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "ea404ad37c7345b815026a1c1503940f381adc6c4c588c8f8a03667f5e504349"
+        },
+        {
+          "iteration": 4,
+          "started_at": "2026-07-17T14:22:16Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "16a96770f34cb128ef41f49e5124dff667254a15b4ac5f42a27cc4f07a652f63"
+        },
+        {
+          "iteration": 5,
+          "started_at": "2026-07-17T14:22:17Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "0552c107691b41168f6d4c20b7e4c27be25ecb3127b4c662a069c3808c1fcc0d"
+        },
+        {
+          "iteration": 6,
+          "started_at": "2026-07-17T14:22:18Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "6472f25e668a46c3ed201c458f797414f70ae2c6eee93b5608afd93f4adce4df"
+        },
+        {
+          "iteration": 7,
+          "started_at": "2026-07-17T14:22:18Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "fcf3bd499a86b07bd385ba26d931b2291e68bf1060ac4bdc16a8dbe6420b7d22"
+        },
+        {
+          "iteration": 8,
+          "started_at": "2026-07-17T14:22:19Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "13646bb57e2e3320241678aedc383644d9b33e22634cf08ca7c660f19a5d9284"
+        },
+        {
+          "iteration": 9,
+          "started_at": "2026-07-17T14:22:19Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "6472f25e668a46c3ed201c458f797414f70ae2c6eee93b5608afd93f4adce4df"
+        },
+        {
+          "iteration": 10,
+          "started_at": "2026-07-17T14:22:20Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "bc44b5f9c46f09cbe3f2e55e3876a0093f36f7a16a60708b5c0f5ca555c81166"
+        },
+        {
+          "iteration": 11,
+          "started_at": "2026-07-17T14:22:21Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "8a19540586a7e8afbdf8c122dc5e8806d2341d6f4e2e522e7f374e03fac93809"
+        },
+        {
+          "iteration": 12,
+          "started_at": "2026-07-17T14:22:21Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "458746dba2caa3caa45c9ef34500a6f76f942d73d7255d5c29e8019fa1568cf1"
+        },
+        {
+          "iteration": 13,
+          "started_at": "2026-07-17T14:22:22Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "458746dba2caa3caa45c9ef34500a6f76f942d73d7255d5c29e8019fa1568cf1"
+        },
+        {
+          "iteration": 14,
+          "started_at": "2026-07-17T14:22:22Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "13646bb57e2e3320241678aedc383644d9b33e22634cf08ca7c660f19a5d9284"
+        },
+        {
+          "iteration": 15,
+          "started_at": "2026-07-17T14:22:23Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "8a19540586a7e8afbdf8c122dc5e8806d2341d6f4e2e522e7f374e03fac93809"
+        },
+        {
+          "iteration": 16,
+          "started_at": "2026-07-17T14:22:24Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "fcf3bd499a86b07bd385ba26d931b2291e68bf1060ac4bdc16a8dbe6420b7d22"
+        },
+        {
+          "iteration": 17,
+          "started_at": "2026-07-17T14:22:24Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "8a19540586a7e8afbdf8c122dc5e8806d2341d6f4e2e522e7f374e03fac93809"
+        },
+        {
+          "iteration": 18,
+          "started_at": "2026-07-17T14:22:25Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "6472f25e668a46c3ed201c458f797414f70ae2c6eee93b5608afd93f4adce4df"
+        },
+        {
+          "iteration": 19,
+          "started_at": "2026-07-17T14:22:25Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "0552c107691b41168f6d4c20b7e4c27be25ecb3127b4c662a069c3808c1fcc0d"
+        },
+        {
+          "iteration": 20,
+          "started_at": "2026-07-17T14:22:26Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "6472f25e668a46c3ed201c458f797414f70ae2c6eee93b5608afd93f4adce4df"
+        }
+      ]
+    },
+    {
+      "test_name": "every_durable_audio_publication_checkpoint_recovers_without_a_dangling_reference",
+      "iterations": 20,
+      "passed": 20,
+      "failed": 0,
+      "observations": [
+        {
+          "iteration": 1,
+          "started_at": "2026-07-17T14:22:27Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "16d62d8f16264080057d642043d5f43a2f5bbbca1eb42c8fb7bf77fa161790bd"
+        },
+        {
+          "iteration": 2,
+          "started_at": "2026-07-17T14:22:28Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "5b48529ce53fbad092f5be1c0b34eaee044f581b8c6bb3c51f55b9d35770a446"
+        },
+        {
+          "iteration": 3,
+          "started_at": "2026-07-17T14:22:28Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "16c05ffbb739fbbd8705afe95a954c35b1b9a1e29caf22650ee1976f22df7652"
+        },
+        {
+          "iteration": 4,
+          "started_at": "2026-07-17T14:22:30Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "213114576690ced99b0886554443ee5d01c775fa1ba5c4c74f05bdc1b4c1d7d0"
+        },
+        {
+          "iteration": 5,
+          "started_at": "2026-07-17T14:22:31Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "a2d8e9fe003081f4d9f025068587a18333482ceb2fea49d7a83321772f1b5fe0"
+        },
+        {
+          "iteration": 6,
+          "started_at": "2026-07-17T14:22:32Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "0cbb8c589efb73d85fb89479f68ef7d2012c1f67dc72124911935db49072c961"
+        },
+        {
+          "iteration": 7,
+          "started_at": "2026-07-17T14:22:33Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "16d62d8f16264080057d642043d5f43a2f5bbbca1eb42c8fb7bf77fa161790bd"
+        },
+        {
+          "iteration": 8,
+          "started_at": "2026-07-17T14:22:34Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "0cbb8c589efb73d85fb89479f68ef7d2012c1f67dc72124911935db49072c961"
+        },
+        {
+          "iteration": 9,
+          "started_at": "2026-07-17T14:22:35Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "5bd214ed5e209c445e3c8153641b16f412613078ac13f35ca88db5eee4f1b29c"
+        },
+        {
+          "iteration": 10,
+          "started_at": "2026-07-17T14:22:36Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "3b900468a5e3ee6a4b1b6f9d8386c30b24ec62a75d1f70fa425dbf934f5978b7"
+        },
+        {
+          "iteration": 11,
+          "started_at": "2026-07-17T14:22:37Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "0378e707023daaa9f52a704f8171209ed516704dfc895018dd6257cdb65ff72b"
+        },
+        {
+          "iteration": 12,
+          "started_at": "2026-07-17T14:22:38Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "719180d3d06ab20c92eceb14a66c0ceabfdda03b2000d9c50d7c9c37f0d723ee"
+        },
+        {
+          "iteration": 13,
+          "started_at": "2026-07-17T14:22:39Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "3b900468a5e3ee6a4b1b6f9d8386c30b24ec62a75d1f70fa425dbf934f5978b7"
+        },
+        {
+          "iteration": 14,
+          "started_at": "2026-07-17T14:22:40Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "4858572f033aa48af10685d85e4417d8bfa9068d534e2715287274d5fb69d4e7"
+        },
+        {
+          "iteration": 15,
+          "started_at": "2026-07-17T14:22:41Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "3359647bf24984754d004bc96dd5000f2ad42de74da3bf4f29051b2e2ee91bea"
+        },
+        {
+          "iteration": 16,
+          "started_at": "2026-07-17T14:22:43Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "0378e707023daaa9f52a704f8171209ed516704dfc895018dd6257cdb65ff72b"
+        },
+        {
+          "iteration": 17,
+          "started_at": "2026-07-17T14:22:43Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "16d62d8f16264080057d642043d5f43a2f5bbbca1eb42c8fb7bf77fa161790bd"
+        },
+        {
+          "iteration": 18,
+          "started_at": "2026-07-17T14:22:44Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "5b48529ce53fbad092f5be1c0b34eaee044f581b8c6bb3c51f55b9d35770a446"
+        },
+        {
+          "iteration": 19,
+          "started_at": "2026-07-17T14:22:45Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "719180d3d06ab20c92eceb14a66c0ceabfdda03b2000d9c50d7c9c37f0d723ee"
+        },
+        {
+          "iteration": 20,
+          "started_at": "2026-07-17T14:22:46Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "719180d3d06ab20c92eceb14a66c0ceabfdda03b2000d9c50d7c9c37f0d723ee"
+        }
+      ]
+    },
+    {
+      "test_name": "top_level_fork_owns_copied_response_audio_after_source_deletion",
+      "iterations": 20,
+      "passed": 20,
+      "failed": 0,
+      "observations": [
+        {
+          "iteration": 1,
+          "started_at": "2026-07-17T14:22:47Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "d71f709e711220d3fe54e908ff4f756660c0be5fb7c4e5bdf9c9d049d5f2e509"
+        },
+        {
+          "iteration": 2,
+          "started_at": "2026-07-17T14:22:48Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "d71f709e711220d3fe54e908ff4f756660c0be5fb7c4e5bdf9c9d049d5f2e509"
+        },
+        {
+          "iteration": 3,
+          "started_at": "2026-07-17T14:22:48Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "2d887af09ddc08af5509bb5cfa6ceffc1879da9a694083984a071766fa4f1ee4"
+        },
+        {
+          "iteration": 4,
+          "started_at": "2026-07-17T14:22:49Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "aae5e821a66734e069b9d01ca45e4f3d01f1ca6717df4a20ed845049800572a0"
+        },
+        {
+          "iteration": 5,
+          "started_at": "2026-07-17T14:22:50Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "aae5e821a66734e069b9d01ca45e4f3d01f1ca6717df4a20ed845049800572a0"
+        },
+        {
+          "iteration": 6,
+          "started_at": "2026-07-17T14:22:50Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "966f1b604e1bfddf273aad923230391322ee2c2ebd20b7b08f2f45155cc7a4e5"
+        },
+        {
+          "iteration": 7,
+          "started_at": "2026-07-17T14:22:51Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "4cd7afc2e02371a0e6be1633d14fa6ec3afa7fa2674c4c26d55da219f3e382df"
+        },
+        {
+          "iteration": 8,
+          "started_at": "2026-07-17T14:22:52Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "02f22c7a685f5f6001a0a92e52e1f7a405dff3f8497cd8b8f22fe9d55b50bbca"
+        },
+        {
+          "iteration": 9,
+          "started_at": "2026-07-17T14:22:52Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "8424d9842082d08c95931675180988fa6c0f9ad9fef94750bec33a3a7541b766"
+        },
+        {
+          "iteration": 10,
+          "started_at": "2026-07-17T14:22:53Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "637df84c53cb0cb6edd32ad168e82edeb73960a438f3780dc446b47108493ada"
+        },
+        {
+          "iteration": 11,
+          "started_at": "2026-07-17T14:22:54Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "637df84c53cb0cb6edd32ad168e82edeb73960a438f3780dc446b47108493ada"
+        },
+        {
+          "iteration": 12,
+          "started_at": "2026-07-17T14:22:54Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "aae5e821a66734e069b9d01ca45e4f3d01f1ca6717df4a20ed845049800572a0"
+        },
+        {
+          "iteration": 13,
+          "started_at": "2026-07-17T14:22:55Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "32f1c04766b4a427e0bffa52d37c9a2c78522467bf4cb5e4220d7194ef75c3f7"
+        },
+        {
+          "iteration": 14,
+          "started_at": "2026-07-17T14:22:56Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "aae5e821a66734e069b9d01ca45e4f3d01f1ca6717df4a20ed845049800572a0"
+        },
+        {
+          "iteration": 15,
+          "started_at": "2026-07-17T14:22:56Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "552cd35d5d076d65745a564c8a2a3ade410685e5df9fd096263cf8654f7a9217"
+        },
+        {
+          "iteration": 16,
+          "started_at": "2026-07-17T14:22:57Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "d71f709e711220d3fe54e908ff4f756660c0be5fb7c4e5bdf9c9d049d5f2e509"
+        },
+        {
+          "iteration": 17,
+          "started_at": "2026-07-17T14:22:57Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "d71f709e711220d3fe54e908ff4f756660c0be5fb7c4e5bdf9c9d049d5f2e509"
+        },
+        {
+          "iteration": 18,
+          "started_at": "2026-07-17T14:22:58Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "32f1c04766b4a427e0bffa52d37c9a2c78522467bf4cb5e4220d7194ef75c3f7"
+        },
+        {
+          "iteration": 19,
+          "started_at": "2026-07-17T14:22:59Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "aae5e821a66734e069b9d01ca45e4f3d01f1ca6717df4a20ed845049800572a0"
+        },
+        {
+          "iteration": 20,
+          "started_at": "2026-07-17T14:22:59Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "d71f709e711220d3fe54e908ff4f756660c0be5fb7c4e5bdf9c9d049d5f2e509"
+        }
+      ]
+    },
+    {
+      "test_name": "session_event_hook_may_append_between_audio_link_and_assistant",
+      "iterations": 20,
+      "passed": 20,
+      "failed": 0,
+      "observations": [
+        {
+          "iteration": 1,
+          "started_at": "2026-07-17T14:23:00Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "476d1e7cde1d2a7b7c458195ccb60a80bab8a4fbe8325a840050982b6c8a200f"
+        },
+        {
+          "iteration": 2,
+          "started_at": "2026-07-17T14:23:01Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "1f455e16d56474c153e3278e3f37a6e2f859def93c54784100f91a8d1b6507ab"
+        },
+        {
+          "iteration": 3,
+          "started_at": "2026-07-17T14:23:01Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "06c109dda93fa5077c1c30d48ca81b9d4114fbcbd36f58ace8e6407de44672e1"
+        },
+        {
+          "iteration": 4,
+          "started_at": "2026-07-17T14:23:02Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "69936c6942d707a361090e30437c819ed0aeb10356297adca02d81978aba992d"
+        },
+        {
+          "iteration": 5,
+          "started_at": "2026-07-17T14:23:03Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "7153959f7f8c3af58c3dccae7acfe6b5fe677fad7043dc44aec148561c32d76b"
+        },
+        {
+          "iteration": 6,
+          "started_at": "2026-07-17T14:23:03Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "69936c6942d707a361090e30437c819ed0aeb10356297adca02d81978aba992d"
+        },
+        {
+          "iteration": 7,
+          "started_at": "2026-07-17T14:23:04Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "7153959f7f8c3af58c3dccae7acfe6b5fe677fad7043dc44aec148561c32d76b"
+        },
+        {
+          "iteration": 8,
+          "started_at": "2026-07-17T14:23:04Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "0b7197b1011510ec79c4115d466f252f7ccfd535d3bb360f30bc7913c6fecd43"
+        },
+        {
+          "iteration": 9,
+          "started_at": "2026-07-17T14:23:05Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "f3e667b5b72f50951f6e55d631229fb0291977b707fe332abf4c4172e6c07e72"
+        },
+        {
+          "iteration": 10,
+          "started_at": "2026-07-17T14:23:06Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "7153959f7f8c3af58c3dccae7acfe6b5fe677fad7043dc44aec148561c32d76b"
+        },
+        {
+          "iteration": 11,
+          "started_at": "2026-07-17T14:23:06Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "c13450b57326083f3f9a133b4d9316d246363524e97666e29f09beb6489b0fc3"
+        },
+        {
+          "iteration": 12,
+          "started_at": "2026-07-17T14:23:07Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "2a300039906d2719c9657f5036fa65f2cb04a6c71481ce6f40ec6d3f9dd0c383"
+        },
+        {
+          "iteration": 13,
+          "started_at": "2026-07-17T14:23:08Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "c707397135ab086dd53c4df37657aed68738cdcae368e90fe97ad60189bb7241"
+        },
+        {
+          "iteration": 14,
+          "started_at": "2026-07-17T14:23:08Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "03ce80925d48a787e6c1a0f1e6d8b2b67714e7bdf05516c512702234ebd44506"
+        },
+        {
+          "iteration": 15,
+          "started_at": "2026-07-17T14:23:09Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "69936c6942d707a361090e30437c819ed0aeb10356297adca02d81978aba992d"
+        },
+        {
+          "iteration": 16,
+          "started_at": "2026-07-17T14:23:10Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "69936c6942d707a361090e30437c819ed0aeb10356297adca02d81978aba992d"
+        },
+        {
+          "iteration": 17,
+          "started_at": "2026-07-17T14:23:10Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "7153959f7f8c3af58c3dccae7acfe6b5fe677fad7043dc44aec148561c32d76b"
+        },
+        {
+          "iteration": 18,
+          "started_at": "2026-07-17T14:23:11Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "7153959f7f8c3af58c3dccae7acfe6b5fe677fad7043dc44aec148561c32d76b"
+        },
+        {
+          "iteration": 19,
+          "started_at": "2026-07-17T14:23:12Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "334adb66e18aae5b24a7150cd2789b76566e0e406b1a638e5ba03c8282125944"
+        },
+        {
+          "iteration": 20,
+          "started_at": "2026-07-17T14:23:12Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "7153959f7f8c3af58c3dccae7acfe6b5fe677fad7043dc44aec148561c32d76b"
+        }
+      ]
+    },
+    {
+      "test_name": "audio_fork_deduplicates_references_and_survives_source_artifact_deletion",
+      "iterations": 20,
+      "passed": 20,
+      "failed": 0,
+      "observations": [
+        {
+          "iteration": 1,
+          "started_at": "2026-07-17T14:23:13Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "0e35c03135c3c5b7ebf816972de1eef9362e95235782d05982b4acb1556dd918"
+        },
+        {
+          "iteration": 2,
+          "started_at": "2026-07-17T14:23:13Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "0e35c03135c3c5b7ebf816972de1eef9362e95235782d05982b4acb1556dd918"
+        },
+        {
+          "iteration": 3,
+          "started_at": "2026-07-17T14:23:14Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "04245fe782b2e68a25159a2adbfd0718dcac682657eed1cc5bb8aaeaeb370854"
+        },
+        {
+          "iteration": 4,
+          "started_at": "2026-07-17T14:23:15Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "23272d94687b24752139fac7a3e1aa22a74c2c69ede049d0abd984ecb43b16b1"
+        },
+        {
+          "iteration": 5,
+          "started_at": "2026-07-17T14:23:15Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "251046658bddcbac3cc58f0f2dbd4b6f1c0a5b28ab2354fd2c2676f6970ecb77"
+        },
+        {
+          "iteration": 6,
+          "started_at": "2026-07-17T14:23:16Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "f8d789f96f9aa1fac3b017c50becbf52ff7f3ad7963ccef0ec920c77be5f148f"
+        },
+        {
+          "iteration": 7,
+          "started_at": "2026-07-17T14:23:17Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "df2f67eb278962d9d6e69e89ac187206648b3a856707a03a39cd62025595a194"
+        },
+        {
+          "iteration": 8,
+          "started_at": "2026-07-17T14:23:18Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "3794da383149b9044933ee12474757cb4337b9bc0bbe964b05853a98d962a63f"
+        },
+        {
+          "iteration": 9,
+          "started_at": "2026-07-17T14:23:19Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "2b0e621b03f24642429fb3162d284b056b0c2c26793bfac391f389078a642765"
+        },
+        {
+          "iteration": 10,
+          "started_at": "2026-07-17T14:23:20Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "841ca5bf8c91178472d8887f5c08a6585c9b3b7958a11d5fec324db886289c9f"
+        },
+        {
+          "iteration": 11,
+          "started_at": "2026-07-17T14:23:21Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "2b0e621b03f24642429fb3162d284b056b0c2c26793bfac391f389078a642765"
+        },
+        {
+          "iteration": 12,
+          "started_at": "2026-07-17T14:23:22Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "4b99bb02c2d3e746d765819884849208a9180119b325d4e75bc03dda320c13c4"
+        },
+        {
+          "iteration": 13,
+          "started_at": "2026-07-17T14:23:23Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "dbd054ee620935d30c08ff657d00eb48d0bead84d671e01d3907a2a33e1ff342"
+        },
+        {
+          "iteration": 14,
+          "started_at": "2026-07-17T14:23:24Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "0a3d42e479c9849bb10438ccf5590895fc3fb93049ea21d5cc5b84772169c479"
+        },
+        {
+          "iteration": 15,
+          "started_at": "2026-07-17T14:23:25Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "f1471b6b5d98f7c72f8483ff636ba18520f268bf3b6d8dad9599aae86d2cd673"
+        },
+        {
+          "iteration": 16,
+          "started_at": "2026-07-17T14:23:26Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "84d7a39e1726e52e243f50223e5b82b5d4d0670f8cd0090a3345a69ae6d2e7b2"
+        },
+        {
+          "iteration": 17,
+          "started_at": "2026-07-17T14:23:27Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "4fcebf4c16b61dfb639b79691b64586ff83f83e08b50c68a6540b65e350a3a6f"
+        },
+        {
+          "iteration": 18,
+          "started_at": "2026-07-17T14:23:27Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "401f8acb08a96dc7e11ecccecb47b3ffcc080c5b6a1bfac82c17dec4e01ed1e7"
+        },
+        {
+          "iteration": 19,
+          "started_at": "2026-07-17T14:23:28Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "ce7699594d8862486c4bcb63587dae4c71c847d29403dd727832671d9173808b"
+        },
+        {
+          "iteration": 20,
+          "started_at": "2026-07-17T14:23:28Z",
+          "result": "pass",
+          "exit_status": 0,
+          "output_sha256": "04245fe782b2e68a25159a2adbfd0718dcac682657eed1cc5bb8aaeaeb370854"
+        }
+      ]
+    }
+  ]
+}
