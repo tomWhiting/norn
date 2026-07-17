@@ -1,9 +1,8 @@
 # D2 strict session-store implementation handoff
 
-**Status:** Gate D returned `READY` contingent on one MINOR durability finding.
-F1 is corrected and re-evidenced at `e9755fe`; the same reviewer's narrow
-confirmation remains required before D2 acceptance. This document is an
-implementer handoff, not that confirmation or P3/P4 acceptance.
+**Status:** D2 accepted. The same Gate D coordinator closed F1 at `26b4e28` and
+returned unconditional `READY` for corrected range `2c0350d..e9755fe`. This
+document remains the implementer handoff, not P3/P4 acceptance.
 
 **Owner contract:** `docs/DECISIONS-2026-07.md` section 15 and D2 in
 `docs/RESPONSES-API-REMEDIATION-PLAN.md`.
@@ -68,8 +67,8 @@ The candidate establishes only these D2 claims:
    index/publication temporaries are reclaimed before authority reads; prefix
    lookalikes are never treated as cleanup authority.
 
-This handoff does **not** claim final D2 acceptance, response-scoped audio, the
-exhaustive all-lifecycle media matrix, final P3/P4 Gate C, or P3/P4 acceptance.
+The accepted D2 boundary does **not** claim response-scoped audio, the exhaustive
+all-lifecycle media matrix, final P3/P4 Gate C, or P3/P4 acceptance.
 
 ## 2. Namespace and artifact inventory
 
@@ -253,15 +252,17 @@ intentionally the only post-snapshot file.
 - [x] A Fable adversarial reviewer returns `READY` for the frozen D2 range.
 
 All four seats are recorded in the
-[`Gate D review`](2026-07-17-d2-gate-d-review.md). Its verdict is `READY`
-contingent on F1, not final D2 acceptance.
+[`Gate D review`](2026-07-17-d2-gate-d-review.md). The same coordinator closed
+F1 in the
+[`correction review`](2026-07-17-d2-f1-correction-review.md), satisfying the
+contingency and making corrected D2 Gate D unconditionally `READY`.
 
 ## 7. Open before P3/P4 acceptance
 
 - [x] Freeze and commit the complete D2 source range.
 - [x] Fill every evidence placeholder above from that exact commit.
-- [ ] Resolve every finding from the independent D2 review. F1 is corrected and
-  re-evidenced at `e9755fe`; the same reviewer must confirm the correction.
+- [x] Resolve every finding from the independent D2 review. F1 is corrected at
+  `e9755fe` and independently closed at `26b4e28`.
 - [ ] Add response-scoped audio without inventing a terminal output item.
 - [ ] Complete the exhaustive all-discriminator/optional-shape lifecycle matrix.
 - [ ] Run and retain final P3/P4 Gate C evidence.

@@ -20,9 +20,10 @@ real spawn/fork replay. This is an implementation candidate, not phase
 acceptance: corrected D2 source `e9755fe` provides the versionless strict
 format-2 store, explicit offline migration, bounded cutover guard, deep verifier,
 three fidelity classes, and standard library constructor. Gate D at `59dc244`
-returned `READY` contingent; F1 is fixed and re-evidenced, while the same
-reviewer's narrow confirmation remains open. Response-scoped audio, the
-exhaustive all-lifecycle media matrix, and independent P3/P4 review remain open.
+returned `READY` contingent; F1 was fixed and re-evidenced, and the same
+coordinator closed it at `26b4e28`. Corrected D2 is accepted with unconditional
+Gate D `READY`. Response-scoped audio, the exhaustive all-lifecycle media
+matrix, and independent P3/P4 review remain open.
 
 ## 1. Executive position
 
@@ -705,8 +706,8 @@ flattened but coherent sessions require an explicit degraded/fresh-epoch resume
 with recorded fidelity loss; corrupt or ambiguous sessions are
 inspect/export-only. Normal startup performs a bounded cutover proof, while
 complete source/backup/store verification is an explicit offline operation.
-This contract is frozen and reviewed `READY` contingent at corrected source
-`e9755fe`; D2 acceptance awaits the same reviewer's narrow F1 confirmation.
+This contract is accepted at corrected source `e9755fe`; `26b4e28` records
+unconditional D2 Gate D `READY`.
 The Gate D observation ledger also carries a material scale caveat into P3/P4:
 registered appends currently serialize under the global index lock and rescan
 the full timeline, producing quadratic lifetime append work.
@@ -882,8 +883,9 @@ versionless strict `~/.norn/session-store/` namespace, untouched legacy
 `~/.norn/sessions/`, and explicit offline migration with canonical,
 degraded/fresh-epoch, and inspect/export-only outcomes. Corrected source
 `e9755fe` represents that decision with retained exact-head evidence. Gate D at
-`59dc244` returned `READY` contingent; the same reviewer's narrow F1 confirmation
-and D2 acceptance remain open in the Responses plan.
+`59dc244` returned `READY` contingent; the same coordinator closed F1 at
+`26b4e28`, making corrected D2 unconditionally `READY` and accepted. P3/P4
+acceptance remains open in the Responses plan.
 
 1. The canonical encoding and digest construction for `EventRecordV1`.
 2. Which repository owns the shared contract crate and TypeScript bindings.

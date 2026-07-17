@@ -23,13 +23,13 @@
   `~/.norn/sessions/` namespace remains untouched; and migration, classification,
   bounded cutover proof, deep offline verification, and fresh-epoch resume
   policy are explicit library and CLI surfaces. Gate D at `59dc244` returned
-  `READY` contingent on one MINOR backup-stage durability finding. F1 is fixed
-  at `e9755fe` and re-evidenced from clean detached snapshots of that exact head
-  at 10/10 gates and 280/280 process-isolated distributions with a
-  zero-violation policy report. D2
-  acceptance awaits the same reviewer's narrow correction confirmation.
-  Response-scoped audio persistence, the exhaustive all-lifecycle media matrix,
-  retained final P3/P4 evidence, and independent P3/P4 acceptance remain open.
+  `READY` contingent on one MINOR backup-stage durability finding. F1 was fixed
+  at `e9755fe`, re-evidenced from clean detached snapshots of that exact head at
+  10/10 gates and 280/280 process-isolated distributions with a zero-violation
+  policy report, and closed by the same coordinator at `26b4e28`. Corrected D2
+  now holds unconditional Gate D `READY`. Response-scoped audio persistence,
+  the exhaustive all-lifecycle media matrix, retained final P3/P4 evidence, and
+  independent P3/P4 acceptance remain open.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -136,10 +136,10 @@ On completion:
    After P1 establishes the campaign gates, the dependency declarations on each
    phase control ordering. The planned owner transcript discussion between P2
    and P3 occurred on 2026-07-15 through 2026-07-16. That pause is satisfied;
-   D2 was decided by the owner on 2026-07-17 and is implemented, reviewed
-   `READY` contingent, corrected, and re-evidenced at candidate level; P3
-   acceptance still requires the narrow D2 correction confirmation, its stated
-   P0-P2 dependencies, and its own remaining evidence. No discussion
+   D2 was decided by the owner on 2026-07-17, implemented, corrected,
+   re-evidenced, and accepted with unconditional Gate D `READY` at `26b4e28`;
+   P3 acceptance still requires its stated P0-P2 dependencies and its own
+   remaining evidence. No discussion
    substitutes for acceptance evidence.
 2. Every finding is owned by one phase in the traceability table. A finding may
    be supported by earlier foundation work, but it closes only in its owning
@@ -425,8 +425,8 @@ artifacts to the same clean head with zero errors.
 | P0. Credential and workspace authority containment | [x] Accepted by focused Gate D review `7ce29d7` on 2026-07-15 | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] Gate A complete at base `2917c8e`; Gate B foundation next; D0 remote enforcement deferred to exit | The program has executable contracts and protected quality gates. |
 | P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; retained Gate C, live A/B/A, P1 dependency, and independent acceptance open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
-| P3. Canonical ordered transcript | [ ] Frozen transcript candidate through `07bf9c1`, plus corrected/evidenced D2 strict-store source `e9755fe`: the exact 28-item union, canonical model/replay/persistence, caller ownership, exact second-request, representative real spawn/fork paths, strict format-2 store, offline migration, and explicit resume classifications are implemented; D2 Gate D is `READY` contingent and awaits narrow F1 confirmation; response audio, exhaustive lifecycle evidence, final P3 gates, and review remain open | Responses items survive stream, persistence, resume, and replay in order. |
-| P4. Streaming and replay conformance | [ ] Reviewable streaming candidate through `07bf9c1`, plus corrected/evidenced D2 persistence source `e9755fe`; public/Codex manifests, explicit validators for all 28 output discriminators, identity/channel/item reconciliation, terminal parsing, refusal, hosted-search replay, authoritative UI repair, and raw CLI events are implemented; D2 Gate D is `READY` contingent and awaits narrow F1 confirmation; audio persistence, exhaustive lifecycle evidence, final P4 gates, and review remain open | Supported events/items are complete, reconciled, and fail closed. |
+| P3. Canonical ordered transcript | [ ] Frozen transcript candidate through `07bf9c1`, plus accepted D2 strict-store source `e9755fe`: the exact 28-item union, canonical model/replay/persistence, caller ownership, exact second-request, representative real spawn/fork paths, strict format-2 store, offline migration, and explicit resume classifications are implemented; corrected D2 holds unconditional Gate D `READY`; response audio, exhaustive lifecycle evidence, final P3 gates, and review remain open | Responses items survive stream, persistence, resume, and replay in order. |
+| P4. Streaming and replay conformance | [ ] Reviewable streaming candidate through `07bf9c1`, plus accepted D2 persistence source `e9755fe`; public/Codex manifests, explicit validators for all 28 output discriminators, identity/channel/item reconciliation, terminal parsing, refusal, hosted-search replay, authoritative UI repair, and raw CLI events are implemented; corrected D2 holds unconditional Gate D `READY`; audio persistence, exhaustive lifecycle evidence, final P4 gates, and review remain open | Supported events/items are complete, reconciled, and fail closed. |
 | P5. Conversation and Codex turn semantics | [ ] | Local/provider history and turn-scoped state have explicit lifetimes. |
 | P6. Transport, retry, and usage | [ ] | Retries terminate once; observed and unknown attempt usage remain explicit. |
 | P7. Request, schema, and model controls | [ ] | Advertised capabilities match validated payload and tool behavior. |
@@ -463,7 +463,7 @@ blocks phase acceptance and cannot be represented as implemented evidence.
 | D1C | File-descriptor exhaustion mitigation introduced by descriptor-pinned private storage and persistent agent sinks. | P0 | [x] Mandatory per the 2026-07-11 post-review owner ruling: the official CLI raises its soft `RLIMIT_NOFILE` only to a finite OS-provided ceiling, reports inherited/effective limits and a labelled descriptor snapshot through `doctor`, and preserves typed `EMFILE` versus `ENFILE` diagnostics across the P0 private/session/process boundary. Library embedders do not receive an implicit process-global mutation. Structural descriptor sharing or lazy reopen remains an explicitly owned follow-up rather than being misrepresented as solved by a higher limit. `RLIMIT_CORE=0` remains a separate open decision because it also affects spawned user commands. |
 | D1E | Structural descriptor closure after the owner rejected residual Norn-owned `EMFILE` risk. | P0 | [x] Decided, implemented, and independently accepted at `7ce29d7`. Idle session/history/process retention and eager spool-root probing are removed; cancellation-safe adoption owns process groups until spool attachment commits; and the process-wide fail-fast authority covers active/scalable process, spool, session, diagnostic, persistent stdio, LSP, HTTP, OAuth callback/browser, read/search, Rhai, debug, ordinary one-shot configuration, discovery, task, and write/edit/patch families. The former arbitrary transient headroom is replaced by exact observer reserve and typed filesystem/subprocess/HTTP permits. The final distribution and Gate D review cover selected descriptor-retention/admission, cancellation, live-transport release, and OAuth launcher permit lifecycles. This item does not claim that Norn can prevent unrelated embedder or operating-system-wide exhaustion. |
 | D1D | Complete `NornSettings.mcp_servers` as the layered MCP client surface: user, shared project, private project-local, per-agent, CLI, and live-session scopes with remembered shared-project approval and dynamic tool-catalogue refresh. | P0 | [x] Owner decision confirmed by Tom on 2026-07-13 and attributed in `DECISIONS-2026-07.md` section 10; implementation and its complete startup/live-control fixture matrix were independently accepted at `7ce29d7`. Precedence is `session > CLI > local > project > user`; same-name entries replace wholesale. Only shared checked-in project definitions require definition-bound remembered approval; user-owned private, CLI, and live-session input is direct operator configuration. Root, variant, and spawned agents select views from the connected pool without treating MCP roots as confinement. Startup consumption, live add/remove/enable/disable/reload, contextual roots, and provider-visible tool refresh are implemented. |
-| D2 | Existing session policy: isolated strict runtime storage plus an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [x] Owner ruling recorded 2026-07-17 and implemented in corrected range `2c0350d..e9755fe`; exact-correction D2 Gate C is retained at 10/10 gates and 280/280 distributions, with 145 changed Rust files/33 test-only and zero policy violations. The strict runtime namespace is the versionless `~/.norn/session-store/`; `~/.norn/sessions/` remains an untouched legacy source, an immutable digest-addressed private backup is published separately, and no `sessions-v2` path exists. `norn session migrate` performs an explicit offline, no-replace, staged publication that is idempotent and interruption-recoverable; normal startup does not decode legacy history. It checks only legacy-path metadata and, when legacy data exists, a bounded fixed-size cutover receipt, exact ownership marker, and required regular-file presence inside the active store. `norn session legacy verify` is the separate history-proportional audit over the strict store, immutable backup, manifest evidence, and live legacy tree. Canonically complete legacy sessions require a recorded fresh provider epoch; flattened but coherent sessions require explicit degraded/fresh-epoch approval with fidelity loss retained; corrupt or ambiguous sessions are inspect/export-only. `SessionManager::standard()` and the shared checked resolver apply this boundary to CLI and library embedders, while `SessionManager::new` remains an explicit custom-store authority. No class fabricates provider items, hidden reasoning, ordering, phase, or provider-side continuity. Gate D at `59dc244` returned `READY` contingent on F1; the populated backup-stage fsync is fixed and freshly evidenced at `e9755fe`. This checkbox records the decided and implemented contract plus retained evidence, not the same reviewer's still-pending narrow F1 confirmation, final D2 acceptance, or P3/P4 acceptance. |
+| D2 | Existing session policy: isolated strict runtime storage plus an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [x] Owner ruling recorded 2026-07-17 and implemented in accepted range `2c0350d..e9755fe`; exact-correction D2 Gate C is retained at 10/10 gates and 280/280 distributions, with 145 changed Rust files/33 test-only and zero policy violations. The strict runtime namespace is the versionless `~/.norn/session-store/`; `~/.norn/sessions/` remains an untouched legacy source, an immutable digest-addressed private backup is published separately, and no `sessions-v2` path exists. `norn session migrate` performs an explicit offline, no-replace, staged publication that is idempotent and interruption-recoverable; normal startup does not decode legacy history. It checks only legacy-path metadata and, when legacy data exists, a bounded fixed-size cutover receipt, exact ownership marker, and required regular-file presence inside the active store. `norn session legacy verify` is the separate history-proportional audit over the strict store, immutable backup, manifest evidence, and live legacy tree. Canonically complete legacy sessions require a recorded fresh provider epoch; flattened but coherent sessions require explicit degraded/fresh-epoch approval with fidelity loss retained; corrupt or ambiguous sessions are inspect/export-only. `SessionManager::standard()` and the shared checked resolver apply this boundary to CLI and library embedders, while `SessionManager::new` remains an explicit custom-store authority. No class fabricates provider items, hidden reasoning, ordering, phase, or provider-side continuity. Gate D at `59dc244` returned `READY` contingent on F1; the populated backup-stage fsync was fixed and freshly evidenced at `e9755fe`, then independently closed at `26b4e28`. Corrected D2 now holds unconditional Gate D `READY`. This checkbox records D2 acceptance, not P3/P4 acceptance. |
 | D3 | Threaded-state policy: decide replaceable Developer context and whether/how local compaction may reset an anchor without losing stored reasoning. Select a genuinely replaceable surface, lossless replay contract, fresh-thread transition, or disable threading/local replay. | P5 | [ ] Open |
 | D4 | Single retry owner and existing configured attempt/budget semantics for HTTP and in-stream failures. | P6 | [ ] Open |
 | D5 | Native `text.format` versus synthetic tool policy by API shape, catalog-selected apply-patch/search envelopes, and local-dispatch versus user-request semantics for tool-backed slash commands. | P7 | [ ] Open |
@@ -1494,15 +1494,13 @@ are not pass claims.
 
 ## P3. Canonical ordered transcript
 
-**Status:** [ ] Frozen transcript candidate through `07bf9c1`, with corrected
-and retained-evidence D2 strict-store source `e9755fe`; D2 Gate D returned
-`READY` contingent and awaits the same reviewer's narrow F1 confirmation;
+**Status:** [ ] Frozen transcript candidate through `07bf9c1`, with accepted D2
+strict-store source `e9755fe`; corrected D2 holds unconditional Gate D `READY`;
 response audio, exhaustive lifecycle evidence, final P3 gates, and review remain
 open;
 **foundation for:** `STATE-01`, `EVT-02`;
-**dependencies:** P0-P2; the owner-decided D2 contract is implemented, reviewed
-`READY` contingent, corrected, and re-evidenced at candidate level but still
-requires narrow correction confirmation.
+**dependencies:** P0-P2; the owner-decided D2 contract is implemented, corrected,
+re-evidenced, and accepted with unconditional Gate D `READY`.
 
 The implementation candidate now carries exact completed-item JSON through
 assembly, JSONL persistence, resume, top-level session fork, real persistent
@@ -1519,12 +1517,13 @@ candidate now provides the versionless strict format-2 store, explicit offline
 migration, three fidelity classifications, bounded normal-runtime cutover
 proof, deep offline verification, and explicit fresh-epoch/degraded resume
 policy. The transcript range `6e279a3..07bf9c1` remains the frozen pre-D2
-candidate; D2 is frozen separately as corrected range `2c0350d..e9755fe`, with
+candidate; D2 is accepted separately as corrected range `2c0350d..e9755fe`, with
 retained 10/10 gates, 280/280 process-isolated distributions, and a
 zero-violation policy report. Gate D at `59dc244` returned `READY` contingent;
-the same reviewer's narrow F1 confirmation, response-scoped audio, the
-exhaustive all-lifecycle media matrix, retained final P3 evidence, and
-independent P3 review still block phase acceptance.
+the same coordinator closed F1 at `26b4e28`, making corrected D2
+unconditionally `READY`. Response-scoped audio, the exhaustive all-lifecycle
+media matrix, retained final P3 evidence, and independent P3 review still block
+phase acceptance.
 
 The replay normalization allowlist is empty for the pinned public contract.
 Current official conversation-state and compaction guidance requires clients
@@ -1631,8 +1630,8 @@ not change their order or invent missing semantics.
   [`D2 implementation handoff`](reviews/2026-07-17-d2-strict-session-store-handoff.md),
   [`F1 correction handoff`](reviews/2026-07-17-d2-f1-correction-handoff.md), and
   their exact-head 10/10 gate, 280/280 distributions, and zero-violation policy
-  artifacts. Gate D is `READY` contingent; the narrow F1 confirmation remains
-  open.
+  artifacts. The [`F1 correction review`](reviews/2026-07-17-d2-f1-correction-review.md)
+  closes the prior contingency and records unconditional D2 Gate D `READY`.
 
 ### Review and exit gate
 
@@ -1644,10 +1643,9 @@ not change their order or invent missing semantics.
 
 ## P4. Streaming and replay conformance
 
-**Status:** [ ] Frozen streaming candidate through `07bf9c1`, plus corrected and
-retained-evidence D2 persistence source `e9755fe`; D2 Gate D returned `READY`
-contingent and awaits the same reviewer's narrow F1 confirmation; the
-D2-compatible response-scoped audio sidecar, exhaustive lifecycle matrix,
+**Status:** [ ] Frozen streaming candidate through `07bf9c1`, plus accepted D2
+persistence source `e9755fe`; corrected D2 holds unconditional Gate D `READY`;
+the D2-compatible response-scoped audio sidecar, exhaustive lifecycle matrix,
 retained final P4 evidence, and independent P4 review still block acceptance;
 **candidate coverage:** `STATE-01`, `EVT-01` through
 `EVT-07`; **dependencies:** P3.
@@ -2183,8 +2181,8 @@ ledger prematurely.
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
 | P1 | Gate A complete at base `2917c8e`; Gate B foundation not yet implemented | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A `READY` | Implement and independently review the executable foundation, complete and verify P1, then resolve D0 before acceptance |
 | P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and the bounded source fixture matrices are present | Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks; retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle | Record the historical missing-phase-base disposition, resolve the P1 dependency, run the live A/B/A validity experiment, execute and retain the complete candidate gates, then obtain P2 acceptance |
-| P3 | Frozen canonical ordered transcript candidate through `07bf9c1`, plus corrected D2 source `e9755fe`: all 28 public output discriminators and shipped non-audio nested/tool schemas have explicit validation and actionability; exact completed items and caller ownership drive derived views and survive persistence, exact second-request replay, representative real persistent spawn/fork, reload, and manager resume paths; the strict format-2 store, explicit offline migration, three fidelity classes, bounded cutover guard, deep verifier, fresh-epoch boundary, and standard library constructor are present | The pre-D2 transcript source gates and review evidence remain as previously recorded. Corrected D2 range `2c0350d..e9755fe` has an [`implementation handoff`](reviews/2026-07-17-d2-strict-session-store-handoff.md), a narrow [`F1 correction handoff`](reviews/2026-07-17-d2-f1-correction-handoff.md), exact-correction Gate C 10/10, distributions 280/280, and a zero-violation 145-Rust-file policy report. Gate D at `59dc244` is `READY` contingent; the same reviewer's F1 confirmation remains open | Obtain narrow F1 confirmation and D2 acceptance, implement the D2-compatible response audio sidecar, complete the exhaustive all-lifecycle media matrix, retain final P3 evidence, then obtain protocol and persistence review |
-| P4 | Frozen streaming/reconciliation candidate through `07bf9c1`, plus corrected D2 persistence source `e9755fe`: 53-event/28-item manifests, one authoritative validator per output discriminator, schema-before-capability ordering, 20 inert/6 executable/2 conditional classifications, identity-safe and frame-atomic completion, item-scoped image/MCP/code/search reconciliation, terminal parsing, refusal outcomes, hosted-search replay, and append-only UI repair | The pre-D2 source gates and review evidence remain as previously recorded. Corrected D2 Gate C is retained at 10/10 and 280/280 with policy pass; Gate D at `59dc244` is `READY` contingent and awaits narrow F1 confirmation. See the [`2026-07-17 P3 output-inventory handoff`](reviews/2026-07-17-p3-output-inventory-handoff.md), [`D2 implementation handoff`](reviews/2026-07-17-d2-strict-session-store-handoff.md), and [`F1 correction handoff`](reviews/2026-07-17-d2-f1-correction-handoff.md) | Obtain narrow F1 confirmation and D2 acceptance; add the durable response-scoped audio sidecar and stream-to-artifact evidence; complete the exhaustive lifecycle matrix; obtain independent P4 review and run final retained phase gates; P6 separately owns usage-presence projection and retry-attempt UI cleanup |
+| P3 | Frozen canonical ordered transcript candidate through `07bf9c1`, plus accepted D2 source `e9755fe`: all 28 public output discriminators and shipped non-audio nested/tool schemas have explicit validation and actionability; exact completed items and caller ownership drive derived views and survive persistence, exact second-request replay, representative real persistent spawn/fork, reload, and manager resume paths; the strict format-2 store, explicit offline migration, three fidelity classes, bounded cutover guard, deep verifier, fresh-epoch boundary, and standard library constructor are present | The pre-D2 transcript source gates and review evidence remain as previously recorded. Accepted D2 range `2c0350d..e9755fe` has an [`implementation handoff`](reviews/2026-07-17-d2-strict-session-store-handoff.md), a narrow [`F1 correction handoff`](reviews/2026-07-17-d2-f1-correction-handoff.md), exact-correction Gate C 10/10, distributions 280/280, a zero-violation 145-Rust-file policy report, and unconditional Gate D `READY` in the [`correction review`](reviews/2026-07-17-d2-f1-correction-review.md) | Implement the D2-compatible response audio sidecar, complete the exhaustive all-lifecycle media matrix, retain final P3 evidence, then obtain protocol and persistence review |
+| P4 | Frozen streaming/reconciliation candidate through `07bf9c1`, plus accepted D2 persistence source `e9755fe`: 53-event/28-item manifests, one authoritative validator per output discriminator, schema-before-capability ordering, 20 inert/6 executable/2 conditional classifications, identity-safe and frame-atomic completion, item-scoped image/MCP/code/search reconciliation, terminal parsing, refusal outcomes, hosted-search replay, and append-only UI repair | The pre-D2 source gates and review evidence remain as previously recorded. Accepted D2 Gate C is retained at 10/10 and 280/280 with policy pass; the correction review records unconditional D2 Gate D `READY`. See the [`2026-07-17 P3 output-inventory handoff`](reviews/2026-07-17-p3-output-inventory-handoff.md), [`D2 implementation handoff`](reviews/2026-07-17-d2-strict-session-store-handoff.md), and [`F1 correction review`](reviews/2026-07-17-d2-f1-correction-review.md) | Add the durable response-scoped audio sidecar and stream-to-artifact evidence; complete the exhaustive lifecycle matrix; obtain independent P4 review and run final retained phase gates; P6 separately owns usage-presence projection and retry-attempt UI cleanup |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|

@@ -1162,11 +1162,11 @@ untouched as the migration source and backup. Norn does not introduce a
 - A corrupt or ambiguous legacy session is inspect/export-only. It cannot be
   resumed or silently repaired into a canonical history.
 
-**Implementation status:** Corrected source `e9755fe` now represents this ruling
-without adding a compatibility path. Gate D review `59dc244` returned `READY`
-contingent on one MINOR backup-stage durability finding; F1 is fixed and
-re-evidenced from the exact correction head, while the same reviewer's narrow
-confirmation remains pending:
+**Implementation status:** Accepted corrected source `e9755fe` represents this
+ruling without adding a compatibility path. Gate D review `59dc244` returned
+`READY` contingent on one MINOR backup-stage durability finding; F1 was fixed
+and re-evidenced from the exact correction head, then closed by the same
+coordinator at `26b4e28`. Corrected D2 holds unconditional Gate D `READY`:
 
 - strict format-2 index and timeline codecs fail closed on missing, legacy,
   newer, malformed, non-canonical, duplicate, unknown-field, and unknown-event
@@ -1197,9 +1197,9 @@ confirmation remains pending:
   280/280 isolated distributions, and the zero-violation 145-Rust-file policy
   scan.
 
-This status is not D2 or P3/P4 acceptance. D2 awaits the same reviewer's narrow
-F1 confirmation. Response-scoped audio, the exhaustive lifecycle matrix, final
-P3/P4 gates, and independent P3/P4 acceptance remain open. The eight
+This records D2 acceptance, not P3/P4 acceptance. Response-scoped audio, the
+exhaustive lifecycle matrix, final P3/P4 gates, and independent P3/P4 acceptance
+remain open. The eight
 non-blocking D2 observations, including serialized quadratic append work, carry
 forward through the
 [`D2 Gate D review`](reviews/2026-07-17-d2-gate-d-review.md). The frozen

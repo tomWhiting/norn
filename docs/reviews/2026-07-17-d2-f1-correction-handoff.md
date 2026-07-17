@@ -1,9 +1,7 @@
 # D2 F1 correction handoff
 
-**Status:** Narrow correction candidate for the same Gate D coordinator. The
-original D2 review returned `READY` contingent on F1. F1 is fixed and
-re-evidenced, but D2 is not accepted until that reviewer confirms this
-correction.
+**Status:** Completed. The same Gate D coordinator confirmed this correction at
+`26b4e28`, closed F1, and returned unconditional `READY` for corrected D2.
 
 **Original reviewed range:** `2c0350d..3ebc468`; candidate tree
 `b95ab9d411271769c7c0e6a305d0d4a21152b2b2`.
@@ -122,5 +120,6 @@ non-blocking observations in the original Gate D review remain the P3/P4 ledger,
 especially global `index.lock` occupancy and quadratic full-timeline rescanning
 under repeated appends.
 
-This handoff does not claim D2 acceptance, response-scoped audio, the exhaustive
-lifecycle matrix, final P3/P4 Gate C, or P3/P4 acceptance.
+The resulting D2 acceptance does not claim response-scoped audio, the exhaustive
+lifecycle matrix, final P3/P4 Gate C, or P3/P4 acceptance. See the
+[`correction review`](2026-07-17-d2-f1-correction-review.md).
