@@ -17,8 +17,10 @@ The current Norn Responses candidate at `07bf9c1` now inventories and validates
 all 28 public output-item discriminators, preserves the shipped non-audio nested
 content/tool shapes and caller lineage canonically, and exercises representative
 real spawn/fork replay. This is an implementation candidate, not phase
-acceptance: D2, response-scoped audio, the exhaustive all-lifecycle media matrix,
-retained evidence, and independent P3/P4 review remain open.
+acceptance: D2 is decided but its strict store and offline migrator are not
+implemented; response-scoped audio, the exhaustive all-lifecycle media matrix,
+retained evidence, and independent P3/P4 review remain open. The candidate
+source range remains frozen for that review.
 
 ## 1. Executive position
 
@@ -109,7 +111,10 @@ Statements in this document use three evidence classes:
 - Norn projects canonical session events into the shared event contract without
   replacing its provider transcript or session storage model.
 - Haematite later becomes a Norn session-store implementation behind a stable
-  manager seam. Existing JSONL is imported, not silently dual-read forever.
+  manager seam. Before that later engine change, Responses D2 moves new strict
+  JSONL sessions to the versionless `~/.norn/session-store/` namespace and keeps
+  legacy `~/.norn/sessions/` untouched. Existing JSONL is imported explicitly,
+  not silently dual-read forever.
 - Liminal later carries semantic records between nodes. Beamr supervises local
   processes. Aion continues to own durable workflow execution.
 - Lys attestations can be added to canonical records and artifacts when trust
@@ -685,11 +690,22 @@ The Responses remediation plan P3 and P4 define the canonical provider-item
 substrate and streaming fidelity. The tree-session model builds on that
 substrate; it must not introduce a second lossy transcript representation.
 
-JSONL remains the current store. Haematite integration follows a session-store
-manager seam and an explicit offline import path. The target Haematite model
-uses append-only branches, stable event addresses, arbitrary committed fork
-anchors, and multi-parent convergence records. It does not require text-merge
-semantics.
+JSONL remains the current storage engine. Under the owner-decided Responses D2
+contract, all new strict runtime sessions belong under the versionless
+`~/.norn/session-store/` path. The legacy `~/.norn/sessions/` tree remains
+untouched as source and backup; there is no `sessions-v2` path, in-place
+upgrade, runtime dual-read, or dual-write period. A separate explicit offline
+migration is atomic, idempotent, interruption-recoverable, and classifies each
+session before publication. Canonically complete sessions may resume from a
+fresh provider-state epoch; flattened but coherent sessions require an explicit
+degraded/fresh-epoch resume with recorded fidelity loss; corrupt or ambiguous
+sessions are inspect/export-only. This contract is decided but not yet
+implemented or accepted.
+
+Haematite integration follows a later session-store manager seam and its own
+explicit offline import path. The target Haematite model uses append-only
+branches, stable event addresses, arbitrary committed fork anchors, and multi-
+parent convergence records. It does not require text-merge semantics.
 
 Cross-machine resume becomes possible only when the session store, referenced
 artifacts, workflow links, and workspace provenance can all be resolved on the
@@ -852,6 +868,12 @@ Its implementation remains the behavioral baseline for later conformance tests.
 
 These require owner and repository-specific review before implementation:
 
+Responses D2 is no longer an open decision. On 2026-07-17 the owner selected the
+versionless strict `~/.norn/session-store/` namespace, untouched legacy
+`~/.norn/sessions/`, and explicit offline migration with canonical,
+degraded/fresh-epoch, and inspect/export-only outcomes. Implementation and
+acceptance remain open in the Responses plan.
+
 1. The canonical encoding and digest construction for `EventRecordV1`.
 2. Which repository owns the shared contract crate and TypeScript bindings.
 3. The stable global `producer_ref` and `actor_ref` identity binding model.
@@ -860,15 +882,14 @@ These require owner and repository-specific review before implementation:
 6. The local Frame node's process ownership and discovery mechanism.
 7. The boundary between a Norn supervisor process and sessions that remain
    in-process for TUI, print, driven, or library use.
-8. The offline migration policy for existing Norn sessions under Responses D2.
-9. Whether and when to add isolated third-party browser modules beyond the
+8. Whether and when to add isolated third-party browser modules beyond the
    approved first-party same-origin policy.
-10. The Liminal participant contract version that is sufficiently implemented
+9. The Liminal participant contract version that is sufficiently implemented
     to carry cross-node records.
-11. The typed action principal, delegation, grant, and authorization-evidence
+10. The typed action principal, delegation, grant, and authorization-evidence
     contract.
-12. The stable workspace, snapshot, change, and diagnostic reference owners.
-13. The Aion-owned session-execution lease and workspace ownership-transfer
+11. The stable workspace, snapshot, change, and diagnostic reference owners.
+12. The Aion-owned session-execution lease and workspace ownership-transfer
     contract for live cross-machine resume.
 
 ## 20. Repository references

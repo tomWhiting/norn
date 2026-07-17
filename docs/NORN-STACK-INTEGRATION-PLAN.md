@@ -62,7 +62,7 @@ The dependency is direct:
 ```text
 Responses P1 accepted
   -> Responses P2 accepted
-  -> Responses D2 decided
+  -> Responses D2 implemented and accepted
   -> Responses P3 canonical transcript
   -> Responses P4 complete event/item reconciliation
   -> NS2 stable Norn event projection and read model
@@ -85,13 +85,19 @@ Other dependencies:
   claim, which remains blocked until the Responses campaign is complete.
 
 Responses D2 concerns legacy and pre-canonical persisted sessions whose flat
-transcripts cannot recover P3 item order, phase, or other omitted data. New
-Responses sessions written through the P3 implementation candidate can persist
-canonical `response_items`, but that does not resolve D2's reject-or-offline-
-migrate decision for existing lossy sessions. D2 does not select Haematite or
-perform the later storage-engine migration. P3 remains on the current
-session-storage authority; NS9 separately introduces the store seam and
-Haematite import after the logical event model is stable.
+transcripts cannot recover P3 item order, phase, or other omitted data. The
+owner decided D2 on 2026-07-17. New strict runtime sessions will use the
+versionless `~/.norn/session-store/` namespace; the existing
+`~/.norn/sessions/` tree remains untouched as the legacy source and backup, and
+no `sessions-v2` path is introduced. A separate explicit offline migration must
+be atomic, idempotent, interruption-recoverable, and absent from normal runtime
+reads. Canonically complete legacy sessions may resume from a fresh provider-
+state epoch; flattened but coherent sessions require an explicit degraded/fresh-
+epoch resume with the fidelity loss recorded; corrupt or ambiguous sessions are
+inspect/export-only. The decision is recorded, not implemented or accepted.
+D2 does not select Haematite or perform the later storage-engine migration. P3
+remains on Norn's JSONL session-storage authority; NS9 separately introduces the
+store seam and Haematite import after the logical event model is stable.
 
 NS0 authority and identity inventories may proceed in parallel with P3 and P4.
 The shared encoding and Norn payload-fixture freeze follows P4 because it must
@@ -185,7 +191,7 @@ explicitly ruled; they are not silently deferred.
 | Phase | Status | Visible outcome |
 |---|---|---|
 | NS0. Architecture and contract boundary | [ ] Drafted; review open | The stack has one documented authority map and compatible contract vocabulary. |
-| NS1. Responses transcript and event substrate | [ ] Reviewable P3/P4 implementation candidate through `07bf9c1`: the exact 28-item output union, shipped non-audio nested/tool schemas, canonical caller-aware persistence/replay, the complete pinned public manifest and scoped Codex overlay, identity-keyed reconciliation, refusal and hosted-search matrices, representative real spawn/fork paths, and authoritative UI suffix repair landed; D2, response-scoped audio, the exhaustive lifecycle matrix, retained evidence, and independent phase gates remain open | Norn has a lossless canonical provider transcript and complete event reconciliation. |
+| NS1. Responses transcript and event substrate | [ ] Frozen P3/P4 implementation candidate through `07bf9c1`: the exact 28-item output union, shipped non-audio nested/tool schemas, canonical caller-aware persistence/replay, the complete pinned public manifest and scoped Codex overlay, identity-keyed reconciliation, refusal and hosted-search matrices, representative real spawn/fork paths, and authoritative UI suffix repair landed; D2 is decided but unimplemented, while response-scoped audio, the exhaustive lifecycle matrix, retained evidence, and independent phase gates remain open | Norn has a lossless canonical provider transcript and complete event reconciliation. |
 | NS2. Norn semantic projection and read model | [ ] Not started | Existing session history is queryable through stable typed records and cursors. |
 | NS3. Local detachable read supervisor | [ ] Not started | A session can continue while local read clients observe, detach, and reconnect without acquiring mutation authority. |
 | NS4. Read-only Frame contribution | [ ] Not started | Norn sessions, agents, status, and timelines appear in a Frame host. |
@@ -283,8 +289,9 @@ it does not duplicate that implementation here.
 
 At `07bf9c1`, the implementation-candidate work is marked complete below.
 These checks record landed candidate behavior only; they do not accept P3, P4,
-or NS1. Response audio, exhaustive lifecycle fixtures, D2, and independent
-review remain open where noted.
+or NS1. The source range remains frozen for external review. Response audio,
+exhaustive lifecycle fixtures, D2 implementation, and independent review remain
+open where noted.
 
 - [x] Complete the ordered canonical 28-discriminator Responses output-item
   union under P3, including one authoritative validator and an explicit
@@ -303,7 +310,10 @@ review remain open where noted.
   uninterrupted, resumed, spawned, and forked sessions.
 - [ ] Complete the exhaustive all-discriminator/optional-shape lifecycle matrix;
   the representative real spawn/fork fixtures do not imply that broader claim.
-- [ ] Resolve Responses decision D2 for existing persisted sessions.
+- [ ] Implement the decided Responses D2 contract: strict new sessions under
+  `~/.norn/session-store/`, untouched legacy `~/.norn/sessions/`, and a separate
+  offline atomic migration with canonical, degraded/fresh-epoch, and
+  inspect/export-only classifications.
 
 ### Difference after the phase
 
@@ -928,10 +938,10 @@ The critical and parallel paths are:
 
 1. Complete P1 acceptance.
 2. Complete P2 retained evidence and acceptance.
-3. Resolve Responses D2.
+3. Implement and verify the owner-decided Responses D2 contract.
 4. In parallel, complete NS0A's authority and identity inventory without
    editing the P3/P4 transcript implementation.
-5. Close P3's remaining D2, response-audio, exhaustive lifecycle-fixture, and
+5. Close P3's remaining D2 implementation, response-audio, exhaustive lifecycle-fixture, and
    independent-review gates, then obtain P3 acceptance.
 6. Close P4's remaining audio, fixture-matrix, and independent-review
    gates, then obtain P4 acceptance.

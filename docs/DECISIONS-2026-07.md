@@ -1140,3 +1140,29 @@ This is a sequencing decision, not a quality-gate waiver.
   legs.
 - P1 performs no live provider request, credential use, or billable experiment.
   Retrieval of public official documentation and schemas is permitted.
+
+## 15. Responses D2 strict session store and legacy migration (2026-07-17)
+
+**Owner ruling:** New strict Norn sessions use the versionless
+`~/.norn/session-store/` namespace. The legacy `~/.norn/sessions/` tree remains
+untouched as the migration source and backup. Norn does not introduce a
+`sessions-v2` path or another version-labelled runtime directory.
+
+- Migration is an explicit offline operation, never an implicit normal-runtime
+  read, in-place upgrade, dual-read, or dual-write compatibility path. It must
+  be atomic, idempotent, interruption-recoverable, backup-aware, and publish no
+  destination session until classification and validation succeed.
+- A canonically complete legacy session may resume normally from a fresh
+  provider-state epoch. The migration must not reuse an old provider anchor or
+  claim continuity that the legacy record cannot prove.
+- A flattened but coherent legacy session may resume only through an explicit
+  degraded/fresh-epoch operation. The migrated record must preserve and expose
+  the fidelity loss rather than manufacturing canonical output items, hidden
+  reasoning, phase, ordering, or provider-side continuity.
+- A corrupt or ambiguous legacy session is inspect/export-only. It cannot be
+  resumed or silently repaired into a canonical history.
+
+This section records policy only. The strict namespace, offline migrator,
+classification tests, retained evidence, and independent P3/P4 acceptance were
+not completed by this ruling. The frozen `6e279a3..07bf9c1` P3/P4 source
+candidate remains unchanged and unaccepted.
