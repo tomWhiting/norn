@@ -1162,8 +1162,11 @@ untouched as the migration source and backup. Norn does not introduce a
 - A corrupt or ambiguous legacy session is inspect/export-only. It cannot be
   resumed or silently repaired into a canonical history.
 
-**Implementation status:** An in-flight D2 candidate now represents this ruling
-without adding a compatibility path:
+**Implementation status:** Corrected source `e9755fe` now represents this ruling
+without adding a compatibility path. Gate D review `59dc244` returned `READY`
+contingent on one MINOR backup-stage durability finding; F1 is fixed and
+re-evidenced from the exact correction head, while the same reviewer's narrow
+confirmation remains pending:
 
 - strict format-2 index and timeline codecs fail closed on missing, legacy,
   newer, malformed, non-canonical, duplicate, unknown-field, and unknown-event
@@ -1188,9 +1191,16 @@ without adding a compatibility path:
 - `SessionManager::standard()` and the shared checked path resolver give the CLI
   and library embedders the same bounded cutover guard. `SessionManager::new`
   remains the explicit constructor for a custom store whose authority the
-  embedder owns.
+  embedder owns; and
+- the populated backup stage is synced before verification, checkpointing, or
+  no-replace publication. Exact-head retained evidence passes 10/10 gate legs,
+  280/280 isolated distributions, and the zero-violation 145-Rust-file policy
+  scan.
 
-This status is not D2 or P3/P4 acceptance. The D2 source range, retained final
-Gate C evidence, independent persistence/protocol review, response-scoped audio,
-and exhaustive lifecycle matrix remain open. The frozen `6e279a3..07bf9c1`
-transcript/streaming range remains unchanged and unaccepted.
+This status is not D2 or P3/P4 acceptance. D2 awaits the same reviewer's narrow
+F1 confirmation. Response-scoped audio, the exhaustive lifecycle matrix, final
+P3/P4 gates, and independent P3/P4 acceptance remain open. The eight
+non-blocking D2 observations, including serialized quadratic append work, carry
+forward through the
+[`D2 Gate D review`](reviews/2026-07-17-d2-gate-d-review.md). The frozen
+`6e279a3..07bf9c1` transcript/streaming range remains unchanged and unaccepted.

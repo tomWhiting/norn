@@ -1,8 +1,9 @@
 # D2 strict session-store implementation handoff
 
-**Status:** Frozen D2 implementation candidate with retained Gate C evidence;
-ready for independent Gate D review. This document is an implementer handoff,
-not an independent verdict or P3/P4 acceptance.
+**Status:** Gate D returned `READY` contingent on one MINOR durability finding.
+F1 is corrected and re-evidenced at `e9755fe`; the same reviewer's narrow
+confirmation remains required before D2 acceptance. This document is an
+implementer handoff, not that confirmation or P3/P4 acceptance.
 
 **Owner contract:** `docs/DECISIONS-2026-07.md` section 15 and D2 in
 `docs/RESPONSES-API-REMEDIATION-PLAN.md`.
@@ -12,9 +13,14 @@ not an independent verdict or P3/P4 acceptance.
 **D2 implementation base:**
 `2c0350d96660db3da0d1d3089dfac525b5fbbfdd`.
 
-**D2 source candidate/range:**
-`2c0350d..3ebc468ba60152dbdb59ae9aff3ad48f15ede1fe`; candidate tree
+**D2 reviewed source/range:**
+`2c0350d..3ebc468ba60152dbdb59ae9aff3ad48f15ede1fe`; reviewed tree
 `b95ab9d411271769c7c0e6a305d0d4a21152b2b2`.
+
+**Corrected D2 candidate/range:**
+`2c0350d..e9755fe2533979410f53eda88966349437a54517`; correction tree
+`9663e625dc57c7e23e87e3caf4f11b3adee8e231`. See the
+[`D2 F1 correction handoff`](2026-07-17-d2-f1-correction-handoff.md).
 
 ## 1. Claimed implementation boundary
 
@@ -62,9 +68,8 @@ The candidate establishes only these D2 claims:
    index/publication temporaries are reclaimed before authority reads; prefix
    lookalikes are never treated as cleanup authority.
 
-This handoff does **not** claim response-scoped audio, the exhaustive
-all-lifecycle media matrix, an independent Gate D verdict, final P3/P4 Gate C,
-or P3/P4 acceptance.
+This handoff does **not** claim final D2 acceptance, response-scoped audio, the
+exhaustive all-lifecycle media matrix, final P3/P4 Gate C, or P3/P4 acceptance.
 
 ## 2. Namespace and artifact inventory
 
@@ -133,16 +138,15 @@ The retained gate artifact mechanically records the complete NUL-delimited
 `git diff --name-only --diff-filter=ACDMRTUXB 2c0350d..HEAD --` inventory rather
 than relying on a manually maintained shortlist:
 
-- 161 paths: 126 under `crates/norn/`, 14 under `crates/norn-cli/`, four under
-  `crates/norn-tui/`, and 17 under `docs/`;
-- raw inventory length 7,494 bytes;
+- 164 paths in the complete corrected D2 range;
+- raw inventory length 7,654 bytes;
 - raw inventory SHA-256
-  `3f52c180d27457cb91f61396ac12b672f3070636535695e1ff1ad4c1f26cb5ab`;
+  `68462c3e7d5359f49a819becf4a44ccf1e8c84044292ab09fa497e708a2556dc`;
 - exact ordered path list in
-  `docs/reviews/evidence/d2/2026-07-17-d2-gate-3ebc468.json` at
+  `docs/reviews/evidence/d2/2026-07-17-d2-f1-correction-gate-e9755fe.json` at
   `repository.base_diff_name_inventory.paths`; and
-- identical candidate commit, tree, inventory, and clean status before and after
-  the retained run.
+- identical correction commit, tree, inventory, and clean status at the initial
+  and final pre-output snapshots.
 
 The companion policy artifact inventories all 145 changed Rust files, including
 33 test-only files. It reports no production file at or above 500 lines, no
@@ -151,16 +155,18 @@ thin-entrypoint or module-shape violation, and no added bypass/debt match.
 ## 4. Contract-to-evidence matrix
 
 Each checked cell below means the source suites containing the described
-fixtures executed successfully in the retained exact-candidate gate. It does not
-mean an independent reviewer has accepted the contract or the sufficiency of
-those fixtures.
+fixtures executed successfully in the retained exact-correction gate. The
+stage-root `fsync` mechanism is instead established by exact source inspection;
+the surrounding checkpoint recovery behavior is exercised by the retained
+distributions. A checked cell does not mean an independent reviewer has accepted
+the contract or the sufficiency of those fixtures.
 
 | Contract | Required evidence | Status |
 |---|---|---|
 | Strict format-2 only | Exact header, unknown-field/event, duplicate-key/id, non-canonical row, legacy/newer version, malformed row, and torn-tail fixtures | [x] Retained candidate gate |
 | Versionless standard namespace | CLI and public library constructor fixtures, including relative/unavailable home failure | [x] Retained candidate gate |
 | No normal legacy content read | Unreadable/renamed legacy-content fixture proving bounded startup still succeeds after valid cutover | [x] Retained candidate gate |
-| Atomic offline publication | Enumerated crash seams before/after backup and store publication; no foreign destination replacement | [x] Gate plus six abrupt-process distributions |
+| Atomic offline publication | Exact source ordering for the populated backup-stage root fsync; enumerated crash seams before/after backup and store publication; no foreign destination replacement | [x] Source inspection plus correction gate and six abrupt-process distributions |
 | Idempotence and interruption recovery | Repeated same-source result plus owned-stage recovery and changed-source behavior | [x] Gate plus six abrupt-process distributions |
 | Immutable legacy and backup | Before/after source tree digest, backup digest, exact export bytes, and old-binary divergence detection | [x] Retained candidate gate |
 | Three fidelity classes | Canonical, flattened coherent, malformed/ambiguous, spoofed boundary, stale index, orphan, and duplicate fixtures | [x] Retained candidate gate |
@@ -215,40 +221,54 @@ observation and no recovery sentinel in concurrency observations. The retained
 JSON records every exact test name, command, iteration, exit status, parsed test
 count, expected/observed sentinel, duration, and stdout/stderr hash.
 
-**Retained full-gate and distribution artifact:**
-`docs/reviews/evidence/d2/2026-07-17-d2-gate-3ebc468.json`, SHA-256
-`51267b197a7229c166a5bb610d725d090d682f66d98d84c96b31888838c8b7f8`.
+**Retained correction full-gate and distribution artifact:**
+`docs/reviews/evidence/d2/2026-07-17-d2-f1-correction-gate-e9755fe.json`,
+SHA-256
+`8cb4caf0b5724bf49de4fe53e9b7a4c4296751d2fb09a73fdb1e809aacd9e077`.
 
-**Retained policy artifact:**
-`docs/reviews/evidence/d2/2026-07-17-d2-policy-3ebc468.json`, SHA-256
-`309aca517a0bd998a2fbc79c234c5c02ba73e110ebf15413f702da3ac937016c`.
+**Retained correction policy artifact:**
+`docs/reviews/evidence/d2/2026-07-17-d2-f1-correction-policy-e9755fe.json`,
+SHA-256
+`c8565b5cf75f7ae88ae94b862ab6e0a6572e988eb333b7c74d27191e9cc6a024`.
 
-The gate ran from a clean detached checkout. Its logical Cargo target was
-`target/shared`, resolving to the main repository's normal `target/`; it did not
-create a temporary or duplicate build tree. Loopback-only test servers required
-execution outside the managed network sandbox after an in-sandbox run was
-invalidated by `EPERM`; no external network was used. The clean end-state
-snapshot is taken immediately before immutable output publication, so the new
-gate JSON is intentionally the only post-snapshot file.
+The gate ran from a detached checkout whose source was clean at both recorded
+snapshots. Its logical Cargo target was `target/shared`, resolving to the main
+repository's normal `target/`; it did not create a temporary or duplicate build
+tree. The implementer reports that loopback-only test servers required execution
+outside the managed network sandbox after an in-sandbox run was invalidated by
+`EPERM`; no external network was used. The clean end-state snapshot is taken
+immediately before immutable output publication, so the new gate JSON is
+intentionally the only post-snapshot file.
 
 ## 6. Required review
 
-- [ ] A session-persistence reviewer enumerates every durable write and
+- [x] A session-persistence reviewer enumerates every durable write and
   publication seam, independently reruns the distributions, and verifies the
-  namespace inventory.
-- [ ] A Responses-protocol reviewer checks that migration classification and
+  namespace inventory. The review returned `READY` with F1 MINOR.
+- [x] A Responses-protocol reviewer checks that migration classification and
   fresh-epoch behavior never manufacture canonical provider semantics.
-- [ ] An embedder/API reviewer verifies `SessionManager::standard()` is the
+- [x] An embedder/API reviewer verifies `SessionManager::standard()` is the
   documented standard front door and custom stores are not represented as
   standard cutover-safe storage.
-- [ ] A Fable adversarial reviewer returns `READY` for the frozen D2 range.
+- [x] A Fable adversarial reviewer returns `READY` for the frozen D2 range.
+
+All four seats are recorded in the
+[`Gate D review`](2026-07-17-d2-gate-d-review.md). Its verdict is `READY`
+contingent on F1, not final D2 acceptance.
 
 ## 7. Open before P3/P4 acceptance
 
 - [x] Freeze and commit the complete D2 source range.
 - [x] Fill every evidence placeholder above from that exact commit.
-- [ ] Resolve every finding from the independent D2 review.
+- [ ] Resolve every finding from the independent D2 review. F1 is corrected and
+  re-evidenced at `e9755fe`; the same reviewer must confirm the correction.
 - [ ] Add response-scoped audio without inventing a terminal output item.
 - [ ] Complete the exhaustive all-discriminator/optional-shape lifecycle matrix.
 - [ ] Run and retain final P3/P4 Gate C evidence.
 - [ ] Obtain independent P3/P4 acceptance.
+
+The eight non-blocking observations from the Gate D review carry into P3/P4.
+Most materially, registered appends currently hold the global `index.lock`
+across full-timeline validation, writes, and fsyncs, making repeated append work
+quadratic over a session's lifetime and serializing a store. This is a disclosed
+scale concern, not a D2 correctness finding.
