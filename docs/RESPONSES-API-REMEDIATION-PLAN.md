@@ -18,13 +18,14 @@
   actionability-classified; accepted items are preserved canonically, while
   unsupported executable forms retain exact raw evidence and fail closed.
   Representative accepted vectors are exercised through real spawn/fork paths.
-  D2 now has an in-flight implementation candidate: strict format-2 sessions
-  use the versionless `~/.norn/session-store/` namespace; the legacy
+  D2 is frozen at source `3ebc468`: strict format-2 sessions use the
+  versionless `~/.norn/session-store/` namespace; the legacy
   `~/.norn/sessions/` namespace remains untouched; and migration, classification,
   bounded cutover proof, deep offline verification, and fresh-epoch resume
-  policy are explicit library and CLI surfaces. The D2 candidate is not yet a
-  frozen or accepted source range. Response-scoped audio persistence, the
-  exhaustive all-lifecycle media matrix, retained final phase evidence, and
+  policy are explicit library and CLI surfaces. Exact-candidate D2 Gate C is
+  retained at 10/10 gates and 280/280 process-isolated distributions with a
+  clean policy report. Independent D2 Gate D, response-scoped audio persistence,
+  the exhaustive all-lifecycle media matrix, retained final P3/P4 evidence, and
   independent P3/P4 acceptance remain open.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
@@ -132,9 +133,10 @@ On completion:
    After P1 establishes the campaign gates, the dependency declarations on each
    phase control ordering. The planned owner transcript discussion between P2
    and P3 occurred on 2026-07-15 through 2026-07-16. That pause is satisfied;
-   D2 was decided by the owner on 2026-07-17; P3 entry still requires its stated
-   P0-P2 dependencies and implementation of that ruling, and no discussion
-   substitutes for their acceptance evidence.
+   D2 was decided by the owner on 2026-07-17 and is implemented and retained at
+   candidate level; P3 acceptance still requires its stated P0-P2 dependencies,
+   independent D2 review, and its own remaining evidence. No discussion
+   substitutes for acceptance evidence.
 2. Every finding is owned by one phase in the traceability table. A finding may
    be supported by earlier foundation work, but it closes only in its owning
    phase.
@@ -419,8 +421,8 @@ artifacts to the same clean head with zero errors.
 | P0. Credential and workspace authority containment | [x] Accepted by focused Gate D review `7ce29d7` on 2026-07-15 | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] Gate A complete at base `2917c8e`; Gate B foundation next; D0 remote enforcement deferred to exit | The program has executable contracts and protected quality gates. |
 | P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; retained Gate C, live A/B/A, P1 dependency, and independent acceptance open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
-| P3. Canonical ordered transcript | [ ] Frozen transcript candidate through `07bf9c1`, plus an in-flight D2 strict-store/migration candidate: the exact 28-item union, canonical model/replay/persistence, caller ownership, exact second-request, representative real spawn/fork paths, strict format-2 store, offline migration, and explicit resume classifications are implemented; response audio, exhaustive lifecycle evidence, final retained gates, and review remain open | Responses items survive stream, persistence, resume, and replay in order. |
-| P4. Streaming and replay conformance | [ ] Reviewable streaming candidate through `07bf9c1`, plus the in-flight D2 persistence substrate; public/Codex manifests, explicit validators for all 28 output discriminators, identity/channel/item reconciliation, terminal parsing, refusal, hosted-search replay, authoritative UI repair, and raw CLI events are implemented; audio persistence, exhaustive lifecycle evidence, retained final gates, and independent review remain open | Supported events/items are complete, reconciled, and fail closed. |
+| P3. Canonical ordered transcript | [ ] Frozen transcript candidate through `07bf9c1`, plus frozen/evidenced D2 strict-store source `3ebc468`: the exact 28-item union, canonical model/replay/persistence, caller ownership, exact second-request, representative real spawn/fork paths, strict format-2 store, offline migration, and explicit resume classifications are implemented; independent D2 review, response audio, exhaustive lifecycle evidence, final P3 gates, and review remain open | Responses items survive stream, persistence, resume, and replay in order. |
+| P4. Streaming and replay conformance | [ ] Reviewable streaming candidate through `07bf9c1`, plus frozen/evidenced D2 persistence source `3ebc468`; public/Codex manifests, explicit validators for all 28 output discriminators, identity/channel/item reconciliation, terminal parsing, refusal, hosted-search replay, authoritative UI repair, and raw CLI events are implemented; independent D2 review, audio persistence, exhaustive lifecycle evidence, final P4 gates, and review remain open | Supported events/items are complete, reconciled, and fail closed. |
 | P5. Conversation and Codex turn semantics | [ ] | Local/provider history and turn-scoped state have explicit lifetimes. |
 | P6. Transport, retry, and usage | [ ] | Retries terminate once; observed and unknown attempt usage remain explicit. |
 | P7. Request, schema, and model controls | [ ] | Advertised capabilities match validated payload and tool behavior. |
@@ -457,7 +459,7 @@ blocks phase acceptance and cannot be represented as implemented evidence.
 | D1C | File-descriptor exhaustion mitigation introduced by descriptor-pinned private storage and persistent agent sinks. | P0 | [x] Mandatory per the 2026-07-11 post-review owner ruling: the official CLI raises its soft `RLIMIT_NOFILE` only to a finite OS-provided ceiling, reports inherited/effective limits and a labelled descriptor snapshot through `doctor`, and preserves typed `EMFILE` versus `ENFILE` diagnostics across the P0 private/session/process boundary. Library embedders do not receive an implicit process-global mutation. Structural descriptor sharing or lazy reopen remains an explicitly owned follow-up rather than being misrepresented as solved by a higher limit. `RLIMIT_CORE=0` remains a separate open decision because it also affects spawned user commands. |
 | D1E | Structural descriptor closure after the owner rejected residual Norn-owned `EMFILE` risk. | P0 | [x] Decided, implemented, and independently accepted at `7ce29d7`. Idle session/history/process retention and eager spool-root probing are removed; cancellation-safe adoption owns process groups until spool attachment commits; and the process-wide fail-fast authority covers active/scalable process, spool, session, diagnostic, persistent stdio, LSP, HTTP, OAuth callback/browser, read/search, Rhai, debug, ordinary one-shot configuration, discovery, task, and write/edit/patch families. The former arbitrary transient headroom is replaced by exact observer reserve and typed filesystem/subprocess/HTTP permits. The final distribution and Gate D review cover selected descriptor-retention/admission, cancellation, live-transport release, and OAuth launcher permit lifecycles. This item does not claim that Norn can prevent unrelated embedder or operating-system-wide exhaustion. |
 | D1D | Complete `NornSettings.mcp_servers` as the layered MCP client surface: user, shared project, private project-local, per-agent, CLI, and live-session scopes with remembered shared-project approval and dynamic tool-catalogue refresh. | P0 | [x] Owner decision confirmed by Tom on 2026-07-13 and attributed in `DECISIONS-2026-07.md` section 10; implementation and its complete startup/live-control fixture matrix were independently accepted at `7ce29d7`. Precedence is `session > CLI > local > project > user`; same-name entries replace wholesale. Only shared checked-in project definitions require definition-bound remembered approval; user-owned private, CLI, and live-session input is direct operator configuration. Root, variant, and spawned agents select views from the connected pool without treating MCP roots as confinement. Startup consumption, live add/remove/enable/disable/reload, contextual roots, and provider-visible tool refresh are implemented. |
-| D2 | Existing session policy: isolated strict runtime storage plus an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [x] Owner ruling recorded 2026-07-17 and represented by an in-flight implementation candidate; final retained evidence and acceptance remain open. The strict runtime namespace is the versionless `~/.norn/session-store/`; `~/.norn/sessions/` remains an untouched legacy source, an immutable digest-addressed private backup is published separately, and no `sessions-v2` path exists. `norn session migrate` performs an explicit offline, no-replace, staged publication that is idempotent and interruption-recoverable; normal startup does not decode legacy history. It checks only legacy-path metadata and, when legacy data exists, a bounded fixed-size cutover receipt, exact ownership marker, and required regular-file presence inside the active store. `norn session legacy verify` is the separate history-proportional audit over the strict store, immutable backup, manifest evidence, and live legacy tree. Canonically complete legacy sessions require a recorded fresh provider epoch; flattened but coherent sessions require explicit degraded/fresh-epoch approval with fidelity loss retained; corrupt or ambiguous sessions are inspect/export-only. `SessionManager::standard()` and the shared checked resolver apply this boundary to CLI and library embedders, while `SessionManager::new` remains an explicit custom-store authority. No class fabricates provider items, hidden reasoning, ordering, phase, or provider-side continuity. This checkbox records the decided and implemented contract, not final Gate C evidence, independent review, or P3/P4 acceptance. |
+| D2 | Existing session policy: isolated strict runtime storage plus an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [x] Owner ruling recorded 2026-07-17 and implemented in frozen range `2c0350d..3ebc468`; exact-candidate D2 Gate C is retained at 10/10 gates and 280/280 distributions, with 145 changed Rust files/33 test-only and zero policy violations. The strict runtime namespace is the versionless `~/.norn/session-store/`; `~/.norn/sessions/` remains an untouched legacy source, an immutable digest-addressed private backup is published separately, and no `sessions-v2` path exists. `norn session migrate` performs an explicit offline, no-replace, staged publication that is idempotent and interruption-recoverable; normal startup does not decode legacy history. It checks only legacy-path metadata and, when legacy data exists, a bounded fixed-size cutover receipt, exact ownership marker, and required regular-file presence inside the active store. `norn session legacy verify` is the separate history-proportional audit over the strict store, immutable backup, manifest evidence, and live legacy tree. Canonically complete legacy sessions require a recorded fresh provider epoch; flattened but coherent sessions require explicit degraded/fresh-epoch approval with fidelity loss retained; corrupt or ambiguous sessions are inspect/export-only. `SessionManager::standard()` and the shared checked resolver apply this boundary to CLI and library embedders, while `SessionManager::new` remains an explicit custom-store authority. No class fabricates provider items, hidden reasoning, ordering, phase, or provider-side continuity. This checkbox records the decided and implemented contract plus retained D2 Gate C, not independent D2 Gate D or P3/P4 acceptance. |
 | D3 | Threaded-state policy: decide replaceable Developer context and whether/how local compaction may reset an anchor without losing stored reasoning. Select a genuinely replaceable surface, lossless replay contract, fresh-thread transition, or disable threading/local replay. | P5 | [ ] Open |
 | D4 | Single retry owner and existing configured attempt/budget semantics for HTTP and in-stream failures. | P6 | [ ] Open |
 | D5 | Native `text.format` versus synthetic tool policy by API shape, catalog-selected apply-patch/search envelopes, and local-dispatch versus user-request semantics for tool-backed slash commands. | P7 | [ ] Open |
@@ -1488,10 +1490,13 @@ are not pass claims.
 
 ## P3. Canonical ordered transcript
 
-**Status:** [ ] Frozen transcript candidate through `07bf9c1`, with an in-flight
-D2 strict-store and offline-migration implementation candidate;
+**Status:** [ ] Frozen transcript candidate through `07bf9c1`, with frozen and
+retained-evidence D2 strict-store source `3ebc468`; independent D2 Gate D,
+response audio, exhaustive lifecycle evidence, final P3 gates, and review remain
+open;
 **foundation for:** `STATE-01`, `EVT-02`;
-**dependencies:** P0-P2 and implementation of the owner-decided D2 contract.
+**dependencies:** P0-P2; the owner-decided D2 contract is implemented and gated
+at candidate level but still requires independent review.
 
 The implementation candidate now carries exact completed-item JSON through
 assembly, JSONL persistence, resume, top-level session fork, real persistent
@@ -1508,9 +1513,11 @@ candidate now provides the versionless strict format-2 store, explicit offline
 migration, three fidelity classifications, bounded normal-runtime cutover
 proof, deep offline verification, and explicit fresh-epoch/degraded resume
 policy. The transcript range `6e279a3..07bf9c1` remains the frozen pre-D2
-candidate; the D2 source range and retained evidence have not yet been frozen.
-Response-scoped audio, the exhaustive all-lifecycle media matrix, retained final
-evidence, and independent review still block phase acceptance.
+candidate; D2 is frozen separately as `2c0350d..3ebc468`, with retained 10/10
+gates, 280/280 process-isolated distributions, and a zero-violation policy
+report. Independent D2 review, response-scoped audio, the exhaustive
+all-lifecycle media matrix, retained final P3 evidence, and independent P3
+review still block phase acceptance.
 
 The replay normalization allowlist is empty for the pinned public contract.
 Current official conversation-state and compaction guidance requires clients
@@ -1606,14 +1613,16 @@ not change their order or invent missing semantics.
   digest-addressed backup, old-binary divergence, rejection before mutation, all
   three legacy-session classifications, bounded runtime cutover verification,
   deep offline verification, and honest handling of phase/order that cannot be
-  recovered. This is implementation-candidate coverage, not retained final Gate
-  C evidence.
-- [ ] Retained final evidence reproduces strict namespace isolation, format
+  recovered. These fixtures passed in the retained exact D2 candidate gate; this
+  is D2 Gate C evidence, not final P3 acceptance evidence.
+- [x] Retained D2 evidence reproduces strict namespace isolation, format
   versioning, interrupted/repeated offline migration, immutable legacy
   source/backup, old-binary behavior, rejection before mutation, all three
   legacy-session classifications, standard library/CLI cutover enforcement, and
   honest handling of phase/order that cannot be recovered from a clean candidate
-  commit.
+  commit. See the frozen
+  [`D2 implementation handoff`](reviews/2026-07-17-d2-strict-session-store-handoff.md)
+  and its 10/10 gate, 280/280 distributions, and zero-violation policy artifacts.
 
 ### Review and exit gate
 
@@ -1625,10 +1634,10 @@ not change their order or invent missing semantics.
 
 ## P4. Streaming and replay conformance
 
-**Status:** [ ] Frozen streaming candidate through `07bf9c1`, plus the in-flight
-D2 persistence substrate; the D2-compatible response-scoped audio sidecar,
-exhaustive lifecycle matrix, retained final phase evidence, and independent
-review still block acceptance;
+**Status:** [ ] Frozen streaming candidate through `07bf9c1`, plus frozen and
+retained-evidence D2 persistence source `3ebc468`; independent D2 Gate D, the
+D2-compatible response-scoped audio sidecar, exhaustive lifecycle matrix,
+retained final P4 evidence, and independent P4 review still block acceptance;
 **candidate coverage:** `STATE-01`, `EVT-01` through
 `EVT-07`; **dependencies:** P3.
 
@@ -2163,8 +2172,8 @@ ledger prematurely.
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
 | P1 | Gate A complete at base `2917c8e`; Gate B foundation not yet implemented | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A `READY` | Implement and independently review the executable foundation, complete and verify P1, then resolve D0 before acceptance |
 | P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and the bounded source fixture matrices are present | Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks; retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle | Record the historical missing-phase-base disposition, resolve the P1 dependency, run the live A/B/A validity experiment, execute and retain the complete candidate gates, then obtain P2 acceptance |
-| P3 | Frozen canonical ordered transcript candidate through `07bf9c1`, plus an in-flight D2 implementation candidate: all 28 public output discriminators and shipped non-audio nested/tool schemas have explicit validation and actionability; exact completed items and caller ownership drive derived views and survive persistence, exact second-request replay, representative real persistent spawn/fork, reload, and manager resume paths; the strict format-2 store, explicit offline migration, three fidelity classes, bounded cutover guard, deep verifier, fresh-epoch boundary, and standard library constructor are present | The pre-D2 transcript source gates and review evidence remain as previously recorded. D2 has source fixtures but no frozen commit, retained final Gate C bundle, or independent verdict yet; see the draft [`D2 implementation handoff`](reviews/2026-07-17-d2-strict-session-store-handoff.md) | Freeze and verify D2, implement the D2-compatible response audio sidecar, complete the exhaustive all-lifecycle media matrix, retain final phase evidence, then obtain protocol and persistence review |
-| P4 | Frozen streaming/reconciliation candidate through `07bf9c1`, plus the in-flight D2 persistence substrate: 53-event/28-item manifests, one authoritative validator per output discriminator, schema-before-capability ordering, 20 inert/6 executable/2 conditional classifications, identity-safe and frame-atomic completion, item-scoped image/MCP/code/search reconciliation, terminal parsing, refusal outcomes, hosted-search replay, and append-only UI repair | The pre-D2 source gates and review evidence remain as previously recorded; D2 final evidence and review are open. See the [`2026-07-17 P3 output-inventory handoff`](reviews/2026-07-17-p3-output-inventory-handoff.md) and draft [`D2 implementation handoff`](reviews/2026-07-17-d2-strict-session-store-handoff.md) | Add the durable response-scoped audio sidecar and stream-to-artifact evidence; complete the exhaustive lifecycle matrix; obtain independent review and run final retained phase gates; P6 separately owns usage-presence projection and retry-attempt UI cleanup |
+| P3 | Frozen canonical ordered transcript candidate through `07bf9c1`, plus frozen D2 source `3ebc468`: all 28 public output discriminators and shipped non-audio nested/tool schemas have explicit validation and actionability; exact completed items and caller ownership drive derived views and survive persistence, exact second-request replay, representative real persistent spawn/fork, reload, and manager resume paths; the strict format-2 store, explicit offline migration, three fidelity classes, bounded cutover guard, deep verifier, fresh-epoch boundary, and standard library constructor are present | The pre-D2 transcript source gates and review evidence remain as previously recorded. D2 range `2c0350d..3ebc468` has a frozen [`implementation handoff`](reviews/2026-07-17-d2-strict-session-store-handoff.md), exact-candidate Gate C 10/10, distributions 280/280, and a zero-violation 145-Rust-file policy report; independent D2 Gate D remains open | Obtain independent D2 review, implement the D2-compatible response audio sidecar, complete the exhaustive all-lifecycle media matrix, retain final P3 evidence, then obtain protocol and persistence review |
+| P4 | Frozen streaming/reconciliation candidate through `07bf9c1`, plus frozen D2 persistence source `3ebc468`: 53-event/28-item manifests, one authoritative validator per output discriminator, schema-before-capability ordering, 20 inert/6 executable/2 conditional classifications, identity-safe and frame-atomic completion, item-scoped image/MCP/code/search reconciliation, terminal parsing, refusal outcomes, hosted-search replay, and append-only UI repair | The pre-D2 source gates and review evidence remain as previously recorded. D2 Gate C is retained at 10/10 and 280/280 with policy pass; independent D2 Gate D remains open. See the [`2026-07-17 P3 output-inventory handoff`](reviews/2026-07-17-p3-output-inventory-handoff.md) and frozen [`D2 implementation handoff`](reviews/2026-07-17-d2-strict-session-store-handoff.md) | Obtain independent D2 review; add the durable response-scoped audio sidecar and stream-to-artifact evidence; complete the exhaustive lifecycle matrix; obtain independent P4 review and run final retained phase gates; P6 separately owns usage-presence projection and retry-attempt UI cleanup |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|

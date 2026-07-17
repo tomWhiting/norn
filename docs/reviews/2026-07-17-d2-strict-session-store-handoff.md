@@ -1,19 +1,24 @@
 # D2 strict session-store implementation handoff
 
-**Status:** Draft implementation handoff; source freeze and evidence collection
-are in progress. This document is not a Gate D request, a test verdict, or P3/P4
-acceptance.
+**Status:** Frozen D2 implementation candidate with retained Gate C evidence;
+ready for independent Gate D review. This document is an implementer handoff,
+not an independent verdict or P3/P4 acceptance.
 
 **Owner contract:** `docs/DECISIONS-2026-07.md` section 15 and D2 in
 `docs/RESPONSES-API-REMEDIATION-PLAN.md`.
 
-**Candidate base:** `07bf9c1` is the frozen pre-D2 transcript/streaming candidate.
+**Transcript base:** `07bf9c1` is the frozen pre-D2 transcript/streaming candidate.
 
-**D2 source commit/range:** `PENDING - record after the source is frozen`.
+**D2 implementation base:**
+`2c0350d96660db3da0d1d3089dfac525b5fbbfdd`.
+
+**D2 source candidate/range:**
+`2c0350d..3ebc468ba60152dbdb59ae9aff3ad48f15ede1fe`; candidate tree
+`b95ab9d411271769c7c0e6a305d0d4a21152b2b2`.
 
 ## 1. Claimed implementation boundary
 
-The candidate is intended to establish only these D2 claims:
+The candidate establishes only these D2 claims:
 
 1. Standard new sessions use strict format 2 under the versionless
    `~/.norn/session-store/` namespace.
@@ -58,8 +63,8 @@ The candidate is intended to establish only these D2 claims:
    lookalikes are never treated as cleanup authority.
 
 This handoff does **not** claim response-scoped audio, the exhaustive
-all-lifecycle media matrix, final retained Gate C, independent review, or P3/P4
-acceptance.
+all-lifecycle media matrix, an independent Gate D verdict, final P3/P4 Gate C,
+or P3/P4 acceptance.
 
 ## 2. Namespace and artifact inventory
 
@@ -71,6 +76,7 @@ as `outputs/**` or `tasks/**`.
 |---|---|
 | `session-store/` | Active versionless strict store; atomically published by migration or created for native strict sessions. |
 | `sessions/` | Untouched legacy/old-binary namespace; explicit offline source only. |
+| `session-migration-backups/` | Private container for immutable digest-addressed migration backups. |
 | `session-migration-backups/<source-tree-sha256>/sessions/` | Immutable private byte-for-byte backup used for verification and inspect-only export. |
 | `.session-store-stage/` | Owned recoverable strict-store staging directory; never an active store. Before no-replace directory publication it mirrors the applicable `session-store/` marker, index, timeline, migration-evidence, and migrated auxiliary families enumerated below. |
 | `.session-backup-stage/` | Owned recoverable backup staging directory; never an active backup. It contains the ownership marker and a byte-exact `sessions/**` subtree before no-replace directory publication. |
@@ -86,12 +92,17 @@ as `outputs/**` or `tasks/**`.
 | `session-store/.provider-epoch-locks/` | Directory for one-time migrated provider-epoch serialization. |
 | `session-store/.provider-epoch-locks/<session-id>.lock` | Retained per-session lock file for the one-time migrated provider-epoch boundary. |
 | `session-store/<session-id>.jsonl` | Strict root-session timeline. |
+| `session-store/<root-id>/` | Root-owned capability directory for child timelines, spool payloads, and fetched artifacts. |
+| `session-store/<root-id>/children/` | Native child-timeline directory for the root session. |
 | `session-store/<root-id>/children/<path-slug>.jsonl` | Strict child timeline, located only through its index row. Descendants remain rooted under the ultimate root directory. |
-| `session-store/<root-id>/artifacts/` | Eagerly created native artifact capability root; it may remain empty. |
+| `session-store/<root-id>/spool/` | Native immutable oversized-result payload directory. |
 | `session-store/<root-id>/spool/<event-id>.bin` | Native immutable verbatim oversized tool-result payload owned by the root session. |
+| `session-store/<root-id>/artifacts/` | Native artifact capability root, created when `SessionArtifactStore` is constructed while an agent session is opened; it is not eagerly created for every persisted session. |
+| `session-store/<root-id>/artifacts/fetched/` | Native immutable fetched-document artifact directory. |
 | `session-store/<root-id>/artifacts/fetched/<uuid>.md` | Native immutable fetched-document artifact owned by the root session. |
-| `session-store/<root-id>/spool/**` | Migrated legacy auxiliary subtree. Migration preserves every observed regular file below a resumable root's legacy `spool/` tree, not only native event-ID names. |
-| `session-store/<root-id>/artifacts/**` | Migrated legacy auxiliary subtree. Migration preserves every observed regular file below a resumable root's legacy `artifacts/` tree, not only native fetched-document names. |
+| `session-store/<root-id>/spool/**` | Migrated shape-compatible legacy auxiliary subtree. Migration preserves every observed shape-compatible regular-file descendant below a resumable root, not only native event-ID names. A malformed regular-file collision at the `spool` anchor remains backup-only and does not block native directory creation. |
+| `session-store/<root-id>/artifacts/**` | Migrated shape-compatible legacy auxiliary subtree. Migration preserves every observed shape-compatible regular-file descendant below a resumable root, not only native fetched-document names. Malformed regular-file collisions at the `artifacts` or `artifacts/fetched` anchors remain backup-only and do not block native directory creation. |
+| `session-store/.timeline-locks/` | Central inter-process timeline-lock directory. |
 | `session-store/.timeline-locks/<sha256>.lock` | Central inter-process lock for one normalized timeline path; the digest uses a domain separator and length-framed path components. |
 | `session-store/.norn-publication-<uuid>.json` | Durable crash-recovery journal for atomic timeline/index publication. |
 | `session-store/.norn-publication-journal-<uuid>.tmp` | Pre-publication journal temporary file; an exact UUID artifact without its matching durable journal is reclaimed under `index.lock`. |
@@ -102,8 +113,8 @@ as `outputs/**` or `tasks/**`.
 Deleting a child removes its timeline and the timelines/index rows of every
 transitive descendant. Spool and fetched files are root-owned rather than
 child-owned, so they remain until the root session is deleted. Deleting the root
-removes its complete `<root-id>/` artifact tree after all subtree rows are
-atomically removed from the index.
+removes its complete `<root-id>/` root-owned capability tree after all subtree
+rows are atomically removed from the index.
 
 Deletion cleanup is descriptor-bounded, not time-bounded: it holds at most one
 timeline lock at a time, but acquiring that lock has the persistence layer's
@@ -118,143 +129,107 @@ invalidates any "complete namespace coverage" claim.
 
 ## 3. Source inventory
 
-The current logical implementation inventory is below. The final handoff must
-replace this working inventory with the mechanically generated
-`git diff --name-only <base>..<candidate>` list and explain every extra or missing
-path.
+The retained gate artifact mechanically records the complete NUL-delimited
+`git diff --name-only --diff-filter=ACDMRTUXB 2c0350d..HEAD --` inventory rather
+than relying on a manually maintained shortlist:
 
-### Strict format and runtime persistence
+- 161 paths: 126 under `crates/norn/`, 14 under `crates/norn-cli/`, four under
+  `crates/norn-tui/`, and 17 under `docs/`;
+- raw inventory length 7,494 bytes;
+- raw inventory SHA-256
+  `3f52c180d27457cb91f61396ac12b672f3070636535695e1ff1ad4c1f26cb5ab`;
+- exact ordered path list in
+  `docs/reviews/evidence/d2/2026-07-17-d2-gate-3ebc468.json` at
+  `repository.base_diff_name_inventory.paths`; and
+- identical candidate commit, tree, inventory, and clean status before and after
+  the retained run.
 
-- `crates/norn/src/session/persistence/strict/`
-- `crates/norn/src/session/persistence/strict_runtime.rs`
-- `crates/norn/src/session/persistence/event_reader.rs`
-- `crates/norn/src/session/persistence/index.rs`
-- `crates/norn/src/session/persistence/index_artifacts.rs`
-- `crates/norn/src/session/persistence/index_codec.rs`
-- `crates/norn/src/session/persistence/index_deletion.rs`
-- `crates/norn/src/session/persistence/index_deletion_recovery.rs`
-- `crates/norn/src/session/persistence/index_resolve.rs`
-- `crates/norn/src/session/persistence/index_timeline.rs`
-- `crates/norn/src/session/persistence/counters.rs`
-- `crates/norn/src/session/persistence/io.rs`
-- `crates/norn/src/session/persistence/replay.rs`
-- `crates/norn/src/session/persistence/types.rs`
-- `crates/norn/src/session/jsonl_sink.rs`
-- `crates/norn/src/session/artifacts.rs`
-- `crates/norn/src/session/spool.rs`
-- `crates/norn/src/session/store.rs`
-
-### Transaction, publication, and concurrency
-
-- `crates/norn/src/session/persistence/publication.rs`
-- `crates/norn/src/session/persistence/publication_conflict.rs`
-- `crates/norn/src/session/persistence/publication_hash.rs`
-- `crates/norn/src/session/persistence/publication_names.rs`
-- `crates/norn/src/session/persistence/publication_parent.rs`
-- `crates/norn/src/session/persistence/publication_recovery.rs`
-- `crates/norn/src/session/persistence/publication_timeline_error.rs`
-- `crates/norn/src/session/persistence/timeline_file.rs`
-- `crates/norn/src/session/persistence/timeline_lock.rs`
-- `crates/norn/src/session/branch.rs`
-- `crates/norn/src/session/branch_materialize.rs`
-- `crates/norn/src/session/manager/fork.rs`
-- `crates/norn/src/session/manager.rs`
-
-### Offline migration and resume policy
-
-- `crates/norn/src/session/migration/`
-- `crates/norn/src/session/manager/open.rs`
-- `crates/norn/src/session/manager/resume_policy.rs`
-- `crates/norn/src/session/manager/standard.rs`
-- `crates/norn/src/config/paths.rs`
-
-### CLI and integration entry points
-
-- `crates/norn-cli/src/cli/args.rs`
-- `crates/norn-cli/src/cli/session_args.rs`
-- `crates/norn-cli/src/commands/session.rs`
-- `crates/norn-cli/src/commands/session_legacy.rs`
-- `crates/norn-cli/src/config/paths.rs`
-- `crates/norn-cli/src/runtime/from_cli.rs`
-- `crates/norn-tui/src/app/slash.rs`
-- `crates/norn/src/agent/resume.rs`
-- `crates/norn/src/agent/session_open.rs`
-- `crates/norn/src/agent/session_spec.rs`
-
-### Candidate test inventory
-
-- `crates/norn/src/session/persistence/strict/reader_tests.rs`
-- `crates/norn/src/session/persistence/strict/validation_tests.rs`
-- `crates/norn/src/session/persistence/strict/index_relationship_tests.rs`
-- `crates/norn/src/session/persistence/index_strict_tests.rs`
-- `crates/norn/src/session/persistence/deletion_runtime_tests.rs`
-- `crates/norn/src/session/persistence/counter_overflow_tests.rs`
-- `crates/norn/src/session/persistence/publication_tests.rs`
-- `crates/norn/src/session/persistence/timeline_concurrency_tests.rs`
-- `crates/norn/src/session/persistence/timeline_runtime_tests.rs`
-- `crates/norn/src/session/migration/tests.rs`
-- `crates/norn/src/session/migration/hardening_tests.rs`
-- `crates/norn/src/session/manager/standard_tests.rs`
-- `crates/norn/src/session/manager/tests/resume_policy.rs`
-- `crates/norn/src/session/provider_epoch_tests.rs`
-- `crates/norn/src/session/artifacts_tests.rs`
-- `crates/norn/src/tests/descriptor_retention.rs`
-- `crates/norn/src/config/paths_session_tests.rs`
-- CLI path, migration, legacy-inspection, and degraded-resume tests colocated in
-  their production modules.
+The companion policy artifact inventories all 145 changed Rust files, including
+33 test-only files. It reports no production file at or above 500 lines, no
+thin-entrypoint or module-shape violation, and no added bypass/debt match.
 
 ## 4. Contract-to-evidence matrix
 
-All evidence cells deliberately remain open until generated from the frozen
-candidate. A source test existing is not a recorded pass.
+Each checked cell below means the source suites containing the described
+fixtures executed successfully in the retained exact-candidate gate. It does not
+mean an independent reviewer has accepted the contract or the sufficiency of
+those fixtures.
 
 | Contract | Required evidence | Status |
 |---|---|---|
-| Strict format-2 only | Exact header, unknown-field/event, duplicate-key/id, non-canonical row, legacy/newer version, malformed row, and torn-tail fixtures | [ ] `PENDING` |
-| Versionless standard namespace | CLI and public library constructor fixtures, including relative/unavailable home failure | [ ] `PENDING` |
-| No normal legacy content read | Unreadable/renamed legacy-content fixture proving bounded startup still succeeds after valid cutover | [ ] `PENDING` |
-| Atomic offline publication | Enumerated crash seams before/after backup and store publication; no foreign destination replacement | [ ] `PENDING` |
-| Idempotence and interruption recovery | Repeated same-source result plus owned-stage recovery and changed-source behavior | [ ] `PENDING` |
-| Immutable legacy and backup | Before/after source tree digest, backup digest, exact export bytes, and old-binary divergence detection | [ ] `PENDING` |
-| Three fidelity classes | Canonical, flattened coherent, malformed/ambiguous, spoofed boundary, stale index, orphan, and duplicate fixtures | [ ] `PENDING` |
-| Fresh provider epoch | Canonical migrated resume, explicit degraded approval, inspect-only refusal, and concurrent one-boundary distribution | [ ] `PENDING` |
-| Timeline/index atomicity | Publication/deletion-journal crash recovery, first-publication recovery, same-name convergence, reader/writer exclusion, transitive delete/writer exclusion, and exact residue checks | [ ] `PENDING` |
-| Generation/ABA isolation | Stale manager rename/reconcile, registered read/repair, sink construction/append, binding, child publication, spool, and fetched-artifact handles after delete/recreate; deterministic index-before-timeline contention | [ ] `PENDING` |
-| Exact usage/count accounting | Overflow, mismatch, append ambiguity, and recovery fixtures | [ ] `PENDING` |
+| Strict format-2 only | Exact header, unknown-field/event, duplicate-key/id, non-canonical row, legacy/newer version, malformed row, and torn-tail fixtures | [x] Retained candidate gate |
+| Versionless standard namespace | CLI and public library constructor fixtures, including relative/unavailable home failure | [x] Retained candidate gate |
+| No normal legacy content read | Unreadable/renamed legacy-content fixture proving bounded startup still succeeds after valid cutover | [x] Retained candidate gate |
+| Atomic offline publication | Enumerated crash seams before/after backup and store publication; no foreign destination replacement | [x] Gate plus six abrupt-process distributions |
+| Idempotence and interruption recovery | Repeated same-source result plus owned-stage recovery and changed-source behavior | [x] Gate plus six abrupt-process distributions |
+| Immutable legacy and backup | Before/after source tree digest, backup digest, exact export bytes, and old-binary divergence detection | [x] Retained candidate gate |
+| Three fidelity classes | Canonical, flattened coherent, malformed/ambiguous, spoofed boundary, stale index, orphan, and duplicate fixtures | [x] Retained candidate gate |
+| Fresh provider epoch | Canonical migrated resume, explicit degraded approval, inspect-only refusal, and concurrent one-boundary distribution | [x] Gate plus 20/20 boundary distribution |
+| Timeline/index atomicity | Publication/deletion-journal crash recovery, first-publication recovery, same-name convergence, reader/writer exclusion, transitive delete/writer exclusion, and exact residue checks | [x] Gate plus exact concurrency distributions |
+| Generation/ABA isolation | Stale manager rename/reconcile, registered read/repair, sink construction/append, binding, child publication, spool, and fetched-artifact handles after delete/recreate; deterministic index-before-timeline contention | [x] Gate plus exact generation distributions |
+| Exact usage/count accounting | Overflow, mismatch, append ambiguity, and recovery fixtures | [x] Retained candidate gate |
 
-## 5. Gate and distribution placeholders
+The primary fixture ownership is mechanical and reviewable: strict codec and
+relationship cases live under `session/persistence/strict/*_tests.rs` and
+`index_strict_tests.rs`; standard-path guards live in
+`config/paths_session_tests.rs` and the CLI `config/paths.rs` tests; migration,
+classification, backup, idempotence, and interruption cases live in
+`session/migration/tests.rs`, `hardening_tests.rs`, and `tests/recovery.rs`;
+fresh-epoch cases live in `session/provider_epoch_tests.rs` and manager resume
+tests; publication, deletion, concurrency, and generation cases live in
+`publication_tests.rs`, `deletion_runtime_tests.rs`,
+`timeline_concurrency_tests.rs`, `timeline_runtime_tests.rs`, manager tests,
+`artifacts_tests.rs`, and colocated spool/branch tests; exact-counter cases live
+in `counter_overflow_tests.rs`, `index_strict_tests.rs`, and the timeline suites.
+
+## 5. Retained gate and distributions
 
 | Gate | Command or evidence generator | Result |
 |---|---|---|
-| Formatting | `cargo fmt --all -- --check` | [ ] `PENDING` |
-| Strict lint | `cargo clippy --workspace --all-targets -- -D warnings` | [ ] `PENDING` |
-| Workspace tests | `cargo test --workspace --all-targets` | [ ] `PENDING` |
-| Doctests | `cargo test --workspace --doc` | [ ] `PENDING` |
-| Focused strict codec/store | `cargo test -p norn session::persistence` | [ ] `PENDING` |
-| Focused migration | `cargo test -p norn session::migration` | [ ] `PENDING` |
-| Focused manager/resume | `cargo test -p norn session::manager` | [ ] `PENDING` |
-| CLI session surface | `cargo test -p norn-cli session` | [ ] `PENDING` |
-| Standard-path surface | `cargo test -p norn config::paths` and `cargo test -p norn-cli config::paths` | [ ] `PENDING` |
-| Policy diff | Added `unwrap`/`expect`/`panic`, lint bypass, ignored test, and arbitrary-limit scan against the frozen base | [ ] `PENDING` |
-| Production LOC | One mechanical production-prefix method for every touched Rust file; strict `<500` result required | [ ] `PENDING` |
+| Formatting | `cargo +1.94.0 --locked fmt --all -- --check` | [x] Pass |
+| Strict lint | `cargo +1.94.0 --locked clippy --workspace --all-targets -- -D warnings` | [x] Pass |
+| Workspace tests | `cargo +1.94.0 --locked test --workspace --all-targets` | [x] 5,281/5,281 |
+| Doctests | `cargo +1.94.0 --locked test --workspace --doc` | [x] 8/8 |
+| Focused strict codec/store | `cargo +1.94.0 --locked test -p norn session::persistence` | [x] 165/165 |
+| Focused migration | `cargo +1.94.0 --locked test -p norn session::migration` | [x] 29/29 |
+| Focused manager/resume | `cargo +1.94.0 --locked test -p norn session::manager` | [x] 37/37 |
+| CLI session surface | `cargo +1.94.0 --locked test -p norn-cli session` | [x] 51/51 |
+| Standard-path surface | `cargo +1.94.0 --locked test -p norn config::paths` and `cargo +1.94.0 --locked test -p norn-cli config::paths` | [x] 14/14 and 11/11 |
+| Policy diff | Added `unwrap`/`expect`/`panic`, lint bypass, ignored test, and debt-marker scan against the frozen base | [x] Zero matches in every category |
+| Production LOC | AST-based production/test classification plus tokei counting for every touched Rust file; strict `<500` result required | [x] 145 files, 33 test-only, zero violations |
 
-The final evidence bundle must record distributions rather than last-run results.
-Every concurrency or crash-sensitive test must run at least 20 times, with test
-name, command, candidate commit, pass count, fail count, and observed recovery
-events retained. Required distributions include:
+The retained runner executed 14 exact process-isolated tests 20 times each:
 
-- same-session concurrent publication convergence;
-- same-timeline concurrent writers;
-- strict reader versus writer torn-tail exclusion;
-- delete versus live writer exclusion;
-- one-time migrated provider-epoch boundary insertion; and
-- interrupted migration recovery at every enumerated publication seam.
+- eight concurrency/generation cases covering same-session publication,
+  registered-sink counter reconciliation, exact-batch retry convergence,
+  reader/tail exclusion, delete/writer exclusion, migrated provider-epoch
+  convergence, generation retention while lock-waiting, and stale-reader ABA
+  repair; and
+- six abrupt-process migration cases, one for each exact checkpoint:
+  `backup_prepared`, `backup_published`, `backup_durable`,
+  `strict_store_prepared`, `strict_store_published`, and
+  `strict_store_durable`.
 
-**Retained distribution files:** `PENDING - list exact repository paths and
-SHA-256 digests after generation`.
+Result: **280/280**, with exactly one named recovery sentinel in every recovery
+observation and no recovery sentinel in concurrency observations. The retained
+JSON records every exact test name, command, iteration, exit status, parsed test
+count, expected/observed sentinel, duration, and stdout/stderr hash.
 
-**Retained full-gate file:** `PENDING - list exact repository path and SHA-256
-digest after generation`.
+**Retained full-gate and distribution artifact:**
+`docs/reviews/evidence/d2/2026-07-17-d2-gate-3ebc468.json`, SHA-256
+`51267b197a7229c166a5bb610d725d090d682f66d98d84c96b31888838c8b7f8`.
+
+**Retained policy artifact:**
+`docs/reviews/evidence/d2/2026-07-17-d2-policy-3ebc468.json`, SHA-256
+`309aca517a0bd998a2fbc79c234c5c02ba73e110ebf15413f702da3ac937016c`.
+
+The gate ran from a clean detached checkout. Its logical Cargo target was
+`target/shared`, resolving to the main repository's normal `target/`; it did not
+create a temporary or duplicate build tree. Loopback-only test servers required
+execution outside the managed network sandbox after an in-sandbox run was
+invalidated by `EPERM`; no external network was used. The clean end-state
+snapshot is taken immediately before immutable output publication, so the new
+gate JSON is intentionally the only post-snapshot file.
 
 ## 6. Required review
 
@@ -270,8 +245,8 @@ digest after generation`.
 
 ## 7. Open before P3/P4 acceptance
 
-- [ ] Freeze and commit the complete D2 source range.
-- [ ] Fill every evidence placeholder above from that exact commit.
+- [x] Freeze and commit the complete D2 source range.
+- [x] Fill every evidence placeholder above from that exact commit.
 - [ ] Resolve every finding from the independent D2 review.
 - [ ] Add response-scoped audio without inventing a terminal output item.
 - [ ] Complete the exhaustive all-discriminator/optional-shape lifecycle matrix.
