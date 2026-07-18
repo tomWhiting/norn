@@ -1,0 +1,16 @@
+{
+  "artifacts": {
+    "distributions": "99c3c4f126d38d7260bd4774ddd23e893402b220e8105584b46b7636dcba3e63",
+    "gate": "b7e86b9ede8add13f68ceb1e88f9fa949dbe01a97e7577228eca8bcb65e2a451",
+    "policy": "aecbd180b4678783fc0cf7e7127adbcbaa76de3e10aef86c454b88e284524fd5",
+    "redaction": "63a4fbbb86fbf1e90d660905baa91064e84148cb5ba156c121aafd2935f9d182"
+  },
+  "errors": [],
+  "generated_at": "2026-07-18T07:39:22.129180+00:00",
+  "generation_mode": "single_process_final",
+  "kind": "p3_p4_final_attestation",
+  "passed": true,
+  "schema_version": 1,
+  "source": "7f47218d8629d55a09577348d6b1a57a78f2aecf",
+  "tree": "b8b042f61b8d921b4cb27496d5a72b8d56b8bb0c"
+}

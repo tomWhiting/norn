@@ -1425,3 +1425,47 @@ reviewed honestly rather than assigned a fictional prospective history.
 
 This ruling is D14. It permits the P2 ledger to record only the phase base; it
 does not accept P2.
+
+## 21. Proposed P3/P4 final evidence and live-fixture disposition (2026-07-18)
+
+**Implementer proposal:** Freeze the P3/P4 implementation and evidence campaign
+for sequential phase review without treating general continuation approval as a
+live credential or acceptance-scope ruling.
+
+- The exact common comparison base remains
+  `a90b730091bccaeaa03ba98c3b31425e40e32dac` under D12. The final combined
+  source is `7f47218d8629d55a09577348d6b1a57a78f2aecf`, with tree
+  `b8b042f61b8d921b4cb27496d5a72b8d56b8bb0c`. `56fd4dd` remains the accepted
+  D11 evidence candidate in the history; it is not the final whole-range head.
+- One source-bound machine bundle may support both phases because their source
+  was interleaved. It does not merge their outcomes. P3 requires its own
+  protocol, persistence, adversarial, and final verdict first. P4 requires a
+  later streaming/item, UI/session, domain-owner, adversarial, and final verdict,
+  and cannot be accepted until P3 is `READY`.
+- The final bundle consists of a strict gate, syntax-aware policy report, three
+  20-run distributions, a source-bound redaction report, and a single-process
+  attestation. It binds the exact base, source, tree, 350-path NUL inventory,
+  toolchain and evidence-support hashes, commands, outputs, and prior accepted
+  D2/audio/D11 artifacts. The redaction inventory covers 198 changed Rust
+  fixture blobs, 12 changed or hash-pinned historical JSON artifacts, and three
+  current generated artifacts with zero findings; 352 absolute build-path
+  fields in accepted historical artifacts remain separately disclosed. A docs
+  commit made after the frozen source does not change the reviewed source head.
+- Local `SessionEvent::Compaction` remains a P5/D3 provider-facing view
+  transform, not an eleventh D11 durable-carriage surface. The immutable
+  canonical rows remain stored. Provider `ResponseItem::Compaction` remains one
+  of the 28 P3/P4 item variants and stays covered by the D11 contract.
+- The implementer proposes superseding the earlier P4 fixture handoff's live
+  Codex-subscription fixture as a P4 blocker. Under that proposal, P4 acceptance
+  uses deterministic public and Codex contract fixtures, while credentialed
+  real-wire conformance belongs to D7/P9. The owner has not yet confirmed that
+  scope change. Until confirmation, the live fixture remains an open P4 item.
+  Running it still requires explicit credentials, spending, redaction, and
+  retention approval at the point of use; a skipped test is never a pass.
+- Request-side audio, playback, export, and audio-specific TUI rendering are not
+  claimed. P6 continues to own absent-versus-zero legacy usage projection and
+  retry-attempt UI cleanup.
+
+This is proposed D15. Its source/evidence freeze and settled compaction boundary
+may be used for P3 review, but its live-fixture disposition remains open until
+the owner confirms it. It does not accept P3, P4, or any later phase.
