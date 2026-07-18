@@ -1327,3 +1327,12 @@ This ruling changes the evidence method, not the compatibility outcome: every
 public discriminator remains admitted or rejected deliberately, exact provider
 JSON must survive every applicable carrier seam, and unknown wire input must
 still fail before ordinary success.
+
+**Implementation status:** Source `56fd4dd` implements this evidence method.
+The retained source-bound gate records the 28-item/274-property/659-state
+official enumeration, seven classes across ten surfaces (45 covered and 25
+reasoned-inapplicable cells), 4,011/4,011 library tests, and 120/120 focused
+observations across 44 tests. The official schema section bytes and extraction
+generator are not retained; regeneration requires refetching the official
+schema and first matching the recorded section hash. This closes D11's evidence
+method, not P3 or P4 acceptance.
