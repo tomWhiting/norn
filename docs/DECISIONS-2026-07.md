@@ -1469,3 +1469,8 @@ live credential or acceptance-scope ruling.
 This is proposed D15. Its source/evidence freeze and settled compaction boundary
 may be used for P3 review, but its live-fixture disposition remains open until
 the owner confirms it. It does not accept P3, P4, or any later phase.
+
+**Subsequent status (2026-07-18):** P3 whole-phase review `06be7c7` returned
+`READY` and accepts P3. It issued no P4 verdict. The live-fixture disposition in
+proposed D15 remains open and still requires explicit owner confirmation before
+the separate P4 review.

@@ -51,8 +51,9 @@
   decision D12 records the retrospective P3/P4 Gate A timing exception and exact
   base `a90b730`. The source-bound final gate, policy audit, 60/60 repeated
   distributions, source-bound redaction report, and single-process attestation
-  all pass at `7f47218`; separate
-  P3 then P4 acceptance reviews remain open. Proposed D15 would make
+  all pass at `7f47218`. The P3 whole-phase review committed at `06be7c7`
+  independently reproduced the package, returned `READY`, and accepts P3. P4's
+  separate review remains open. Proposed D15 would make
   deterministic public/Codex contract fixtures the P4 gate and retain
   credentialed real-wire conformance for D7/P9; that P4 scope decision remains
   open pending explicit owner confirmation.
@@ -473,8 +474,8 @@ artifacts to the same clean head with zero errors.
 | P0. Credential and workspace authority containment | [x] Accepted by focused Gate D review `7ce29d7` on 2026-07-15 | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] Historical Gate A retained but stale; no Gate B implementation landed. D13 moves generic repository enforcement and D0 to P9 rather than reviving the rejected 364-file prototype | Current product phases use their own strict source-bound contract and policy gates; shared release governance is completed once in P9. |
 | P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; D14 records base `6669b9d`; retained Gate C, live A/B/A, and independent acceptance remain open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
-| P3. Canonical ordered transcript | [ ] Frozen combined source `7f47218` contains the exact 28-item union, canonical model/replay/persistence, caller ownership, strict format-2 store, offline migration, explicit resume classifications, and response-scoped private audio artifacts. D2, the audio correction, and D11 evidence are independently `READY`. The final source-bound gate, zero-violation policy audit, 60/60 distributions, redaction report, and attestation pass; independent P3 acceptance review remains open | Responses items survive stream, persistence, resume, and replay in order; explicit context edits change only the provider-facing view, not the audit timeline. |
-| P4. Streaming and replay conformance | [ ] Frozen combined source `7f47218` contains the public/Codex manifests, validators for all 28 output discriminators, identity/channel/item reconciliation, terminal parsing, refusal, hosted-search replay, authoritative UI repair, raw CLI events, and lossless response-audio receive/reconciliation. The common final evidence bundle passes; P3 acceptance and independent P4 acceptance review remain open | Supported events/items are complete, reconciled, and fail closed. |
+| P3. Canonical ordered transcript | [x] Accepted by whole-phase Gate D review `06be7c7` on 2026-07-18. Frozen combined source `7f47218` contains the exact 28-item union, canonical model/replay/persistence, caller ownership, strict format-2 store, offline migration, explicit resume classifications, and response-scoped private audio artifacts. The reviewer independently reproduced the final source-bound gate, zero-violation policy audit, 60/60 distributions, redaction report, and attestation | Responses items survive stream, persistence, resume, and replay in order; explicit context edits change only the provider-facing view, not the audit timeline. |
+| P4. Streaming and replay conformance | [ ] Frozen combined source `7f47218` contains the public/Codex manifests, validators for all 28 output discriminators, identity/channel/item reconciliation, terminal parsing, refusal, hosted-search replay, authoritative UI repair, raw CLI events, and lossless response-audio receive/reconciliation. The common final evidence bundle passes and P3 is accepted; proposed D15 and independent P4 acceptance review remain open | Supported events/items are complete, reconciled, and fail closed. |
 | P5. Conversation and Codex turn semantics | [ ] Behavior audit and first implementation slice specified; source work not started | Local/provider history and turn-scoped state have explicit lifetimes. |
 | P6. Transport, retry, and usage | [ ] | Retries terminate once; observed and unknown attempt usage remain explicit. |
 | P7. Request, schema, and model controls | [ ] | Advertised capabilities match validated payload and tool behavior. |
@@ -1550,14 +1551,15 @@ are not pass claims.
 
 ## P3. Canonical ordered transcript
 
-**Status:** [ ] Frozen combined source `7f47218` includes the transcript, strict
+**Status:** [x] Accepted by whole-phase Gate D review `06be7c7` on 2026-07-18.
+Frozen combined source `7f47218` includes the transcript, strict
 store, lifecycle, audio, and finite optional-shape work. Accepted D2 source
 `e9755fe` is unconditionally `READY`; M-1/F-2 correction `df47e9e` is confirmed
 `READY` at `dad0291`; finite D11 source `56fd4dd` and its 120/120 evidence are
 accepted at `5af7308`. The final source-bound gate, zero-violation policy audit,
 60/60 distributions, source-bound redaction report, and single-process
-attestation pass at `7f47218`.
-Independent P3 phase acceptance review remains open;
+attestation pass at `7f47218`. The coordinator independently reproduced all five
+artifact hashes, the complete battery, and the crown-jewel verbatim replay claim.
 **foundation for:** `STATE-01`, `EVT-02`;
 **dependencies:** accepted P0 and D2; the owner-decided D2 contract is
 implemented, corrected, re-evidenced, and accepted with unconditional Gate D
@@ -1569,8 +1571,8 @@ decision D12 explicitly accepts that historical fact and grants a timing-only
 retrospective exception. The exact common comparison base is `a90b730`, whose
 child `128b282` is the first canonical-transcript source commit. `56fd4dd` is the
 accepted D11 evidence candidate; the prepared final combined source under
-proposed D15 is `7f47218`. The exception waives no dependency, baseline, implementation,
-machine-verification, or review requirement.
+proposed D15 is `7f47218`. The exception waives no dependency, baseline,
+implementation, machine-verification, or review requirement.
 
 The implementation candidate now carries exact completed-item JSON through
 assembly, JSONL persistence, resume, top-level session fork, real persistent
@@ -1613,8 +1615,9 @@ the 28/274/659 contract enumeration, seven-by-ten applicability matrix, 4,011
 library tests, and 120/120 focused observations. Independent
 [`D11 evidence review`](reviews/2026-07-18-p3-p4-optional-lifecycle-review.md)
 `5af7308` returns `READY`. D12 resolves only the Gate A timing requirement.
-Full-range final P3 evidence is retained at `7f47218`; independent P3 phase
-acceptance review still blocks phase acceptance.
+Full-range final P3 evidence is retained at `7f47218`; the
+[`whole-phase Gate D review`](reviews/2026-07-18-p3-final-gate-d-review.md)
+returns `READY` with no MAJOR or MINOR finding and accepts P3.
 
 The replay normalization allowlist is empty for the pinned public contract.
 Current official conversation-state and compaction guidance requires clients
@@ -1770,11 +1773,12 @@ or P4.
 
 ### Review and exit gate
 
-- [ ] Responses-protocol and session/persistence reviewers approve the model and
+- [x] Responses-protocol and session/persistence reviewers approve the model and
   migration/rejection behavior.
-- [ ] A Fable adversarial reviewer compares raw fixtures with persisted and
+- [x] A Fable adversarial reviewer compares raw fixtures with persisted and
   replayed forms and returns `READY`.
-- [ ] Universal Gates A-D pass. `STATE-01` remains open until P4 proves streaming.
+- [x] Universal Gates A-D pass for P3 under the D12 timing exception. `STATE-01`
+  remains open until P4 proves streaming.
 
 ## P4. Streaming and replay conformance
 
@@ -1784,8 +1788,9 @@ and finite optional-shape work. Accepted D2 source `e9755fe` is unconditionally
 `READY`; M-1/F-2 correction `df47e9e` is confirmed `READY` at `dad0291`; finite
 D11 source `56fd4dd` and its 120/120 evidence are accepted at `5af7308`. The
 common final source-bound gate, policy audit, 60/60 distributions, redaction
-report, and attestation pass at `7f47218`. P3 acceptance must precede independent P4 phase
-acceptance review;
+report, and attestation pass at `7f47218`. P3 acceptance is satisfied by
+whole-phase review `06be7c7`; proposed D15 must be resolved before independent
+P4 phase acceptance review;
 **candidate coverage:** `STATE-01`, `EVT-01` through
 `EVT-07`; **dependencies:** P3. D13 removes P1/P2 as transitive blockers; D12
 resolves only the missed phase-base timing requirement.
@@ -2398,18 +2403,19 @@ depend on implementer assertion or terminal history.
 Populate only the `Phase base` cell at Gate A. Update the remaining cells only
 after the phase's final fix-round review.
 
-### Current candidate snapshot
+### Current phase snapshot
 
-This progress snapshot is not acceptance evidence and does not populate the
-ledger prematurely.
+Accepted rows below cite their controlling verdict and are populated in the
+formal ledger. Open rows remain implementation snapshots, not acceptance
+evidence.
 
 | Phase | Current implementation | Retained candidate evidence | Work still required before acceptance |
 |---|---|---|---|
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
 | P1 | Historical Gate A at `2917c8e` is stale against accepted D11 nullable-phase evidence; no Gate B source landed; archived `393f67e` is rejected as a candidate | Historical contract/review chronology and 62-row preregistration remain available but make no current implementation claim | D13 moves generic repository enforcement and D0 to P9. If standalone P1 resumes, restart prospectively with the current contract; do not resurrect the archived prototype |
 | P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and the bounded source fixture matrices are present | D14 establishes retrospective base `6669b9d`. Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks; retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle | Run the live A/B/A validity experiment after explicit credential-use approval, execute and retain the complete candidate gates, then obtain P2 acceptance |
-| P3 | Frozen combined source `7f47218` over D12 base `a90b730`; tree `b8b042f61b8d921b4cb27496d5a72b8d56b8bb0c`; accepted D2 source `e9755fe`, lifecycle fixtures `f252cbb`, M-1/F-2 correction `df47e9e`, and finite D11 source `56fd4dd` are included | D2 remains unconditionally `READY`; review `dad0291` closes M-1/F-2; review `5af7308` accepts D11's 28/274/659 inventory and seven-by-ten matrix. The final gate passes strict fmt/Clippy, Norn 4,035/4,035, CLI 551/551, TUI 700/700, workspace 5,364/5,364, doctests 8/8, redaction sentinels 23/23, exact diff, and policy. The policy reports 298 changed Rust files, 78 test-only, and zero LOC/module/added-line violations. Three repeated cases pass 60/60; the 213-record redaction report has zero findings; the single-process attestation has zero errors | Submit the final P3 handoff for protocol, persistence, adversarial, and phase acceptance review. Do not close `STATE-01` or `EVT-01..07`; P4 owns them |
-| P4 | Frozen combined source `7f47218` over D12 base `a90b730`; public/Codex manifests, 53 event contracts, 28 item validators, reconciliation, terminal parsing, raw CLI events, refusal, hosted-search replay, and response-audio persistence are implemented | The same source-bound final gate, zero-violation policy, 60/60 distributions, zero-finding redaction report, and attestation pass. The live Codex-subscription fixture was not run; proposed D15's move to D7/P9 still needs owner confirmation. P6 separately owns usage-presence projection and retry-attempt UI cleanup | Obtain P3 `READY`; resolve D15 or run the explicitly approved live fixture; then submit the separate P4 streaming/item, UI/session, domain-owner, adversarial, and phase acceptance review proving `STATE-01` and `EVT-01..07` |
+| P3 | Accepted source `7f47218` over D12 base `a90b730`; tree `b8b042f61b8d921b4cb27496d5a72b8d56b8bb0c`; accepted D2 source `e9755fe`, lifecycle fixtures `f252cbb`, M-1/F-2 correction `df47e9e`, and finite D11 source `56fd4dd` are included | D2 remains unconditionally `READY`; review `dad0291` closes M-1/F-2; review `5af7308` accepts D11's 28/274/659 inventory and seven-by-ten matrix. The final gate passes strict fmt/Clippy, Norn 4,035/4,035, CLI 551/551, TUI 700/700, workspace 5,364/5,364, doctests 8/8, redaction sentinels 23/23, exact diff, and policy. The policy reports 298 changed Rust files, 78 test-only, and zero LOC/module/added-line violations. Three repeated cases pass 60/60; the 213-record redaction report has zero findings; the single-process attestation has zero errors. Whole-phase review `06be7c7` independently reproduces the evidence and returns `READY` | None; accepted 2026-07-18. `STATE-01` and `EVT-01..07` remain P4-owned |
+| P4 | Frozen combined source `7f47218` over D12 base `a90b730`; public/Codex manifests, 53 event contracts, 28 item validators, reconciliation, terminal parsing, raw CLI events, refusal, hosted-search replay, and response-audio persistence are implemented | The same source-bound final gate, zero-violation policy, 60/60 distributions, zero-finding redaction report, and attestation pass. P3 is accepted at `06be7c7`. The live Codex-subscription fixture was not run; proposed D15's move to D7/P9 still needs owner confirmation. P6 separately owns usage-presence projection and retry-attempt UI cleanup | Resolve D15 or run the explicitly approved live fixture; then submit the separate P4 streaming/item, UI/session, domain-owner, adversarial, and phase acceptance review proving `STATE-01` and `EVT-01..07` |
 | P5 | Read-only current-state audit complete: Codex `store:false` and public threaded request shapes are distinct and stateless encrypted-reasoning replay exists; instruction resend and compaction-anchor invalidation are partial; producer ownership, `end_turn`, Codex turn state, credential-bound state, `client_metadata`, and D8 role authority are missing | The first `TRANS-01` slice and synchronized nine-case transport/cancellation evidence matrix are specified; no source or acceptance evidence exists | Obtain the scoped entry disposition if D3/D8 remain open; implement and review `TRANS-01`; then resolve the Codex turn overlay, D3 state/account binding, and D8 provenance/role contract before whole-phase gates |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
@@ -2417,7 +2423,7 @@ ledger prematurely.
 | P0 | `41ea210` | Source range `41ea210..e1bf7f2`; evidence/docs `d06e4fc`, `7648159`, `c029de5`, `1096628` | [`P0 traceability`](reviews/2026-07-12-p0-traceability.md); Gate C 38/38; distributions 830/830; attestation pass; independent reproduction in `7ce29d7`; [`acceptance supplement`](reviews/2026-07-15-p0-acceptance-supplement.md) | 359 changed Rust files; 65 test-only; 97 writers; zero bypass, over-500, module-shape, or thin-entrypoint violations | External domain seats A-C, whole-diff seam seat, and three read-only supplement seats, 2026-07-15 | [`READY`](reviews/2026-07-15-p0-correction-gate-d-review.md), `7ce29d7` | [x] Accepted |
 | P1 | `2917c8e` | | | | | | [ ] |
 | P2 | `6669b9d` (D14 retrospective timing exception) | | | | | | [ ] |
-| P3 | `a90b730` (D12 retrospective timing exception) | | | | | | [ ] |
+| P3 | `a90b730` (D12 retrospective timing exception) | Source `a90b730..7f47218`; evidence/docs `d8c16f3`; review `06be7c7` | [`P3 handoff`](reviews/2026-07-18-p3-final-gate-d-handoff.md); final gate 10/10; Norn 4,035/4,035; CLI 551/551; TUI 700/700; workspace 5,364/5,364; doctests 8/8; distributions 60/60; redaction 23/23 and zero findings; attestation pass; independent reproduction in `06be7c7` | 298 changed Rust files; 78 test-only; 143 writer candidates; zero bypass, over-500, module-shape, or thin-entrypoint violations | Responses-protocol and session/persistence Opus seats plus coordinator, 2026-07-18 | [Fable `READY`](reviews/2026-07-18-p3-final-gate-d-review.md), `06be7c7` | [x] Accepted |
 | P4 | `a90b730` (D12 retrospective timing exception) | | | | | | [ ] |
 | P5 | | | | | | | [ ] |
 | P6 | | | | | | | [ ] |

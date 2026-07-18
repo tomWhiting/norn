@@ -4,6 +4,8 @@
 
 **Status:** READY FOR INDEPENDENT P3 REVIEW; not P3 acceptance
 
+**Subsequent review:** [`P3 whole-phase Gate D — READY`](2026-07-18-p3-final-gate-d-review.md), committed at `06be7c7`
+
 **Phase base:** `a90b730091bccaeaa03ba98c3b31425e40e32dac`
 
 **Frozen source:** `7f47218d8629d55a09577348d6b1a57a78f2aecf`

@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-18
 
-**Status:** PREPARED; do not issue a P4 verdict until P3 is `READY` and proposed D15 is resolved
+**Status:** PREPARED; P3 is `READY`; do not issue a P4 verdict until proposed D15 is resolved
 
 **Phase base:** `a90b730091bccaeaa03ba98c3b31425e40e32dac`
 
@@ -15,15 +15,18 @@
 **P3 prerequisite handoff:**
 [`2026-07-18-p3-final-gate-d-handoff.md`](2026-07-18-p3-final-gate-d-handoff.md)
 
+**P3 prerequisite result:**
+[`2026-07-18-p3-final-gate-d-review.md`](2026-07-18-p3-final-gate-d-review.md) — `READY` at `06be7c7`
+
 **Tracking plan:**
 [`RESPONSES-API-REMEDIATION-PLAN.md`](../RESPONSES-API-REMEDIATION-PLAN.md)
 
 ## Sequencing and verdict requested
 
-This package is ready for review preparation, but P4 acceptance depends on an
-independent P3 `READY` verdict and an explicit owner disposition for the live
-Codex-subscription fixture in proposed D15. After both close, return one separate
-P4-only `READY` or `NOT READY` verdict for `STATE-01` and `EVT-01` through
+P3's independent `READY` prerequisite is satisfied by `06be7c7`. P4 acceptance
+still depends on an explicit owner disposition for the live Codex-subscription
+fixture in proposed D15. After that closes, return one separate P4-only `READY`
+or `NOT READY` verdict for `STATE-01` and `EVT-01` through
 `EVT-07`. Do not infer P4 acceptance from the common machine bundle or from P3's
 verdict.
 
@@ -148,8 +151,8 @@ and F-2's erased link diagnostic are closed in
 
 ## Honest boundaries
 
-- P4 depends on a P3 `READY` verdict. This handoff being prepared does not satisfy
-  that dependency.
+- P4's P3 dependency is satisfied by whole-phase review `06be7c7`. This handoff
+  being prepared does not itself satisfy P4 review or proposed D15.
 - Local `SessionEvent::Compaction` remains P5/D3 prompt-view work, not an
   eleventh P4/D11 carrier surface. Provider `ResponseItem::Compaction` remains
   covered among the 28 output items.
@@ -194,8 +197,8 @@ hash-pinned contract and exact result validation.
 
 ## Required independent review
 
-The P4 review begins only after P3 is `READY` and proposed D15 is resolved, and
-should use five disjoint responsibilities:
+The P4 review begins after proposed D15 is resolved; P3's `READY` prerequisite is
+already satisfied. It should use five disjoint responsibilities:
 
 1. A streaming/item reviewer re-enumerates the 53 public events, 28 item
    discriminators, Codex overlay, SSE framing, identity reconciliation, terminal
