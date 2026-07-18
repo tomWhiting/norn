@@ -884,8 +884,9 @@ acceptance remains pending.
   rule are fixed above. The source implementation candidate is present through
   `448353d`; its provider-auth matrix is one public, side-effect-free library
   policy used by the CLI and available to embedders before secret lookup. The
-  live validity experiment, P1 dependency, retained gate evidence, and
-  independent P2 acceptance remain open. D9A's credential-lock timing policy is
+  live validity experiment, retained gate evidence, and independent P2
+  acceptance remain open. D13 later removed P1 as a semantic dependency while
+  leaving every P2-specific gate intact. D9A's credential-lock timing policy is
   closed separately.
 - **D10 remains open.** Automatic rotation requires both authoritative permission
   under the governing product/contract terms and a pre-dispatch or guaranteed
@@ -1373,3 +1374,54 @@ continuing with whatever is required to finish the work on 2026-07-18.
 - The P3/P4 phase-base ledger cells may now record `a90b730`; every other ledger
   cell remains blank until its stated evidence exists. Neither phase becomes
   accepted through this ruling.
+
+## 19. Phase dependency and P1 enforcement disposition (2026-07-18)
+
+**Owner ruling:** After the remaining path was explained, Tom approved doing
+whatever is required to finish the Responses work on 2026-07-18. The campaign
+therefore corrects an over-serial dependency rather than reviving an abandoned
+policy-product detour.
+
+- P1's 2026-07-15 Gate A review remains historical evidence only. Its contract
+  predates accepted D11 evidence and omits the legal explicit-null assistant
+  `phase` state. No P1 Gate B implementation landed.
+- The archived `393f67e` prototype is not a candidate. It changed 364 files and
+  added 170,888 lines while runtime wiring and several gate legs remained
+  incomplete. It is not merged, cherry-picked, or used as acceptance evidence.
+- Generic repository-policy product work, staged-mutation coordination, the
+  shared clean-checkout release gate, and D0 remote enforcement move to P9.
+  The owner continues to decline GitHub Actions for now; no remote-protection
+  claim is permitted.
+- This does not weaken product-phase verification. P3 and P4 still require
+  strict source-bound formatting, Clippy without suppressions, workspace
+  all-target and doc tests, exact-range diff checks, syntax-aware production
+  LOC/module/bypass and redaction checks, sensitive distributions, and
+  independent phase review.
+- P2 OAuth lifecycle acceptance and P3/P4 transcript/streaming acceptance are
+  independent after P0. P3/P4 do not wait on P2's live two-account experiment;
+  P2 does not inherit P3/P4 evidence. P4 continues to depend on accepted P3.
+
+This ruling is D13. It changes phase ordering and P1 scope, not any finding's
+owner, quality standard, or program-completion requirement.
+
+## 20. P2 retrospective Gate A timing disposition (2026-07-18)
+
+**Owner ruling:** The same authorization records a narrow retrospective P2
+process disposition so completed OAuth product work can be evidenced and
+reviewed honestly rather than assigned a fictional prospective history.
+
+- `6669b9d81acc0d57ab8eb9056b5fb7abb3ee1907` is the exact P2 comparison
+  base. Its child `6a76d9f` is the first P2 source commit, and `fcd1b30` is the
+  frozen implementation and fixture candidate.
+- The base was not recorded before implementation, P1 was incomplete, and D9
+  plus the live two-account validity experiment were still open when P2 source
+  work began. Those facts remain explicit.
+- The exception waives no live credential experiment, retained Gate C command,
+  source-bound LOC/bypass/redaction or foreign-path inventory, concurrency
+  distribution, or independent P2 acceptance review.
+- Running the live A/B/A experiment still requires explicit approval at the
+  point of credential use. Until it passes, simultaneous independently stored
+  account validity is not an accepted product claim.
+
+This ruling is D14. It permits the P2 ledger to record only the phase base; it
+does not accept P2.

@@ -1,17 +1,20 @@
 # Responses API remediation plan
 
-- **Status:** Active; P0 accepted, P1 Gate A complete and Gate B foundation
-  next. The focused independent
+- **Status:** Active; P0 accepted. P1's historical Gate A review is retained,
+  but its contract is stale against the accepted D11 nullable-phase inventory
+  and no Gate B implementation landed. Decision D13 moves P1's generic
+  repository-enforcement program to P9 release governance and removes P1/P2 as
+  semantic acceptance dependencies for P3/P4. The focused independent
   correction review committed at `7ce29d7` returned `READY` for source head
   `e1bf7f2` and the full `41ea210..e1bf7f2` seam sweep. It independently
   reproduced Gate C 38/38, distributions 830/830, the full-range policy, and
-  zero-error attestation, and closed GD-1 through GD-18. P1 uses `2917c8e` as
-  its prospective base. The owner has deferred D0 remote merge enforcement to
-  P1 exit; checked-in local enforcement and retained evidence remain mandatory,
-  and no remote-protection claim is permitted while D0 is open. P2
+  zero-error attestation, and closed GD-1 through GD-18. P1 historically used
+  `2917c8e`; any restart requires a new prospective base. D13 moves D0 remote
+  merge enforcement and shared release-gate work to P9; no remote-protection
+  claim is permitted while D0 is open. P2
   implementation candidate and fixture closure are complete through source
   `fcd1b30`; retained Gate C,
-  the live A/B/A experiment, the P1 dependency, and independent P2 acceptance
+  the live A/B/A experiment and independent P2 acceptance
   remain open. The combined P3/P4 implementation candidate now reaches source
   `0512953`: all 28 public output-item discriminators and the shipped non-audio
   nested/tool schemas are inventoried, schema-validated, and
@@ -44,7 +47,8 @@
   inventory and seven-class/ten-surface applicability matrix pass a source-bound
   7/7 gate, 4,011/4,011 library tests, and 120/120 focused observations. Its
   independent review `5af7308` returns `READY` for D11 evidence. P1 and P2 are
-  not accepted. Owner decision D12 now records the retrospective P3/P4 Gate A
+  not accepted and no longer block transcript/streaming acceptance. Owner
+  decision D12 records the retrospective P3/P4 Gate A
   timing exception and exact base `a90b730`; full-range final evidence and
   separate P3 then P4 acceptance reviews remain open.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
@@ -150,13 +154,15 @@ On completion:
 ## How this plan is operated
 
 1. P0 ships first because it closes the critical credential-exfiltration path.
-   After P1 establishes the campaign gates, the dependency declarations on each
-   phase control ordering. The planned owner transcript discussion between P2
+   Decision D13 corrects the original over-serial ordering: each product phase
+   retains its own strict source-bound gate, while generic repository-policy and
+   remote-enforcement work is release governance in P9. The planned owner
+   transcript discussion between P2
    and P3 occurred on 2026-07-15 through 2026-07-16. That pause is satisfied;
    D2 was decided by the owner on 2026-07-17, implemented, corrected,
    re-evidenced, and accepted with unconditional Gate D `READY` at `26b4e28`;
-   P3 acceptance still requires its stated P0-P2 dependencies and its own
-   remaining evidence. No discussion
+   P3 acceptance requires P0, accepted D2, its own full-range evidence, and its
+   independent review; P2 OAuth acceptance proceeds separately. No discussion
    substitutes for acceptance evidence.
 2. Every finding is owned by one phase in the traceability table. A finding may
    be supported by earlier foundation work, but it closes only in its owning
@@ -281,17 +287,19 @@ this program.
 
 Every phase must satisfy all four gates below.
 
-Gates A-D below are the active P1 dashboard. P1's prospective base is
-`2917c8e`; none of P0's checked gates or retrospective exceptions carries into
-this phase.
+Gates A-D below define the universal evidence standard. P1's historical base is
+`2917c8e`, but its 2026-07-15 Gate A contract is no longer a current entry
+contract: accepted D11 evidence proves assistant `phase` has absent, explicit
+null, and present states, while the historical P1 contract records only absent
+or present. P1 must be re-entered prospectively if its standalone work resumes.
 The prior automated workspace Gate C, full-range policy, 750-observation
 distribution, and mechanical attestation remain historical evidence at
 `13d661c`; the `c6bf1e2` whole-phase review invalidated them as P0 acceptance
 evidence. Replacement machine evidence has now been generated from clean exact
 source head `e1bf7f2` under the main repository's ignored `target/` lanes.
 The P0 machine and reviewer results remain historical evidence in its ledger
-row. Every P1 Gate B-D item below has been reset and must be satisfied against
-the P1 base.
+row. D13 moves the unfinished generic P1 enforcement work to P9; it does not
+carry any P1 Gate B-D result into another phase.
 
 ### Gate A: entry and design
 
@@ -449,9 +457,9 @@ artifacts to the same clean head with zero errors.
 | Phase | Status | Primary outcome |
 |---|---|---|
 | P0. Credential and workspace authority containment | [x] Accepted by focused Gate D review `7ce29d7` on 2026-07-15 | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
-| P1. Contract and enforcement baseline | [ ] Gate A complete at base `2917c8e`; Gate B foundation next; D0 remote enforcement deferred to exit | The program has executable contracts and protected quality gates. |
-| P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; retained Gate C, live A/B/A, P1 dependency, and independent acceptance open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
-| P3. Canonical ordered transcript | [ ] Combined transcript/audio implementation candidate through `0512953`, packaged at `192756e`, plus accepted D2 strict-store source `e9755fe`: the exact 28-item union, canonical model/replay/persistence, caller ownership, exact second-request, representative real spawn/fork paths, strict format-2 store, offline migration, explicit resume classifications, and response-scoped private audio artifacts are implemented; corrected D2 holds unconditional Gate D `READY`; six successor lifecycle fixtures and their source-bound 64/64 retained evidence are complete at `f252cbb`; M-1/F-2 correction `df47e9e` is confirmed `READY` at `dad0291`; finite optional-shape/lifecycle source `56fd4dd` is accepted as D11 evidence at `5af7308`; D12 records retrospective base `a90b730`; P1/P2 acceptance, final P3 gates, and acceptance review remain open | Responses items survive stream, persistence, resume, and replay in order; explicit context edits change only the provider-facing view, not the audit timeline. |
+| P1. Contract and enforcement baseline | [ ] Historical Gate A retained but stale; no Gate B implementation landed. D13 moves generic repository enforcement and D0 to P9 rather than reviving the rejected 364-file prototype | Current product phases use their own strict source-bound contract and policy gates; shared release governance is completed once in P9. |
+| P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; retained Gate C, live A/B/A, retrospective base disposition, and independent acceptance open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
+| P3. Canonical ordered transcript | [ ] Combined transcript/audio implementation candidate through `0512953`, packaged at `192756e`, plus accepted D2 strict-store source `e9755fe`: the exact 28-item union, canonical model/replay/persistence, caller ownership, exact second-request, representative real spawn/fork paths, strict format-2 store, offline migration, explicit resume classifications, and response-scoped private audio artifacts are implemented; corrected D2 holds unconditional Gate D `READY`; six successor lifecycle fixtures and their source-bound 64/64 retained evidence are complete at `f252cbb`; M-1/F-2 correction `df47e9e` is confirmed `READY` at `dad0291`; finite optional-shape/lifecycle source `56fd4dd` is accepted as D11 evidence at `5af7308`; D12 records retrospective base `a90b730`; final P3 gates and acceptance review remain open | Responses items survive stream, persistence, resume, and replay in order; explicit context edits change only the provider-facing view, not the audit timeline. |
 | P4. Streaming and replay conformance | [ ] Combined streaming/audio implementation candidate through `0512953`, packaged at `192756e`, plus accepted D2 persistence source `e9755fe`; public/Codex manifests, explicit validators for all 28 output discriminators, identity/channel/item reconciliation, terminal parsing, refusal, hosted-search replay, authoritative UI repair, raw CLI events, and lossless response-audio receive/reconciliation are implemented; corrected D2 holds unconditional Gate D `READY`; six successor lifecycle fixtures and their source-bound 64/64 retained evidence are complete at `f252cbb`; M-1/F-2 correction `df47e9e` is confirmed `READY` at `dad0291`; finite optional-shape/lifecycle source `56fd4dd` is accepted as D11 evidence at `5af7308`; D12 records retrospective base `a90b730`; P3 acceptance, final P4 gates, and acceptance review remain open | Supported events/items are complete, reconciled, and fail closed. |
 | P5. Conversation and Codex turn semantics | [ ] Behavior audit and first implementation slice specified; source work not started | Local/provider history and turn-scoped state have explicit lifetimes. |
 | P6. Transport, retry, and usage | [ ] | Retries terminate once; observed and unknown attempt usage remain explicit. |
@@ -482,7 +490,7 @@ blocks phase acceptance and cannot be represented as implemented evidence.
 
 | ID | Required decision | Due | Status / record |
 |---|---|---|---|
-| D0 | Remote CI/merge-enforcement platform and required-check wiring. The checked-in local gate is phase work, not a substitute for remote enforcement. | P1 exit | [ ] Open for P1 exit. On 2026-07-15 the owner declined GitHub Actions for now and authorized P1 to proceed locally. No GitHub Actions workflow or remote-protection claim may be introduced under that ruling. P1 must build and retain evidence from one deterministic local clean-checkout gate, then revisit D0 before `READY` to select another remote mechanism, approve GitHub Actions later, or make a new explicit enforcement decision. |
+| D0 | Remote CI/merge-enforcement platform and required-check wiring. A checked-in local gate is not a substitute for remote enforcement. | P9 | [ ] Moved to P9 by D13. The owner declined GitHub Actions and no GitHub Actions workflow or remote-protection claim may be introduced under that ruling. P9 must select another remote mechanism, obtain later approval for GitHub Actions, or record a new explicit release-enforcement decision. |
 | D1 | Exact compiled OAuth authority/path allowlist, redirect, workspace filesystem/command, and private-artifact policy. Custom trusted-proxy and repository-command consent are out of P0 scope. | P0 | [x] Decided 2026-07-10 and refined by the P0 threat model and provisional review round: accept no override or normalized `https://chatgpt.com[:443]/backend-api/codex[/]`, discard accepted input in favor of the compiled URL, and follow no redirects on credential-bearing clients. Both CWD layers are untrusted even when gitignored. Direct/raw provider authority, backend-selecting aliases, command-bearing hooks/rules, workspace skill shell, convention process categories, and model-selected profile prompt commands are rejected before use. One immutable launch root uses no-follow workspace reads/enumeration on supported descriptor-capable Unix targets; repository symlinks are unsupported, and Redox, ESP-IDF, and non-Unix workspace input fail closed. Debug-dump and private-artifact hardening are implemented on the same supported target class, including descriptor-pinned ancestor traversal, foreground and process spools, task storage, and removal of relative sensitive-data fallbacks; unsupported targets fail before artifact I/O. Pre-existing private-artifact links/non-regular entries are rejected, and read-only reopen hardens traversed legacy directories and regular files. Under a concurrent same-UID final-name replacement, the portable invariant is descriptor confinement: the replacement is never followed, no outside target is read/written/deleted, and the operation either fails or affects only the raced entry inside the pinned private root; POSIX does not provide portable strict rejection/serializability against that actor. Response headers remain fully redacted under D1, and redirect refusal follows the structural policy in `DECISIONS-2026-07.md` section 7. Custom API-key endpoints require HTTPS except loopback HTTP. No trusted proxy or implicit project-command consent is admitted. The final review and phase gates passed at `7ce29d7`. |
 | D1A | Non-disclosing representation for unknown provider terminal discriminators: equality semantics, keying, identifier lifetime, output size, and deterministic test control. | P0 | [x] Decided 2026-07-11: known values retain typed mappings; an unknown exact byte sequence is represented only by its terminal category and a domain-separated full HMAC-SHA-256 tag under an OS-random process-lifetime key. The key and raw value are never persisted or logged. A deterministic key seam is crate-private and compiled only under `cfg(test)`; production exposes no public, configuration, or environment override. OS-random initialization failure is a typed fail-closed diagnostic error, never a fixed-key fallback. Tags support equality only within one process and are not cross-run fingerprints. Raw value and byte length are not exposed. |
 | D1B | Location and access policy for fetched and other session-derived artifacts. | P0 | [x] Decided 2026-07-11: fetched documents are private session-owned artifacts beneath the trusted user-level Norn session store, never workspace files. P0 establishes a typed active-session artifact scope and migrates new fetch writes without pre-empting P3 transcript-format, historical-reference, fork-copy, or broad storage-migration decisions. Generic model file access may read/search only the active artifact subtree; it does not gain authority over credentials, indexes, raw child transcripts, or other sessions. |
@@ -501,6 +509,8 @@ blocks phase acceptance and cannot be represented as implemented evidence.
 | D10 | Automatic account rotation policy: applicable product/contract permission, eligible exhaustion signals, trusted candidate allowlist, pre-request rejection proof, turn/session affinity, state reset, cache-isolation handoff, and resume authorization. | P6 | [ ] Open until authoritative current terms/product guidance permits the behavior and P3/P5 establish transcript replay, account-scoped state, and turn affinity. The current [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/) prohibit circumventing rate limits or restrictions, so exhaustion-triggered rotation is unsupported unless OpenAI or the governing contract explicitly establishes that this use is permitted. Even then, switching occurs only before dispatch or after a typed provider outcome proving no execution or state mutation; absence of observed output is insufficient. P6 otherwise keeps `ROUTE-01` unsupported. |
 | D11 | P3/P4 optional-shape lifecycle evidence scope: exhaustive Cartesian property-state execution versus a finite official inventory plus behavioral equivalence classes. | P3/P4 | [x] Decided 2026-07-18 and accepted as evidence at review `5af7308`: mechanically enumerate every applicable official output-item optional/nullable property state. Behavioral evidence is equivalence-class based, not a 659-by-surface Cartesian product. Publish a finite named class inventory and class/surface applicability matrix; every applicable pair must name a source-bound test, and every excluded pair must state why it is inapplicable. Response audio remains a separate sidecar family. Local compaction is a P5/D3 prompt-view transform, not an eleventh D11 durable-carriage surface: superseded canonical rows remain in the append-only audit store while only the provider-facing view substitutes a summary. No claim may say every legal property state traversed every lifecycle surface or survives explicit compaction verbatim in the prompt view. |
 | D12 | Retrospective P3/P4 Gate A timing disposition and exact common phase base. | P3/P4 | [x] Owner-approved 2026-07-18: use `a90b730` as the exact common comparison base for interleaved P3/P4 implementation through frozen source `56fd4dd`. This exception acknowledges rather than rewrites the missed prospective timing requirement. It waives no dependency, baseline-evidence, implementation, test, policy, distribution, or review requirement, and it does not accept either phase. |
+| D13 | Correct phase dependencies and disposition the unfinished P1 enforcement program. | P1/P3/P4/P9 | [x] Owner-approved 2026-07-18. P1's historical Gate A is retained as chronology but is stale against accepted D11 nullable-phase evidence; no P1 Gate B implementation landed. The archived 364-file policy prototype is rejected as a candidate and is not resurrected. Generic policy-product, staged-mutation, clean-checkout, and D0 remote-enforcement work moves to P9 release governance. P3/P4 retain strict source-bound fmt, Clippy, workspace/all-target/doc tests, exact diff, LOC/module/bypass, redaction, distribution, and independent-review gates. P1 and P2 are not semantic prerequisites for transcript/streaming acceptance; P2 remains independently gated and P4 still depends on accepted P3. No remote-protection claim is made. |
+| D14 | Retrospective P2 timing disposition and exact phase base. | P2 | [x] Owner-approved 2026-07-18: use `6669b9d` as the exact P2 comparison base; its child `6a76d9f` is the first P2 source commit and `fcd1b30` is the frozen implementation/fixture candidate. This acknowledges that the base was not recorded prospectively, P1 was incomplete, and D9 plus its live validity experiment were still open when implementation began. It waives none of the live experiment, retained evidence, policy, or independent-review requirements and does not accept P2. |
 
 ## Accepted boundary and operator guidance
 
@@ -1102,10 +1112,12 @@ seams, closed GD-1 through GD-18, and returned `READY`; P0 is accepted.
 
 ## P1. Contract and enforcement baseline
 
-**Status:** [ ] Gate A complete and independently `READY` at phase base
-`2917c8e`; Gate B foundation not yet implemented; **findings supported:** all;
-**dependency state:** P0 accepted. D0 remote enforcement is owner-deferred to
-P1 exit and still blocks acceptance, not local implementation.
+**Status:** [ ] Historical Gate A review retained but no longer current; Gate B
+never landed; D13 moves the generic enforcement program and D0 to P9 rather
+than reviving the archived prototype; **findings supported:** all;
+**dependency state:** P0 accepted. Any future standalone P1 restart requires a
+new prospective base and a corrected contract that includes nullable assistant
+phase.
 
 ### What this phase fixes
 
@@ -1196,11 +1208,11 @@ campaign rules. No provider behavior changes in this phase.
 source `fcd1b30`; focused OAuth and CLI gates are green, but no retained Gate C
 or P2 acceptance claim;
 **findings targeted:** `AUTH-01` through `AUTH-07`, `CONFIG-01`, `CONFIG-02`;
-**dependencies:** P1; D9 and D9A are decided. Checked work items below mean the
+**dependencies:** P0; D9, D9A, and retrospective D14 are decided. Checked work items below mean the
 implementation and focused source fixtures are present; they do not substitute
 for retained Gate C evidence or independent review. Gate A selected the
-named-account branch. Its live-validity experiment and the P1 dependency must
-close before P2 acceptance. Automatic account rotation is not in P2.
+named-account branch. Its live-validity experiment must close before P2
+acceptance. Automatic account rotation is not in P2.
 
 ### Interim-review correction ledger
 
@@ -1211,7 +1223,7 @@ not phase acceptance or retained candidate evidence.
 The independent correction review committed at `7536436` returned `READY` for
 the complete correction range through source `455990a`. That verdict closes
 the seven interim findings and D9A only; it is not P2 acceptance and does not
-close the P1 dependency, phase evidence, or exit gates. The later D9 decision
+close phase evidence or exit gates. The later D9 decision
 and implementation candidate are recorded below.
 
 - [x] `P2-1` and `P2-2`: D9A records owner-approved defaults of 30 seconds for
@@ -1305,8 +1317,9 @@ addresses those Norn-owned default and named-account paths. It also
 separates Norn's writable `$NORN_HOME/auth/auth.json` from foreign
 `$CODEX_HOME/auth.json`, so Norn no longer races or mutates the Codex CLI file.
 Foreign import/migration and OS-keyring integration are explicitly outside P2.
-Remaining phase work is the P1 dependency disposition, the live A/B/A validity
-experiment, retained candidate gates, and independent P2 acceptance.
+Remaining phase work is the live A/B/A validity experiment, retained candidate
+gates, and independent P2 acceptance. D14 records the historical phase-base and
+entry-timing facts without waiving any of those requirements.
 
 ### Difference after the phase
 
@@ -1534,9 +1547,10 @@ correction `df47e9e` and its retained 12/12 gate are confirmed `READY` at
 120/120 evidence are accepted for D11 at `5af7308`; final P3 gates and
 independent phase acceptance review remain open;
 **foundation for:** `STATE-01`, `EVT-02`;
-**dependencies:** P0-P2; the owner-decided D2 contract is implemented, corrected,
-re-evidenced, and accepted with unconditional Gate D `READY`. P1 and P2 are not
-accepted, so P3 cannot be accepted until both dependencies close.
+**dependencies:** accepted P0 and D2; the owner-decided D2 contract is
+implemented, corrected, re-evidenced, and accepted with unconditional Gate D
+`READY`. D13 records that generic P1 enforcement and independent P2 OAuth
+acceptance are not semantic prerequisites for canonical transcript acceptance.
 
 No prospective P3 or P4 phase base was recorded before implementation. Owner
 decision D12 explicitly accepts that historical fact and grants a timing-only
@@ -1586,8 +1600,8 @@ the 28/274/659 contract enumeration, seven-by-ten applicability matrix, 4,011
 library tests, and 120/120 focused observations. Independent
 [`D11 evidence review`](reviews/2026-07-18-p3-p4-optional-lifecycle-review.md)
 `5af7308` returns `READY`. D12 resolves only the Gate A timing requirement.
-Full-range final P3 evidence, P1/P2 acceptance, and independent P3 phase
-acceptance review still block phase acceptance.
+Full-range final P3 evidence and independent P3 phase acceptance review still
+block phase acceptance.
 
 The replay normalization allowlist is empty for the pinned public contract.
 Current official conversation-state and compaction guidance requires clients
@@ -1749,9 +1763,8 @@ at `dad0291`; finite optional-shape/lifecycle source `56fd4dd` and its retained
 120/120 evidence are accepted for D11 at `5af7308`; full-range final P4 evidence
 and independent P4 acceptance review still block acceptance;
 **candidate coverage:** `STATE-01`, `EVT-01` through
-`EVT-07`; **dependencies:** P3. P3 is not accepted, and its transitive P1/P2
-acceptance blockers therefore remain P4 blockers. D12 resolves only the missed
-phase-base timing requirement.
+`EVT-07`; **dependencies:** P3. D13 removes P1/P2 as transitive blockers; D12
+resolves only the missed phase-base timing requirement.
 
 ### What this phase fixes
 
@@ -2275,8 +2288,10 @@ than inference.
 
 ## P9. Integrated conformance and release review
 
-**Status:** [ ] Not started; **closure scope:** all remaining integrated risk;
-**dependencies:** P0-P8 and D7.
+**Status:** [ ] Not started; **closure scope:** all remaining integrated risk
+plus the D13-deferred repository-enforcement program;
+**dependencies:** P0, P2-P8, and D7. P1 governance closes within P9 rather than
+as a prerequisite to product-phase work.
 
 ### What this phase fixes
 
@@ -2295,6 +2310,15 @@ depend on implementer assertion or terminal history.
 
 ### Work checklist
 
+- [ ] Re-ratify the current public/Codex contract inventory, including nullable
+  assistant phase, against the accepted P3/P4 manifests and any later official
+  drift.
+- [ ] Build one deterministic checked-in local clean-checkout release gate from
+  the proven phase policy machinery; it must fail hard on strict fmt/Clippy,
+  workspace/all-target/doc tests, exact-range diff, LOC/module/bypass,
+  unresolved markers, redaction, or evidence-integrity failures.
+- [ ] Resolve D0 without claiming remote enforcement that does not exist. Do
+  not revive the archived `393f67e` policy-product prototype.
 - [ ] Run the full conformance corpus against ChatGPT/Codex and public Responses
   with the credentials, spending, redaction, and retention approved in D7.
 - [ ] Exercise text, reasoning, local tool loops, refusal, hosted search,
@@ -2348,9 +2372,9 @@ ledger prematurely.
 | Phase | Current implementation | Retained candidate evidence | Work still required before acceptance |
 |---|---|---|---|
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
-| P1 | Gate A complete at base `2917c8e`; Gate B foundation not yet implemented | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A `READY` | Implement and independently review the executable foundation, complete and verify P1, then resolve D0 before acceptance |
-| P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and the bounded source fixture matrices are present | Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks; retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle | Record the historical missing-phase-base disposition, resolve the P1 dependency, run the live A/B/A validity experiment, execute and retain the complete candidate gates, then obtain P2 acceptance |
-| P3 | Combined canonical transcript/audio candidate through `0512953`, accepted D2 source `e9755fe`, lifecycle fixtures `f252cbb`, M-1/F-2 correction `df47e9e`, and finite D11 source `56fd4dd` | Accepted D2 evidence remains as recorded. D12 establishes retrospective base `a90b730`. The [`response-audio correction review`](reviews/2026-07-18-p3-p4-response-audio-correction-review.md) `dad0291` closes M-1/F-2 and records the focused slice `READY`. The [`optional-lifecycle review`](reviews/2026-07-18-p3-p4-optional-lifecycle-review.md) `5af7308` accepts the 28/274/659 inventory, seven-by-ten matrix, 4,011/4,011 library tests, and 120/120 observations as D11 evidence | Resolve P1/P2 acceptance dependencies; retain full-range final P3 evidence; then obtain protocol, persistence, adversarial, and phase acceptance review |
+| P1 | Historical Gate A at `2917c8e` is stale against accepted D11 nullable-phase evidence; no Gate B source landed; archived `393f67e` is rejected as a candidate | Historical contract/review chronology and 62-row preregistration remain available but make no current implementation claim | D13 moves generic repository enforcement and D0 to P9. If standalone P1 resumes, restart prospectively with the current contract; do not resurrect the archived prototype |
+| P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and the bounded source fixture matrices are present | D14 establishes retrospective base `6669b9d`. Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks; retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle | Run the live A/B/A validity experiment after explicit credential-use approval, execute and retain the complete candidate gates, then obtain P2 acceptance |
+| P3 | Combined canonical transcript/audio candidate through `0512953`, accepted D2 source `e9755fe`, lifecycle fixtures `f252cbb`, M-1/F-2 correction `df47e9e`, and finite D11 source `56fd4dd` | Accepted D2 evidence remains as recorded. D12 establishes retrospective base `a90b730`; D13 removes unrelated P1/P2 acceptance dependencies. The [`response-audio correction review`](reviews/2026-07-18-p3-p4-response-audio-correction-review.md) `dad0291` closes M-1/F-2 and records the focused slice `READY`. The [`optional-lifecycle review`](reviews/2026-07-18-p3-p4-optional-lifecycle-review.md) `5af7308` accepts the 28/274/659 inventory, seven-by-ten matrix, 4,011/4,011 library tests, and 120/120 observations as D11 evidence | Remove the full-range strict-policy violations without lint bypasses, retain final P3 evidence, then obtain protocol, persistence, adversarial, and phase acceptance review |
 | P4 | Combined streaming/reconciliation/audio candidate through `0512953`, accepted D2 persistence source `e9755fe`, lifecycle fixtures `f252cbb`, M-1/F-2 correction `df47e9e`, and finite D11 source `56fd4dd` | D12 establishes retrospective base `a90b730`; pre-audio source reviews and accepted D2 evidence remain as recorded. Review `dad0291` confirms the response-audio correction `READY`; review `5af7308` accepts the finite optional-shape/lifecycle evidence. Public/Codex manifests, 53 event contracts, 28 item validators, reconciliation, terminal parsing, raw CLI events, and response-audio persistence are implemented | Resolve and accept P3; retain full-range P4 gates proving `STATE-01` and `EVT-01..07`; then obtain streaming, item, UI/session, adversarial, and phase acceptance review. P6 separately owns usage-presence projection and retry-attempt UI cleanup |
 | P5 | Read-only current-state audit complete: Codex `store:false` and public threaded request shapes are distinct and stateless encrypted-reasoning replay exists; instruction resend and compaction-anchor invalidation are partial; producer ownership, `end_turn`, Codex turn state, credential-bound state, `client_metadata`, and D8 role authority are missing | The first `TRANS-01` slice and synchronized nine-case transport/cancellation evidence matrix are specified; no source or acceptance evidence exists | Obtain the scoped entry disposition if D3/D8 remain open; implement and review `TRANS-01`; then resolve the Codex turn overlay, D3 state/account binding, and D8 provenance/role contract before whole-phase gates |
 
@@ -2358,7 +2382,7 @@ ledger prematurely.
 |---|---|---|---|---|---|---|---|
 | P0 | `41ea210` | Source range `41ea210..e1bf7f2`; evidence/docs `d06e4fc`, `7648159`, `c029de5`, `1096628` | [`P0 traceability`](reviews/2026-07-12-p0-traceability.md); Gate C 38/38; distributions 830/830; attestation pass; independent reproduction in `7ce29d7`; [`acceptance supplement`](reviews/2026-07-15-p0-acceptance-supplement.md) | 359 changed Rust files; 65 test-only; 97 writers; zero bypass, over-500, module-shape, or thin-entrypoint violations | External domain seats A-C, whole-diff seam seat, and three read-only supplement seats, 2026-07-15 | [`READY`](reviews/2026-07-15-p0-correction-gate-d-review.md), `7ce29d7` | [x] Accepted |
 | P1 | `2917c8e` | | | | | | [ ] |
-| P2 | | | | | | | [ ] |
+| P2 | `6669b9d` (D14 retrospective timing exception) | | | | | | [ ] |
 | P3 | `a90b730` (D12 retrospective timing exception) | | | | | | [ ] |
 | P4 | `a90b730` (D12 retrospective timing exception) | | | | | | [ ] |
 | P5 | | | | | | | [ ] |
