@@ -6,6 +6,14 @@
 **Phase base:** `a90b730` · **Frozen source:** `7f47218` (tree `b8b042f6`)
 **Exact range:** `a90b730..7f47218`
 
+**Subsequent scope status (2026-07-18):** Owner-approved D15 now makes the
+deterministic public/Codex fixtures sufficient for P4 review and assigns the
+still-unrun authenticated real-wire fixture as a mandatory D7/P9 gate before
+overall integrated acceptance. D13 keeps P1/P2 acceptance independent rather
+than prerequisite to P4. This note supersedes only the stale open-item wording
+in "Standing / still open" below; it does not alter this review's P3-only
+verdict or claim a P4/live-wire result.
+
 ## Verdict
 
 **P3 — READY.** The canonical ordered Responses transcript outcome is sound,

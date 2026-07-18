@@ -1426,11 +1426,14 @@ reviewed honestly rather than assigned a fictional prospective history.
 This ruling is D14. It permits the P2 ledger to record only the phase base; it
 does not accept P2.
 
-## 21. Proposed P3/P4 final evidence and live-fixture disposition (2026-07-18)
+## 21. P3/P4 final evidence and live-fixture disposition (2026-07-18)
 
-**Implementer proposal:** Freeze the P3/P4 implementation and evidence campaign
-for sequential phase review without treating general continuation approval as a
-live credential or acceptance-scope ruling.
+**Owner decision:** Freeze the P3/P4 implementation and evidence campaign for
+sequential phase review. Deterministic public and Codex contract fixtures are
+sufficient evidence for the P4 protocol/streaming gate. A real authenticated
+streamed Responses request remains mandatory before final integrated acceptance
+in P9, under the separate D7 credential, spending, redaction, and retention
+approval.
 
 - The exact common comparison base remains
   `a90b730091bccaeaa03ba98c3b31425e40e32dac` under D12. The final combined
@@ -1455,22 +1458,21 @@ live credential or acceptance-scope ruling.
   transform, not an eleventh D11 durable-carriage surface. The immutable
   canonical rows remain stored. Provider `ResponseItem::Compaction` remains one
   of the 28 P3/P4 item variants and stays covered by the D11 contract.
-- The implementer proposes superseding the earlier P4 fixture handoff's live
-  Codex-subscription fixture as a P4 blocker. Under that proposal, P4 acceptance
-  uses deterministic public and Codex contract fixtures, while credentialed
-  real-wire conformance belongs to D7/P9. The owner has not yet confirmed that
-  scope change. Until confirmation, the live fixture remains an open P4 item.
-  Running it still requires explicit credentials, spending, redaction, and
-  retention approval at the point of use; a skipped test is never a pass.
+- The earlier P4 fixture handoff's live Codex-subscription fixture is superseded
+  as a P4 blocker. P4 acceptance uses deterministic public and Codex contract
+  fixtures, while credentialed real-wire conformance is a mandatory D7/P9
+  integration gate. The live fixture has not run. Running it still requires
+  explicit credentials, spending, redaction, and retention approval at the
+  point of use; a skipped test is never a pass and overall integrated Responses
+  conformance cannot close without it.
 - Request-side audio, playback, export, and audio-specific TUI rendering are not
   claimed. P6 continues to own absent-versus-zero legacy usage projection and
   retry-attempt UI cleanup.
 
-This is proposed D15. Its source/evidence freeze and settled compaction boundary
-may be used for P3 review, but its live-fixture disposition remains open until
-the owner confirms it. It does not accept P3, P4, or any later phase.
+This ruling is D15. It fixes the source/evidence freeze, settled compaction
+boundary, and P4/P9 live-fixture disposition. It does not accept P4 or P9.
 
-**Subsequent status (2026-07-18):** P3 whole-phase review `06be7c7` returned
-`READY` and accepts P3. It issued no P4 verdict. The live-fixture disposition in
-proposed D15 remains open and still requires explicit owner confirmation before
-the separate P4 review.
+**P3 status (2026-07-18):** P3 whole-phase review `06be7c7` returned
+`READY` and accepts P3. It issued no P4 verdict. With D15 now owner-approved,
+the separate P4 review may proceed; the mandatory D7/P9 real-wire gate remains
+open.

@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-18
 
-**Status:** PREPARED; P3 is `READY`; do not issue a P4 verdict until proposed D15 is resolved
+**Status:** READY FOR INDEPENDENT P4 REVIEW; not P4 acceptance
 
 **Phase base:** `a90b730091bccaeaa03ba98c3b31425e40e32dac`
 
@@ -23,17 +23,18 @@
 
 ## Sequencing and verdict requested
 
-P3's independent `READY` prerequisite is satisfied by `06be7c7`. P4 acceptance
-still depends on an explicit owner disposition for the live Codex-subscription
-fixture in proposed D15. After that closes, return one separate P4-only `READY`
-or `NOT READY` verdict for `STATE-01` and `EVT-01` through
-`EVT-07`. Do not infer P4 acceptance from the common machine bundle or from P3's
-verdict.
+P3's independent `READY` prerequisite is satisfied by `06be7c7`. Owner-approved
+D15 makes deterministic public/Codex fixtures sufficient for the P4 gate and
+assigns the mandatory authenticated real-wire test to D7/P9 before overall
+integrated acceptance. Return one separate P4-only `READY` or `NOT READY`
+verdict for `STATE-01` and `EVT-01` through `EVT-07`. Do not infer P4 acceptance
+from the common machine bundle or from P3's verdict.
 
 The source range contains interleaved P3/P4 implementation, so this prepared
-package uses one common source-bound machine bundle. Proposed D15 has not yet
-resolved the live-fixture scope. The outcomes, reviewer seats, and verdicts
-remain separate. Any production-source correction after `7f47218` invalidates
+package uses one common source-bound machine bundle. D15 resolves the
+live-fixture scope without claiming that the live fixture ran. The outcomes,
+reviewer seats, and verdicts remain separate. Any production-source correction
+after `7f47218` invalidates
 the freeze and requires regenerated evidence.
 
 ## P4 outcome under review
@@ -151,8 +152,8 @@ and F-2's erased link diagnostic are closed in
 
 ## Honest boundaries
 
-- P4's P3 dependency is satisfied by whole-phase review `06be7c7`. This handoff
-  being prepared does not itself satisfy P4 review or proposed D15.
+- P4's P3 dependency is satisfied by whole-phase review `06be7c7`, and D15 is
+  owner-approved. This handoff does not itself satisfy P4 review.
 - Local `SessionEvent::Compaction` remains P5/D3 prompt-view work, not an
   eleventh P4/D11 carrier surface. Provider `ResponseItem::Compaction` remains
   covered among the 28 output items.
@@ -161,12 +162,11 @@ and F-2's erased link diagnostic are closed in
 - P6 owns retry-producer termination, retry-attempt TUI cleanup, and
   absent-versus-zero legacy `Usage` projection. Raw terminal usage already
   preserves presence, but P4 does not claim the P6 projection fix.
-- Deterministic public and Codex contract fixtures are complete. The earlier
-  request for a retained live Codex-subscription fixture is not yet superseded:
-  proposed D15 would move credentialed real-wire conformance to D7/P9, but the
-  owner must confirm that acceptance-scope change before P4 review. The fixture
-  was not run, and general continuation approval is not credential-use or
-  spending approval.
+- Deterministic public and Codex contract fixtures are complete. D15 supersedes
+  the earlier live Codex-subscription fixture as a P4 blocker and requires
+  credentialed real-wire conformance later under D7/P9 before overall integrated
+  acceptance. The fixture was not run, and D15 is not credential-use or
+  spending approval; those still require explicit approval at the point of use.
 - Unknown output items and non-allowlisted events retain raw evidence and fail
   typed. The candidate does not advertise execution for unsupported forms.
 
@@ -197,8 +197,8 @@ hash-pinned contract and exact result validation.
 
 ## Required independent review
 
-The P4 review begins after proposed D15 is resolved; P3's `READY` prerequisite is
-already satisfied. It should use five disjoint responsibilities:
+The P4 review may begin: P3's `READY` prerequisite and D15 scope ruling are both
+satisfied. It should use five disjoint responsibilities:
 
 1. A streaming/item reviewer re-enumerates the 53 public events, 28 item
    discriminators, Codex overlay, SSE framing, identity reconciliation, terminal

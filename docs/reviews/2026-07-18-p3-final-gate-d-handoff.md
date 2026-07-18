@@ -17,7 +17,7 @@
 **Tracking plan:**
 [`RESPONSES-API-REMEDIATION-PLAN.md`](../RESPONSES-API-REMEDIATION-PLAN.md)
 
-**Decision record:** D2, D11, D12, D13, and proposed D15 in
+**Decision record:** D2, D11, D12, D13, and D15 in
 [`DECISIONS-2026-07.md`](../DECISIONS-2026-07.md)
 
 ## Verdict requested
@@ -142,9 +142,9 @@ P3 review.
 - The source supports response-audio reception and durable carriage. It does not
   claim request-side audio, playback, export, or audio-specific TUI rendering.
 - Deterministic public/Codex contract fixtures cover P3. The credentialed
-  subscription real-wire fixture was not run. Proposed D15 would retain it for
-  D7/P9; until the owner confirms that scope change, it remains an open P4 item
-  but does not block this P3 transcript review.
+  subscription real-wire fixture was not run. At handoff preparation, its P4
+  disposition remained open. Owner-approved D15 now assigns it as a mandatory
+  D7/P9 integration gate before overall acceptance, not a P4 blocker.
 - P6 owns absent-versus-zero legacy usage projection and retry-attempt UI
   cleanup. P5 owns provider/local conversation-state and turn-state semantics.
 
