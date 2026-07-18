@@ -264,6 +264,9 @@ fn classify(event_type: &str) -> ResponseStreamEventManifest {
 }
 
 #[cfg(test)]
+mod official_shape_tests;
+
+#[cfg(test)]
 mod tests {
     use std::error::Error;
 

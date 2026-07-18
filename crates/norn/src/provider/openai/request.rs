@@ -478,6 +478,9 @@ mod canonical_replay_tests;
 mod caller_projection_tests;
 
 #[cfg(test)]
+mod opaque_lifecycle_tests;
+
+#[cfg(test)]
 #[allow(
     clippy::unwrap_used,
     clippy::expect_used,

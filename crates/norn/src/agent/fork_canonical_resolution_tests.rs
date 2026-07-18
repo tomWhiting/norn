@@ -1,7 +1,12 @@
 use crate::agent::{ContextFilter, verify_no_orphan_tool_calls};
-use crate::provider::openai::output_item_test_fixtures::response_items_named;
+use crate::provider::openai::output_item_test_fixtures::{
+    historical_shape_matrix_items, response_items_named,
+};
 use crate::provider::openai::request::build_payload;
 use crate::provider::request::{ProviderRequest, ToolCallCaller, ToolCallKind};
+use crate::provider::response_item::{
+    ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
+};
 use crate::session::conversion::events_to_messages;
 use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
 use crate::session::{
@@ -55,6 +60,45 @@ fn response_audio_turn() -> Result<[SessionEvent; 2], Box<dyn std::error::Error>
         response_id: Some("resp_filtered_audio".to_owned()),
     };
     Ok([link, assistant])
+}
+
+fn shape_matrix_assistant()
+-> Result<(SessionEvent, Vec<serde_json::Value>), Box<dyn std::error::Error>> {
+    let mut raw_items = historical_shape_matrix_items("filter_matrix", "filter matrix");
+    raw_items.push(serde_json::json!({
+        "type": "future_filter_item",
+        "id": "future_filter_matrix",
+        "payload": {"preserved": true, "optional": null}
+    }));
+    let response_items = raw_items
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, raw)| {
+            let output_index = u64::try_from(index)?;
+            Ok(ResponseTranscriptItem {
+                item: ResponseItem::from_value(raw)?,
+                provenance: ResponseStreamProvenance {
+                    item_id: None,
+                    output_index: Some(output_index),
+                    content_index: None,
+                    sequence_number: Some(output_index.saturating_add(1)),
+                },
+            })
+        })
+        .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+    let event = SessionEvent::AssistantMessage {
+        base: EventBase::new(None),
+        response_items,
+        content: String::new(),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: EventUsage::default(),
+        stop_reason: "end_turn".to_owned(),
+        response_id: None,
+    };
+    Ok((event, raw_items))
 }
 
 #[test]
@@ -127,6 +171,31 @@ fn exclude_tool_calls_removes_canonical_calls_and_outputs_from_exact_replay() ->
         .and_then(serde_json::Value::as_array)
         .ok_or("filtered request input was not an array")?;
     assert_eq!(input, &expected);
+    Ok(())
+}
+
+#[test]
+fn library_context_filter_preserves_minimal_populated_and_opaque_shapes() -> TestResult {
+    let (source, expected) = shape_matrix_assistant()?;
+    let filtered = ContextFilter {
+        include_system: false,
+        include_recent_n: Some(1),
+        exclude_tool_calls: false,
+    }
+    .apply(&[source]);
+    assert_eq!(filtered.len(), 1);
+    let SessionEvent::AssistantMessage { response_items, .. } = &filtered[0] else {
+        return Err("context filter changed the canonical assistant event kind".into());
+    };
+    let actual = response_items
+        .iter()
+        .map(|entry| entry.item.raw().clone())
+        .collect::<Vec<_>>();
+    assert_eq!(actual, expected);
+    assert!(matches!(
+        response_items.last().map(|entry| &entry.item),
+        Some(ResponseItem::Opaque(_))
+    ));
     Ok(())
 }
 

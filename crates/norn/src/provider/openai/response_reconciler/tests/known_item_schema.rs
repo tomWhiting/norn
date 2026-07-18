@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::provider::openai::output_item_test_fixtures::{
-    public_output_item_inventory, public_tool_definitions,
+    minimal_output_item_inventory, public_output_item_inventory, public_tool_definitions,
 };
 
 mod client_calls;
@@ -44,6 +44,17 @@ fn every_public_output_item_has_an_explicit_authoritative_validator() -> TestRes
     assert!(!ResponseReconciler::has_authoritative_item_validator(
         "future_output_item"
     ));
+    Ok(())
+}
+
+#[test]
+fn every_minimal_public_item_passes_its_authoritative_schema() -> TestResult {
+    let items = minimal_output_item_inventory("schema");
+    assert_eq!(items.len(), 28);
+    for raw in items {
+        let item = ResponseItem::from_value(raw)?;
+        ResponseReconciler::validate_authoritative_item_schema(&item)?;
+    }
     Ok(())
 }
 

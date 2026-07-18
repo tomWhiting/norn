@@ -1,6 +1,9 @@
 use serde_json::Value;
 
-use super::{historical_replay_items, public_output_item_inventory, spawn_lifecycle_items};
+use super::{
+    historical_replay_items, historical_shape_matrix_items, public_output_item_inventory,
+    spawn_lifecycle_items, spawn_shape_matrix_items,
+};
 use crate::provider::openai::response_contract::{
     OutputItemActionability, OutputItemRepresentation, PUBLIC_OUTPUT_ITEMS,
 };
@@ -119,6 +122,39 @@ fn historical_fixture_adds_resolved_function_and_custom_call_pairs() {
             pair.iter()
                 .all(|expected| item_types(&items).contains(expected))
         );
+    }
+}
+
+#[test]
+fn lifecycle_shape_matrices_pair_populated_and_optional_absent_items() {
+    let spawn = spawn_shape_matrix_items("shape_spawn", "shape spawn");
+    let history = historical_shape_matrix_items("shape_history", "shape history");
+    assert_eq!(spawn.len(), 48);
+    assert_eq!(history.len(), 52);
+    let spawn_types = item_types(&spawn);
+    let history_types = item_types(&history);
+    let expected_spawn_counts = [
+        2, 2, 0, 2, 5, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 1, 4, 0, 2, 2, 2, 0, 2, 0, 2,
+    ];
+    let expected_history_counts = [
+        2, 2, 2, 2, 5, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 2, 1, 4, 0, 2, 2, 2, 0, 2, 2, 2,
+    ];
+
+    for ((entry, expected_spawn), expected_history) in PUBLIC_OUTPUT_ITEMS
+        .iter()
+        .zip(expected_spawn_counts)
+        .zip(expected_history_counts)
+    {
+        let spawn_count = spawn_types
+            .iter()
+            .filter(|item_type| **item_type == entry.name())
+            .count();
+        let history_count = history_types
+            .iter()
+            .filter(|item_type| **item_type == entry.name())
+            .count();
+        assert_eq!(spawn_count, expected_spawn, "{}", entry.name());
+        assert_eq!(history_count, expected_history, "{}", entry.name());
     }
 }
 

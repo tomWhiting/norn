@@ -86,3 +86,6 @@ mod response_audio_end_to_end_tests;
 
 #[cfg(test)]
 mod response_audio_lifecycle_loop_tests;
+
+#[cfg(test)]
+mod unsupported_response_loop_tests;

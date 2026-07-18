@@ -1,0 +1,4582 @@
+{
+  "schema_version": 1,
+  "artifact": "response-output-item-optional-shape-contract",
+  "source": {
+    "schema_url": "https://developers.openai.com/api/reference/resources/responses/streaming-events",
+    "openapi_endpoint_url": "https://api.openai.com/v1/responses",
+    "openapi_version": "2.3.0",
+    "retrieved_on": "2026-07-18",
+    "section": "response.created / ResponseCreatedEvent first schema JSON fence; reachable ResponseOutputItem graph",
+    "section_extraction": "UTF-8 characters after the opening ```json marker through the character before the newline that opens the closing fence",
+    "section_character_length": 2103673,
+    "section_utf8_byte_length": 2103677,
+    "section_sha256": "d414cb294fadb4b56185f6507fe57a092dfb10e888776b24aa866be89d3182ea"
+  },
+  "semantics": {
+    "scope": "Every HttpDeclProperty with optional=true or nullable=true reachable from each of the 28 ResponseOutputItem variants. Shared schemas are retained once per item context.",
+    "contextual_identity": "item plus contextual_path",
+    "legal_state_labels": {
+      "absent": "The property key is omitted.",
+      "null": "The property key is present with JSON null.",
+      "present": "The property key is present with a schema-valid non-null value."
+    },
+    "category_state_rules": {
+      "optional_non_nullable": [
+        "absent",
+        "present"
+      ],
+      "optional_nullable": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "required_nullable": [
+        "null",
+        "present"
+      ]
+    }
+  },
+  "totals": {
+    "output_items": 28,
+    "contextual_property_occurrences": 274,
+    "state_assertions": 659,
+    "categories": {
+      "optional_non_nullable": 149,
+      "optional_nullable": 111,
+      "required_nullable": 14
+    }
+  },
+  "per_item": [
+    {
+      "item": "message",
+      "item_index": 0,
+      "property_occurrences": 1,
+      "state_assertions": 3,
+      "categories": {
+        "optional_non_nullable": 0,
+        "optional_nullable": 1,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "file_search_call",
+      "item_index": 1,
+      "property_occurrences": 6,
+      "state_assertions": 14,
+      "categories": {
+        "optional_non_nullable": 4,
+        "optional_nullable": 2,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "function_call",
+      "item_index": 2,
+      "property_occurrences": 4,
+      "state_assertions": 9,
+      "categories": {
+        "optional_non_nullable": 3,
+        "optional_nullable": 1,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "function_call_output",
+      "item_index": 3,
+      "property_occurrences": 12,
+      "state_assertions": 28,
+      "categories": {
+        "optional_non_nullable": 8,
+        "optional_nullable": 4,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "web_search_call",
+      "item_index": 4,
+      "property_occurrences": 4,
+      "state_assertions": 9,
+      "categories": {
+        "optional_non_nullable": 3,
+        "optional_nullable": 1,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "computer_call",
+      "item_index": 5,
+      "property_occurrences": 9,
+      "state_assertions": 24,
+      "categories": {
+        "optional_non_nullable": 2,
+        "optional_nullable": 6,
+        "required_nullable": 1
+      }
+    },
+    {
+      "item": "computer_call_output",
+      "item_index": 6,
+      "property_occurrences": 6,
+      "state_assertions": 14,
+      "categories": {
+        "optional_non_nullable": 4,
+        "optional_nullable": 2,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "reasoning",
+      "item_index": 7,
+      "property_occurrences": 3,
+      "state_assertions": 7,
+      "categories": {
+        "optional_non_nullable": 2,
+        "optional_nullable": 1,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "program",
+      "item_index": 8,
+      "property_occurrences": 0,
+      "state_assertions": 0,
+      "categories": {
+        "optional_non_nullable": 0,
+        "optional_nullable": 0,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "program_output",
+      "item_index": 9,
+      "property_occurrences": 0,
+      "state_assertions": 0,
+      "categories": {
+        "optional_non_nullable": 0,
+        "optional_nullable": 0,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "tool_search_call",
+      "item_index": 10,
+      "property_occurrences": 2,
+      "state_assertions": 4,
+      "categories": {
+        "optional_non_nullable": 1,
+        "optional_nullable": 0,
+        "required_nullable": 1
+      }
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "property_occurrences": 92,
+      "state_assertions": 220,
+      "categories": {
+        "optional_non_nullable": 53,
+        "optional_nullable": 36,
+        "required_nullable": 3
+      }
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "property_occurrences": 90,
+      "state_assertions": 216,
+      "categories": {
+        "optional_non_nullable": 52,
+        "optional_nullable": 36,
+        "required_nullable": 2
+      }
+    },
+    {
+      "item": "compaction",
+      "item_index": 13,
+      "property_occurrences": 1,
+      "state_assertions": 2,
+      "categories": {
+        "optional_non_nullable": 1,
+        "optional_nullable": 0,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "image_generation_call",
+      "item_index": 14,
+      "property_occurrences": 1,
+      "state_assertions": 2,
+      "categories": {
+        "optional_non_nullable": 0,
+        "optional_nullable": 0,
+        "required_nullable": 1
+      }
+    },
+    {
+      "item": "code_interpreter_call",
+      "item_index": 15,
+      "property_occurrences": 2,
+      "state_assertions": 4,
+      "categories": {
+        "optional_non_nullable": 0,
+        "optional_nullable": 0,
+        "required_nullable": 2
+      }
+    },
+    {
+      "item": "local_shell_call",
+      "item_index": 16,
+      "property_occurrences": 3,
+      "state_assertions": 9,
+      "categories": {
+        "optional_non_nullable": 0,
+        "optional_nullable": 3,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "local_shell_call_output",
+      "item_index": 17,
+      "property_occurrences": 1,
+      "state_assertions": 3,
+      "categories": {
+        "optional_non_nullable": 0,
+        "optional_nullable": 1,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "shell_call",
+      "item_index": 18,
+      "property_occurrences": 5,
+      "state_assertions": 11,
+      "categories": {
+        "optional_non_nullable": 1,
+        "optional_nullable": 1,
+        "required_nullable": 3
+      }
+    },
+    {
+      "item": "shell_call_output",
+      "item_index": 19,
+      "property_occurrences": 4,
+      "state_assertions": 9,
+      "categories": {
+        "optional_non_nullable": 2,
+        "optional_nullable": 1,
+        "required_nullable": 1
+      }
+    },
+    {
+      "item": "apply_patch_call",
+      "item_index": 20,
+      "property_occurrences": 2,
+      "state_assertions": 5,
+      "categories": {
+        "optional_non_nullable": 1,
+        "optional_nullable": 1,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "apply_patch_call_output",
+      "item_index": 21,
+      "property_occurrences": 3,
+      "state_assertions": 8,
+      "categories": {
+        "optional_non_nullable": 1,
+        "optional_nullable": 2,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "mcp_call",
+      "item_index": 22,
+      "property_occurrences": 4,
+      "state_assertions": 11,
+      "categories": {
+        "optional_non_nullable": 1,
+        "optional_nullable": 3,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "mcp_list_tools",
+      "item_index": 23,
+      "property_occurrences": 3,
+      "state_assertions": 9,
+      "categories": {
+        "optional_non_nullable": 0,
+        "optional_nullable": 3,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "mcp_approval_request",
+      "item_index": 24,
+      "property_occurrences": 0,
+      "state_assertions": 0,
+      "categories": {
+        "optional_non_nullable": 0,
+        "optional_nullable": 0,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "mcp_approval_response",
+      "item_index": 25,
+      "property_occurrences": 1,
+      "state_assertions": 3,
+      "categories": {
+        "optional_non_nullable": 0,
+        "optional_nullable": 1,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "custom_tool_call",
+      "item_index": 26,
+      "property_occurrences": 3,
+      "state_assertions": 7,
+      "categories": {
+        "optional_non_nullable": 2,
+        "optional_nullable": 1,
+        "required_nullable": 0
+      }
+    },
+    {
+      "item": "custom_tool_call_output",
+      "item_index": 27,
+      "property_occurrences": 12,
+      "state_assertions": 28,
+      "categories": {
+        "optional_non_nullable": 8,
+        "optional_nullable": 4,
+        "required_nullable": 0
+      }
+    }
+  ],
+  "properties": [
+    {
+      "item": "message",
+      "item_index": 0,
+      "contextual_path": "(resource) responses > (model) response_output_message > (schema) > (property) phase",
+      "oas_ref": "#/components/schemas/OutputMessage/properties/phase",
+      "property": "phase",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 1
+    },
+    {
+      "item": "file_search_call",
+      "item_index": 1,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 1 > (property) results",
+      "oas_ref": "#/components/schemas/FileSearchToolCall/properties/results",
+      "property": "results",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 2
+    },
+    {
+      "item": "file_search_call",
+      "item_index": 1,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 1 > (property) results > (items) > (property) attributes",
+      "oas_ref": "#/components/schemas/FileSearchToolCall/properties/results/anyOf/0/items/properties/attributes",
+      "property": "attributes",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 3
+    },
+    {
+      "item": "file_search_call",
+      "item_index": 1,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 1 > (property) results > (items) > (property) file_id",
+      "oas_ref": "#/components/schemas/FileSearchToolCall/properties/results/anyOf/0/items/properties/file_id",
+      "property": "file_id",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 4
+    },
+    {
+      "item": "file_search_call",
+      "item_index": 1,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 1 > (property) results > (items) > (property) filename",
+      "oas_ref": "#/components/schemas/FileSearchToolCall/properties/results/anyOf/0/items/properties/filename",
+      "property": "filename",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 5
+    },
+    {
+      "item": "file_search_call",
+      "item_index": 1,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 1 > (property) results > (items) > (property) score",
+      "oas_ref": "#/components/schemas/FileSearchToolCall/properties/results/anyOf/0/items/properties/score",
+      "property": "score",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 6
+    },
+    {
+      "item": "file_search_call",
+      "item_index": 1,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 1 > (property) results > (items) > (property) text",
+      "oas_ref": "#/components/schemas/FileSearchToolCall/properties/results/anyOf/0/items/properties/text",
+      "property": "text",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 7
+    },
+    {
+      "item": "function_call",
+      "item_index": 2,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 2 > (property) id",
+      "oas_ref": "#/components/schemas/FunctionToolCall/properties/id",
+      "property": "id",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 8
+    },
+    {
+      "item": "function_call",
+      "item_index": 2,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 2 > (property) caller",
+      "oas_ref": "#/components/schemas/FunctionToolCall/properties/caller",
+      "property": "caller",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 9
+    },
+    {
+      "item": "function_call",
+      "item_index": 2,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 2 > (property) namespace",
+      "oas_ref": "#/components/schemas/FunctionToolCall/properties/namespace",
+      "property": "namespace",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 10
+    },
+    {
+      "item": "function_call",
+      "item_index": 2,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 2 > (property) status",
+      "oas_ref": "#/components/schemas/FunctionToolCall/properties/status",
+      "property": "status",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 11
+    },
+    {
+      "item": "function_call_output",
+      "item_index": 3,
+      "contextual_path": "(resource) responses > (model) response_input_text > (schema) > (property) prompt_cache_breakpoint",
+      "oas_ref": "#/components/schemas/InputTextContent/properties/prompt_cache_breakpoint",
+      "property": "prompt_cache_breakpoint",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 12
+    },
+    {
+      "item": "function_call_output",
+      "item_index": 3,
+      "contextual_path": "(resource) responses > (model) response_input_image > (schema) > (property) file_id",
+      "oas_ref": "#/components/schemas/InputImageContent/properties/file_id",
+      "property": "file_id",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 13
+    },
+    {
+      "item": "function_call_output",
+      "item_index": 3,
+      "contextual_path": "(resource) responses > (model) response_input_image > (schema) > (property) image_url",
+      "oas_ref": "#/components/schemas/InputImageContent/properties/image_url",
+      "property": "image_url",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 14
+    },
+    {
+      "item": "function_call_output",
+      "item_index": 3,
+      "contextual_path": "(resource) responses > (model) response_input_image > (schema) > (property) prompt_cache_breakpoint",
+      "oas_ref": "#/components/schemas/InputImageContent/properties/prompt_cache_breakpoint",
+      "property": "prompt_cache_breakpoint",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 15
+    },
+    {
+      "item": "function_call_output",
+      "item_index": 3,
+      "contextual_path": "(resource) responses > (model) response_input_file > (schema) > (property) detail",
+      "oas_ref": "#/components/schemas/InputFileContent/properties/detail",
+      "property": "detail",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 16
+    },
+    {
+      "item": "function_call_output",
+      "item_index": 3,
+      "contextual_path": "(resource) responses > (model) response_input_file > (schema) > (property) file_data",
+      "oas_ref": "#/components/schemas/InputFileContent/properties/file_data",
+      "property": "file_data",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 17
+    },
+    {
+      "item": "function_call_output",
+      "item_index": 3,
+      "contextual_path": "(resource) responses > (model) response_input_file > (schema) > (property) file_id",
+      "oas_ref": "#/components/schemas/InputFileContent/properties/file_id",
+      "property": "file_id",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 18
+    },
+    {
+      "item": "function_call_output",
+      "item_index": 3,
+      "contextual_path": "(resource) responses > (model) response_input_file > (schema) > (property) file_url",
+      "oas_ref": "#/components/schemas/InputFileContent/properties/file_url",
+      "property": "file_url",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 19
+    },
+    {
+      "item": "function_call_output",
+      "item_index": 3,
+      "contextual_path": "(resource) responses > (model) response_input_file > (schema) > (property) filename",
+      "oas_ref": "#/components/schemas/InputFileContent/properties/filename",
+      "property": "filename",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 20
+    },
+    {
+      "item": "function_call_output",
+      "item_index": 3,
+      "contextual_path": "(resource) responses > (model) response_input_file > (schema) > (property) prompt_cache_breakpoint",
+      "oas_ref": "#/components/schemas/InputFileContent/properties/prompt_cache_breakpoint",
+      "property": "prompt_cache_breakpoint",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 21
+    },
+    {
+      "item": "function_call_output",
+      "item_index": 3,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 3 > (property) caller",
+      "oas_ref": "#/components/schemas/FunctionToolCallOutput/properties/caller",
+      "property": "caller",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 22
+    },
+    {
+      "item": "function_call_output",
+      "item_index": 3,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 3 > (property) created_by",
+      "oas_ref": "#/components/schemas/FunctionToolCallOutputResource/allOf/1/properties/created_by",
+      "property": "created_by",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 23
+    },
+    {
+      "item": "web_search_call",
+      "item_index": 4,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 4 > (property) action > (variant) 0 > (property) queries",
+      "oas_ref": "#/components/schemas/WebSearchActionSearch/properties/queries",
+      "property": "queries",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 24
+    },
+    {
+      "item": "web_search_call",
+      "item_index": 4,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 4 > (property) action > (variant) 0 > (property) query",
+      "oas_ref": "#/components/schemas/WebSearchActionSearch/properties/query",
+      "property": "query",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 25
+    },
+    {
+      "item": "web_search_call",
+      "item_index": 4,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 4 > (property) action > (variant) 0 > (property) sources",
+      "oas_ref": "#/components/schemas/WebSearchActionSearch/properties/sources",
+      "property": "sources",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 26
+    },
+    {
+      "item": "web_search_call",
+      "item_index": 4,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 4 > (property) action > (variant) 1 > (property) url",
+      "oas_ref": "#/components/schemas/WebSearchActionOpenPage/properties/url",
+      "property": "url",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 27
+    },
+    {
+      "item": "computer_call",
+      "item_index": 5,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 5 > (property) pending_safety_checks > (items) > (property) code",
+      "oas_ref": "#/components/schemas/ComputerCallSafetyCheckParam/properties/code",
+      "property": "code",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 28
+    },
+    {
+      "item": "computer_call",
+      "item_index": 5,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 5 > (property) pending_safety_checks > (items) > (property) message",
+      "oas_ref": "#/components/schemas/ComputerCallSafetyCheckParam/properties/message",
+      "property": "message",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 29
+    },
+    {
+      "item": "computer_call",
+      "item_index": 5,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 5 > (property) action",
+      "oas_ref": "#/components/schemas/ComputerToolCall/properties/action",
+      "property": "action",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 30
+    },
+    {
+      "item": "computer_call",
+      "item_index": 5,
+      "contextual_path": "(resource) responses > (model) computer_action > (schema) > (variant) 0 > (property) keys",
+      "oas_ref": "#/components/schemas/ClickParam/properties/keys",
+      "property": "keys",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 31
+    },
+    {
+      "item": "computer_call",
+      "item_index": 5,
+      "contextual_path": "(resource) responses > (model) computer_action > (schema) > (variant) 1 > (property) keys",
+      "oas_ref": "#/components/schemas/DoubleClickAction/properties/keys",
+      "property": "keys",
+      "optional": false,
+      "nullable": true,
+      "category": "required_nullable",
+      "legal_states": [
+        "null",
+        "present"
+      ],
+      "ordinal": 32
+    },
+    {
+      "item": "computer_call",
+      "item_index": 5,
+      "contextual_path": "(resource) responses > (model) computer_action > (schema) > (variant) 2 > (property) keys",
+      "oas_ref": "#/components/schemas/DragParam/properties/keys",
+      "property": "keys",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 33
+    },
+    {
+      "item": "computer_call",
+      "item_index": 5,
+      "contextual_path": "(resource) responses > (model) computer_action > (schema) > (variant) 4 > (property) keys",
+      "oas_ref": "#/components/schemas/MoveParam/properties/keys",
+      "property": "keys",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 34
+    },
+    {
+      "item": "computer_call",
+      "item_index": 5,
+      "contextual_path": "(resource) responses > (model) computer_action > (schema) > (variant) 6 > (property) keys",
+      "oas_ref": "#/components/schemas/ScrollParam/properties/keys",
+      "property": "keys",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 35
+    },
+    {
+      "item": "computer_call",
+      "item_index": 5,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 5 > (property) actions",
+      "oas_ref": "#/components/schemas/ComputerToolCall/properties/actions",
+      "property": "actions",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 36
+    },
+    {
+      "item": "computer_call_output",
+      "item_index": 6,
+      "contextual_path": "(resource) responses > (model) response_computer_tool_call_output_screenshot > (schema) > (property) file_id",
+      "oas_ref": "#/components/schemas/ComputerScreenshotImage/properties/file_id",
+      "property": "file_id",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 37
+    },
+    {
+      "item": "computer_call_output",
+      "item_index": 6,
+      "contextual_path": "(resource) responses > (model) response_computer_tool_call_output_screenshot > (schema) > (property) image_url",
+      "oas_ref": "#/components/schemas/ComputerScreenshotImage/properties/image_url",
+      "property": "image_url",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 38
+    },
+    {
+      "item": "computer_call_output",
+      "item_index": 6,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 6 > (property) acknowledged_safety_checks",
+      "oas_ref": "#/components/schemas/ComputerToolCallOutput/properties/acknowledged_safety_checks",
+      "property": "acknowledged_safety_checks",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 39
+    },
+    {
+      "item": "computer_call_output",
+      "item_index": 6,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 6 > (property) acknowledged_safety_checks > (items) > (property) code",
+      "oas_ref": "#/components/schemas/ComputerCallSafetyCheckParam/properties/code",
+      "property": "code",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 40
+    },
+    {
+      "item": "computer_call_output",
+      "item_index": 6,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 6 > (property) acknowledged_safety_checks > (items) > (property) message",
+      "oas_ref": "#/components/schemas/ComputerCallSafetyCheckParam/properties/message",
+      "property": "message",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 41
+    },
+    {
+      "item": "computer_call_output",
+      "item_index": 6,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 6 > (property) created_by",
+      "oas_ref": "#/components/schemas/ComputerToolCallOutputResource/allOf/1/properties/created_by",
+      "property": "created_by",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 42
+    },
+    {
+      "item": "reasoning",
+      "item_index": 7,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 7 > (property) content",
+      "oas_ref": "#/components/schemas/ReasoningItem/properties/content",
+      "property": "content",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 43
+    },
+    {
+      "item": "reasoning",
+      "item_index": 7,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 7 > (property) encrypted_content",
+      "oas_ref": "#/components/schemas/ReasoningItem/properties/encrypted_content",
+      "property": "encrypted_content",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 44
+    },
+    {
+      "item": "reasoning",
+      "item_index": 7,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 7 > (property) status",
+      "oas_ref": "#/components/schemas/ReasoningItem/properties/status",
+      "property": "status",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 45
+    },
+    {
+      "item": "tool_search_call",
+      "item_index": 10,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 10 > (property) call_id",
+      "oas_ref": "#/components/schemas/ToolSearchCall/properties/call_id",
+      "property": "call_id",
+      "optional": false,
+      "nullable": true,
+      "category": "required_nullable",
+      "legal_states": [
+        "null",
+        "present"
+      ],
+      "ordinal": 46
+    },
+    {
+      "item": "tool_search_call",
+      "item_index": 10,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 10 > (property) created_by",
+      "oas_ref": "#/components/schemas/ToolSearchCall/properties/created_by",
+      "property": "created_by",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 47
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) call_id",
+      "oas_ref": "#/components/schemas/ToolSearchOutput/properties/call_id",
+      "property": "call_id",
+      "optional": false,
+      "nullable": true,
+      "category": "required_nullable",
+      "legal_states": [
+        "null",
+        "present"
+      ],
+      "ordinal": 48
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 0 > (property) parameters",
+      "oas_ref": "#/components/schemas/FunctionTool/properties/parameters",
+      "property": "parameters",
+      "optional": false,
+      "nullable": true,
+      "category": "required_nullable",
+      "legal_states": [
+        "null",
+        "present"
+      ],
+      "ordinal": 49
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 0 > (property) strict",
+      "oas_ref": "#/components/schemas/FunctionTool/properties/strict",
+      "property": "strict",
+      "optional": false,
+      "nullable": true,
+      "category": "required_nullable",
+      "legal_states": [
+        "null",
+        "present"
+      ],
+      "ordinal": 50
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 0 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/FunctionTool/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 51
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 0 > (property) defer_loading",
+      "oas_ref": "#/components/schemas/FunctionTool/properties/defer_loading",
+      "property": "defer_loading",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 52
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 0 > (property) description",
+      "oas_ref": "#/components/schemas/FunctionTool/properties/description",
+      "property": "description",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 53
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 0 > (property) output_schema",
+      "oas_ref": "#/components/schemas/FunctionTool/properties/output_schema",
+      "property": "output_schema",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 54
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 1 > (property) filters",
+      "oas_ref": "#/components/schemas/FileSearchTool/properties/filters",
+      "property": "filters",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 55
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 1 > (property) max_num_results",
+      "oas_ref": "#/components/schemas/FileSearchTool/properties/max_num_results",
+      "property": "max_num_results",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 56
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 1 > (property) ranking_options",
+      "oas_ref": "#/components/schemas/FileSearchTool/properties/ranking_options",
+      "property": "ranking_options",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 57
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 1 > (property) ranking_options > (property) hybrid_search",
+      "oas_ref": "#/components/schemas/RankingOptions/properties/hybrid_search",
+      "property": "hybrid_search",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 58
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 1 > (property) ranking_options > (property) ranker",
+      "oas_ref": "#/components/schemas/RankingOptions/properties/ranker",
+      "property": "ranker",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 59
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 1 > (property) ranking_options > (property) score_threshold",
+      "oas_ref": "#/components/schemas/RankingOptions/properties/score_threshold",
+      "property": "score_threshold",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 60
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 4 > (property) filters",
+      "oas_ref": "#/components/schemas/WebSearchTool/properties/filters",
+      "property": "filters",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 61
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 4 > (property) filters > (property) allowed_domains",
+      "oas_ref": "#/components/schemas/WebSearchTool/properties/filters/anyOf/0/properties/allowed_domains",
+      "property": "allowed_domains",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 62
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 4 > (property) search_context_size",
+      "oas_ref": "#/components/schemas/WebSearchTool/properties/search_context_size",
+      "property": "search_context_size",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 63
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 4 > (property) user_location",
+      "oas_ref": "#/components/schemas/WebSearchTool/properties/user_location",
+      "property": "user_location",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 64
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 4 > (property) user_location > (property) city",
+      "oas_ref": "#/components/schemas/WebSearchApproximateLocation/anyOf/0/properties/city",
+      "property": "city",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 65
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 4 > (property) user_location > (property) country",
+      "oas_ref": "#/components/schemas/WebSearchApproximateLocation/anyOf/0/properties/country",
+      "property": "country",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 66
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 4 > (property) user_location > (property) region",
+      "oas_ref": "#/components/schemas/WebSearchApproximateLocation/anyOf/0/properties/region",
+      "property": "region",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 67
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 4 > (property) user_location > (property) timezone",
+      "oas_ref": "#/components/schemas/WebSearchApproximateLocation/anyOf/0/properties/timezone",
+      "property": "timezone",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 68
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 4 > (property) user_location > (property) type",
+      "oas_ref": "#/components/schemas/WebSearchApproximateLocation/anyOf/0/properties/type",
+      "property": "type",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 69
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/MCPTool/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 70
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) allowed_tools",
+      "oas_ref": "#/components/schemas/MCPTool/properties/allowed_tools",
+      "property": "allowed_tools",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 71
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) allowed_tools > (variant) 1 > (property) read_only",
+      "oas_ref": "#/components/schemas/MCPToolFilter/properties/read_only",
+      "property": "read_only",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 72
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) allowed_tools > (variant) 1 > (property) tool_names",
+      "oas_ref": "#/components/schemas/MCPToolFilter/properties/tool_names",
+      "property": "tool_names",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 73
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) authorization",
+      "oas_ref": "#/components/schemas/MCPTool/properties/authorization",
+      "property": "authorization",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 74
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) connector_id",
+      "oas_ref": "#/components/schemas/MCPTool/properties/connector_id",
+      "property": "connector_id",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 75
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) defer_loading",
+      "oas_ref": "#/components/schemas/MCPTool/properties/defer_loading",
+      "property": "defer_loading",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 76
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) headers",
+      "oas_ref": "#/components/schemas/MCPTool/properties/headers",
+      "property": "headers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 77
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) require_approval",
+      "oas_ref": "#/components/schemas/MCPTool/properties/require_approval",
+      "property": "require_approval",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 78
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) require_approval > (variant) 0 > (property) always",
+      "oas_ref": "#/components/schemas/MCPTool/properties/require_approval/anyOf/0/oneOf/0/properties/always",
+      "property": "always",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 79
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) require_approval > (variant) 0 > (property) always > (property) read_only",
+      "oas_ref": "#/components/schemas/MCPToolFilter/properties/read_only",
+      "property": "read_only",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 80
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) require_approval > (variant) 0 > (property) always > (property) tool_names",
+      "oas_ref": "#/components/schemas/MCPToolFilter/properties/tool_names",
+      "property": "tool_names",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 81
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) require_approval > (variant) 0 > (property) never",
+      "oas_ref": "#/components/schemas/MCPTool/properties/require_approval/anyOf/0/oneOf/0/properties/never",
+      "property": "never",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 82
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) require_approval > (variant) 0 > (property) never > (property) read_only",
+      "oas_ref": "#/components/schemas/MCPToolFilter/properties/read_only",
+      "property": "read_only",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 83
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) require_approval > (variant) 0 > (property) never > (property) tool_names",
+      "oas_ref": "#/components/schemas/MCPToolFilter/properties/tool_names",
+      "property": "tool_names",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 84
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) server_description",
+      "oas_ref": "#/components/schemas/MCPTool/properties/server_description",
+      "property": "server_description",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 85
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) server_url",
+      "oas_ref": "#/components/schemas/MCPTool/properties/server_url",
+      "property": "server_url",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 86
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 5 > (property) tunnel_id",
+      "oas_ref": "#/components/schemas/MCPTool/properties/tunnel_id",
+      "property": "tunnel_id",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 87
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 6 > (property) container > (variant) 1 > (property) file_ids",
+      "oas_ref": "#/components/schemas/AutoCodeInterpreterToolParam/properties/file_ids",
+      "property": "file_ids",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 88
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 6 > (property) container > (variant) 1 > (property) memory_limit",
+      "oas_ref": "#/components/schemas/AutoCodeInterpreterToolParam/properties/memory_limit",
+      "property": "memory_limit",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 89
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 6 > (property) container > (variant) 1 > (property) network_policy",
+      "oas_ref": "#/components/schemas/AutoCodeInterpreterToolParam/properties/network_policy",
+      "property": "network_policy",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 90
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) container_network_policy_allowlist > (schema) > (property) domain_secrets",
+      "oas_ref": "#/components/schemas/ContainerNetworkPolicyAllowlistParam/properties/domain_secrets",
+      "property": "domain_secrets",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 91
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 6 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/CodeInterpreterTool/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 92
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 8 > (property) action",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/action",
+      "property": "action",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 93
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 8 > (property) background",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/background",
+      "property": "background",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 94
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 8 > (property) input_fidelity",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/input_fidelity",
+      "property": "input_fidelity",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 95
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 8 > (property) input_image_mask",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/input_image_mask",
+      "property": "input_image_mask",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 96
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 8 > (property) input_image_mask > (property) file_id",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/input_image_mask/properties/file_id",
+      "property": "file_id",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 97
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 8 > (property) input_image_mask > (property) image_url",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/input_image_mask/properties/image_url",
+      "property": "image_url",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 98
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 8 > (property) model",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/model",
+      "property": "model",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 99
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 8 > (property) moderation",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/moderation",
+      "property": "moderation",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 100
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 8 > (property) output_compression",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/output_compression",
+      "property": "output_compression",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 101
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 8 > (property) output_format",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/output_format",
+      "property": "output_format",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 102
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 8 > (property) partial_images",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/partial_images",
+      "property": "partial_images",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 103
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 8 > (property) quality",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/quality",
+      "property": "quality",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 104
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 8 > (property) size",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/size",
+      "property": "size",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 105
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 10 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/FunctionShellToolParam/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 106
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 10 > (property) environment",
+      "oas_ref": "#/components/schemas/FunctionShellToolParam/properties/environment",
+      "property": "environment",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 107
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) container_auto > (schema) > (property) file_ids",
+      "oas_ref": "#/components/schemas/ContainerAutoParam/properties/file_ids",
+      "property": "file_ids",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 108
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) container_auto > (schema) > (property) memory_limit",
+      "oas_ref": "#/components/schemas/ContainerAutoParam/properties/memory_limit",
+      "property": "memory_limit",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 109
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) container_auto > (schema) > (property) network_policy",
+      "oas_ref": "#/components/schemas/ContainerAutoParam/properties/network_policy",
+      "property": "network_policy",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 110
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) container_auto > (schema) > (property) skills",
+      "oas_ref": "#/components/schemas/ContainerAutoParam/properties/skills",
+      "property": "skills",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 111
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) skill_reference > (schema) > (property) version",
+      "oas_ref": "#/components/schemas/SkillReferenceParam/properties/version",
+      "property": "version",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 112
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) local_environment > (schema) > (property) skills",
+      "oas_ref": "#/components/schemas/LocalEnvironmentParam/properties/skills",
+      "property": "skills",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 113
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 11 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 114
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 11 > (property) defer_loading",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/defer_loading",
+      "property": "defer_loading",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 115
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 11 > (property) description",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/description",
+      "property": "description",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 116
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 11 > (property) format",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/format",
+      "property": "format",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 117
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/FunctionToolParam/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 118
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) defer_loading",
+      "oas_ref": "#/components/schemas/FunctionToolParam/properties/defer_loading",
+      "property": "defer_loading",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 119
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) description",
+      "oas_ref": "#/components/schemas/FunctionToolParam/properties/description",
+      "property": "description",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 120
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) output_schema",
+      "oas_ref": "#/components/schemas/FunctionToolParam/properties/output_schema",
+      "property": "output_schema",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 121
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) parameters",
+      "oas_ref": "#/components/schemas/FunctionToolParam/properties/parameters",
+      "property": "parameters",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 122
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) strict",
+      "oas_ref": "#/components/schemas/FunctionToolParam/properties/strict",
+      "property": "strict",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 123
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 1 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 124
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 1 > (property) defer_loading",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/defer_loading",
+      "property": "defer_loading",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 125
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 1 > (property) description",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/description",
+      "property": "description",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 126
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 1 > (property) format",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/format",
+      "property": "format",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 127
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 13 > (property) description",
+      "oas_ref": "#/components/schemas/ToolSearchToolParam/properties/description",
+      "property": "description",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 128
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 13 > (property) execution",
+      "oas_ref": "#/components/schemas/ToolSearchToolParam/properties/execution",
+      "property": "execution",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 129
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 13 > (property) parameters",
+      "oas_ref": "#/components/schemas/ToolSearchToolParam/properties/parameters",
+      "property": "parameters",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 130
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 14 > (property) search_content_types",
+      "oas_ref": "#/components/schemas/WebSearchPreviewTool/properties/search_content_types",
+      "property": "search_content_types",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 131
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 14 > (property) search_context_size",
+      "oas_ref": "#/components/schemas/WebSearchPreviewTool/properties/search_context_size",
+      "property": "search_context_size",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 132
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 14 > (property) user_location",
+      "oas_ref": "#/components/schemas/WebSearchPreviewTool/properties/user_location",
+      "property": "user_location",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 133
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 14 > (property) user_location > (property) city",
+      "oas_ref": "#/components/schemas/ApproximateLocation/properties/city",
+      "property": "city",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 134
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 14 > (property) user_location > (property) country",
+      "oas_ref": "#/components/schemas/ApproximateLocation/properties/country",
+      "property": "country",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 135
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 14 > (property) user_location > (property) region",
+      "oas_ref": "#/components/schemas/ApproximateLocation/properties/region",
+      "property": "region",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 136
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 14 > (property) user_location > (property) timezone",
+      "oas_ref": "#/components/schemas/ApproximateLocation/properties/timezone",
+      "property": "timezone",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 137
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) tools > (items) > (variant) 15 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/ApplyPatchToolParam/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 138
+    },
+    {
+      "item": "tool_search_output",
+      "item_index": 11,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 11 > (property) created_by",
+      "oas_ref": "#/components/schemas/ToolSearchOutput/properties/created_by",
+      "property": "created_by",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 139
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) parameters",
+      "oas_ref": "#/components/schemas/FunctionTool/properties/parameters",
+      "property": "parameters",
+      "optional": false,
+      "nullable": true,
+      "category": "required_nullable",
+      "legal_states": [
+        "null",
+        "present"
+      ],
+      "ordinal": 140
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) strict",
+      "oas_ref": "#/components/schemas/FunctionTool/properties/strict",
+      "property": "strict",
+      "optional": false,
+      "nullable": true,
+      "category": "required_nullable",
+      "legal_states": [
+        "null",
+        "present"
+      ],
+      "ordinal": 141
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/FunctionTool/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 142
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) defer_loading",
+      "oas_ref": "#/components/schemas/FunctionTool/properties/defer_loading",
+      "property": "defer_loading",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 143
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) description",
+      "oas_ref": "#/components/schemas/FunctionTool/properties/description",
+      "property": "description",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 144
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) output_schema",
+      "oas_ref": "#/components/schemas/FunctionTool/properties/output_schema",
+      "property": "output_schema",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 145
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 1 > (property) filters",
+      "oas_ref": "#/components/schemas/FileSearchTool/properties/filters",
+      "property": "filters",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 146
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 1 > (property) max_num_results",
+      "oas_ref": "#/components/schemas/FileSearchTool/properties/max_num_results",
+      "property": "max_num_results",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 147
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 1 > (property) ranking_options",
+      "oas_ref": "#/components/schemas/FileSearchTool/properties/ranking_options",
+      "property": "ranking_options",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 148
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 1 > (property) ranking_options > (property) hybrid_search",
+      "oas_ref": "#/components/schemas/RankingOptions/properties/hybrid_search",
+      "property": "hybrid_search",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 149
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 1 > (property) ranking_options > (property) ranker",
+      "oas_ref": "#/components/schemas/RankingOptions/properties/ranker",
+      "property": "ranker",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 150
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 1 > (property) ranking_options > (property) score_threshold",
+      "oas_ref": "#/components/schemas/RankingOptions/properties/score_threshold",
+      "property": "score_threshold",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 151
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 4 > (property) filters",
+      "oas_ref": "#/components/schemas/WebSearchTool/properties/filters",
+      "property": "filters",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 152
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 4 > (property) filters > (property) allowed_domains",
+      "oas_ref": "#/components/schemas/WebSearchTool/properties/filters/anyOf/0/properties/allowed_domains",
+      "property": "allowed_domains",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 153
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 4 > (property) search_context_size",
+      "oas_ref": "#/components/schemas/WebSearchTool/properties/search_context_size",
+      "property": "search_context_size",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 154
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 4 > (property) user_location",
+      "oas_ref": "#/components/schemas/WebSearchTool/properties/user_location",
+      "property": "user_location",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 155
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 4 > (property) user_location > (property) city",
+      "oas_ref": "#/components/schemas/WebSearchApproximateLocation/anyOf/0/properties/city",
+      "property": "city",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 156
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 4 > (property) user_location > (property) country",
+      "oas_ref": "#/components/schemas/WebSearchApproximateLocation/anyOf/0/properties/country",
+      "property": "country",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 157
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 4 > (property) user_location > (property) region",
+      "oas_ref": "#/components/schemas/WebSearchApproximateLocation/anyOf/0/properties/region",
+      "property": "region",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 158
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 4 > (property) user_location > (property) timezone",
+      "oas_ref": "#/components/schemas/WebSearchApproximateLocation/anyOf/0/properties/timezone",
+      "property": "timezone",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 159
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 4 > (property) user_location > (property) type",
+      "oas_ref": "#/components/schemas/WebSearchApproximateLocation/anyOf/0/properties/type",
+      "property": "type",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 160
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/MCPTool/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 161
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) allowed_tools",
+      "oas_ref": "#/components/schemas/MCPTool/properties/allowed_tools",
+      "property": "allowed_tools",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 162
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) allowed_tools > (variant) 1 > (property) read_only",
+      "oas_ref": "#/components/schemas/MCPToolFilter/properties/read_only",
+      "property": "read_only",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 163
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) allowed_tools > (variant) 1 > (property) tool_names",
+      "oas_ref": "#/components/schemas/MCPToolFilter/properties/tool_names",
+      "property": "tool_names",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 164
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) authorization",
+      "oas_ref": "#/components/schemas/MCPTool/properties/authorization",
+      "property": "authorization",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 165
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) connector_id",
+      "oas_ref": "#/components/schemas/MCPTool/properties/connector_id",
+      "property": "connector_id",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 166
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) defer_loading",
+      "oas_ref": "#/components/schemas/MCPTool/properties/defer_loading",
+      "property": "defer_loading",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 167
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) headers",
+      "oas_ref": "#/components/schemas/MCPTool/properties/headers",
+      "property": "headers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 168
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) require_approval",
+      "oas_ref": "#/components/schemas/MCPTool/properties/require_approval",
+      "property": "require_approval",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 169
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) require_approval > (variant) 0 > (property) always",
+      "oas_ref": "#/components/schemas/MCPTool/properties/require_approval/anyOf/0/oneOf/0/properties/always",
+      "property": "always",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 170
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) require_approval > (variant) 0 > (property) always > (property) read_only",
+      "oas_ref": "#/components/schemas/MCPToolFilter/properties/read_only",
+      "property": "read_only",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 171
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) require_approval > (variant) 0 > (property) always > (property) tool_names",
+      "oas_ref": "#/components/schemas/MCPToolFilter/properties/tool_names",
+      "property": "tool_names",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 172
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) require_approval > (variant) 0 > (property) never",
+      "oas_ref": "#/components/schemas/MCPTool/properties/require_approval/anyOf/0/oneOf/0/properties/never",
+      "property": "never",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 173
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) require_approval > (variant) 0 > (property) never > (property) read_only",
+      "oas_ref": "#/components/schemas/MCPToolFilter/properties/read_only",
+      "property": "read_only",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 174
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) require_approval > (variant) 0 > (property) never > (property) tool_names",
+      "oas_ref": "#/components/schemas/MCPToolFilter/properties/tool_names",
+      "property": "tool_names",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 175
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) server_description",
+      "oas_ref": "#/components/schemas/MCPTool/properties/server_description",
+      "property": "server_description",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 176
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) server_url",
+      "oas_ref": "#/components/schemas/MCPTool/properties/server_url",
+      "property": "server_url",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 177
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 5 > (property) tunnel_id",
+      "oas_ref": "#/components/schemas/MCPTool/properties/tunnel_id",
+      "property": "tunnel_id",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 178
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 6 > (property) container > (variant) 1 > (property) file_ids",
+      "oas_ref": "#/components/schemas/AutoCodeInterpreterToolParam/properties/file_ids",
+      "property": "file_ids",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 179
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 6 > (property) container > (variant) 1 > (property) memory_limit",
+      "oas_ref": "#/components/schemas/AutoCodeInterpreterToolParam/properties/memory_limit",
+      "property": "memory_limit",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 180
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 6 > (property) container > (variant) 1 > (property) network_policy",
+      "oas_ref": "#/components/schemas/AutoCodeInterpreterToolParam/properties/network_policy",
+      "property": "network_policy",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 181
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) container_network_policy_allowlist > (schema) > (property) domain_secrets",
+      "oas_ref": "#/components/schemas/ContainerNetworkPolicyAllowlistParam/properties/domain_secrets",
+      "property": "domain_secrets",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 182
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 6 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/CodeInterpreterTool/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 183
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 8 > (property) action",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/action",
+      "property": "action",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 184
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 8 > (property) background",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/background",
+      "property": "background",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 185
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 8 > (property) input_fidelity",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/input_fidelity",
+      "property": "input_fidelity",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 186
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 8 > (property) input_image_mask",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/input_image_mask",
+      "property": "input_image_mask",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 187
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 8 > (property) input_image_mask > (property) file_id",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/input_image_mask/properties/file_id",
+      "property": "file_id",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 188
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 8 > (property) input_image_mask > (property) image_url",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/input_image_mask/properties/image_url",
+      "property": "image_url",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 189
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 8 > (property) model",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/model",
+      "property": "model",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 190
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 8 > (property) moderation",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/moderation",
+      "property": "moderation",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 191
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 8 > (property) output_compression",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/output_compression",
+      "property": "output_compression",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 192
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 8 > (property) output_format",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/output_format",
+      "property": "output_format",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 193
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 8 > (property) partial_images",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/partial_images",
+      "property": "partial_images",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 194
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 8 > (property) quality",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/quality",
+      "property": "quality",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 195
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 8 > (property) size",
+      "oas_ref": "#/components/schemas/ImageGenTool/properties/size",
+      "property": "size",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 196
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 10 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/FunctionShellToolParam/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 197
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 10 > (property) environment",
+      "oas_ref": "#/components/schemas/FunctionShellToolParam/properties/environment",
+      "property": "environment",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 198
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) container_auto > (schema) > (property) file_ids",
+      "oas_ref": "#/components/schemas/ContainerAutoParam/properties/file_ids",
+      "property": "file_ids",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 199
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) container_auto > (schema) > (property) memory_limit",
+      "oas_ref": "#/components/schemas/ContainerAutoParam/properties/memory_limit",
+      "property": "memory_limit",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 200
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) container_auto > (schema) > (property) network_policy",
+      "oas_ref": "#/components/schemas/ContainerAutoParam/properties/network_policy",
+      "property": "network_policy",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 201
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) container_auto > (schema) > (property) skills",
+      "oas_ref": "#/components/schemas/ContainerAutoParam/properties/skills",
+      "property": "skills",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 202
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) skill_reference > (schema) > (property) version",
+      "oas_ref": "#/components/schemas/SkillReferenceParam/properties/version",
+      "property": "version",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 203
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) local_environment > (schema) > (property) skills",
+      "oas_ref": "#/components/schemas/LocalEnvironmentParam/properties/skills",
+      "property": "skills",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 204
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 11 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 205
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 11 > (property) defer_loading",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/defer_loading",
+      "property": "defer_loading",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 206
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 11 > (property) description",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/description",
+      "property": "description",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 207
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 11 > (property) format",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/format",
+      "property": "format",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 208
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/FunctionToolParam/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 209
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) defer_loading",
+      "oas_ref": "#/components/schemas/FunctionToolParam/properties/defer_loading",
+      "property": "defer_loading",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 210
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) description",
+      "oas_ref": "#/components/schemas/FunctionToolParam/properties/description",
+      "property": "description",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 211
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) output_schema",
+      "oas_ref": "#/components/schemas/FunctionToolParam/properties/output_schema",
+      "property": "output_schema",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 212
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) parameters",
+      "oas_ref": "#/components/schemas/FunctionToolParam/properties/parameters",
+      "property": "parameters",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 213
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 0 > (property) strict",
+      "oas_ref": "#/components/schemas/FunctionToolParam/properties/strict",
+      "property": "strict",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 214
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 1 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 215
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 1 > (property) defer_loading",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/defer_loading",
+      "property": "defer_loading",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 216
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 1 > (property) description",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/description",
+      "property": "description",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 217
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 12 > (property) tools > (items) > (variant) 1 > (property) format",
+      "oas_ref": "#/components/schemas/CustomToolParam/properties/format",
+      "property": "format",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 218
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 13 > (property) description",
+      "oas_ref": "#/components/schemas/ToolSearchToolParam/properties/description",
+      "property": "description",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 219
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 13 > (property) execution",
+      "oas_ref": "#/components/schemas/ToolSearchToolParam/properties/execution",
+      "property": "execution",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 220
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 13 > (property) parameters",
+      "oas_ref": "#/components/schemas/ToolSearchToolParam/properties/parameters",
+      "property": "parameters",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 221
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 14 > (property) search_content_types",
+      "oas_ref": "#/components/schemas/WebSearchPreviewTool/properties/search_content_types",
+      "property": "search_content_types",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 222
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 14 > (property) search_context_size",
+      "oas_ref": "#/components/schemas/WebSearchPreviewTool/properties/search_context_size",
+      "property": "search_context_size",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 223
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 14 > (property) user_location",
+      "oas_ref": "#/components/schemas/WebSearchPreviewTool/properties/user_location",
+      "property": "user_location",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 224
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 14 > (property) user_location > (property) city",
+      "oas_ref": "#/components/schemas/ApproximateLocation/properties/city",
+      "property": "city",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 225
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 14 > (property) user_location > (property) country",
+      "oas_ref": "#/components/schemas/ApproximateLocation/properties/country",
+      "property": "country",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 226
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 14 > (property) user_location > (property) region",
+      "oas_ref": "#/components/schemas/ApproximateLocation/properties/region",
+      "property": "region",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 227
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 14 > (property) user_location > (property) timezone",
+      "oas_ref": "#/components/schemas/ApproximateLocation/properties/timezone",
+      "property": "timezone",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 228
+    },
+    {
+      "item": "additional_tools",
+      "item_index": 12,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 12 > (property) tools > (items) > (variant) 15 > (property) allowed_callers",
+      "oas_ref": "#/components/schemas/ApplyPatchToolParam/properties/allowed_callers",
+      "property": "allowed_callers",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 229
+    },
+    {
+      "item": "compaction",
+      "item_index": 13,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 13 > (property) created_by",
+      "oas_ref": "#/components/schemas/CompactionBody/properties/created_by",
+      "property": "created_by",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 230
+    },
+    {
+      "item": "image_generation_call",
+      "item_index": 14,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 14 > (property) result",
+      "oas_ref": "#/components/schemas/ImageGenToolCall/properties/result",
+      "property": "result",
+      "optional": false,
+      "nullable": true,
+      "category": "required_nullable",
+      "legal_states": [
+        "null",
+        "present"
+      ],
+      "ordinal": 231
+    },
+    {
+      "item": "code_interpreter_call",
+      "item_index": 15,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 15 > (property) code",
+      "oas_ref": "#/components/schemas/CodeInterpreterToolCall/properties/code",
+      "property": "code",
+      "optional": false,
+      "nullable": true,
+      "category": "required_nullable",
+      "legal_states": [
+        "null",
+        "present"
+      ],
+      "ordinal": 232
+    },
+    {
+      "item": "code_interpreter_call",
+      "item_index": 15,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 15 > (property) outputs",
+      "oas_ref": "#/components/schemas/CodeInterpreterToolCall/properties/outputs",
+      "property": "outputs",
+      "optional": false,
+      "nullable": true,
+      "category": "required_nullable",
+      "legal_states": [
+        "null",
+        "present"
+      ],
+      "ordinal": 233
+    },
+    {
+      "item": "local_shell_call",
+      "item_index": 16,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 16 > (property) action > (property) timeout_ms",
+      "oas_ref": "#/components/schemas/LocalShellExecAction/properties/timeout_ms",
+      "property": "timeout_ms",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 234
+    },
+    {
+      "item": "local_shell_call",
+      "item_index": 16,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 16 > (property) action > (property) user",
+      "oas_ref": "#/components/schemas/LocalShellExecAction/properties/user",
+      "property": "user",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 235
+    },
+    {
+      "item": "local_shell_call",
+      "item_index": 16,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 16 > (property) action > (property) working_directory",
+      "oas_ref": "#/components/schemas/LocalShellExecAction/properties/working_directory",
+      "property": "working_directory",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 236
+    },
+    {
+      "item": "local_shell_call_output",
+      "item_index": 17,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 17 > (property) status",
+      "oas_ref": "#/components/schemas/LocalShellToolCallOutput/properties/status",
+      "property": "status",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 237
+    },
+    {
+      "item": "shell_call",
+      "item_index": 18,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 18 > (property) action > (property) max_output_length",
+      "oas_ref": "#/components/schemas/FunctionShellAction/properties/max_output_length",
+      "property": "max_output_length",
+      "optional": false,
+      "nullable": true,
+      "category": "required_nullable",
+      "legal_states": [
+        "null",
+        "present"
+      ],
+      "ordinal": 238
+    },
+    {
+      "item": "shell_call",
+      "item_index": 18,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 18 > (property) action > (property) timeout_ms",
+      "oas_ref": "#/components/schemas/FunctionShellAction/properties/timeout_ms",
+      "property": "timeout_ms",
+      "optional": false,
+      "nullable": true,
+      "category": "required_nullable",
+      "legal_states": [
+        "null",
+        "present"
+      ],
+      "ordinal": 239
+    },
+    {
+      "item": "shell_call",
+      "item_index": 18,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 18 > (property) environment",
+      "oas_ref": "#/components/schemas/FunctionShellCall/properties/environment",
+      "property": "environment",
+      "optional": false,
+      "nullable": true,
+      "category": "required_nullable",
+      "legal_states": [
+        "null",
+        "present"
+      ],
+      "ordinal": 240
+    },
+    {
+      "item": "shell_call",
+      "item_index": 18,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 18 > (property) caller",
+      "oas_ref": "#/components/schemas/FunctionShellCall/properties/caller",
+      "property": "caller",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 241
+    },
+    {
+      "item": "shell_call",
+      "item_index": 18,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 18 > (property) created_by",
+      "oas_ref": "#/components/schemas/FunctionShellCall/properties/created_by",
+      "property": "created_by",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 242
+    },
+    {
+      "item": "shell_call_output",
+      "item_index": 19,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 19 > (property) max_output_length",
+      "oas_ref": "#/components/schemas/FunctionShellCallOutput/properties/max_output_length",
+      "property": "max_output_length",
+      "optional": false,
+      "nullable": true,
+      "category": "required_nullable",
+      "legal_states": [
+        "null",
+        "present"
+      ],
+      "ordinal": 243
+    },
+    {
+      "item": "shell_call_output",
+      "item_index": 19,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 19 > (property) output > (items) > (property) created_by",
+      "oas_ref": "#/components/schemas/FunctionShellCallOutputContent/properties/created_by",
+      "property": "created_by",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 244
+    },
+    {
+      "item": "shell_call_output",
+      "item_index": 19,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 19 > (property) caller",
+      "oas_ref": "#/components/schemas/FunctionShellCallOutput/properties/caller",
+      "property": "caller",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 245
+    },
+    {
+      "item": "shell_call_output",
+      "item_index": 19,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 19 > (property) created_by",
+      "oas_ref": "#/components/schemas/FunctionShellCallOutput/properties/created_by",
+      "property": "created_by",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 246
+    },
+    {
+      "item": "apply_patch_call",
+      "item_index": 20,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 20 > (property) caller",
+      "oas_ref": "#/components/schemas/ApplyPatchToolCall/properties/caller",
+      "property": "caller",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 247
+    },
+    {
+      "item": "apply_patch_call",
+      "item_index": 20,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 20 > (property) created_by",
+      "oas_ref": "#/components/schemas/ApplyPatchToolCall/properties/created_by",
+      "property": "created_by",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 248
+    },
+    {
+      "item": "apply_patch_call_output",
+      "item_index": 21,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 21 > (property) caller",
+      "oas_ref": "#/components/schemas/ApplyPatchToolCallOutput/properties/caller",
+      "property": "caller",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 249
+    },
+    {
+      "item": "apply_patch_call_output",
+      "item_index": 21,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 21 > (property) created_by",
+      "oas_ref": "#/components/schemas/ApplyPatchToolCallOutput/properties/created_by",
+      "property": "created_by",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 250
+    },
+    {
+      "item": "apply_patch_call_output",
+      "item_index": 21,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 21 > (property) output",
+      "oas_ref": "#/components/schemas/ApplyPatchToolCallOutput/properties/output",
+      "property": "output",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 251
+    },
+    {
+      "item": "mcp_call",
+      "item_index": 22,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 22 > (property) approval_request_id",
+      "oas_ref": "#/components/schemas/MCPToolCall/properties/approval_request_id",
+      "property": "approval_request_id",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 252
+    },
+    {
+      "item": "mcp_call",
+      "item_index": 22,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 22 > (property) error",
+      "oas_ref": "#/components/schemas/MCPToolCall/properties/error",
+      "property": "error",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 253
+    },
+    {
+      "item": "mcp_call",
+      "item_index": 22,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 22 > (property) output",
+      "oas_ref": "#/components/schemas/MCPToolCall/properties/output",
+      "property": "output",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 254
+    },
+    {
+      "item": "mcp_call",
+      "item_index": 22,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 22 > (property) status",
+      "oas_ref": "#/components/schemas/MCPToolCall/properties/status",
+      "property": "status",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 255
+    },
+    {
+      "item": "mcp_list_tools",
+      "item_index": 23,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 23 > (property) tools > (items) > (property) annotations",
+      "oas_ref": "#/components/schemas/MCPListToolsTool/properties/annotations",
+      "property": "annotations",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 256
+    },
+    {
+      "item": "mcp_list_tools",
+      "item_index": 23,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 23 > (property) tools > (items) > (property) description",
+      "oas_ref": "#/components/schemas/MCPListToolsTool/properties/description",
+      "property": "description",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 257
+    },
+    {
+      "item": "mcp_list_tools",
+      "item_index": 23,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 23 > (property) error",
+      "oas_ref": "#/components/schemas/MCPListTools/properties/error",
+      "property": "error",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 258
+    },
+    {
+      "item": "mcp_approval_response",
+      "item_index": 25,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 25 > (property) reason",
+      "oas_ref": "#/components/schemas/MCPApprovalResponseResource/properties/reason",
+      "property": "reason",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 259
+    },
+    {
+      "item": "custom_tool_call",
+      "item_index": 26,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 26 > (property) id",
+      "oas_ref": "#/components/schemas/CustomToolCall/properties/id",
+      "property": "id",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 260
+    },
+    {
+      "item": "custom_tool_call",
+      "item_index": 26,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 26 > (property) caller",
+      "oas_ref": "#/components/schemas/CustomToolCall/properties/caller",
+      "property": "caller",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 261
+    },
+    {
+      "item": "custom_tool_call",
+      "item_index": 26,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 26 > (property) namespace",
+      "oas_ref": "#/components/schemas/CustomToolCall/properties/namespace",
+      "property": "namespace",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 262
+    },
+    {
+      "item": "custom_tool_call_output",
+      "item_index": 27,
+      "contextual_path": "(resource) responses > (model) response_input_text > (schema) > (property) prompt_cache_breakpoint",
+      "oas_ref": "#/components/schemas/InputTextContent/properties/prompt_cache_breakpoint",
+      "property": "prompt_cache_breakpoint",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 263
+    },
+    {
+      "item": "custom_tool_call_output",
+      "item_index": 27,
+      "contextual_path": "(resource) responses > (model) response_input_image > (schema) > (property) file_id",
+      "oas_ref": "#/components/schemas/InputImageContent/properties/file_id",
+      "property": "file_id",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 264
+    },
+    {
+      "item": "custom_tool_call_output",
+      "item_index": 27,
+      "contextual_path": "(resource) responses > (model) response_input_image > (schema) > (property) image_url",
+      "oas_ref": "#/components/schemas/InputImageContent/properties/image_url",
+      "property": "image_url",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 265
+    },
+    {
+      "item": "custom_tool_call_output",
+      "item_index": 27,
+      "contextual_path": "(resource) responses > (model) response_input_image > (schema) > (property) prompt_cache_breakpoint",
+      "oas_ref": "#/components/schemas/InputImageContent/properties/prompt_cache_breakpoint",
+      "property": "prompt_cache_breakpoint",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 266
+    },
+    {
+      "item": "custom_tool_call_output",
+      "item_index": 27,
+      "contextual_path": "(resource) responses > (model) response_input_file > (schema) > (property) detail",
+      "oas_ref": "#/components/schemas/InputFileContent/properties/detail",
+      "property": "detail",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 267
+    },
+    {
+      "item": "custom_tool_call_output",
+      "item_index": 27,
+      "contextual_path": "(resource) responses > (model) response_input_file > (schema) > (property) file_data",
+      "oas_ref": "#/components/schemas/InputFileContent/properties/file_data",
+      "property": "file_data",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 268
+    },
+    {
+      "item": "custom_tool_call_output",
+      "item_index": 27,
+      "contextual_path": "(resource) responses > (model) response_input_file > (schema) > (property) file_id",
+      "oas_ref": "#/components/schemas/InputFileContent/properties/file_id",
+      "property": "file_id",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 269
+    },
+    {
+      "item": "custom_tool_call_output",
+      "item_index": 27,
+      "contextual_path": "(resource) responses > (model) response_input_file > (schema) > (property) file_url",
+      "oas_ref": "#/components/schemas/InputFileContent/properties/file_url",
+      "property": "file_url",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 270
+    },
+    {
+      "item": "custom_tool_call_output",
+      "item_index": 27,
+      "contextual_path": "(resource) responses > (model) response_input_file > (schema) > (property) filename",
+      "oas_ref": "#/components/schemas/InputFileContent/properties/filename",
+      "property": "filename",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 271
+    },
+    {
+      "item": "custom_tool_call_output",
+      "item_index": 27,
+      "contextual_path": "(resource) responses > (model) response_input_file > (schema) > (property) prompt_cache_breakpoint",
+      "oas_ref": "#/components/schemas/InputFileContent/properties/prompt_cache_breakpoint",
+      "property": "prompt_cache_breakpoint",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 272
+    },
+    {
+      "item": "custom_tool_call_output",
+      "item_index": 27,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 27 > (property) caller",
+      "oas_ref": "#/components/schemas/CustomToolCallOutput/properties/caller",
+      "property": "caller",
+      "optional": true,
+      "nullable": true,
+      "category": "optional_nullable",
+      "legal_states": [
+        "absent",
+        "null",
+        "present"
+      ],
+      "ordinal": 273
+    },
+    {
+      "item": "custom_tool_call_output",
+      "item_index": 27,
+      "contextual_path": "(resource) responses > (model) response_output_item > (schema) > (variant) 27 > (property) created_by",
+      "oas_ref": "#/components/schemas/CustomToolCallOutputResource/allOf/1/properties/created_by",
+      "property": "created_by",
+      "optional": true,
+      "nullable": false,
+      "category": "optional_non_nullable",
+      "legal_states": [
+        "absent",
+        "present"
+      ],
+      "ordinal": 274
+    }
+  ]
+}

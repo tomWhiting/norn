@@ -1,7 +1,10 @@
 use serde_json::{Value, json};
 
 use super::nested::nested_output_item_matrix;
-use super::{historical_replay_items, public_output_item_inventory, spawn_lifecycle_items};
+use super::{
+    historical_shape_matrix_items, minimal_output_item_inventory, public_output_item_inventory,
+    spawn_shape_matrix_items,
+};
 use crate::provider::openai::response_reconciler::{
     ReconcileUpdate, ResponseReconciler, ResponseReconciliationError,
 };
@@ -53,8 +56,8 @@ fn item_named(items: &[Value], item_type: &str) -> Result<Value, Box<dyn std::er
 
 #[test]
 fn every_hosted_or_inert_fixture_survives_done_and_terminal_authority() -> TestResult {
-    let expected = spawn_lifecycle_items("authority", "authority text");
-    assert_eq!(expected.len(), 22);
+    let expected = spawn_shape_matrix_items("authority", "authority text");
+    assert_eq!(expected.len(), 48);
     let mut reconciler = ResponseReconciler::new();
     for (index, raw) in expected.iter().cloned().enumerate() {
         let output_index = u64::try_from(index)?;
@@ -80,8 +83,8 @@ fn every_hosted_or_inert_fixture_survives_done_and_terminal_authority() -> TestR
 
 #[test]
 fn supported_function_and_custom_pairs_are_valid_completed_history() -> TestResult {
-    let expected = historical_replay_items("history", "historical text");
-    assert_eq!(expected.len(), 24);
+    let expected = historical_shape_matrix_items("history", "historical text");
+    assert_eq!(expected.len(), 52);
     let update = ResponseReconciler::new().ingest(&terminal(1, &expected))?;
     let ReconcileUpdate::Terminal { items, .. } = update else {
         return Err("expected terminal historical inventory".into());
@@ -121,7 +124,12 @@ fn unsupported_global_and_conditional_calls_fail_with_exact_raw_retention() -> T
     local_shell.insert("environment".to_owned(), json!({"type": "local"}));
     unsupported.push(Value::Object(local_shell.clone()));
 
-    assert_eq!(unsupported.len(), 6);
+    unsupported.push(item_named(
+        &minimal_output_item_inventory("unsupported_minimal"),
+        "shell_call",
+    )?);
+
+    assert_eq!(unsupported.len(), 7);
     for raw in unsupported {
         let error = terminal_error(&raw)?;
         assert!(matches!(

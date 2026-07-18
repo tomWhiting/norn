@@ -1,10 +1,12 @@
 use serde_json::{Value, json};
 
+pub(crate) use self::minimal::minimal_output_item_inventory;
 pub(crate) use self::tools::public_tool_definitions;
 use crate::provider::response_item::{
     ResponseItem, ResponseItemError, ResponseStreamProvenance, ResponseTranscriptItem,
 };
 
+mod minimal;
 mod nested;
 mod nested_persistence_tests;
 mod reconciler_tests;
@@ -389,6 +391,72 @@ pub(crate) fn historical_replay_items(id_suffix: &str, text: &str) -> Vec<Value>
             )
         })
         .collect()
+}
+
+/// Populated and all-optional-absent items safe for a live child response.
+pub(crate) fn spawn_shape_matrix_items(id_suffix: &str, text: &str) -> Vec<Value> {
+    let mut items = spawn_lifecycle_items(id_suffix, text);
+    items.extend(
+        minimal_output_item_inventory(id_suffix)
+            .into_iter()
+            .filter(|item| {
+                !matches!(
+                    item.get("type").and_then(Value::as_str),
+                    Some(
+                        "function_call"
+                            | "computer_call"
+                            | "local_shell_call"
+                            | "shell_call"
+                            | "apply_patch_call"
+                            | "mcp_approval_request"
+                            | "custom_tool_call"
+                    )
+                )
+            }),
+    );
+    items.extend(
+        nested::nested_output_item_matrix(id_suffix)
+            .into_iter()
+            .filter(|item| {
+                matches!(
+                    item.get("type").and_then(Value::as_str),
+                    Some("web_search_call" | "shell_call_output")
+                )
+            }),
+    );
+    items
+}
+
+/// Populated and all-optional-absent items safe for historical replay.
+pub(crate) fn historical_shape_matrix_items(id_suffix: &str, text: &str) -> Vec<Value> {
+    let mut items = historical_replay_items(id_suffix, text);
+    items.extend(
+        minimal_output_item_inventory(id_suffix)
+            .into_iter()
+            .filter(|item| {
+                !matches!(
+                    item.get("type").and_then(Value::as_str),
+                    Some(
+                        "computer_call"
+                            | "local_shell_call"
+                            | "shell_call"
+                            | "apply_patch_call"
+                            | "mcp_approval_request"
+                    )
+                )
+            }),
+    );
+    items.extend(
+        nested::nested_output_item_matrix(id_suffix)
+            .into_iter()
+            .filter(|item| {
+                matches!(
+                    item.get("type").and_then(Value::as_str),
+                    Some("web_search_call" | "shell_call_output")
+                )
+            }),
+    );
+    items
 }
 
 pub(crate) fn response_items_named(

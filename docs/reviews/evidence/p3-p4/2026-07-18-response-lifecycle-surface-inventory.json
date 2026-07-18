@@ -1,0 +1,234 @@
+{
+  "schema_version": 2,
+  "artifact": "response-lifecycle-surface-inventory",
+  "as_of": "2026-07-18",
+  "source_state": {
+    "branch": "codex/p3-optional-matrix",
+    "base_commit": "624540db1fd159a69d5851dfdc3072c73e67b635",
+    "binding": "source-anchor inventory only; the final source commit and execution distributions are bound by later gate evidence",
+    "execution_results_recorded_here": false
+  },
+  "coverage_semantics": {
+    "decision": 17,
+    "official_contract_enumeration": {
+      "kind": "schema-derived property-state enumeration",
+      "artifact_path": "docs/reviews/evidence/p3-p4/2026-07-18-response-optional-shape-contract.json",
+      "artifact_sha256": "7ea54c502732510a8c7e55a2acbfd481b92ed267ded34ce747af79216883dea3",
+      "output_item_variants": 28,
+      "contextual_property_occurrences": 274,
+      "legal_state_assertions": 659
+    },
+    "behavioral_lifecycle_execution": {
+      "kind": "named equivalence classes across applicable lifecycle carriers",
+      "cartesian_659_case_lifecycle_run": false,
+      "claim": "The behavioral suites execute populated, minimal, accepted nested-union, opaque-historical, wire-failure, event-envelope, and response-audio representatives only at applicable surfaces. They do not execute every one of the 659 schema states through every lifecycle surface."
+    },
+    "claim_boundaries": {
+      "stream_events": "ResponseStreamEvent is a lossless wire envelope. It is parsed and mapped live, but the envelope itself is not a transcript item and is not claimed to survive strict persistence, replay, filters, spawn, or forks.",
+      "stream_provenance": "ResponseTranscriptItem carries stream coordinates in stored transcript data; store:false provider replay serializes only authoritative raw item JSON and deliberately omits output_index and sequence_number.",
+      "causal_failures": "Unknown-output and unknown-event claims pair mapper classification anchors with loop propagation anchors. The loop fixtures alone prove propagation and no ordinary success turn, not mapper causality.",
+      "response_audio": "Response audio is a separate response-scoped sidecar family, not a twenty-ninth output-item variant and not provider input on store:false replay."
+    }
+  },
+  "corpora": {
+    "live_success": {"builder": "spawn_shape_matrix_items", "count": 48},
+    "historical_success": {"builder": "historical_shape_matrix_items", "count": 52},
+    "historical_plus_opaque": {"count": 53, "composition": "52 historical_success items plus one unknown discriminator classified as ResponseItem::Opaque"},
+    "persistent_in_root_fork_inherited": {"count": 53, "composition": "52 historical_success items plus one future historical opaque item"},
+    "unsupported_live_execution": {
+      "populated_failure_form_count": 6,
+      "mode": "failure-only",
+      "included_in_success_corpora": false,
+      "additional_schema_only_failure_carrier": "minimal shell_call with environment=null",
+      "forms": ["computer_call", "local_shell_call", "apply_patch_call", "mcp_approval_request", "tool_search_call with execution=client", "shell_call with environment=local"]
+    },
+    "nested_union_matrix": {"count": 17, "accepted_reconcile_count": 5, "failure_only_count": 12, "scope": "Three web-search actions and two shell outcomes reconcile successfully; nine computer actions and three patch operations remain failure-only."},
+    "public_stream_event_manifest": {"count": 53},
+    "response_audio_stream_family": {"count": 4, "scope": "Response-scoped events, not ResponseOutputItem variants."}
+  },
+  "anchor_catalog": {
+    "manifest_exact": {"path": "crates/norn/src/provider/openai/output_item_test_fixtures/tests.rs", "test": "fixture_covers_public_output_manifest_exactly_in_order"},
+    "manifest_parser": {"path": "crates/norn/src/provider/openai/output_item_test_fixtures/tests.rs", "test": "fixture_and_parser_agree_on_every_manifest_representation"},
+    "shape_matrix_counts": {"path": "crates/norn/src/provider/openai/output_item_test_fixtures/tests.rs", "test": "lifecycle_shape_matrices_pair_populated_and_optional_absent_items"},
+    "nested_fixture": {"path": "crates/norn/src/provider/openai/output_item_test_fixtures/tests.rs", "test": "fixture_pins_nested_multimodal_and_annotation_unions"},
+    "audio_not_output_item": {"path": "crates/norn/src/provider/openai/output_item_test_fixtures/tests.rs", "test": "audio_is_a_response_scoped_event_family_not_an_output_item"},
+    "nested_matrix_exact": {"path": "crates/norn/src/provider/openai/output_item_test_fixtures/nested.rs", "test": "nested_output_matrix_contains_every_isolated_union_variant"},
+    "schema_validators": {"path": "crates/norn/src/provider/openai/response_reconciler/tests/known_item_schema.rs", "test": "every_public_output_item_has_an_explicit_authoritative_validator"},
+    "schema_minimal": {"path": "crates/norn/src/provider/openai/response_reconciler/tests/known_item_schema.rs", "test": "every_minimal_public_item_passes_its_authoritative_schema"},
+    "schema_populated": {"path": "crates/norn/src/provider/openai/response_reconciler/tests/known_item_schema.rs", "test": "every_accepted_known_item_passes_authoritative_schema_validation"},
+    "schema_missing_required": {"path": "crates/norn/src/provider/openai/response_reconciler/tests/known_item_schema.rs", "test": "missing_required_fields_fail_before_canonical_retention"},
+    "schema_nested_invalid": {"path": "crates/norn/src/provider/openai/response_reconciler/tests/known_item_schema.rs", "test": "nested_tagged_unions_reject_unknown_or_incomplete_members"},
+    "reconcile_live": {"path": "crates/norn/src/provider/openai/output_item_test_fixtures/reconciler_tests.rs", "test": "every_hosted_or_inert_fixture_survives_done_and_terminal_authority"},
+    "reconcile_history": {"path": "crates/norn/src/provider/openai/output_item_test_fixtures/reconciler_tests.rs", "test": "supported_function_and_custom_pairs_are_valid_completed_history"},
+    "reconcile_nested": {"path": "crates/norn/src/provider/openai/output_item_test_fixtures/reconciler_tests.rs", "test": "every_nested_union_variant_reaches_parser_and_reconciler"},
+    "reconcile_unsupported": {"path": "crates/norn/src/provider/openai/output_item_test_fixtures/reconciler_tests.rs", "test": "unsupported_global_and_conditional_calls_fail_with_exact_raw_retention"},
+    "null_shell_failure": {"path": "crates/norn/src/provider/openai/response_reconciler/tests/tool_actionability.rs", "test": "null_shell_environment_remains_fail_closed_and_retained"},
+    "nested_persist_replay": {"path": "crates/norn/src/provider/openai/output_item_test_fixtures/nested_persistence_tests.rs", "test": "every_nested_union_variant_persists_and_replays_verbatim"},
+    "canonical_persist_resume": {"path": "crates/norn/src/session/canonical_persistence_tests.rs", "test": "canonical_items_survive_jsonl_persistence_reload_and_resume_in_order"},
+    "opaque_strict_replay": {"path": "crates/norn/src/provider/openai/request/opaque_lifecycle_tests.rs", "test": "unknown_item_survives_strict_reload_into_stateless_replay"},
+    "opaque_manager_fork": {"path": "crates/norn/src/provider/openai/request/opaque_lifecycle_tests.rs", "test": "manager_fork_preserves_unknown_item_under_new_owner_and_strict_resume"},
+    "persistent_spawn": {"path": "crates/norn/src/tools/agent/spawn.rs", "test": "spawn_under_persistent_parent_persists_child_timeline"},
+    "library_filter": {"path": "crates/norn/src/agent/fork_canonical_resolution_tests.rs", "test": "library_context_filter_preserves_minimal_populated_and_opaque_shapes"},
+    "audio_filter_system": {"path": "crates/norn/src/agent/fork_canonical_resolution_tests.rs", "test": "exclude_system_preserves_response_audio_link_with_its_assistant"},
+    "audio_filter_recent": {"path": "crates/norn/src/agent/fork_canonical_resolution_tests.rs", "test": "recent_filter_restores_response_audio_precursor_as_an_atomic_companion"},
+    "persistent_fork": {"path": "crates/norn/src/tools/agent/fork_tool.rs", "test": "fork_under_persistent_parent_persists_child_timeline"},
+    "top_fork_audio": {"path": "crates/norn/src/session/manager/tests/fork_audio.rs", "test": "top_level_fork_resolves_two_audio_artifacts_after_source_deletion"},
+    "audio_four_events": {"path": "crates/norn/src/provider/openai/response_reconciler/tests/audio.rs", "test": "all_four_audio_events_are_typed_without_item_identity"},
+    "audio_malformed": {"path": "crates/norn/src/provider/openai/response_reconciler/tests/audio.rs", "test": "malformed_audio_and_transcript_delta_payloads_fail_typed"},
+    "audio_real_step": {"path": "crates/norn/src/loop/response_audio_end_to_end_tests.rs", "test": "real_agent_step_persists_audio_and_resume_resolves_it"},
+    "audio_hard_cut": {"path": "crates/norn/src/loop/response_audio_lifecycle_loop_tests.rs", "test": "post_llm_hard_cut_preserves_sealed_audio_without_publishing_turn"},
+    "audio_absent_response_id": {"path": "crates/norn/src/loop/response_audio_lifecycle_loop_tests.rs", "test": "absent_response_id_survives_sidecar_link_assistant_and_resume"},
+    "audio_terminal_once": {"path": "crates/norn/src/loop/response_audio_lifecycle_loop_tests.rs", "test": "completed_audio_step_writes_one_final_terminal_jsonl_record"},
+    "audio_root_resume": {"path": "crates/norn/src/session/response_audio_lifecycle_tests.rs", "test": "root_resume_preserves_and_resolves_response_audio"},
+    "audio_persistent_spawn": {"path": "crates/norn/src/session/response_audio_lifecycle_tests.rs", "test": "persistent_spawn_shares_root_artifacts_and_resolves_after_resume"},
+    "audio_missing_sidecar": {"path": "crates/norn/src/session/response_audio_lifecycle_tests.rs", "test": "resume_is_structural_but_missing_sidecar_fails_on_link_resolution"},
+    "mapper_unknown_output": {"path": "crates/norn/src/provider/openai/execute/reconciliation_tests.rs", "test": "unknown_output_item_is_raw_then_retained_then_typed_unsupported"},
+    "mapper_unknown_event": {"path": "crates/norn/src/provider/openai/execute/reconciliation_tests.rs", "test": "unknown_event_is_raw_then_typed_unsupported"},
+    "mapper_audio": {"path": "crates/norn/src/provider/openai/execute/reconciliation_tests.rs", "test": "known_audio_event_is_raw_then_typed_with_decoded_bytes"},
+    "loop_unknown_output": {"path": "crates/norn/src/loop/unsupported_response_loop_tests.rs", "test": "unknown_output_item_fails_loudly_without_persisting_an_ordinary_turn"},
+    "loop_unknown_event": {"path": "crates/norn/src/loop/unsupported_response_loop_tests.rs", "test": "unknown_stream_event_fails_loudly_without_persisting_an_ordinary_turn"},
+    "events_common_envelope": {"path": "crates/norn/src/provider/openai/response_stream_event.rs", "test": "all_public_events_require_and_retain_a_sequence"},
+    "events_malformed_sequence": {"path": "crates/norn/src/provider/openai/response_stream_event.rs", "test": "rejects_malformed_sequences_for_both_manifest_families"},
+    "event_error_nullable": {"path": "crates/norn/src/provider/openai/response_stream_event/official_shape_tests.rs", "test": "public_error_event_retains_required_nullable_code_and_param"},
+    "event_reasoning_status": {"path": "crates/norn/src/provider/openai/response_stream_event/official_shape_tests.rs", "test": "reasoning_summary_part_done_retains_optional_status_shapes"}
+  },
+  "surfaces": [
+    {"surface": "AuthoritativeSchema", "coverage": "Manifest, populated, minimal, nested, malformed-shape, common-event, and audio-family contracts are explicit.", "anchor_ids": ["manifest_exact", "manifest_parser", "shape_matrix_counts", "nested_fixture", "nested_matrix_exact", "schema_validators", "schema_minimal", "schema_populated", "schema_missing_required", "schema_nested_invalid", "events_common_envelope", "event_error_nullable", "event_reasoning_status", "audio_not_output_item"]},
+    {"surface": "LiveReconcile", "coverage": "Successful live and historical representatives reconcile; unsupported and unknown forms retain raw evidence before typed failure. Mapper anchors establish causality.", "anchor_ids": ["reconcile_live", "reconcile_history", "reconcile_nested", "reconcile_unsupported", "mapper_unknown_output", "mapper_unknown_event", "mapper_audio", "audio_four_events"]},
+    {"surface": "StrictPersistReload", "coverage": "Strict timelines reload exact canonical raw items and historical opaque classification; audio sidecars resolve independently after resume.", "anchor_ids": ["canonical_persist_resume", "nested_persist_replay", "opaque_strict_replay", "audio_real_step", "audio_root_resume"]},
+    {"surface": "StoreFalseReplay", "coverage": "Reloaded canonical items replay as authoritative provider JSON without stream coordinates; response-audio sidecars are deliberately excluded.", "anchor_ids": ["nested_persist_replay", "opaque_strict_replay", "persistent_fork"]},
+    {"surface": "PersistentSpawn", "coverage": "A real persistent child writes, reloads, and replays the 48-item live-success corpus; audio sharing is separately resolved after resume.", "anchor_ids": ["persistent_spawn", "audio_persistent_spawn"]},
+    {"surface": "LibraryContextFilter", "coverage": "The 53-item historical-plus-opaque vector survives filtering, and audio link/assistant pairs remain atomic.", "anchor_ids": ["library_filter", "audio_filter_system", "audio_filter_recent"]},
+    {"surface": "PersistentInRootFork", "coverage": "A real ForkTool child persists, resumes, and replays 53 inherited items while retaining the original-owner audio link.", "anchor_ids": ["persistent_fork"]},
+    {"surface": "OwnershipChangingTopLevelFork", "coverage": "SessionManager::fork assigns a new id and generation while retaining and strictly replaying 53 items; copied audio sidecars survive source deletion.", "anchor_ids": ["opaque_manager_fork", "top_fork_audio"]},
+    {"surface": "ResponseAudioSidecar", "coverage": "Four response-scoped events become strict private sidecars across resume, filter, spawn, in-root fork, top-level fork, and interruption boundaries.", "anchor_ids": ["audio_four_events", "mapper_audio", "audio_real_step", "audio_hard_cut", "audio_absent_response_id", "audio_terminal_once", "audio_root_resume", "audio_persistent_spawn", "audio_filter_system", "audio_filter_recent", "persistent_fork", "top_fork_audio"]},
+    {"surface": "FailureBoundary", "coverage": "Schema, executable-item, unknown-wire, and audio failures are typed. Unknown-wire causality is proven by mapper anchors paired with loop propagation/no-ordinary-turn anchors.", "anchor_ids": ["schema_missing_required", "schema_nested_invalid", "reconcile_nested", "reconcile_unsupported", "null_shell_failure", "mapper_unknown_output", "loop_unknown_output", "mapper_unknown_event", "loop_unknown_event", "events_malformed_sequence", "audio_malformed", "audio_hard_cut", "audio_missing_sidecar"]}
+  ],
+  "applicability_matrix": {
+    "class_count": 7,
+    "surface_count": 10,
+    "cell_count": 70,
+    "surface_order": ["AuthoritativeSchema", "LiveReconcile", "StrictPersistReload", "StoreFalseReplay", "PersistentSpawn", "LibraryContextFilter", "PersistentInRootFork", "OwnershipChangingTopLevelFork", "ResponseAudioSidecar", "FailureBoundary"],
+    "classes": [
+      {
+        "class": "populated_public_success",
+        "definition": "Schema-complete populated representatives for supported public output items.",
+        "applicability": [
+          {"surface": "AuthoritativeSchema", "status": "covered", "anchor_ids": ["manifest_exact", "schema_populated"]},
+          {"surface": "LiveReconcile", "status": "covered", "anchor_ids": ["reconcile_live", "reconcile_history"]},
+          {"surface": "StrictPersistReload", "status": "covered", "anchor_ids": ["opaque_strict_replay"]},
+          {"surface": "StoreFalseReplay", "status": "covered", "anchor_ids": ["opaque_strict_replay"]},
+          {"surface": "PersistentSpawn", "status": "covered", "anchor_ids": ["persistent_spawn"]},
+          {"surface": "LibraryContextFilter", "status": "covered", "anchor_ids": ["library_filter"]},
+          {"surface": "PersistentInRootFork", "status": "covered", "anchor_ids": ["persistent_fork"]},
+          {"surface": "OwnershipChangingTopLevelFork", "status": "covered", "anchor_ids": ["opaque_manager_fork"]},
+          {"surface": "ResponseAudioSidecar", "status": "not_applicable", "reason": "Output-item JSON is transcript data; response audio is a separate sidecar family."},
+          {"surface": "FailureBoundary", "status": "not_applicable", "reason": "This class contains accepted success representatives; rejected forms belong to wire_failure."}
+        ]
+      },
+      {
+        "class": "minimal_public_success",
+        "definition": "Minimal legal optional-absent representatives that can complete or replay successfully; minimal shell_call with environment=null is excluded as schema-only failure evidence.",
+        "applicability": [
+          {"surface": "AuthoritativeSchema", "status": "covered", "anchor_ids": ["schema_minimal", "shape_matrix_counts"]},
+          {"surface": "LiveReconcile", "status": "covered", "anchor_ids": ["reconcile_live", "reconcile_history"]},
+          {"surface": "StrictPersistReload", "status": "covered", "anchor_ids": ["opaque_strict_replay"]},
+          {"surface": "StoreFalseReplay", "status": "covered", "anchor_ids": ["opaque_strict_replay"]},
+          {"surface": "PersistentSpawn", "status": "covered", "anchor_ids": ["persistent_spawn"]},
+          {"surface": "LibraryContextFilter", "status": "covered", "anchor_ids": ["library_filter"]},
+          {"surface": "PersistentInRootFork", "status": "covered", "anchor_ids": ["persistent_fork"]},
+          {"surface": "OwnershipChangingTopLevelFork", "status": "covered", "anchor_ids": ["opaque_manager_fork"]},
+          {"surface": "ResponseAudioSidecar", "status": "not_applicable", "reason": "Output-item optionality does not define response-audio sidecar records."},
+          {"surface": "FailureBoundary", "status": "not_applicable", "reason": "Only accepted minimal representatives are in this class; the required-null shell carrier is recorded under wire_failure."}
+        ]
+      },
+      {
+        "class": "nested_union_success",
+        "definition": "Accepted representatives of shipped nested tagged unions; failure-only computer and patch variants remain in wire_failure.",
+        "applicability": [
+          {"surface": "AuthoritativeSchema", "status": "covered", "anchor_ids": ["nested_fixture", "nested_matrix_exact"]},
+          {"surface": "LiveReconcile", "status": "covered", "anchor_ids": ["reconcile_nested"]},
+          {"surface": "StrictPersistReload", "status": "covered", "anchor_ids": ["nested_persist_replay"]},
+          {"surface": "StoreFalseReplay", "status": "covered", "anchor_ids": ["nested_persist_replay"]},
+          {"surface": "PersistentSpawn", "status": "covered", "anchor_ids": ["nested_fixture", "persistent_spawn"]},
+          {"surface": "LibraryContextFilter", "status": "covered", "anchor_ids": ["nested_fixture", "library_filter"]},
+          {"surface": "PersistentInRootFork", "status": "covered", "anchor_ids": ["nested_fixture", "persistent_fork"]},
+          {"surface": "OwnershipChangingTopLevelFork", "status": "covered", "anchor_ids": ["nested_fixture", "opaque_manager_fork"]},
+          {"surface": "ResponseAudioSidecar", "status": "not_applicable", "reason": "Nested output-item unions are not response-audio sidecar records."},
+          {"surface": "FailureBoundary", "status": "not_applicable", "reason": "This class is limited to accepted nested representatives; invalid and unsupported nested members are wire_failure."}
+        ]
+      },
+      {
+        "class": "opaque_historical",
+        "definition": "Unknown future item discriminators admitted only from already-retained historical transcript data.",
+        "applicability": [
+          {"surface": "AuthoritativeSchema", "status": "not_applicable", "reason": "An unknown discriminator has no official local schema; exact object shape is retained instead."},
+          {"surface": "LiveReconcile", "status": "not_applicable", "reason": "Unknown live wire items fail typed and cannot enter the historical opaque class."},
+          {"surface": "StrictPersistReload", "status": "covered", "anchor_ids": ["opaque_strict_replay"]},
+          {"surface": "StoreFalseReplay", "status": "covered", "anchor_ids": ["opaque_strict_replay"]},
+          {"surface": "PersistentSpawn", "status": "not_applicable", "reason": "Spawn consumes live provider output; an unknown live item is rejected before child success."},
+          {"surface": "LibraryContextFilter", "status": "covered", "anchor_ids": ["library_filter"]},
+          {"surface": "PersistentInRootFork", "status": "covered", "anchor_ids": ["persistent_fork"]},
+          {"surface": "OwnershipChangingTopLevelFork", "status": "covered", "anchor_ids": ["opaque_manager_fork"]},
+          {"surface": "ResponseAudioSidecar", "status": "not_applicable", "reason": "Opaque transcript items are not response-audio sidecars."},
+          {"surface": "FailureBoundary", "status": "not_applicable", "reason": "Historical opaque retention is successful replay; live unknown rejection is covered by wire_failure."}
+        ]
+      },
+      {
+        "class": "wire_failure",
+        "definition": "Malformed known shapes, unsupported executable forms including the schema-valid null-environment shell carrier, and unknown live output/event contracts; audio-specific failures remain in response_audio_sidecar.",
+        "applicability": [
+          {"surface": "AuthoritativeSchema", "status": "covered", "anchor_ids": ["schema_missing_required", "schema_nested_invalid"]},
+          {"surface": "LiveReconcile", "status": "covered", "anchor_ids": ["reconcile_nested", "reconcile_unsupported", "null_shell_failure", "mapper_unknown_output", "mapper_unknown_event"]},
+          {"surface": "StrictPersistReload", "status": "not_applicable", "reason": "The failure must not publish an ordinary assistant turn eligible for strict successful reload."},
+          {"surface": "StoreFalseReplay", "status": "not_applicable", "reason": "Rejected live wire contracts are never eligible provider-input history."},
+          {"surface": "PersistentSpawn", "status": "not_applicable", "reason": "A failed provider turn cannot become a successful persistent child corpus."},
+          {"surface": "LibraryContextFilter", "status": "not_applicable", "reason": "Context filters operate on admitted session events, not rejected wire contracts."},
+          {"surface": "PersistentInRootFork", "status": "not_applicable", "reason": "Rejected wire contracts cannot seed a successful ForkTool child."},
+          {"surface": "OwnershipChangingTopLevelFork", "status": "not_applicable", "reason": "Rejected wire contracts cannot seed a successful SessionManager fork."},
+          {"surface": "ResponseAudioSidecar", "status": "not_applicable", "reason": "Audio-specific malformed and interruption cases are isolated in response_audio_sidecar."},
+          {"surface": "FailureBoundary", "status": "covered", "anchor_ids": ["schema_missing_required", "schema_nested_invalid", "reconcile_nested", "reconcile_unsupported", "null_shell_failure", "mapper_unknown_output", "loop_unknown_output", "mapper_unknown_event", "loop_unknown_event"]}
+        ]
+      },
+      {
+        "class": "event_common_envelope",
+        "definition": "The common lossless Responses stream-event envelope, including discriminator agreement and sequence policy.",
+        "applicability": [
+          {"surface": "AuthoritativeSchema", "status": "covered", "anchor_ids": ["events_common_envelope", "event_error_nullable", "event_reasoning_status"]},
+          {"surface": "LiveReconcile", "status": "covered", "anchor_ids": ["mapper_audio", "mapper_unknown_event"]},
+          {"surface": "StrictPersistReload", "status": "not_applicable", "reason": "Raw stream-event envelopes are not transcript records; derived items or sidecars own persistence."},
+          {"surface": "StoreFalseReplay", "status": "not_applicable", "reason": "Provider replay sends canonical items, not prior SSE envelopes."},
+          {"surface": "PersistentSpawn", "status": "not_applicable", "reason": "Spawn persists reconciled items, not transport envelopes."},
+          {"surface": "LibraryContextFilter", "status": "not_applicable", "reason": "Filters operate on session events after stream-envelope consumption."},
+          {"surface": "PersistentInRootFork", "status": "not_applicable", "reason": "ForkTool inherits session events and canonical items, not raw stream envelopes."},
+          {"surface": "OwnershipChangingTopLevelFork", "status": "not_applicable", "reason": "SessionManager forks stored events, not prior SSE envelopes."},
+          {"surface": "ResponseAudioSidecar", "status": "covered", "anchor_ids": ["mapper_audio", "audio_real_step"]},
+          {"surface": "FailureBoundary", "status": "covered", "anchor_ids": ["events_malformed_sequence", "mapper_unknown_event", "loop_unknown_event"]}
+        ]
+      },
+      {
+        "class": "response_audio_sidecar",
+        "definition": "Four response-scoped audio/transcript stream events mapped into private sidecars and linked session events.",
+        "applicability": [
+          {"surface": "AuthoritativeSchema", "status": "covered", "anchor_ids": ["audio_not_output_item", "audio_four_events"]},
+          {"surface": "LiveReconcile", "status": "covered", "anchor_ids": ["audio_four_events", "mapper_audio"]},
+          {"surface": "StrictPersistReload", "status": "covered", "anchor_ids": ["audio_real_step", "audio_root_resume", "audio_absent_response_id"]},
+          {"surface": "StoreFalseReplay", "status": "not_applicable", "reason": "Response-audio sidecars are local artifacts and are never serialized into Responses provider input."},
+          {"surface": "PersistentSpawn", "status": "covered", "anchor_ids": ["audio_persistent_spawn"]},
+          {"surface": "LibraryContextFilter", "status": "covered", "anchor_ids": ["audio_filter_system", "audio_filter_recent"]},
+          {"surface": "PersistentInRootFork", "status": "covered", "anchor_ids": ["persistent_fork"]},
+          {"surface": "OwnershipChangingTopLevelFork", "status": "covered", "anchor_ids": ["top_fork_audio"]},
+          {"surface": "ResponseAudioSidecar", "status": "covered", "anchor_ids": ["audio_real_step", "audio_hard_cut", "audio_absent_response_id", "audio_terminal_once", "audio_root_resume", "audio_persistent_spawn", "audio_filter_system", "audio_filter_recent", "persistent_fork", "top_fork_audio"]},
+          {"surface": "FailureBoundary", "status": "covered", "anchor_ids": ["audio_malformed", "audio_hard_cut", "audio_missing_sidecar"]}
+        ]
+      }
+    ]
+  },
+  "uncertainties": [
+    "This source-anchor inventory does not itself record test pass distributions or bind a final source commit; later gate evidence performs both bindings.",
+    "The 659 official legal-state assertions are contract enumeration, not a 659-case Cartesian run through each behavioral lifecycle surface.",
+    "The official schema section bytes and the contract generator are not checked in; future regeneration requires refetching the official schema and confirming its recorded content hash before comparing counts.",
+    "Nested union persistence includes exact carrier checks for both accepted and failure-only variants; it does not reclassify the twelve unsupported executable variants as successful live output.",
+    "Unknown-wire causality and loop propagation are separate source anchors rather than one end-to-end mapper-driven loop fixture."
+  ]
+}

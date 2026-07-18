@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::provider::response_audio::ResponseAudioEvent;
+use crate::provider::response_item::ResponseItem;
 
 mod equivalence;
 
@@ -242,6 +243,35 @@ fn unsupported_executable_item_is_retained_before_typed_failure() {
             Err(ProviderError::UnsupportedResponseItem),
         ]
     ));
+}
+
+#[test]
+fn unknown_output_item_is_raw_then_retained_then_typed_unsupported() -> TestResult {
+    let item = json!({
+        "type": "future_output_item",
+        "id": "future_item_1",
+        "payload": {"kept": true},
+    });
+    let mut mapper = ResponsesMapper::default();
+    let events = mapper.map_event(&done_item(0, 0, &item));
+    let (stream_event, retained) = match events.as_slice() {
+        [
+            Ok(ProviderEvent::ResponseStreamEvent { event }),
+            Ok(ProviderEvent::ResponseItemDone { item }),
+            Err(ProviderError::UnsupportedResponseItem),
+        ] => (event, item),
+        other => {
+            return Err(io::Error::other(format!(
+                "unexpected item sequence with {} entries",
+                other.len()
+            ))
+            .into());
+        }
+    };
+    assert_eq!(stream_event.raw().get("item"), Some(&item));
+    assert_eq!(retained.item.raw(), &item);
+    assert!(matches!(retained.item, ResponseItem::Opaque(_)));
+    Ok(())
 }
 
 #[test]

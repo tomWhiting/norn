@@ -1799,7 +1799,40 @@ mod tests {
         assert_eq!(inherited_audio.owner_session_id, root_id);
         assert_eq!(inherited_audio.owner_generation, root_entry.generation);
         let replay_input = stateless_payload_input(&resumed_events)?;
-        let mut expected_replay = inherited_items;
+        assert!(
+            replay_input
+                .windows(inherited_items.len())
+                .any(|window| window == inherited_items),
+            "the resumed fork must replay its exact inherited public and opaque corpus",
+        );
+        let expected_opaque = inherited_items
+            .last()
+            .ok_or_else(|| std::io::Error::other("inherited corpus unexpectedly empty"))?
+            .clone();
+        let replayed_opaque = replay_input
+            .iter()
+            .filter(|item| {
+                item.get("type").and_then(serde_json::Value::as_str)
+                    == Some("future_historical_item")
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            replayed_opaque,
+            vec![expected_opaque],
+            "the resumed fork must replay the inherited opaque item exactly once",
+        );
+        let mut expected_replay = inherited_items
+            .into_iter()
+            .filter(|item| {
+                item.get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|item_type| {
+                        crate::provider::openai::response_contract::public_output_item(item_type)
+                            .is_some()
+                    })
+            })
+            .collect::<Vec<_>>();
         expected_replay.extend([
             json!({
                 "type": "function_call",
@@ -1816,7 +1849,7 @@ mod tests {
         assert_eq!(
             canonical_payload_items(&replay_input),
             expected_replay,
-            "the resumed fork must replay its exact inherited corpus followed only by its own structured result",
+            "the resumed fork must replay the exact public-item corpus followed only by its own structured result",
         );
         Ok(())
     }

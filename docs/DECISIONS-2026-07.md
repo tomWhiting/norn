@@ -1286,3 +1286,44 @@ and repeated lifecycle evidence are recorded in the P3/P4 response-audio
 handoff. This section does not accept P3 or P4; the
 broader exhaustive lifecycle matrix, full-range phase evidence, and independent
 phase review remain open.
+
+## 17. P3/P4 finite shape and lifecycle evidence scope (2026-07-18)
+
+**Owner ruling:** After the finite contract totals and the equivalence-class
+approach were explained in-thread, Tom approved continuing on 2026-07-18. P3/P4
+therefore require a mechanically enumerable schema inventory plus complete
+coverage of named behavioral classes at every applicable lifecycle surface;
+they do not require a Cartesian execution of every schema property state through
+every persistence and fork path.
+
+- The official contract inventory enumerates each optional or nullable property
+  occurrence reachable from all 28 public output-item variants, including its
+  legal absent, null, and present states. It records 274 contextual properties
+  and 659 legal-state assertions against a content-hashed official schema
+  section.
+- Schema-specific tests own item discriminators, required keys, minimal legal
+  shapes, required-null fields, actionability, and the shipped nested tagged
+  unions. They must fail if a public item loses its validator or an applicable
+  corpus member silently disappears.
+- The canonical transcript codec is a raw JSON carrier after admission. Its
+  lifecycle proof uses named populated, minimal, nested-union, opaque-future,
+  typed-failure, event-envelope, and response-audio classes. A machine-readable
+  matrix must mark each class covered or inapplicable for each named lifecycle
+  surface and state why an exclusion is valid.
+- Every applicable class must traverse its listed uninterrupted, reconciliation,
+  strict persistence/reload, `store:false` replay, persistent spawn, library
+  filter, in-root ForkTool, ownership-changing top-level fork, sidecar, or
+  failure boundary. Unsupported executable forms remain failure-only and cannot
+  be inserted into a successful lifecycle corpus merely to increase a count.
+- Response audio remains a separate response-scoped sidecar family. It is not a
+  twenty-ninth output item and is not folded into the output-item property-state
+  totals.
+- Evidence and plan text must say explicitly that the 659 schema assertions are
+  an official contract enumeration, not 659 lifecycle executions or a
+  `659 x surfaces` Cartesian test. Any broader claim requires new source-bound
+  evidence and review.
+
+This ruling changes the evidence method, not the compatibility outcome: every
+public discriminator remains admitted or rejected deliberately, exact provider
+JSON must survive every applicable carrier seam, and unknown wire input must
+still fail before ordinary success.
