@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
 import re
 import subprocess
@@ -147,6 +148,8 @@ def command_text(repo: Path, args: list[str]) -> str:
         and Path(recorded[0]).name == "cargo"
     ):
         recorded[0] = "<pinned-cargo>"
+    elif recorded and Path(recorded[0]).is_absolute() and recorded[0] == sys.executable:
+        recorded[0] = "<python>"
     return (
         " ".join(recorded)
         .replace(str(target_root(repo)), "<repo>/target")
@@ -170,7 +173,11 @@ def execute_case(
     matches = re.findall(
         rb"test result: (?:ok|FAILED)\. (\d+) passed;", completed.stdout
     )
-    observed = sum(int(value) for value in matches) if matches else None
+    python_matches = re.findall(rb"Ran (\d+) tests?", completed.stdout)
+    observed_matches = matches or python_matches
+    observed = (
+        sum(int(value) for value in observed_matches) if observed_matches else None
+    )
     passed = (
         completed.returncode == 0
         and (not require_tests or bool(observed))
@@ -194,9 +201,17 @@ def execute_case(
 
 def write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    payload = json.dumps(value, indent=2, sort_keys=True) + "\n"
+    try:
+        with temporary.open("x", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 def display_path(repo: Path, path: Path) -> str:
@@ -216,7 +231,14 @@ def display_path(repo: Path, path: Path) -> str:
 def validate_output_paths(args: Any, repo: Path) -> None:
     allowed = target_root(repo).resolve()
     resolved = []
-    for name in ("output", "policy_output", "gate", "policy", "distributions"):
+    for name in (
+        "output",
+        "policy_output",
+        "gate",
+        "policy",
+        "distributions",
+        "redaction",
+    ):
         path = getattr(args, name, None)
         if path is not None:
             path = Path(path).resolve()
@@ -231,7 +253,7 @@ def validate_output_paths(args: Any, repo: Path) -> None:
 
 
 def clear_output_paths(args: Any) -> None:
-    for name in ("output", "gate", "policy", "distributions"):
+    for name in ("output", "gate", "policy", "distributions", "redaction"):
         path = getattr(args, name)
         if path.is_symlink() or path.is_file():
             path.unlink()
@@ -276,6 +298,136 @@ def environment_record(
         "cargo_config": policy_support.cargo_config_fingerprints(repo, env),
         "loopback_fixtures": "native-host execution required",
     }
+
+
+def gate_cases(
+    base: str,
+    policy_runner: str,
+    redaction_test: str,
+    source: str,
+    policy_scratch: Path,
+    cargo_executable: str,
+) -> tuple[tuple[str, list[str], bool], ...]:
+    cargo = [cargo_executable, "--locked"]
+    return (
+        ("fmt", [*cargo, "fmt", "--all", "--", "--check"], False),
+        (
+            "clippy",
+            [
+                *cargo,
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--all-features",
+                "--",
+                "-D",
+                "warnings",
+            ],
+            False,
+        ),
+        (
+            "norn_tests",
+            [
+                *cargo,
+                "test",
+                "-p",
+                "norn",
+                "--tests",
+                "--all-features",
+                "--no-fail-fast",
+            ],
+            True,
+        ),
+        (
+            "cli_tests",
+            [
+                *cargo,
+                "test",
+                "-p",
+                "norn-cli",
+                "--tests",
+                "--all-features",
+                "--no-fail-fast",
+            ],
+            True,
+        ),
+        (
+            "tui_tests",
+            [
+                *cargo,
+                "test",
+                "-p",
+                "norn-tui",
+                "--tests",
+                "--all-features",
+                "--no-fail-fast",
+            ],
+            True,
+        ),
+        (
+            "workspace_tests",
+            [
+                *cargo,
+                "test",
+                "--workspace",
+                "--all-targets",
+                "--all-features",
+                "--no-fail-fast",
+            ],
+            True,
+        ),
+        (
+            "doctests",
+            [
+                *cargo,
+                "test",
+                "--workspace",
+                "--doc",
+                "--all-features",
+                "--no-fail-fast",
+            ],
+            True,
+        ),
+        (
+            "redaction_tests",
+            [sys.executable, "-I", "-S", "-B", redaction_test],
+            True,
+        ),
+        ("diff_check", ["git", "diff", "--check", f"{base}...{source}"], False),
+        (
+            "policy",
+            [
+                sys.executable,
+                "-I",
+                "-S",
+                "-B",
+                policy_runner,
+                "--base",
+                base,
+                "--head",
+                source,
+                "--output",
+                str(policy_scratch),
+            ],
+            False,
+        ),
+    )
+
+
+def distribution_command(test: str, cargo_executable: str) -> list[str]:
+    return [
+        cargo_executable,
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "--all-features",
+        test,
+        "--",
+        "--exact",
+        "--nocapture",
+    ]
 
 
 def gate_records_valid(records: object, expected: list[tuple[str, str, bool]]) -> bool:

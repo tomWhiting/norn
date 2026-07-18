@@ -19,6 +19,8 @@ sys.dont_write_bytecode = True
 
 CONTRACT_PATH: Final = "docs/reviews/evidence/p3-p4/p3_p4_final_contract.json"
 SUPPORT_PATH: Final = "docs/reviews/evidence/p3-p4/p3_p4_final_support.py"
+REDACTION_PATH: Final = "docs/reviews/evidence/p3-p4/p3_p4_redaction.py"
+REDACTION_TEST_PATH: Final = "docs/reviews/evidence/p3-p4/test_p3_p4_redaction.py"
 RUNNER: Final = "docs/reviews/evidence/p3-p4/run_p3_p4_final_evidence.py"
 POLICY_RUNNER: Final = "docs/reviews/evidence/run_p0_policy_evidence.py"
 BASE = TOOLCHAIN = ""
@@ -26,10 +28,12 @@ REUSED_ARTIFACTS: dict[str, str] = {}
 DIST_TESTS: tuple[str, ...] = ()
 commit = command_text = display_path = distribution_records_valid = None
 clear_output_paths = None
+distribution_command = gate_cases = None
 environment_record = execute_case = file_sha256 = gate_records_valid = git = None
 manifest = path_inventory = run = sha256 = target_root = write_json = None
 source_support_manifest = verify_reused_artifacts = None
 validate_output_paths = None
+build_redaction_evidence = redaction_document_valid = None
 p0_support: Any = None
 
 
@@ -37,7 +41,19 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
+def strict_document(raw: bytes, label: str, loader: Any) -> dict[str, Any]:
+    try:
+        document = loader(raw)
+    except (ValueError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"{label} JSON is invalid") from error
+    if not isinstance(document, dict):
+        raise RuntimeError(f"{label} JSON must be an object")
+    return document
+
+
 def bootstrap(source_arg: str) -> None:
+    if not (sys.flags.isolated and sys.flags.no_site and sys.flags.dont_write_bytecode):
+        raise RuntimeError("final evidence requires Python -I -S -B")
     repo = repo_root()
 
     def raw_git(*args: str) -> bytes:
@@ -53,7 +69,14 @@ def bootstrap(source_arg: str) -> None:
     ignored = raw_git("ls-files", "--others", "--ignored", "--exclude-standard")
     if dirty or ignored:
         raise RuntimeError("final evidence requires a completely clean worktree")
-    paths = [CONTRACT_PATH, SUPPORT_PATH, RUNNER, POLICY_RUNNER]
+    paths = [
+        CONTRACT_PATH,
+        SUPPORT_PATH,
+        REDACTION_PATH,
+        REDACTION_TEST_PATH,
+        RUNNER,
+        POLICY_RUNNER,
+    ]
     policy_paths = (
         raw_git("ls-tree", "-r", "--name-only", source, "--", "docs/reviews/evidence")
         .decode()
@@ -78,8 +101,13 @@ def bootstrap(source_arg: str) -> None:
         str((repo / "docs/reviews/evidence").resolve()),
     ]
     support = importlib.import_module("p3_p4_final_support")
+    redaction = importlib.import_module("p3_p4_redaction")
     policy_support = importlib.import_module("p0_evidence_support")
-    contract = json.loads((repo / CONTRACT_PATH).read_text(encoding="utf-8"))
+    contract = strict_document(
+        (repo / CONTRACT_PATH).read_bytes(),
+        "final evidence contract",
+        policy_support.strict_json_loads,
+    )
     expected_keys = {
         "schema_version",
         "base",
@@ -105,10 +133,12 @@ def bootstrap(source_arg: str) -> None:
         "clear_output_paths",
         "command_text",
         "display_path",
+        "distribution_command",
         "distribution_records_valid",
         "environment_record",
         "execute_case",
         "file_sha256",
+        "gate_cases",
         "gate_records_valid",
         "git",
         "manifest",
@@ -122,6 +152,8 @@ def bootstrap(source_arg: str) -> None:
         "write_json",
     ):
         globals()[name] = getattr(support, name)
+    for name in ("build_redaction_evidence", "redaction_document_valid"):
+        globals()[name] = getattr(redaction, name)
 
 
 def validate_source(repo: Path, source_arg: str) -> tuple[str, dict[str, Any]]:
@@ -149,7 +181,16 @@ def validate_source(repo: Path, source_arg: str) -> tuple[str, dict[str, Any]]:
         "changed_paths": path_inventory(repo, BASE, source),
         "rust_manifest": manifest(repo, source),
         "support_manifest": source_support_manifest(
-            repo, source, (CONTRACT_PATH, SUPPORT_PATH, RUNNER, POLICY_RUNNER)
+            repo,
+            source,
+            (
+                CONTRACT_PATH,
+                SUPPORT_PATH,
+                REDACTION_PATH,
+                REDACTION_TEST_PATH,
+                RUNNER,
+                POLICY_RUNNER,
+            ),
         ),
         "reused_artifacts": verify_reused_artifacts(repo, source, REUSED_ARTIFACTS),
     }
@@ -166,107 +207,6 @@ def environment(target: Path) -> tuple[dict[str, str], int]:
     return env, removed
 
 
-def gate_cases(
-    source: str, policy_scratch: Path, cargo_executable: str
-) -> tuple[tuple[str, list[str], bool], ...]:
-    cargo = [cargo_executable, "--locked"]
-    return (
-        ("fmt", [*cargo, "fmt", "--all", "--", "--check"], False),
-        (
-            "clippy",
-            [
-                *cargo,
-                "clippy",
-                "--workspace",
-                "--all-targets",
-                "--all-features",
-                "--",
-                "-D",
-                "warnings",
-            ],
-            False,
-        ),
-        (
-            "norn_tests",
-            [
-                *cargo,
-                "test",
-                "-p",
-                "norn",
-                "--tests",
-                "--all-features",
-                "--no-fail-fast",
-            ],
-            True,
-        ),
-        (
-            "cli_tests",
-            [
-                *cargo,
-                "test",
-                "-p",
-                "norn-cli",
-                "--tests",
-                "--all-features",
-                "--no-fail-fast",
-            ],
-            True,
-        ),
-        (
-            "tui_tests",
-            [
-                *cargo,
-                "test",
-                "-p",
-                "norn-tui",
-                "--tests",
-                "--all-features",
-                "--no-fail-fast",
-            ],
-            True,
-        ),
-        (
-            "workspace_tests",
-            [
-                *cargo,
-                "test",
-                "--workspace",
-                "--all-targets",
-                "--all-features",
-                "--no-fail-fast",
-            ],
-            True,
-        ),
-        (
-            "doctests",
-            [
-                *cargo,
-                "test",
-                "--workspace",
-                "--doc",
-                "--all-features",
-                "--no-fail-fast",
-            ],
-            True,
-        ),
-        ("diff_check", ["git", "diff", "--check", f"{BASE}...{source}"], False),
-        (
-            "policy",
-            [
-                sys.executable,
-                POLICY_RUNNER,
-                "--base",
-                BASE,
-                "--head",
-                source,
-                "--output",
-                str(policy_scratch),
-            ],
-            False,
-        ),
-    )
-
-
 def gate(args: argparse.Namespace) -> int:
     repo = repo_root()
     source, provenance = validate_source(repo, args.source)
@@ -276,10 +216,18 @@ def gate(args: argparse.Namespace) -> int:
     policy_scratch = args.policy_output
     env, removed_environment = environment(target)
     cargo_executable = str(Path(env["RUSTC"]).parent / "cargo")
-    cases = gate_cases(source, policy_scratch, cargo_executable)
+    cases = gate_cases(
+        BASE,
+        POLICY_RUNNER,
+        REDACTION_TEST_PATH,
+        source,
+        policy_scratch,
+        cargo_executable,
+    )
     try:
         results = [execute_case(repo, scratch, env, *case) for case in cases]
-        policy = json.loads(policy_scratch.read_text(encoding="utf-8"))
+        policy_bytes = policy_scratch.read_bytes()
+        policy = strict_document(policy_bytes, "policy", p0_support.strict_json_loads)
         policy_matches_source = (
             policy.get("base") == BASE
             and policy.get("head") == source
@@ -300,7 +248,7 @@ def gate(args: argparse.Namespace) -> int:
             "checks": results,
             "policy": {
                 "path": display_path(repo, args.policy_output),
-                "sha256": file_sha256(args.policy_output),
+                "sha256": sha256(policy_bytes),
             },
             "passed": passed,
         }
@@ -365,28 +313,27 @@ def distributions(args: argparse.Namespace) -> int:
         shutil.rmtree(scratch, ignore_errors=True)
 
 
-def distribution_command(test: str, cargo_executable: str) -> list[str]:
-    return [
-        cargo_executable,
-        "--locked",
-        "test",
-        "-p",
-        "norn",
-        "--lib",
-        "--all-features",
-        test,
-        "--",
-        "--exact",
-        "--nocapture",
-    ]
-
-
 def attest(args: argparse.Namespace) -> int:
     repo = repo_root()
     source, provenance = validate_source(repo, args.source)
-    gate_doc = json.loads(args.gate.read_text(encoding="utf-8"))
-    policy_doc = json.loads(args.policy.read_text(encoding="utf-8"))
-    dist_doc = json.loads(args.distributions.read_text(encoding="utf-8"))
+    artifact_bytes = {
+        "gate": args.gate.read_bytes(),
+        "policy": args.policy.read_bytes(),
+        "distributions": args.distributions.read_bytes(),
+        "redaction": args.redaction.read_bytes(),
+    }
+    gate_doc = strict_document(
+        artifact_bytes["gate"], "gate", p0_support.strict_json_loads
+    )
+    policy_doc = strict_document(
+        artifact_bytes["policy"], "policy", p0_support.strict_json_loads
+    )
+    dist_doc = strict_document(
+        artifact_bytes["distributions"], "distributions", p0_support.strict_json_loads
+    )
+    redaction_doc = strict_document(
+        artifact_bytes["redaction"], "redaction", p0_support.strict_json_loads
+    )
     errors = []
     if (
         gate_doc.get("schema_version") != 1
@@ -407,7 +354,12 @@ def attest(args: argparse.Namespace) -> int:
     expected_gate = [
         (case_id, command_text(repo, command), require_tests)
         for case_id, command, require_tests in gate_cases(
-            source, args.policy, str(Path(env["RUSTC"]).parent / "cargo")
+            BASE,
+            POLICY_RUNNER,
+            REDACTION_TEST_PATH,
+            source,
+            args.policy,
+            str(Path(env["RUSTC"]).parent / "cargo"),
         )
     ]
     if not gate_records_valid(gate_doc.get("checks"), expected_gate):
@@ -419,7 +371,7 @@ def attest(args: argparse.Namespace) -> int:
         or not policy_doc.get("policy_passed")
     ):
         errors.append("policy source or verdict mismatch")
-    if gate_doc.get("policy", {}).get("sha256") != file_sha256(args.policy):
+    if gate_doc.get("policy", {}).get("sha256") != sha256(artifact_bytes["policy"]):
         errors.append("gate policy hash mismatch")
     if gate_doc.get("policy", {}).get("path") != display_path(repo, args.policy):
         errors.append("gate policy path mismatch")
@@ -438,11 +390,16 @@ def attest(args: argparse.Namespace) -> int:
         errors.append("gate environment differs from attestation environment")
     if dist_doc.get("environment") != current_environment:
         errors.append("distribution environment differs from attestation environment")
-    artifacts = {
-        "gate": file_sha256(args.gate),
-        "policy": file_sha256(args.policy),
-        "distributions": file_sha256(args.distributions),
-    }
+    expected_redaction = build_redaction_evidence(
+        repo,
+        BASE,
+        source,
+        REUSED_ARTIFACTS,
+        {name: artifact_bytes[name] for name in ("gate", "policy", "distributions")},
+    )
+    if not redaction_document_valid(redaction_doc, expected_redaction):
+        errors.append("redaction document inventory or verdict mismatch")
+    artifacts = {name: sha256(data) for name, data in artifact_bytes.items()}
     write_json(
         args.output,
         {
@@ -470,6 +427,21 @@ def final(args: argparse.Namespace) -> int:
     dist_args = argparse.Namespace(source=args.source, output=args.distributions)
     if distributions(dist_args):
         return 1
+    generated_bytes = {
+        "gate": args.gate.read_bytes(),
+        "policy": args.policy.read_bytes(),
+        "distributions": args.distributions.read_bytes(),
+    }
+    redaction_doc = build_redaction_evidence(
+        repo_root(),
+        BASE,
+        commit(repo_root(), args.source),
+        REUSED_ARTIFACTS,
+        generated_bytes,
+    )
+    write_json(args.redaction, redaction_doc)
+    if not redaction_doc["passed"]:
+        return 1
     return attest(args)
 
 
@@ -479,6 +451,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--gate", type=Path, required=True)
     root.add_argument("--policy", type=Path, required=True)
     root.add_argument("--distributions", type=Path, required=True)
+    root.add_argument("--redaction", type=Path, required=True)
     root.add_argument("--output", type=Path, required=True)
     root.set_defaults(action=final)
     return root
