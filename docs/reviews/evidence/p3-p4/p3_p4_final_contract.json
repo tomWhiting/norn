@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "base": "a90b730091bccaeaa03ba98c3b31425e40e32dac",
+  "toolchain": "1.94.0",
+  "distribution_tests": [
+    "session::manager::tests::open_or_resume_concurrent_same_id_converges_on_one_session",
+    "session::manager::tests::concurrent_migrated_resumes_converge_on_one_boundary",
+    "session::manager::tests::top_level_fork_resolves_two_audio_artifacts_after_source_deletion"
+  ],
+  "reused_artifacts": {
+    "docs/reviews/evidence/d2/2026-07-17-d2-f1-correction-gate-e9755fe.json": "8cb4caf0b5724bf49de4fe53e9b7a4c4296751d2fb09a73fdb1e809aacd9e077",
+    "docs/reviews/evidence/d2/2026-07-17-d2-f1-correction-policy-e9755fe.json": "c8565b5cf75f7ae88ae94b862ab6e0a6572e988eb333b7c74d27191e9cc6a024",
+    "docs/reviews/evidence/p3-p4-audio/2026-07-17-response-audio-gate-0512953.json": "38a20fb6d99f7eea23327870d79dbb40233039df6e2d3475984b5f911abe824c",
+    "docs/reviews/evidence/p3-p4-audio/2026-07-17-response-audio-distributions-0512953.json": "d4bac58deea36713ef6ead9522cc2f639babf0dd1f497aa58a5bef06ac6113a6",
+    "docs/reviews/evidence/p3-p4-audio/2026-07-17-response-audio-lifecycle-distributions-f252cbb.json": "4f1d5f81ecceb608972b8a803e193c2f3f3d23b1cb3ddf9462dba76dcab41798",
+    "docs/reviews/evidence/p3-p4-audio/2026-07-17-response-audio-correction-gate-df47e9e.json": "d76ee1809907ab2d981da2c91be21975c56f5be2aaae85c69cbd2b3f0a651bb5",
+    "docs/reviews/evidence/p3-p4/2026-07-18-response-optional-lifecycle-gate-56fd4dd.json": "848e44f34ed075065a7a5370c811dad68daa15139f72e0dd534edd826f3936f0",
+    "docs/reviews/evidence/p3-p4/2026-07-18-response-optional-shape-contract.json": "7ea54c502732510a8c7e55a2acbfd481b92ed267ded34ce747af79216883dea3",
+    "docs/reviews/evidence/p3-p4/2026-07-18-response-lifecycle-surface-inventory.json": "561f9cc099d31a9d6c0e7ac40f28cd477db8058e7d71a7b400ccabe7f3ad11f0"
+  }
+}
