@@ -273,7 +273,6 @@ fn service_tier_provider_value(request: &ProviderRequest) -> Result<Option<Strin
 }
 
 #[cfg(test)]
-#[allow(clippy::clone_on_ref_ptr, clippy::unnecessary_literal_bound)]
 mod tests {
     use super::*;
     use crate::provider::request::{
