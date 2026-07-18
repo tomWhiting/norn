@@ -5,6 +5,16 @@ script_path=${BASH_SOURCE[0]}
 script_dir=$(cd -- "$(dirname -- "$script_path")" && pwd)
 repo_root=$(git -C "$script_dir" rev-parse --show-toplevel)
 cd "$repo_root" || exit 1
+common_git_dir=$(git rev-parse --git-common-dir)
+if [[ "$common_git_dir" != /* ]]; then
+  common_git_dir="$repo_root/$common_git_dir"
+fi
+common_git_dir=$(cd "$common_git_dir" && pwd -P)
+primary_repo_root=$(dirname "$common_git_dir")
+if [[ ! -f "$primary_repo_root/Cargo.toml" ]]; then
+  printf 'Git common directory does not resolve to the primary repository root\n' >&2
+  exit 2
+fi
 
 source_arg=${1:-}
 if [[ -z "$source_arg" ]]; then
@@ -30,7 +40,7 @@ contract_source_section_sha256=d414cb294fadb4b56185f6507fe57a092dfb10e888776b24a
 evidence_dir=docs/reviews/evidence/p3-p4
 output="$evidence_dir/$(date -u +%F)-response-optional-lifecycle-gate-$short_commit.json"
 
-repo_target="$repo_root/target"
+repo_target="$primary_repo_root/target"
 mkdir -p "$repo_target"
 build_target=${CARGO_TARGET_DIR:-$repo_target}
 if [[ "$build_target" != /* ]]; then
