@@ -1283,9 +1283,12 @@ The implementation contract is:
 **Implementation status:** Candidate source `0512953` implements this contract.
 The retained source-bound gate, its disclosed test-only working-tree overlay,
 and repeated lifecycle evidence are recorded in the P3/P4 response-audio
-handoff. This section does not accept P3 or P4; the
-broader exhaustive lifecycle matrix, full-range phase evidence, and independent
-phase review remain open.
+handoff. Review `50115bf` accepted the lifecycle fixtures but returned
+`NOT READY` on M-1/F-2; correction source `df47e9e` closed both findings, and
+same-reviewer confirmation `dad0291` records the focused response-audio slice
+as `READY`. The separate finite D11 lifecycle evidence at `56fd4dd` is accepted
+by review `5af7308`. This section does not accept P3 or P4; full-range phase
+evidence and independent phase reviews remain open.
 
 ## 17. P3/P4 finite shape and lifecycle evidence scope (2026-07-18)
 
@@ -1322,6 +1325,17 @@ every persistence and fork path.
   an official contract enumeration, not 659 lifecycle executions or a
   `659 x surfaces` Cartesian test. Any broader claim requires new source-bound
   evidence and review.
+- Local context compaction is not an eleventh D11 carrier surface. Compaction
+  deliberately replaces superseded events in the provider-facing prompt view
+  with a durable summary; it does not rewrite or delete their canonical events
+  from the append-only session store. D11 therefore proves durable carriage at
+  its ten named surfaces, not verbatim prompt replay after an explicit context
+  edit. P5 and D3 own compaction-view reconstruction, provider-anchor
+  transitions, and reasoning-continuity evidence.
+- This exclusion applies only to Norn's local `SessionEvent::Compaction` view
+  transform. The provider's `ResponseItem::Compaction` remains one of the 28
+  public output-item variants and is covered by the D11 contract and carrier
+  evidence like every other admitted provider item.
 
 This ruling changes the evidence method, not the compatibility outcome: every
 public discriminator remains admitted or rejected deliberately, exact provider
@@ -1335,4 +1349,5 @@ reasoned-inapplicable cells), 4,011/4,011 library tests, and 120/120 focused
 observations across 44 tests. The official schema section bytes and extraction
 generator are not retained; regeneration requires refetching the official
 schema and first matching the recorded section hash. This closes D11's evidence
-method, not P3 or P4 acceptance.
+method. Independent review `5af7308` returned `READY` for that evidence
+candidate. Neither the implementation nor that review accepts P3 or P4.

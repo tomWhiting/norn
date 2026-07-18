@@ -136,6 +136,13 @@ defects before source freeze:
   paths. Required-null occurrences beneath omitted optional or empty nested
   containers are covered by populated/nested fixtures; no claim says all 14
   contextual occurrences execute in the minimal fixture.
+- Local context compaction is outside D11's ten carrier surfaces. It
+  intentionally replaces superseded events in the provider-facing prompt view
+  with a durable summary while leaving their canonical append-only store rows
+  unchanged. P5/D3 owns resumed view reconstruction, provider-anchor changes,
+  and reasoning continuity; this handoff does not claim verbatim prompt replay
+  after an explicit context edit. The provider's separate
+  `ResponseItem::Compaction` remains one of the 28 covered output variants.
 - This range does not resolve the pending same-reviewer M-1/F-2 correction
   confirmation, P1/P2 acceptance, the retrospective P3/P4 phase-base decision,
   the final full-range phase gates, or separate P3 then P4 acceptance reviews.
