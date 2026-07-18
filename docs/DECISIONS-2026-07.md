@@ -1351,3 +1351,25 @@ generator are not retained; regeneration requires refetching the official
 schema and first matching the recorded section hash. This closes D11's evidence
 method. Independent review `5af7308` returned `READY` for that evidence
 candidate. Neither the implementation nor that review accepts P3 or P4.
+
+## 18. P3/P4 retrospective Gate A timing disposition (2026-07-18)
+
+**Owner ruling:** In response to the explicit recommendation to use a narrowly
+documented retrospective exception at mechanical base `a90b730`, Tom approved
+continuing with whatever is required to finish the work on 2026-07-18.
+
+- `a90b730091bccaeaa03ba98c3b31425e40e32dac` is the final P2 documentation
+  commit before P3/P4 implementation; its child `128b282` is the first
+  canonical-transcript source commit. The frozen combined P3/P4 source head is
+  `56fd4dd626af0c66954a51932fc05395f3023622`.
+- P3 and P4 use the same exact comparison base because their transcript and
+  streaming implementation was interleaved. They still require separate
+  phase-specific evidence, domain review, adversarial review, and acceptance
+  verdicts.
+- This is a timing exception only. It does not assert that the base was recorded
+  prospectively, does not manufacture baseline-red observations, and does not
+  waive dependency completion, full-range diff/LOC/policy checks, strict
+  Clippy, complete workspace tests, concurrency distributions, or Gate D.
+- The P3/P4 phase-base ledger cells may now record `a90b730`; every other ledger
+  cell remains blank until its stated evidence exists. Neither phase becomes
+  accepted through this ruling.
