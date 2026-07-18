@@ -498,20 +498,24 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
                 }
             }),
         };
-        match map_sse_event(&done) {
-            Some(Ok(ProviderEvent::ResponseItemDone { item })) => {
-                let call = item
-                    .item
-                    .as_function_call()
-                    .expect("function call is typed");
-                assert_eq!(item.provenance.item_id.as_deref(), Some("fc_abc"));
-                assert_eq!(call.call_id(), "call_xyz");
-                assert_ne!(call.call_id(), "fc_abc");
-                assert_eq!(call.name(), "get_weather");
-                assert_eq!(call.arguments(), "{\"city\": \"NYC\"}");
-            }
-            other => panic!("expected canonical function call, got {other:?}"),
-        }
+        let mapped = map_sse_event(&done);
+        assert!(
+            matches!(&mapped, Some(Ok(ProviderEvent::ResponseItemDone { .. }))),
+            "expected canonical function call, got {mapped:?}"
+        );
+        let Some(Ok(ProviderEvent::ResponseItemDone { item })) = mapped else {
+            return;
+        };
+        let call = item.item.as_function_call();
+        assert!(call.is_some(), "function call must remain typed");
+        let Some(call) = call else {
+            return;
+        };
+        assert_eq!(item.provenance.item_id.as_deref(), Some("fc_abc"));
+        assert_eq!(call.call_id(), "call_xyz");
+        assert_ne!(call.call_id(), "fc_abc");
+        assert_eq!(call.name(), "get_weather");
+        assert_eq!(call.arguments(), "{\"city\": \"NYC\"}");
     }
 
     #[test]
@@ -528,22 +532,26 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
                 }
             }),
         };
-        match map_sse_event(&done) {
-            Some(Ok(ProviderEvent::ResponseItemDone { item })) => {
-                let call = item
-                    .item
-                    .as_custom_tool_call()
-                    .expect("custom tool call is typed");
-                assert_eq!(call.call_id(), "call_custom");
-                assert_eq!(call.name(), "apply_patch");
-                assert_eq!(
-                    call.input(),
-                    "*** BEGIN PATCH ***\n@@\n-foo\n+bar\n*** END PATCH ***",
-                    "freeform input must pass through verbatim",
-                );
-            }
-            other => panic!("expected canonical custom tool call, got {other:?}"),
-        }
+        let mapped = map_sse_event(&done);
+        assert!(
+            matches!(&mapped, Some(Ok(ProviderEvent::ResponseItemDone { .. }))),
+            "expected canonical custom tool call, got {mapped:?}"
+        );
+        let Some(Ok(ProviderEvent::ResponseItemDone { item })) = mapped else {
+            return;
+        };
+        let call = item.item.as_custom_tool_call();
+        assert!(call.is_some(), "custom tool call must remain typed");
+        let Some(call) = call else {
+            return;
+        };
+        assert_eq!(call.call_id(), "call_custom");
+        assert_eq!(call.name(), "apply_patch");
+        assert_eq!(
+            call.input(),
+            "*** BEGIN PATCH ***\n@@\n-foo\n+bar\n*** END PATCH ***",
+            "freeform input must pass through verbatim",
+        );
     }
 
     #[test]
@@ -584,31 +592,38 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
                 }
             }),
         };
-        match map_sse_event(&done) {
-            Some(Ok(ProviderEvent::ResponseItemDone { item })) => {
-                let reasoning = item.item.as_reasoning().expect("reasoning is typed");
-                assert_eq!(item.item.id(), Some("rs_abc"));
-                assert_eq!(
-                    reasoning.summary(),
-                    &[serde_json::json!({
-                        "type": "summary_text",
-                        "text": "I considered the options"
-                    })],
-                );
-                assert_eq!(
-                    reasoning.content(),
-                    Some(
-                        [serde_json::json!({
-                            "type": "reasoning_text",
-                            "text": "raw chain of thought"
-                        })]
-                        .as_slice()
-                    ),
-                );
-                assert_eq!(reasoning.encrypted_content(), Some("gAAAAB-opaque-blob"),);
-            }
-            other => panic!("expected canonical reasoning item, got {other:?}"),
-        }
+        let mapped = map_sse_event(&done);
+        assert!(
+            matches!(&mapped, Some(Ok(ProviderEvent::ResponseItemDone { .. }))),
+            "expected canonical reasoning item, got {mapped:?}"
+        );
+        let Some(Ok(ProviderEvent::ResponseItemDone { item })) = mapped else {
+            return;
+        };
+        let reasoning = item.item.as_reasoning();
+        assert!(reasoning.is_some(), "reasoning item must remain typed");
+        let Some(reasoning) = reasoning else {
+            return;
+        };
+        assert_eq!(item.item.id(), Some("rs_abc"));
+        assert_eq!(
+            reasoning.summary(),
+            &[serde_json::json!({
+                "type": "summary_text",
+                "text": "I considered the options"
+            })],
+        );
+        assert_eq!(
+            reasoning.content(),
+            Some(
+                [serde_json::json!({
+                    "type": "reasoning_text",
+                    "text": "raw chain of thought"
+                })]
+                .as_slice()
+            ),
+        );
+        assert_eq!(reasoning.encrypted_content(), Some("gAAAAB-opaque-blob"),);
     }
 
     #[test]
@@ -626,16 +641,23 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
                 }
             }),
         };
-        match map_sse_event(&done) {
-            Some(Ok(ProviderEvent::ResponseItemDone { item })) => {
-                let reasoning = item.item.as_reasoning().expect("reasoning is typed");
-                assert_eq!(item.item.id(), Some("rs_plain"));
-                assert!(reasoning.summary().is_empty());
-                assert!(reasoning.content().is_none());
-                assert!(reasoning.encrypted_content().is_none());
-            }
-            other => panic!("expected canonical reasoning item, got {other:?}"),
-        }
+        let mapped = map_sse_event(&done);
+        assert!(
+            matches!(&mapped, Some(Ok(ProviderEvent::ResponseItemDone { .. }))),
+            "expected canonical reasoning item, got {mapped:?}"
+        );
+        let Some(Ok(ProviderEvent::ResponseItemDone { item })) = mapped else {
+            return;
+        };
+        let reasoning = item.item.as_reasoning();
+        assert!(reasoning.is_some(), "reasoning item must remain typed");
+        let Some(reasoning) = reasoning else {
+            return;
+        };
+        assert_eq!(item.item.id(), Some("rs_plain"));
+        assert!(reasoning.summary().is_empty());
+        assert!(reasoning.content().is_none());
+        assert!(reasoning.encrypted_content().is_none());
     }
 
     #[test]
@@ -650,13 +672,16 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
                 }
             }),
         };
-        match map_sse_event(&done) {
-            Some(Ok(ProviderEvent::ResponseItemDone { item })) => {
-                assert_eq!(item.item.item_type(), "compaction");
-                assert_eq!(item.item.raw()["encrypted_content"], "enc_state");
-            }
-            other => panic!("expected canonical compaction, got {other:?}"),
-        }
+        let mapped = map_sse_event(&done);
+        assert!(
+            matches!(&mapped, Some(Ok(ProviderEvent::ResponseItemDone { .. }))),
+            "expected canonical compaction, got {mapped:?}"
+        );
+        let Some(Ok(ProviderEvent::ResponseItemDone { item })) = mapped else {
+            return;
+        };
+        assert_eq!(item.item.item_type(), "compaction");
+        assert_eq!(item.item.raw()["encrypted_content"], "enc_state");
     }
 
     #[test]

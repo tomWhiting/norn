@@ -273,13 +273,7 @@ fn service_tier_provider_value(request: &ProviderRequest) -> Result<Option<Strin
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::clone_on_ref_ptr,
-    clippy::unnecessary_literal_bound
-)]
+#[allow(clippy::clone_on_ref_ptr, clippy::unnecessary_literal_bound)]
 mod tests {
     use super::*;
     use crate::provider::request::{
@@ -288,6 +282,8 @@ mod tests {
     use crate::provider::tools::{
         HostedToolDefinition, HostedWebSearchTool, ProviderToolDefinition,
     };
+
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
     fn base_request() -> ProviderRequest {
         ProviderRequest {
@@ -354,9 +350,8 @@ mod tests {
     }
 
     #[test]
-    fn payload_uses_chat_shape_and_omits_responses_only_fields() {
-        let payload = build_payload(&base_request()).unwrap();
-        let value = serde_json::to_value(payload).unwrap();
+    fn payload_uses_chat_shape_and_omits_responses_only_fields() -> TestResult {
+        let value = build_payload(&base_request())?;
 
         assert_eq!(value["model"], "local-model");
         assert_eq!(value["stream"], true);
@@ -368,26 +363,37 @@ mod tests {
         assert!(value.get("context_management").is_none());
         assert!(value.get("prompt_cache_key").is_none());
 
-        let messages = value["messages"].as_array().unwrap();
-        assert_eq!(messages[0]["role"], "system");
-        assert_eq!(messages[1]["role"], "system");
-        assert_eq!(messages[2]["role"], "user");
+        let messages = value["messages"]
+            .as_array()
+            .ok_or("chat payload messages must be an array")?;
+        let roles = messages
+            .iter()
+            .map(|message| message.get("role").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(roles, [Some("system"), Some("system"), Some("user")]);
 
-        let tool = &value["tools"][0];
-        assert_eq!(tool["type"], "function");
-        assert_eq!(tool["function"]["name"], "read_file");
+        assert_eq!(
+            value.pointer("/tools/0/type"),
+            Some(&serde_json::json!("function"))
+        );
+        assert_eq!(
+            value.pointer("/tools/0/function/name"),
+            Some(&serde_json::json!("read_file"))
+        );
+        Ok(())
     }
 
     #[test]
-    fn max_reasoning_effort_uses_canonical_wire_value() {
+    fn max_reasoning_effort_uses_canonical_wire_value() -> TestResult {
         let mut request = base_request();
         request.reasoning_effort = Some(ReasoningEffort::Max);
-        let value = serde_json::to_value(build_payload(&request).unwrap()).unwrap();
+        let value = build_payload(&request)?;
         assert_eq!(value["reasoning_effort"], "max");
+        Ok(())
     }
 
     #[test]
-    fn assistant_tool_call_and_result_use_chat_replay_shape() {
+    fn assistant_tool_call_and_result_use_chat_replay_shape() -> TestResult {
         let mut request = base_request();
         request.messages.push(Message {
             response_items: Vec::new(),
@@ -420,20 +426,26 @@ mod tests {
             tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
 
-        let value = serde_json::to_value(build_payload(&request).unwrap()).unwrap();
-        let messages = value["messages"].as_array().unwrap();
-        assert_eq!(messages[3]["role"], "assistant");
-        assert_eq!(messages[3]["tool_calls"][0]["id"], "call_123");
-        assert_eq!(
-            messages[3]["tool_calls"][0]["function"]["name"],
-            "read_file"
-        );
-        assert_eq!(messages[4]["role"], "tool");
-        assert_eq!(messages[4]["tool_call_id"], "call_123");
+        let value = build_payload(&request)?;
+        let messages = value["messages"]
+            .as_array()
+            .ok_or("chat replay messages must be an array")?;
+        let assistant = messages
+            .get(3)
+            .ok_or("chat replay omitted the assistant tool-call message")?;
+        let tool_result = messages
+            .get(4)
+            .ok_or("chat replay omitted the tool-result message")?;
+        assert_eq!(assistant["role"], "assistant");
+        assert_eq!(assistant["tool_calls"][0]["id"], "call_123");
+        assert_eq!(assistant["tool_calls"][0]["function"]["name"], "read_file");
+        assert_eq!(tool_result["role"], "tool");
+        assert_eq!(tool_result["tool_call_id"], "call_123");
+        Ok(())
     }
 
     #[test]
-    fn missing_tool_result_id_is_hard_error() {
+    fn missing_tool_result_id_is_hard_error() -> TestResult {
         let mut request = base_request();
         request.messages.push(Message {
             response_items: Vec::new(),
@@ -448,36 +460,45 @@ mod tests {
             tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
 
-        let err = build_payload(&request).unwrap_err();
+        let Err(err) = build_payload(&request) else {
+            return Err("a tool result without a call id must fail serialization".into());
+        };
         assert!(matches!(
             err,
             ProviderError::RequestSerializationFailed { .. }
         ));
         assert!(!err.to_string().contains("tool-name-secret-must-not-escape"));
+        Ok(())
     }
 
     #[test]
-    fn hosted_tools_fail_closed() {
+    fn hosted_tools_fail_closed() -> TestResult {
         let mut request = base_request();
         request.tools = vec![ProviderToolDefinition::Hosted(
             HostedToolDefinition::WebSearch(HostedWebSearchTool::default()),
         )];
 
-        let err = build_payload(&request).unwrap_err();
+        let Err(err) = build_payload(&request) else {
+            return Err("hosted tools must fail closed on chat completions".into());
+        };
         assert!(matches!(err, ProviderError::UnsupportedFeature { .. }));
+        Ok(())
     }
 
     #[test]
-    fn service_tier_uses_compatible_backend_catalog() {
+    fn service_tier_uses_compatible_backend_catalog() -> TestResult {
         let mut request = base_request();
         request.service_tier = Some(ServiceTier::Fast);
 
-        let err = build_payload(&request).unwrap_err();
+        let Err(err) = build_payload(&request) else {
+            return Err("an unsupported service tier must fail request construction".into());
+        };
         assert!(matches!(err, ProviderError::InvalidRequest { .. }));
+        Ok(())
     }
 
     #[test]
-    fn provider_options_merge_advanced_chat_fields() {
+    fn provider_options_merge_advanced_chat_fields() -> TestResult {
         let mut request = base_request();
         request.config = Some(ProviderOptions(serde_json::json!({
             "logprobs": true,
@@ -486,18 +507,19 @@ mod tests {
             "response_format": {"type": "json_object"}
         })));
 
-        let value = build_payload(&request).unwrap();
+        let value = build_payload(&request)?;
 
         assert_eq!(value["logprobs"], true);
         assert_eq!(value["top_logprobs"], 5);
         assert_eq!(value["seed"], 1234);
         assert_eq!(value["response_format"]["type"], "json_object");
         assert_eq!(value["model"], "local-model");
-        assert_eq!(value["messages"].as_array().unwrap().len(), 3);
+        assert_eq!(value["messages"].as_array().map(Vec::len), Some(3));
+        Ok(())
     }
 
     #[test]
-    fn provider_options_support_scoped_chat_fields() {
+    fn provider_options_support_scoped_chat_fields() -> TestResult {
         let mut request = base_request();
         request.config = Some(ProviderOptions(serde_json::json!({
             "api_options": {
@@ -508,27 +530,31 @@ mod tests {
             }
         })));
 
-        let value = build_payload(&request).unwrap();
+        let value = build_payload(&request)?;
 
         assert_eq!(value["logit_bias"]["42"], -100);
         assert_eq!(value["temperature"], 0.2);
         assert!(value.get("api_options").is_none());
+        Ok(())
     }
 
     #[test]
-    fn provider_options_reject_protected_chat_fields() {
+    fn provider_options_reject_protected_chat_fields() -> TestResult {
         let mut request = base_request();
         request.config = Some(ProviderOptions(serde_json::json!({
             "messages": []
         })));
 
-        let err = build_payload(&request).unwrap_err();
+        let Err(err) = build_payload(&request) else {
+            return Err("protected chat fields must be rejected".into());
+        };
 
         assert!(matches!(err, ProviderError::InvalidRequest { .. }));
+        Ok(())
     }
 
     #[test]
-    fn chat_completions_never_replays_reasoning_items() {
+    fn chat_completions_never_replays_reasoning_items() -> TestResult {
         // The encrypted-reasoning replay contract is Responses-API-only:
         // an assistant message carrying captured reasoning items (even
         // with encrypted_content) serializes to a plain chat message with
@@ -555,7 +581,7 @@ mod tests {
             tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
 
-        let value = serde_json::to_value(build_payload(&request).unwrap()).unwrap();
+        let value = build_payload(&request)?;
         let serialized = value.to_string();
         assert!(
             !serialized.contains("opaque-blob"),
@@ -565,14 +591,19 @@ mod tests {
             !serialized.contains("\"reasoning\""),
             "no reasoning items may be serialized on chat_completions: {serialized}"
         );
-        let messages = value["messages"].as_array().unwrap();
-        let assistant = messages.last().unwrap();
+        let messages = value["messages"]
+            .as_array()
+            .ok_or("chat payload messages must be an array")?;
+        let assistant = messages
+            .last()
+            .ok_or("chat payload omitted the assistant message")?;
         assert_eq!(assistant["role"], "assistant");
         assert_eq!(assistant["content"], "answer");
+        Ok(())
     }
 
     #[test]
-    fn canonical_response_items_fail_closed_before_chat_serialization() {
+    fn canonical_response_items_fail_closed_before_chat_serialization() -> TestResult {
         use crate::provider::response_item::{
             ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
         };
@@ -584,8 +615,7 @@ mod tests {
                     "type": "future_response_item",
                     "id": "item_1",
                     "secret_extension": "must-not-be-flattened"
-                }))
-                .unwrap(),
+                }))?,
                 provenance: ResponseStreamProvenance::default(),
             }],
             reasoning: Vec::new(),
@@ -599,7 +629,11 @@ mod tests {
             tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
 
-        let error = build_payload(&request).unwrap_err();
+        let Err(error) = build_payload(&request) else {
+            return Err(
+                "canonical Responses items must fail closed before chat serialization".into(),
+            );
+        };
         match error {
             ProviderError::UnsupportedFeature { feature } => {
                 assert_eq!(
@@ -607,7 +641,8 @@ mod tests {
                     "canonical Responses item replay on chat_completions"
                 );
             }
-            other => panic!("expected UnsupportedFeature, got {other:?}"),
+            other => return Err(format!("expected UnsupportedFeature, got {other:?}").into()),
         }
+        Ok(())
     }
 }

@@ -499,9 +499,6 @@ pub(super) fn tool_data_pair(data: &ToolData) -> (String, Value) {
 
 #[cfg(test)]
 #[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
     clippy::clone_on_ref_ptr,
     clippy::no_effect_underscore_binding,
     clippy::useless_vec,
@@ -525,6 +522,8 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::provider::request::{Message, MessageRole, ProviderRequest};
+
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
     fn config() -> ClaudeRunnerConfig {
         ClaudeRunnerConfig {
@@ -561,7 +560,7 @@ mod tests {
         }
     }
 
-    fn request_with_canonical_item() -> ProviderRequest {
+    fn request_with_canonical_item() -> TestResult<ProviderRequest> {
         use crate::provider::response_item::{
             ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
         };
@@ -574,8 +573,7 @@ mod tests {
                     item: ResponseItem::from_value(serde_json::json!({
                         "type": "future_response_item",
                         "id": "item_1"
-                    }))
-                    .unwrap(),
+                    }))?,
                     provenance: ResponseStreamProvenance::default(),
                 }],
                 reasoning: Vec::new(),
@@ -589,7 +587,7 @@ mod tests {
                 tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             },
         );
-        request
+        Ok(request)
     }
 
     // R1 verification: ClaudeRunnerAdapter implements Provider -- static
@@ -602,9 +600,9 @@ mod tests {
 
     // R1 acceptance: built command carries prompt, stream-json format, model.
     #[test]
-    fn build_command_includes_prompt_and_stream_json() {
+    fn build_command_includes_prompt_and_stream_json() -> TestResult {
         let adapter = ClaudeRunnerAdapter::new(config());
-        let cmd = adapter.build_command(&user_request("hello")).unwrap();
+        let cmd = adapter.build_command(&user_request("hello"))?;
         let args = cmd.build_args();
         let joined = args.join(" ");
         assert!(joined.contains("hello"), "args carry prompt: {joined}");
@@ -614,41 +612,45 @@ mod tests {
         );
         assert!(joined.contains("-p"), "print mode: {joined}");
         assert!(joined.contains("--model"), "model flag: {joined}");
+        Ok(())
     }
 
     #[test]
-    fn run_step_rejects_canonical_items_before_spawning() {
+    fn run_step_rejects_canonical_items_before_spawning() -> TestResult {
         let adapter = ClaudeRunnerAdapter::new(config());
-        let error = adapter
-            .run_step(&request_with_canonical_item())
-            .unwrap_err();
+        let request = request_with_canonical_item()?;
+        let Err(error) = adapter.run_step(&request) else {
+            return Err("canonical Responses items must fail before spawning Claude Runner".into());
+        };
 
         match error {
             IntegrationError::ClaudeRunnerError { reason } => assert_eq!(
                 reason,
                 "unsupported feature: canonical Responses item replay through Claude Runner"
             ),
-            other => panic!("expected ClaudeRunnerError, got {other:?}"),
+            other => return Err(format!("expected ClaudeRunnerError, got {other:?}").into()),
         }
+        Ok(())
     }
 
     #[test]
-    fn provider_stream_rejects_canonical_items_before_rendering() {
+    fn provider_stream_rejects_canonical_items_before_rendering() -> TestResult {
         let adapter = ClaudeRunnerAdapter::new(config());
-        let result = adapter.stream(request_with_canonical_item());
+        let result = adapter.stream(request_with_canonical_item()?);
 
         match result {
             Err(ProviderError::UnsupportedFeature { feature }) => assert_eq!(
                 feature,
                 "canonical Responses item replay through Claude Runner"
             ),
-            Err(other) => panic!("expected UnsupportedFeature, got {other:?}"),
-            Ok(_) => panic!("canonical Responses items must fail closed"),
+            Err(other) => return Err(format!("expected UnsupportedFeature, got {other:?}").into()),
+            Ok(_) => return Err("canonical Responses items must fail closed".into()),
         }
+        Ok(())
     }
 
     #[test]
-    fn consolidate_outcome_extracts_result_and_stop_reason() {
+    fn consolidate_outcome_extracts_result_and_stop_reason() -> TestResult {
         let events = vec![
             ClaudeEvent::Assistant {
                 message: ClaudeMessage {
@@ -689,16 +691,17 @@ mod tests {
                 }),
             },
         ];
-        let outcome = consolidate_outcome(&events).unwrap();
+        let outcome = consolidate_outcome(&events)?;
         assert_eq!(outcome.result, serde_json::json!({"ok": true}));
         assert_eq!(outcome.stop_reason, StopReason::EndTurn);
         assert_eq!(outcome.usage.input_tokens, 30);
         assert_eq!(outcome.usage.output_tokens, 12);
         assert_eq!(outcome.usage.cost_usd, Some(0.001));
+        Ok(())
     }
 
     #[test]
-    fn consolidate_outcome_propagates_is_error() {
+    fn consolidate_outcome_propagates_is_error() -> TestResult {
         let events = vec![ClaudeEvent::Result {
             subtype: Some("error".to_owned()),
             is_error: Some(true),
@@ -713,10 +716,13 @@ mod tests {
             total_cost_usd: None,
             usage: None,
         }];
-        let err = consolidate_outcome(&events).unwrap_err();
+        let Err(err) = consolidate_outcome(&events) else {
+            return Err("an error result event must fail outcome consolidation".into());
+        };
         match err {
             IntegrationError::ClaudeRunnerError { reason } => assert_eq!(reason, "internal"),
-            other => panic!("expected ClaudeRunnerError, got {other:?}"),
+            other => return Err(format!("expected ClaudeRunnerError, got {other:?}").into()),
         }
+        Ok(())
     }
 }

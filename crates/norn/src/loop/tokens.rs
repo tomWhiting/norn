@@ -319,7 +319,8 @@ mod tests {
     }
 
     #[test]
-    fn estimate_uses_only_canonical_item_json_when_present() {
+    fn estimate_uses_only_canonical_item_json_when_present()
+    -> Result<(), crate::provider::response_item::ResponseItemError> {
         use crate::provider::response_item::{
             ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
         };
@@ -347,16 +348,18 @@ mod tests {
         let response_items = raw_items
             .iter()
             .cloned()
-            .map(|raw| ResponseTranscriptItem {
-                item: ResponseItem::from_value(raw).expect("valid response item"),
-                provenance: ResponseStreamProvenance {
-                    item_id: Some("stream provenance must not be counted".repeat(20)),
-                    output_index: Some(99),
-                    content_index: Some(88),
-                    sequence_number: Some(77),
-                },
+            .map(|raw| {
+                ResponseItem::from_value(raw).map(|item| ResponseTranscriptItem {
+                    item,
+                    provenance: ResponseStreamProvenance {
+                        item_id: Some("stream provenance must not be counted".repeat(20)),
+                        output_index: Some(99),
+                        content_index: Some(88),
+                        sequence_number: Some(77),
+                    },
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         let message = Message {
             response_items,
             reasoning: Vec::new(),
@@ -384,5 +387,6 @@ mod tests {
             estimate_prompt_tokens(&CharacterCountEstimator, &[message], &[]),
             expected,
         );
+        Ok(())
     }
 }

@@ -993,7 +993,8 @@ mod tests {
     }
 
     #[test]
-    fn digest_records_canonical_item_order_and_canonical_local_tool_names() {
+    fn digest_records_canonical_item_order_and_canonical_local_tool_names()
+    -> Result<(), crate::provider::response_item::ResponseItemError> {
         use crate::provider::response_item::{
             ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
         };
@@ -1034,11 +1035,13 @@ mod tests {
         let response_items = raw_items
             .iter()
             .cloned()
-            .map(|raw| ResponseTranscriptItem {
-                item: ResponseItem::from_value(raw).expect("valid response item"),
-                provenance: ResponseStreamProvenance::default(),
+            .map(|raw| {
+                ResponseItem::from_value(raw).map(|item| ResponseTranscriptItem {
+                    item,
+                    provenance: ResponseStreamProvenance::default(),
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         let event = SessionEvent::AssistantMessage {
             base: EventBase::new(None),
             response_items,
@@ -1070,6 +1073,7 @@ mod tests {
                 "item_types": ["reasoning", "function_call", "custom_tool_call", "message"]
             }]),
         );
+        Ok(())
     }
 
     #[test]

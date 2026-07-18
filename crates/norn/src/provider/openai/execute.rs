@@ -443,10 +443,14 @@ mod streaming_tests {
                 Ok(ProviderEvent::Done { .. })
             ]
         ));
-        match mapper.map_event(&delta).as_slice() {
-            [Err(ProviderError::ResponseProtocolViolation { .. })] => {}
-            other => panic!("expected a post-terminal protocol error, got {other:?}"),
-        }
+        let post_terminal = mapper.map_event(&delta);
+        assert!(
+            matches!(
+                post_terminal.as_slice(),
+                [Err(ProviderError::ResponseProtocolViolation { .. })]
+            ),
+            "expected a post-terminal protocol error, got {post_terminal:?}"
+        );
     }
 
     #[test]
@@ -462,13 +466,17 @@ mod streaming_tests {
                 "delta": "{"
             }),
         };
-        match mapper.map_event(&delta).as_slice() {
-            [
-                Ok(ProviderEvent::ResponseStreamEvent { .. }),
-                Err(ProviderError::ResponseProtocolViolation { .. }),
-            ] => {}
-            other => panic!("expected raw event then protocol error, got {other:?}"),
-        }
+        let mapped = mapper.map_event(&delta);
+        assert!(
+            matches!(
+                mapped.as_slice(),
+                [
+                    Ok(ProviderEvent::ResponseStreamEvent { .. }),
+                    Err(ProviderError::ResponseProtocolViolation { .. }),
+                ]
+            ),
+            "expected raw event then protocol error, got {mapped:?}"
+        );
     }
 
     fn build_request() -> ProviderRequest {

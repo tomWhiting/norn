@@ -582,7 +582,8 @@ mod tests {
     }
 
     #[test]
-    fn event_estimate_uses_only_canonical_item_bytes_when_present() {
+    fn event_estimate_uses_only_canonical_item_bytes_when_present()
+    -> Result<(), crate::provider::response_item::ResponseItemError> {
         use crate::provider::response_item::{
             ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
         };
@@ -604,14 +605,16 @@ mod tests {
         let response_items = raw_items
             .iter()
             .cloned()
-            .map(|raw| ResponseTranscriptItem {
-                item: ResponseItem::from_value(raw).expect("valid response item"),
-                provenance: ResponseStreamProvenance {
-                    item_id: Some("provenance is excluded".repeat(20)),
-                    ..ResponseStreamProvenance::default()
-                },
+            .map(|raw| {
+                ResponseItem::from_value(raw).map(|item| ResponseTranscriptItem {
+                    item,
+                    provenance: ResponseStreamProvenance {
+                        item_id: Some("provenance is excluded".repeat(20)),
+                        ..ResponseStreamProvenance::default()
+                    },
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         let event = SessionEvent::AssistantMessage {
             response_items,
             base: EventBase::new(None),
@@ -632,6 +635,7 @@ mod tests {
             estimate_event_tokens(Some(&ByteCountEstimator), &[event]),
             expected,
         );
+        Ok(())
     }
 
     fn summary_events(text: &str) -> Vec<ProviderEvent> {

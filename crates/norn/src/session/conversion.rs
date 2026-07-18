@@ -260,10 +260,10 @@ mod tests {
     }
 
     #[test]
-    fn response_audio_link_custom_event_is_not_replayed_to_provider_messages() {
+    fn response_audio_link_custom_event_is_not_replayed_to_provider_messages()
+    -> Result<(), serde_json::Error> {
         let reference: crate::session::ResponseAudioArtifactRef =
-            serde_json::from_value(serde_json::json!("123e4567-e89b-42d3-a456-426614174000"))
-                .expect("valid UUID reference");
+            serde_json::from_value(serde_json::json!("123e4567-e89b-42d3-a456-426614174000"))?;
         let link_base = EventBase::new(None);
         let assistant_base = EventBase::new(Some(link_base.id.clone()));
         let link = crate::session::ResponseAudioArtifactLink::new(
@@ -271,8 +271,7 @@ mod tests {
             reference,
             Some("resp_audio".to_owned()),
         )
-        .into_custom_event(link_base)
-        .expect("serialize typed link");
+        .into_custom_event(link_base)?;
         let events = vec![
             link,
             SessionEvent::AssistantMessage {
@@ -290,9 +289,10 @@ mod tests {
 
         let messages = events_to_messages(&events);
         assert_eq!(messages.len(), 1);
-        let encoded = serde_json::to_string(&messages[0]).expect("serialize message");
+        let encoded = serde_json::to_string(&messages[0])?;
         assert!(!encoded.contains("response_audio"));
         assert!(!encoded.contains(&reference.to_string()));
+        Ok(())
     }
 
     /// A legacy `AssistantMessage` event without a `reasoning` field (and

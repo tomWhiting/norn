@@ -650,7 +650,7 @@ mod tests {
     /// [`AgentStreamRetry`] marker *before* the replay's events, so
     /// observers reset the failed attempt's partial output.
     #[tokio::test]
-    async fn retry_broadcasts_stream_retry_marker_before_replay() {
+    async fn retry_broadcasts_stream_retry_marker_before_replay() -> Result<(), NornError> {
         let provider = ScriptedResultProvider::new(vec![
             vec![
                 Ok(ProviderEvent::TextDelta {
@@ -682,8 +682,7 @@ mod tests {
             None,
             None,
         )
-        .await
-        .expect("second attempt succeeds");
+        .await?;
         assert_eq!(response.text, "full answer");
 
         let mut received = Vec::new();
@@ -718,11 +717,12 @@ mod tests {
             AgentEventKind::Provider(ProviderEvent::Done { .. }),
         ));
         assert_eq!(received.len(), 4, "no extra events are broadcast");
+        Ok(())
     }
 
     /// A first-attempt success must broadcast no retry marker.
     #[tokio::test]
-    async fn successful_first_attempt_emits_no_retry_marker() {
+    async fn successful_first_attempt_emits_no_retry_marker() -> Result<(), NornError> {
         let provider = ScriptedResultProvider::new(vec![vec![
             Ok(ProviderEvent::TextDelta {
                 text: "clean".to_owned(),
@@ -741,8 +741,7 @@ mod tests {
             None,
             None,
         )
-        .await
-        .expect("first attempt succeeds");
+        .await?;
         assert_eq!(response.text, "clean");
 
         while let Ok(event) = rx.try_recv() {
@@ -751,5 +750,6 @@ mod tests {
                 "no retry marker may be broadcast on a clean first attempt",
             );
         }
+        Ok(())
     }
 }

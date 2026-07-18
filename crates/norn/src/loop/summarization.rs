@@ -255,7 +255,8 @@ mod tests {
     }
 
     #[test]
-    fn transcript_renders_canonical_items_in_order_without_flat_projections() {
+    fn transcript_renders_canonical_items_in_order_without_flat_projections()
+    -> Result<(), Box<dyn std::error::Error>> {
         use crate::provider::response_item::{
             ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
         };
@@ -284,14 +285,16 @@ mod tests {
         let response_items = raw_items
             .iter()
             .cloned()
-            .map(|raw| ResponseTranscriptItem {
-                item: ResponseItem::from_value(raw).expect("valid response item"),
-                provenance: ResponseStreamProvenance {
-                    item_id: Some("stream-only-id".to_string()),
-                    ..ResponseStreamProvenance::default()
-                },
+            .map(|raw| {
+                ResponseItem::from_value(raw).map(|item| ResponseTranscriptItem {
+                    item,
+                    provenance: ResponseStreamProvenance {
+                        item_id: Some("stream-only-id".to_string()),
+                        ..ResponseStreamProvenance::default()
+                    },
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         let event = SessionEvent::AssistantMessage {
             base: EventBase::new(None),
             response_items,
@@ -311,16 +314,20 @@ mod tests {
         };
 
         let transcript = render_transcript(&[event]);
-        let positions = raw_items.map(|raw| {
-            transcript
-                .find(&raw.to_string())
-                .expect("canonical raw item must be rendered")
-        });
+        let positions = raw_items
+            .iter()
+            .map(|raw| {
+                transcript.find(&raw.to_string()).ok_or_else(|| {
+                    std::io::Error::other(format!("canonical raw item was not rendered: {raw}"))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(!transcript.contains("stale flat text"));
         assert!(!transcript.contains("stale flat thinking"));
         assert!(!transcript.contains("stale_tool"));
         assert!(!transcript.contains("stream-only-id"));
+        Ok(())
     }
 
     #[test]
