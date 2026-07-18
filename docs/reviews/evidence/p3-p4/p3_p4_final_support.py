@@ -215,15 +215,28 @@ def display_path(repo: Path, path: Path) -> str:
 
 def validate_output_paths(args: Any, repo: Path) -> None:
     allowed = target_root(repo).resolve()
+    resolved = []
     for name in ("output", "policy_output", "gate", "policy", "distributions"):
         path = getattr(args, name, None)
         if path is not None:
             path = Path(path).resolve()
             setattr(args, name, path)
+            resolved.append(path)
             if path != allowed and allowed not in path.parents:
                 raise RuntimeError(
                     f"{name} must stay under the primary repository target"
                 )
+    if len(resolved) != len(set(resolved)):
+        raise RuntimeError("final evidence artifact paths must be distinct")
+
+
+def clear_output_paths(args: Any) -> None:
+    for name in ("output", "gate", "policy", "distributions"):
+        path = getattr(args, name)
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+        elif path.exists():
+            raise RuntimeError(f"{name} output is not a removable file")
 
 
 def environment_record(

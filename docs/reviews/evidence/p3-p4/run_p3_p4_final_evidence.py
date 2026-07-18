@@ -25,6 +25,7 @@ BASE = TOOLCHAIN = ""
 REUSED_ARTIFACTS: dict[str, str] = {}
 DIST_TESTS: tuple[str, ...] = ()
 commit = command_text = display_path = distribution_records_valid = None
+clear_output_paths = None
 environment_record = execute_case = file_sha256 = gate_records_valid = git = None
 manifest = path_inventory = run = sha256 = target_root = write_json = None
 source_support_manifest = verify_reused_artifacts = None
@@ -101,6 +102,7 @@ def bootstrap(source_arg: str) -> None:
     p0_support = policy_support
     for name in (
         "commit",
+        "clear_output_paths",
         "command_text",
         "display_path",
         "distribution_records_valid",
@@ -459,6 +461,7 @@ def attest(args: argparse.Namespace) -> int:
 
 
 def final(args: argparse.Namespace) -> int:
+    clear_output_paths(args)
     gate_args = argparse.Namespace(
         source=args.source, output=args.gate, policy_output=args.policy
     )
