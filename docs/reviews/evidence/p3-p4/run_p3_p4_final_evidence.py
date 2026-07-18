@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any, Final
 
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 CONTRACT_PATH: Final = "docs/reviews/evidence/p3-p4/p3_p4_final_contract.json"
 SUPPORT_PATH: Final = "docs/reviews/evidence/p3-p4/p3_p4_final_support.py"
@@ -68,6 +67,10 @@ def bootstrap(source_arg: str) -> None:
                 f"working evidence bootstrap differs from source: {path}"
             )
 
+    sys.path[:0] = [
+        str(Path(__file__).resolve().parent),
+        str((repo / "docs/reviews/evidence").resolve()),
+    ]
     support = importlib.import_module("p3_p4_final_support")
     policy_support = importlib.import_module("p0_evidence_support")
     contract = json.loads((repo / CONTRACT_PATH).read_text(encoding="utf-8"))
