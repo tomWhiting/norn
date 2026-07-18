@@ -28,6 +28,7 @@ commit = command_text = display_path = distribution_records_valid = None
 environment_record = execute_case = file_sha256 = gate_records_valid = git = None
 manifest = path_inventory = run = sha256 = target_root = write_json = None
 source_support_manifest = verify_reused_artifacts = None
+validate_output_paths = None
 p0_support: Any = None
 
 
@@ -47,6 +48,10 @@ def bootstrap(source_arg: str) -> None:
     head = raw_git("rev-parse", "HEAD^{commit}").decode().strip()
     if source != head:
         raise RuntimeError("final evidence source must be the checked-out HEAD")
+    dirty = raw_git("status", "--porcelain", "--untracked-files=all")
+    ignored = raw_git("ls-files", "--others", "--ignored", "--exclude-standard")
+    if dirty or ignored:
+        raise RuntimeError("final evidence requires a completely clean worktree")
     paths = [CONTRACT_PATH, SUPPORT_PATH, RUNNER, POLICY_RUNNER]
     policy_paths = (
         raw_git("ls-tree", "-r", "--name-only", source, "--", "docs/reviews/evidence")
@@ -110,6 +115,7 @@ def bootstrap(source_arg: str) -> None:
         "sha256",
         "source_support_manifest",
         "target_root",
+        "validate_output_paths",
         "verify_reused_artifacts",
         "write_json",
     ):
@@ -124,9 +130,12 @@ def validate_source(repo: Path, source_arg: str) -> tuple[str, dict[str, Any]]:
         raise RuntimeError("P3/P4 base is not an ancestor of the source")
     if source != commit(repo, "HEAD"):
         raise RuntimeError("final evidence source must equal the checked-out HEAD")
-    dirty = git(repo, "status", "--porcelain", "--untracked-files=no").decode().strip()
+    dirty = git(repo, "status", "--porcelain", "--untracked-files=all").decode().strip()
+    ignored = git(repo, "ls-files", "--others", "--ignored", "--exclude-standard")
     if dirty:
-        raise RuntimeError("tracked working-tree changes would invalidate evidence")
+        raise RuntimeError("working-tree changes would invalidate evidence")
+    if ignored:
+        raise RuntimeError("ignored worktree paths would invalidate evidence")
     source_runner = git(repo, "show", f"{source}:{RUNNER}")
     if sha256(source_runner) != file_sha256(repo / RUNNER):
         raise RuntimeError("working runner differs from the source-bound runner")
@@ -146,13 +155,19 @@ def validate_source(repo: Path, source_arg: str) -> tuple[str, dict[str, Any]]:
 
 
 def environment(target: Path) -> tuple[dict[str, str], int]:
-    return p0_support.evidence_environment(target)
+    env, removed = p0_support.evidence_environment(target)
+    toolchain = p0_support.toolchain_support
+    cargo = toolchain.pinned_binary(env, TOOLCHAIN, "cargo")
+    env["PATH"] = f"{cargo.parent}{os.pathsep}{env['PATH']}"
+    env["RUSTC"] = str(toolchain.pinned_binary(env, TOOLCHAIN, "rustc"))
+    env["RUSTDOC"] = str(toolchain.pinned_binary(env, TOOLCHAIN, "rustdoc"))
+    return env, removed
 
 
 def gate_cases(
-    source: str, policy_scratch: Path
+    source: str, policy_scratch: Path, cargo_executable: str
 ) -> tuple[tuple[str, list[str], bool], ...]:
-    cargo = ["cargo", f"+{TOOLCHAIN}", "--locked"]
+    cargo = [cargo_executable, "--locked"]
     return (
         ("fmt", [*cargo, "fmt", "--all", "--", "--check"], False),
         (
@@ -258,7 +273,8 @@ def gate(args: argparse.Namespace) -> int:
     scratch.mkdir(parents=True, exist_ok=False)
     policy_scratch = args.policy_output
     env, removed_environment = environment(target)
-    cases = gate_cases(source, policy_scratch)
+    cargo_executable = str(Path(env["RUSTC"]).parent / "cargo")
+    cases = gate_cases(source, policy_scratch, cargo_executable)
     try:
         results = [execute_case(repo, scratch, env, *case) for case in cases]
         policy = json.loads(policy_scratch.read_text(encoding="utf-8"))
@@ -293,8 +309,6 @@ def gate(args: argparse.Namespace) -> int:
 
 
 def distributions(args: argparse.Namespace) -> int:
-    if args.runs != 20:
-        raise RuntimeError("final sensitive distributions require exactly 20 runs")
     repo = repo_root()
     source, provenance = validate_source(repo, args.source)
     target = target_root(repo)
@@ -305,8 +319,10 @@ def distributions(args: argparse.Namespace) -> int:
     try:
         for test in DIST_TESTS:
             observations = []
-            command = distribution_command(test)
-            for index in range(1, args.runs + 1):
+            command = distribution_command(
+                test, str(Path(env["RUSTC"]).parent / "cargo")
+            )
+            for index in range(1, 21):
                 record = execute_case(
                     repo,
                     scratch,
@@ -321,7 +337,7 @@ def distributions(args: argparse.Namespace) -> int:
             results.append(
                 {
                     "test": test,
-                    "runs": args.runs,
+                    "runs": 20,
                     "observations": observations,
                     "passed": all(item["result"] == "pass" for item in observations),
                 }
@@ -347,10 +363,9 @@ def distributions(args: argparse.Namespace) -> int:
         shutil.rmtree(scratch, ignore_errors=True)
 
 
-def distribution_command(test: str) -> list[str]:
+def distribution_command(test: str, cargo_executable: str) -> list[str]:
     return [
-        "cargo",
-        f"+{TOOLCHAIN}",
+        cargo_executable,
         "--locked",
         "test",
         "-p",
@@ -386,9 +401,12 @@ def attest(args: argparse.Namespace) -> int:
             errors.append(f"{label} provenance mismatch")
         if not document.get("passed"):
             errors.append(f"{label} did not pass")
+    env, removed_environment = environment(target_root(repo))
     expected_gate = [
         (case_id, command_text(repo, command), require_tests)
-        for case_id, command, require_tests in gate_cases(source, args.policy)
+        for case_id, command, require_tests in gate_cases(
+            source, args.policy, str(Path(env["RUSTC"]).parent / "cargo")
+        )
     ]
     if not gate_records_valid(gate_doc.get("checks"), expected_gate):
         errors.append("gate record inventory or result mismatch")
@@ -404,11 +422,13 @@ def attest(args: argparse.Namespace) -> int:
     if gate_doc.get("policy", {}).get("path") != display_path(repo, args.policy):
         errors.append("gate policy path mismatch")
     dist_commands = [
-        command_text(repo, distribution_command(test)) for test in DIST_TESTS
+        command_text(
+            repo, distribution_command(test, str(Path(env["RUSTC"]).parent / "cargo"))
+        )
+        for test in DIST_TESTS
     ]
     if not distribution_records_valid(dist_doc, DIST_TESTS, dist_commands):
         errors.append("distribution record inventory or result mismatch")
-    env, removed_environment = environment(target_root(repo))
     current_environment = environment_record(
         repo, env, removed_environment, TOOLCHAIN, p0_support
     )
@@ -426,6 +446,7 @@ def attest(args: argparse.Namespace) -> int:
         {
             "schema_version": 1,
             "kind": "p3_p4_final_attestation",
+            "generation_mode": "single_process_final",
             "generated_at": datetime.now(UTC).isoformat(),
             "source": source,
             "tree": provenance["tree"],
@@ -437,40 +458,26 @@ def attest(args: argparse.Namespace) -> int:
     return 0 if not errors else 1
 
 
-def output_path(value: str) -> Path:
-    return Path(value).resolve()
-
-
-def validate_paths(args: argparse.Namespace) -> None:
-    allowed = (repo_root().resolve(), target_root(repo_root()).resolve())
-    for name in ("output", "policy_output", "gate", "policy", "distributions"):
-        path = getattr(args, name, None)
-        if path is not None and not any(
-            path == root or root in path.parents for root in allowed
-        ):
-            raise RuntimeError(f"{name} must stay under the repository or its target")
+def final(args: argparse.Namespace) -> int:
+    gate_args = argparse.Namespace(
+        source=args.source, output=args.gate, policy_output=args.policy
+    )
+    if gate(gate_args):
+        return 1
+    dist_args = argparse.Namespace(source=args.source, output=args.distributions)
+    if distributions(dist_args):
+        return 1
+    return attest(args)
 
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
-    subparsers = root.add_subparsers(dest="command", required=True)
-    gate_parser = subparsers.add_parser("gate")
-    gate_parser.add_argument("--source", required=True)
-    gate_parser.add_argument("--output", type=output_path, required=True)
-    gate_parser.add_argument("--policy-output", type=output_path, required=True)
-    gate_parser.set_defaults(action=gate)
-    dist_parser = subparsers.add_parser("distributions")
-    dist_parser.add_argument("--source", required=True)
-    dist_parser.add_argument("--runs", type=int, default=20)
-    dist_parser.add_argument("--output", type=output_path, required=True)
-    dist_parser.set_defaults(action=distributions)
-    attest_parser = subparsers.add_parser("attest")
-    attest_parser.add_argument("--source", required=True)
-    attest_parser.add_argument("--gate", type=output_path, required=True)
-    attest_parser.add_argument("--policy", type=output_path, required=True)
-    attest_parser.add_argument("--distributions", type=output_path, required=True)
-    attest_parser.add_argument("--output", type=output_path, required=True)
-    attest_parser.set_defaults(action=attest)
+    root.add_argument("--source", required=True)
+    root.add_argument("--gate", type=Path, required=True)
+    root.add_argument("--policy", type=Path, required=True)
+    root.add_argument("--distributions", type=Path, required=True)
+    root.add_argument("--output", type=Path, required=True)
+    root.set_defaults(action=final)
     return root
 
 
@@ -478,7 +485,7 @@ def main() -> int:
     args = parser().parse_args()
     try:
         bootstrap(args.source)
-        validate_paths(args)
+        validate_output_paths(args, repo_root())
         return int(args.action(args))
     except (OSError, RuntimeError, subprocess.CalledProcessError, ValueError) as error:
         print(f"p3/p4 evidence failed: {error}", file=sys.stderr)

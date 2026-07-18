@@ -140,7 +140,18 @@ def verify_reused_artifacts(
 
 
 def command_text(repo: Path, args: list[str]) -> str:
-    return " ".join(args).replace(str(repo), "<repo>")
+    recorded = list(args)
+    if (
+        recorded
+        and Path(recorded[0]).is_absolute()
+        and Path(recorded[0]).name == "cargo"
+    ):
+        recorded[0] = "<pinned-cargo>"
+    return (
+        " ".join(recorded)
+        .replace(str(target_root(repo)), "<repo>/target")
+        .replace(str(repo), "<repo>")
+    )
 
 
 def execute_case(
@@ -202,6 +213,19 @@ def display_path(repo: Path, path: Path) -> str:
         return str(Path("<repo>/target") / suffix)
 
 
+def validate_output_paths(args: Any, repo: Path) -> None:
+    allowed = target_root(repo).resolve()
+    for name in ("output", "policy_output", "gate", "policy", "distributions"):
+        path = getattr(args, name, None)
+        if path is not None:
+            path = Path(path).resolve()
+            setattr(args, name, path)
+            if path != allowed and allowed not in path.parents:
+                raise RuntimeError(
+                    f"{name} must stay under the primary repository target"
+                )
+
+
 def environment_record(
     repo: Path,
     env: dict[str, str],
@@ -209,22 +233,33 @@ def environment_record(
     toolchain: str,
     policy_support: Any,
 ) -> dict[str, Any]:
+    toolchain_bin = Path(env["RUSTC"]).parent
+    pinned_names = (
+        "cargo",
+        "cargo-clippy",
+        "cargo-fmt",
+        "clippy-driver",
+        "rustc",
+        "rustdoc",
+        "rustfmt",
+    )
     return {
-        "cargo": run(["cargo", f"+{toolchain}", "--version"], cwd=repo, env=env)
+        "cargo": run([str(toolchain_bin / "cargo"), "--version"], cwd=repo, env=env)
         .stdout.decode()
         .strip(),
-        "rustc": run(
-            ["rustc", f"+{toolchain}", "--version", "--verbose"], cwd=repo, env=env
-        )
+        "rustc": run([env["RUSTC"], "--version", "--verbose"], cwd=repo, env=env)
         .stdout.decode()
         .strip(),
         "platform": platform.platform(),
         "python": platform.python_version(),
         "target": "<repo>/target",
         "controls": policy_support.PATH_FREE_ENVIRONMENT_CONTROLS,
-        "sanitized_variable_names": list(policy_support.SANITIZED_VARIABLE_NAMES),
+        "sanitized_variable_names": sorted(env),
         "removed_ambient_variable_count": removed,
         "fingerprint": policy_support.environment_fingerprint(env, toolchain),
+        "pinned_toolchain": {
+            name: {"sha256": file_sha256(toolchain_bin / name)} for name in pinned_names
+        },
         "cargo_config": policy_support.cargo_config_fingerprints(repo, env),
         "loopback_fixtures": "native-host execution required",
     }
