@@ -84,7 +84,14 @@ ACCOUNT="<Norn OAuth account alias or default>"
 EFFORT="${EFFORT:-high}"
 
 WORKSPACE="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-SKILL_DIR="${NORN_SKILL_DIR:-$HOME/.claude/skills/norn}"
+SKILL_DIR="${NORN_SKILL_DIR:-}"
+if [[ -z "$SKILL_DIR" ]]; then
+  if [[ -d "$WORKSPACE/.claude/skills/norn" ]]; then
+    SKILL_DIR="$WORKSPACE/.claude/skills/norn"
+  else
+    SKILL_DIR="$HOME/.claude/skills/norn"
+  fi
+fi
 NORN_STATE_HOME="${NORN_HOME:-$HOME/.norn}"
 
 case "$MODE" in
@@ -310,7 +317,14 @@ MODE="<same mode>"
 PRESET="<same or new preset>"
 EFFORT="${EFFORT:-high}"
 WORKSPACE="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-SKILL_DIR="${NORN_SKILL_DIR:-$HOME/.claude/skills/norn}"
+SKILL_DIR="${NORN_SKILL_DIR:-}"
+if [[ -z "$SKILL_DIR" ]]; then
+  if [[ -d "$WORKSPACE/.claude/skills/norn" ]]; then
+    SKILL_DIR="$WORKSPACE/.claude/skills/norn"
+  else
+    SKILL_DIR="$HOME/.claude/skills/norn"
+  fi
+fi
 NORN_STATE_HOME="${NORN_HOME:-$HOME/.norn}"
 SCHEMA_PATH="${SCHEMA_PATH:-$SKILL_DIR/schemas/$MODE.schema.json}"
 BASE_INSTRUCTIONS="$SKILL_DIR/instructions/$MODE/base.md"

@@ -3,7 +3,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::collections::HashSet;
-use std::io::Write;
+use std::fmt::Write as _;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -12,7 +13,7 @@ use serde_json::json;
 
 use diagnostics::adapter::registry::AdapterRegistry;
 use diagnostics::adapter::{AdapterCapabilities, CommandSpec, DiagnosticAdapter, OutputFormat};
-use diagnostics::conventions::{ConventionsConfig, TestTrigger};
+use diagnostics::conventions::{ConventionsConfig, Handling, TestTrigger};
 use diagnostics::event::{DiagnosticEvent, Severity};
 use diagnostics::registry::PolicyRegistry;
 
@@ -28,6 +29,18 @@ use crate::tools::lsp::{
 };
 
 const ADMISSION_HELPER_CHILD: &str = "NORN_DIAGNOSTIC_ADMISSION_HELPER_CHILD";
+const CHECKED_IN_CONVENTIONS: &str = include_str!("../../../../../CONVENTIONS.toml");
+const HARD_RUST_PATTERNS: [&str; 9] = [
+    "allow-attr",
+    "expect-attr",
+    "deny-attr",
+    "cfg-any",
+    "ignore-attr",
+    "silent-var-rename",
+    "fallible-shortcuts",
+    "panic-macros",
+    "todo-markers",
+];
 
 #[test]
 fn descriptor_admission_helpers_reserve_exact_weights() -> Result<(), Box<dyn std::error::Error>> {
@@ -286,6 +299,170 @@ todo_markers = { on = "tool", handling = "block" }
     let result = DiagnosticsPostCheck.check(&output, &ctx).await;
     assert!(matches!(result.outcome, PostValidateOutcome::Fail { .. }));
     assert!(result.advisories.is_empty());
+}
+
+#[test]
+fn checked_in_conventions_compile_and_cover_hard_rust_patterns()
+-> Result<(), Box<dyn std::error::Error>> {
+    let conventions = ConventionsConfig::load_from_str(CHECKED_IN_CONVENTIONS)?;
+    let rust = conventions
+        .lang_def("rust")
+        .ok_or_else(|| std::io::Error::other("checked-in Rust language definition missing"))?;
+    let patterns = rust
+        .patterns
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("checked-in Rust patterns missing"))?;
+
+    let lint_attributes =
+        |name: &str| format!("#![{name}(dead_code)]\n#[{name}(unused)]\nfn fixture() {{}}\n");
+    let cfg_source = ["#![cfg(", "any())]\n#[cfg(", "any())]\nfn fixture() {}\n"].concat();
+    let ignore_source = ["#[ig", "nore]\nfn fixture() {}\n"].concat();
+    let binding_source = "fn fixture(_parameter: i32) { let _binding = 1; }\n".to_owned();
+
+    let mut fallible_source = String::from("fn fixture(value: Result<(), ()>) {\n");
+    for method in ["unwrap", "unwrap_err"] {
+        writeln!(&mut fallible_source, "let _ = value.{method}();")?;
+    }
+    for method in ["expect", "expect_err"] {
+        writeln!(&mut fallible_source, "let _ = value.{method}(\"reason\");")?;
+    }
+    fallible_source.push_str("}\n");
+
+    let mut macro_source = String::from("fn fixture() {\n");
+    for macro_name in ["panic", "todo", "unimplemented", "unreachable"] {
+        writeln!(&mut macro_source, "{macro_name}!();")?;
+    }
+    macro_source.push_str("}\n");
+
+    let marker_source = [
+        ["TO", "DO"].concat(),
+        ["FIX", "ME"].concat(),
+        ["HA", "CK"].concat(),
+    ]
+    .join("\n");
+    let fixtures = [
+        ("allow-attr", lint_attributes("allow"), 2),
+        ("expect-attr", lint_attributes("expect"), 2),
+        ("deny-attr", lint_attributes("deny"), 2),
+        ("cfg-any", cfg_source, 2),
+        ("ignore-attr", ignore_source, 1),
+        ("silent-var-rename", binding_source, 2),
+        ("fallible-shortcuts", fallible_source, 4),
+        ("panic-macros", macro_source, 4),
+        ("todo-markers", marker_source, 3),
+    ];
+
+    for (name, source, expected_matches) in fixtures {
+        let pattern = patterns
+            .get(name)
+            .ok_or_else(|| std::io::Error::other(format!("checked-in pattern `{name}` missing")))?;
+        assert_eq!(pattern.handling, Handling::Block, "pattern `{name}`");
+        assert_eq!(
+            pattern.matches(&source, Some("rust"))?.len(),
+            expected_matches,
+            "pattern `{name}` must cover every fixture shape"
+        );
+    }
+
+    assert!(conventions.lookup_tool("rust", "clippy").is_none());
+    assert!(conventions.lookup_tool("rust", "rustfmt").is_none());
+    for rule_name in ["rust-general", "rust-entrypoints"] {
+        let rule = conventions.rule(rule_name).ok_or_else(|| {
+            std::io::Error::other(format!("checked-in rule `{rule_name}` missing"))
+        })?;
+        for pattern_name in HARD_RUST_PATTERNS {
+            let activation = rule.rule.activations.get(pattern_name).ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "checked-in rule `{rule_name}` does not activate `{pattern_name}`"
+                ))
+            })?;
+            assert_eq!(activation.handling, Handling::Block);
+            assert!(activation.on.contains(&TestTrigger::Tool));
+            assert!(activation.on.contains(&TestTrigger::Stop));
+        }
+        assert!(!rule.rule.activations.contains_key("clippy"));
+        assert!(!rule.rule.activations.contains_key("rustfmt"));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn checked_in_hard_feedback_handles_every_mutator_output_shape_and_stop()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let relative_file = PathBuf::from("src/lib.rs");
+    let output_path = relative_file.display().to_string();
+    let file = dir.path().join(&relative_file);
+    std::fs::create_dir_all(
+        file.parent()
+            .ok_or_else(|| std::io::Error::other("diagnostics fixture path has no parent"))?,
+    )?;
+    let forbidden_source = ["fn forbidden() { pan", "ic!(\"stop\"); }\n"].concat();
+    std::fs::write(&file, forbidden_source)?;
+
+    let conventions = ConventionsConfig::load_from_str(CHECKED_IN_CONVENTIONS)?;
+    let infra = Arc::new(test_infra(dir.path().to_path_buf(), Some(conventions)));
+    let ctx = ToolContext::empty();
+    ctx.insert_extension(Arc::clone(&infra));
+
+    let mutator_outputs = [
+        (
+            "write",
+            json!({ "path": output_path.clone(), "bytes_written": 37 }),
+        ),
+        (
+            "edit",
+            json!({
+                "path": output_path.clone(),
+                "kind": "edit_committed",
+                "committed": true,
+            }),
+        ),
+        (
+            "apply_patch",
+            json!({
+                "kind": "patch_committed",
+                "files_modified": [output_path],
+                "committed": true,
+            }),
+        ),
+    ];
+    for (tool_name, content) in mutator_outputs {
+        let result = DiagnosticsPostCheck
+            .check(&make_output(content), &ctx)
+            .await;
+        assert!(result.advisories.is_empty());
+        match result.outcome {
+            PostValidateOutcome::Fail { errors } => assert!(
+                errors.iter().any(|error| {
+                    error.contains("[pattern:panic-macros]")
+                        && error.contains("Return or propagate a typed error")
+                }),
+                "{tool_name} must return the checked-in hard-pattern feedback: {errors:?}"
+            ),
+            PostValidateOutcome::Pass => {
+                return Err(std::io::Error::other(format!(
+                    "{tool_name} output bypassed the checked-in hard pattern"
+                ))
+                .into());
+            }
+        }
+    }
+
+    let hook = DiagnosticStopHook::new(infra);
+    match hook.on_stop("done").await {
+        HookOutcome::Block { reason } => {
+            assert!(reason.contains("[pattern:panic-macros]"));
+            assert!(reason.contains("Return or propagate a typed error"));
+        }
+        HookOutcome::Proceed | HookOutcome::Modify { .. } => {
+            return Err(std::io::Error::other(
+                "stop hook allowed an unresolved checked-in hard pattern",
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 #[tokio::test]
