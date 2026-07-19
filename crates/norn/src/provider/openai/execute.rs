@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 
+use super::codex_turn;
 use super::request::build_payload;
 use super::response_reconciler::{
     DeltaReconciliation, ReconcileUpdate, ResponseDeltaChannel, ResponseReconciler,
@@ -21,6 +22,10 @@ use crate::provider::events::ProviderEvent;
 use crate::provider::exec::{SseEventMapper, StreamExecutor};
 use crate::provider::request::ProviderRequest;
 use crate::provider::response_audio::is_response_audio_event;
+use crate::provider::turn::{
+    CODEX_TURN_STATE_HEADER, ProviderTurnContext, codex_turn_state_from_metadata,
+    redact_codex_turn_state,
+};
 
 /// Per-request sender state cloned out of the provider.
 pub(super) struct SenderProvider {
@@ -30,6 +35,8 @@ pub(super) struct SenderProvider {
     /// actually using (Codex subscription vs. direct Responses API);
     /// governs service-tier resolution in [`build_payload`].
     pub(super) catalog_backend: &'static str,
+    /// Trusted live-turn transport context for Codex subscription requests.
+    pub(super) turn_context: Option<ProviderTurnContext>,
 }
 
 impl SenderProvider {
@@ -44,7 +51,8 @@ impl SenderProvider {
         request: ProviderRequest,
         tx: tokio::sync::mpsc::Sender<Result<ProviderEvent, ProviderError>>,
     ) -> Result<(), ProviderError> {
-        let payload = build_payload(&request, self.catalog_backend)?;
+        let mut payload = build_payload(&request, self.catalog_backend)?;
+        codex_turn::insert_client_metadata(&mut payload, self.turn_context.as_ref())?;
         let body = serde_json::to_string(&payload).map_err(|e| {
             ProviderError::RequestSerializationFailed {
                 reason: format!("failed to serialize responses request: {e}"),
@@ -55,18 +63,20 @@ impl SenderProvider {
             message_count = request.messages.len(),
             "responses request starting"
         );
-        let mut mapper = ResponsesMapper::for_catalog_backend(self.catalog_backend);
+        let mut mapper =
+            ResponsesMapper::with_turn_context(self.catalog_backend, self.turn_context.clone());
         self.executor.execute(body, &mut mapper, &tx).await
     }
 }
 
 /// Stateful Responses stream validation, reconciliation, and projection.
 ///
-/// Every valid envelope is emitted losslessly for machine observers. The
-/// reconciler separately owns identity-keyed preview state and emits canonical
-/// items only in terminal `response.output` order. [`map_sse_event`] remains a
-/// compatibility projection for the existing text/thinking/tool UI; it is no
-/// longer an authority for replay or execution.
+/// Every valid envelope is emitted for machine observers, with the reusable
+/// `x-codex-turn-state` transport secret redacted. The reconciler separately
+/// owns identity-keyed preview state and emits canonical items only in terminal
+/// `response.output` order. [`map_sse_event`] remains a compatibility projection
+/// for the existing text/thinking/tool UI; it is no longer an authority for
+/// replay or execution.
 #[derive(Default)]
 struct ResponsesMapper {
     /// Tool-call `item_id` (`fc_*` / `ctc_*`) -> `call_id` (`call_*`),
@@ -78,9 +88,23 @@ struct ResponsesMapper {
     terminal: bool,
     /// Trusted response dialect selected before request dispatch.
     dialect: ResponsesDialect,
+    /// Trusted, non-persisted Codex state for this live turn.
+    turn_context: Option<ProviderTurnContext>,
 }
 
 impl SseEventMapper for ResponsesMapper {
+    fn observe_response_headers(&mut self, headers: &reqwest::header::HeaderMap) {
+        let Some(context) = self.turn_context.as_ref() else {
+            return;
+        };
+        if let Some(value) = headers
+            .get(CODEX_TURN_STATE_HEADER)
+            .and_then(|value| value.to_str().ok())
+        {
+            context.observe_codex_turn_state(value);
+        }
+    }
+
     fn map_event(&mut self, event: &SseEvent) -> Vec<Result<ProviderEvent, ProviderError>> {
         if self.terminal {
             return vec![Err(ProviderError::ResponseProtocolViolation {
@@ -88,7 +112,8 @@ impl SseEventMapper for ResponsesMapper {
             })];
         }
 
-        let envelope = match ResponseStreamEvent::from_sse(&event.event_type, event.data.clone()) {
+        let event_data = redact_codex_turn_state(&event.data);
+        let envelope = match ResponseStreamEvent::from_sse(&event.event_type, event_data) {
             Ok(envelope) => envelope,
             Err(error) => {
                 self.terminal = true;
@@ -98,6 +123,12 @@ impl SseEventMapper for ResponsesMapper {
             }
         };
         let manifest = envelope.manifest();
+        if manifest.known_event_type() == Some("response.metadata")
+            && let Some(context) = self.turn_context.as_ref()
+            && let Some(value) = codex_turn_state_from_metadata(&event.data)
+        {
+            context.observe_codex_turn_state(value);
+        }
         let audio_source =
             is_response_audio_event(envelope.event_type()).then(|| Box::new(envelope.clone()));
         let mut mapped = vec![Ok(ProviderEvent::ResponseStreamEvent {
@@ -240,11 +271,19 @@ impl ResponsesMapper {
             reconciler: ResponseReconciler::new(),
             terminal: false,
             dialect,
+            turn_context: None,
         }
     }
 
     fn for_catalog_backend(catalog_backend: &str) -> Self {
         Self::new(ResponsesDialect::for_catalog_backend(catalog_backend))
+    }
+
+    fn with_turn_context(catalog_backend: &str, turn_context: Option<ProviderTurnContext>) -> Self {
+        Self {
+            turn_context,
+            ..Self::for_catalog_backend(catalog_backend)
+        }
     }
 
     fn finish(&mut self) {
@@ -317,6 +356,9 @@ fn append_reconciliation_repair(
     mapped.push(Ok(event));
     Ok(())
 }
+
+#[cfg(test)]
+mod turn_state_tests;
 
 #[cfg(test)]
 mod reconciliation_tests;

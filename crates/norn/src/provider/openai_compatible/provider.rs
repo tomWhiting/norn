@@ -138,6 +138,7 @@ impl Provider for OpenAiCompatibleProvider {
                 retry_after_ceiling: self.config.retry_after_ceiling,
                 rate_limiter: Arc::clone(&self.rate_limiter),
                 auth_provider: Arc::clone(&self.auth_provider),
+                request_headers: reqwest::header::HeaderMap::new(),
                 debug_dump_file: self.config.debug_dump_file.clone(),
                 backend_label: "chat completions",
             },

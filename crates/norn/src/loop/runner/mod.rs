@@ -28,6 +28,8 @@ mod stop;
 mod tests;
 #[cfg(test)]
 mod tool_lease_tests;
+#[cfg(test)]
+mod turn_context_tests;
 
 pub use entry::{
     AgentMessageStepRequest, AgentStepRequest, run_agent_step, run_agent_step_from_messages,

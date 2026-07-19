@@ -276,6 +276,7 @@ fn reject_protected_option_key(key: &str) -> Result<(), ProviderError> {
             | "prompt_cache_key"
             | "previous_response_id"
             | "context_management"
+            | "client_metadata"
     ) {
         return Err(ProviderError::InvalidRequest {
             message: format!(
@@ -831,14 +832,17 @@ mod tests {
 
     #[test]
     fn provider_options_reject_protected_responses_fields() {
-        let mut req = make_request();
-        req.config = Some(ProviderOptions(serde_json::json!({
-            "input": []
-        })));
+        for (key, value) in [
+            ("input", serde_json::json!([])),
+            ("client_metadata", serde_json::json!({"hostile": true})),
+        ] {
+            let mut req = make_request();
+            req.config = Some(ProviderOptions(serde_json::json!({(key): value})));
 
-        let err = build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).unwrap_err();
+            let err = build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).unwrap_err();
 
-        assert!(matches!(err, ProviderError::InvalidRequest { .. }));
+            assert!(matches!(err, ProviderError::InvalidRequest { .. }));
+        }
     }
 
     #[test]

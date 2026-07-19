@@ -50,6 +50,7 @@ fn executor(endpoint: String) -> TestResult<StreamExecutor> {
         retry_after_ceiling: None,
         rate_limiter: Arc::new(RateLimiter::new(60, Duration::from_secs(60))),
         auth_provider: Arc::new(MockAuthProvider::single("test-key")),
+        request_headers: reqwest::header::HeaderMap::new(),
         debug_dump_file: None,
         backend_label: "responses",
     })

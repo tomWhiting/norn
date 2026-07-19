@@ -1,6 +1,7 @@
 //! Provider implementation for the `OpenAI` Responses API.
 
 mod backend;
+mod codex_turn;
 mod execute;
 mod opaque_discriminator;
 #[cfg(test)]

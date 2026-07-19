@@ -159,7 +159,14 @@ impl DebugDumper {
 
     /// Log a single parsed SSE event.
     pub fn write_sse_event(&self, event_type: &str, data: &serde_json::Value) {
-        self.append_entry("sse_event", DebugPayload::SseEvent { event_type, data });
+        let redacted = crate::provider::turn::redact_codex_turn_state(data);
+        self.append_entry(
+            "sse_event",
+            DebugPayload::SseEvent {
+                event_type,
+                data: &redacted,
+            },
+        );
     }
 
     fn append_entry(&self, entry_type: &str, payload: DebugPayload<'_>) {
@@ -353,6 +360,33 @@ mod security_tests {
         }
         assert!(rendered.contains("[REDACTED]"));
         assert!(rendered.contains("x-request-id"));
+        Ok(())
+    }
+
+    #[test]
+    fn sse_dump_redacts_turn_state_even_when_discriminators_disagree()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let file = directory.path().join("debug.jsonl");
+        let dumper = DebugDumper::new(&file)
+            .ok_or_else(|| std::io::Error::other("failed to create debug dumper"))?;
+
+        dumper.write_sse_event(
+            "response.future",
+            &serde_json::json!({
+                "type": "response.metadata",
+                "headers": {
+                    "X-CoDeX-TuRn-StAtE": ["turn-secret-a", "turn-secret-b"],
+                    "x-request-id": "request-visible"
+                }
+            }),
+        );
+
+        let rendered = fs::read_to_string(file)?;
+        assert!(!rendered.contains("turn-secret-a"));
+        assert!(!rendered.contains("turn-secret-b"));
+        assert!(rendered.contains("[REDACTED]"));
+        assert!(rendered.contains("request-visible"));
         Ok(())
     }
 

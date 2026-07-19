@@ -1,21 +1,16 @@
 //! Shared streaming-request execution core for the SSE-based HTTP providers.
 //!
-//! Both the `OpenAI` Responses provider and the OpenAI-compatible Chat
-//! Completions provider execute requests identically: a send loop that owns
-//! 401 refresh-and-retry, 429 `Retry-After` handling, and error-status
-//! classification, followed by SSE consumption under an inactivity deadline.
-//! The backend-specific pieces are payload construction (done by the caller
-//! before invoking [`StreamExecutor::execute`]) and the mapping from parsed
-//! SSE frames to [`ProviderEvent`] values (the [`SseEventMapper`]
-//! implementation). Everything else lives here exactly once, so retry
-//! behaviour and error classification physically cannot diverge between the
-//! two backends.
+//! Responses and Chat Completions share this send/retry, status-classification,
+//! and inactivity-bounded SSE lifecycle. Callers supply only the serialized
+//! payload and [`SseEventMapper`], so transport behavior cannot diverge between
+//! the two backends.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
+use reqwest::header::HeaderMap;
 
 use crate::error::{ProviderError, TransientKind};
 use crate::provider::auth::AuthProvider;
@@ -24,6 +19,11 @@ use crate::provider::events::ProviderEvent;
 use crate::provider::openai::rate_limiter::RateLimiter;
 use crate::provider::openai::retry_after::parse_retry_after;
 use crate::provider::openai::sse::{SseEvent, SseParser};
+
+#[path = "exec_emit.rs"]
+mod emit;
+
+use emit::{emit_mapped, log_complete};
 
 /// Deliberate, owner-approved default (2026-06-11) used when
 /// [`ProviderConfig::retry_backoff`] is `None`: the wait applied to a
@@ -38,6 +38,9 @@ pub(crate) const DEFAULT_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 /// tool-call deltas and usage across frames); the executor drives exactly one
 /// mapper instance per request.
 pub(crate) trait SseEventMapper {
+    /// Observes headers from the accepted successful response before its body.
+    fn observe_response_headers(&mut self, _headers: &HeaderMap) {}
+
     /// Maps one parsed SSE frame into zero or more provider events.
     fn map_event(&mut self, event: &SseEvent) -> Vec<Result<ProviderEvent, ProviderError>>;
 
@@ -95,6 +98,8 @@ pub(crate) struct StreamExecutor {
     pub(crate) rate_limiter: Arc<RateLimiter>,
     /// Authentication applied to each outgoing attempt.
     pub(crate) auth_provider: Arc<dyn AuthProvider>,
+    /// Provider-owned headers applied to every retry attempt for this request.
+    pub(crate) request_headers: HeaderMap,
     /// JSONL debug-dump target, when configured.
     pub(crate) debug_dump_file: Option<PathBuf>,
     /// Human-readable backend label used in traces and diagnostics
@@ -146,6 +151,8 @@ impl StreamExecutor {
             dump.write_response_meta(status, &headers);
         }
 
+        mapper.observe_response_headers(response.response.headers());
+
         self.consume_stream(response, mapper, tx, dumper, request_start)
             .await
     }
@@ -162,6 +169,7 @@ impl StreamExecutor {
                 .post(&self.endpoint)
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
+                .headers(self.request_headers.clone())
                 .body(body.to_owned());
             builder = self.auth_provider.apply_auth(builder).await?;
             let governor = crate::resource::DescriptorGovernor::global()
@@ -421,7 +429,12 @@ impl StreamExecutor {
             for sse_event in parser.feed(chunk.as_ref()) {
                 event_count = event_count.saturating_add(1);
                 if emit_mapped(mapper, &sse_event, dumper.as_ref(), tx).await {
-                    self.log_complete(request_start, stream_start, chunk_count, event_count);
+                    log_complete(
+                        self.backend_label,
+                        request_start,
+                        stream_start,
+                        (chunk_count, event_count),
+                    );
                     return Ok(());
                 }
             }
@@ -435,7 +448,12 @@ impl StreamExecutor {
         for sse_event in parser.finish() {
             event_count = event_count.saturating_add(1);
             if emit_mapped(mapper, &sse_event, dumper.as_ref(), tx).await {
-                self.log_complete(request_start, stream_start, chunk_count, event_count);
+                log_complete(
+                    self.backend_label,
+                    request_start,
+                    stream_start,
+                    (chunk_count, event_count),
+                );
                 return Ok(());
             }
         }
@@ -473,54 +491,8 @@ impl StreamExecutor {
             }),
         }
     }
-
-    fn log_complete(
-        &self,
-        request_start: std::time::Instant,
-        stream_start: std::time::Instant,
-        chunks: u64,
-        events: u64,
-    ) {
-        tracing::debug!(
-            total_s = request_start.elapsed().as_secs_f64(),
-            stream_s = stream_start.elapsed().as_secs_f64(),
-            chunks,
-            events,
-            backend = self.backend_label,
-            "provider request complete"
-        );
-    }
 }
 
 #[cfg(test)]
 #[path = "exec_tests.rs"]
 mod tests;
-
-/// Dumps and maps one SSE frame, forwarding the mapped events.
-///
-/// Returns `true` when the request is finished: either the terminal `Done`
-/// event was delivered, or the receiver dropped (the consumer stopped
-/// listening, which ends the request without error).
-async fn emit_mapped<M: SseEventMapper>(
-    mapper: &mut M,
-    sse_event: &SseEvent,
-    dumper: Option<&DebugDumper>,
-    tx: &tokio::sync::mpsc::Sender<Result<ProviderEvent, ProviderError>>,
-) -> bool {
-    if let Some(dump) = dumper {
-        dump.write_sse_event(mapper.dump_label(sse_event), &sse_event.data);
-    }
-    for provider_event in mapper.map_event(sse_event) {
-        let is_terminal = matches!(
-            provider_event,
-            Ok(ProviderEvent::Done { .. } | ProviderEvent::Error { .. }) | Err(_)
-        );
-        if tx.send(provider_event).await.is_err() {
-            return true;
-        }
-        if is_terminal {
-            return true;
-        }
-    }
-    false
-}

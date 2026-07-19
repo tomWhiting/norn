@@ -48,6 +48,7 @@ impl StepMachine<'_> {
                 &self.loop_context.retry_policy,
                 self.provider,
                 request,
+                &self.provider_turn_context,
                 self.event_tx,
                 // Mirror in-flight deltas into the shared timeout state so
                 // a hard cut (step timeout dropping this future, or the
