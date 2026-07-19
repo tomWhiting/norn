@@ -4,6 +4,13 @@
 
 **Status:** READY FOR INDEPENDENT P4 REVIEW; not P4 acceptance
 
+**Subsequent result:** Review `80f0e36` returned `NOT READY`. This document
+remains the historical `7f47218` submission. Corrected production source
+`ab26632`, evidence head `180759f`, regenerated artifacts, and narrowed EVT-06
+semantics are recorded in
+[`2026-07-19-p4-final-gate-d-correction-handoff.md`](2026-07-19-p4-final-gate-d-correction-handoff.md).
+Nothing below records P4 acceptance.
+
 **Phase base:** `a90b730091bccaeaa03ba98c3b31425e40e32dac`
 
 **Frozen source:** `7f47218d8629d55a09577348d6b1a57a78f2aecf`
@@ -63,6 +70,10 @@ unsupported posture.
 | `EVT-05` | Unknown future item/event JSON is retained raw for diagnosis and produces a typed failure before an ordinary assistant/tool turn is published. |
 | `EVT-06` | Output-index, item, and call identity are stable; optional IDs are not fabricated; exact duplicates are idempotent; conflicts and rebinding fail closed. |
 | `EVT-07` | Only authoritative completed executable items dispatch; incomplete, delta-only, unresolved, or malformed calls cannot execute. |
+
+The original EVT-06 row records the submitted claim and was too broad. The
+corrected claim is limited to exact duplicate sequences processed before
+terminal delivery; direct post-terminal mapper input fails closed.
 
 Strong source anchors include:
 

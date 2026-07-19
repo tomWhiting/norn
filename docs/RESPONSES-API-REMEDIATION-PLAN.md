@@ -52,10 +52,18 @@
   base `a90b730`. The source-bound final gate, policy audit, 60/60 repeated
   distributions, source-bound redaction report, and single-process attestation
   all pass at `7f47218`. The P3 whole-phase review committed at `06be7c7`
-  independently reproduced the package, returned `READY`, and accepts P3. P4's
-  separate review remains open. Owner-approved D15 makes deterministic
-  public/Codex contract fixtures the P4 gate and requires credentialed
-  real-wire conformance later under D7/P9 before overall integrated acceptance.
+  independently reproduced the package, returned `READY`, and accepts P3. The
+  separate P4 review at `80f0e36` returned `NOT READY` on one successful-terminal
+  authority defect and one overbroad duplicate-idempotence claim. Production
+  correction `ab26632` adds the typed orphan-core-delta guard; evidence-only
+  correction `180759f` makes the redaction evidence recursively rerunnable. A
+  regenerated five-artifact bundle for source `180759f` is retained at
+  `8faf1f4` and documented in the
+  [`correction handoff`](reviews/2026-07-19-p4-final-gate-d-correction-handoff.md).
+  P4 remains unaccepted pending narrow same-reviewer confirmation.
+  Owner-approved D15 makes deterministic public/Codex contract fixtures the P4
+  gate and requires credentialed real-wire conformance later under D7/P9 before
+  overall integrated acceptance.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -474,7 +482,7 @@ artifacts to the same clean head with zero errors.
 | P1. Contract and enforcement baseline | [ ] Historical Gate A retained but stale; no Gate B implementation landed. D13 moves generic repository enforcement and D0 to P9 rather than reviving the rejected 364-file prototype | Current product phases use their own strict source-bound contract and policy gates; shared release governance is completed once in P9. |
 | P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; D14 records base `6669b9d`; retained Gate C, live A/B/A, and independent acceptance remain open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
 | P3. Canonical ordered transcript | [x] Accepted by whole-phase Gate D review `06be7c7` on 2026-07-18. Frozen combined source `7f47218` contains the exact 28-item union, canonical model/replay/persistence, caller ownership, strict format-2 store, offline migration, explicit resume classifications, and response-scoped private audio artifacts. The reviewer independently reproduced the final source-bound gate, zero-violation policy audit, 60/60 distributions, redaction report, and attestation | Responses items survive stream, persistence, resume, and replay in order; explicit context edits change only the provider-facing view, not the audit timeline. |
-| P4. Streaming and replay conformance | [ ] Frozen combined source `7f47218` contains the public/Codex manifests, validators for all 28 output discriminators, identity/channel/item reconciliation, terminal parsing, refusal, hosted-search replay, authoritative UI repair, raw CLI events, and lossless response-audio receive/reconciliation. The common final evidence bundle passes, P3 is accepted, and D15 is resolved; independent P4 acceptance review remains open | Supported events/items are complete, reconciled, and fail closed. |
+| P4. Streaming and replay conformance | [ ] P4 review `80f0e36` returned `NOT READY`. Product correction `ab26632` closes the orphan-core-preview authority defect; evidence head `180759f` carries the regenerated five-artifact bundle. P3 remains accepted and D15 remains resolved, but P4 awaits same-reviewer correction confirmation | Supported events/items are complete, reconciled against terminal authority, and fail closed without promoting preview-only content. |
 | P5. Conversation and Codex turn semantics | [ ] Behavior audit and first implementation slice specified; source work not started | Local/provider history and turn-scoped state have explicit lifetimes. |
 | P6. Transport, retry, and usage | [ ] | Retries terminate once; observed and unknown attempt usage remain explicit. |
 | P7. Request, schema, and model controls | [ ] | Advertised capabilities match validated payload and tool behavior. |
@@ -525,7 +533,7 @@ blocks phase acceptance and cannot be represented as implemented evidence.
 | D12 | Retrospective P3/P4 Gate A timing disposition and exact common phase base. | P3/P4 | [x] Owner-approved 2026-07-18: use `a90b730` as the exact common comparison base for interleaved P3/P4 implementation. `56fd4dd` was the frozen D11-era source at the ruling; D15 records final source `7f47218`. This exception acknowledges rather than rewrites the missed prospective timing requirement. It waives no dependency, baseline-evidence, implementation, test, policy, distribution, or review requirement, and it does not accept either phase. |
 | D13 | Correct phase dependencies and disposition the unfinished P1 enforcement program. | P1/P3/P4/P9 | [x] Owner-approved 2026-07-18. P1's historical Gate A is retained as chronology but is stale against accepted D11 nullable-phase evidence; no P1 Gate B implementation landed. The archived 364-file policy prototype is rejected as a candidate and is not resurrected. Generic policy-product, staged-mutation, clean-checkout, and D0 remote-enforcement work moves to P9 release governance. P3/P4 retain strict source-bound fmt, Clippy, workspace/all-target/doc tests, exact diff, LOC/module/bypass, redaction, distribution, and independent-review gates. P1 and P2 are not semantic prerequisites for transcript/streaming acceptance; P2 remains independently gated and P4 still depends on accepted P3. No remote-protection claim is made. |
 | D14 | Retrospective P2 timing disposition and exact phase base. | P2 | [x] Owner-approved 2026-07-18: use `6669b9d` as the exact P2 comparison base; its child `6a76d9f` is the first P2 source commit and `fcd1b30` is the frozen implementation/fixture candidate. This acknowledges that the base was not recorded prospectively, P1 was incomplete, and D9 plus its live validity experiment were still open when implementation began. It waives none of the live experiment, retained evidence, policy, or independent-review requirements and does not accept P2. |
-| D15 | P3/P4 final source, evidence, compaction boundary, and credentialed live-fixture disposition. | P3/P4/P9 | [x] Owner-approved 2026-07-18: freeze final combined source `7f47218` over D12 base `a90b730`; use one source-bound machine bundle while requiring separate P3 then P4 Gate D verdicts; retain the settled local/provider compaction boundary. Deterministic public/Codex fixtures complete the P4 protocol/streaming evidence requirement. A real authenticated streamed Responses request remains a mandatory D7/P9 integration gate before overall acceptance, was not run here, and still requires explicit credentials, spending, redaction, and retention approval at the point of use. A skipped live test is never a pass. This ruling does not accept P4 or P9. |
+| D15 | P3/P4 final source, evidence, compaction boundary, and credentialed live-fixture disposition. | P3/P4/P9 | [x] Owner-approved 2026-07-18: freeze final combined source `7f47218` over D12 base `a90b730`; use one source-bound machine bundle while requiring separate P3 then P4 Gate D verdicts; retain the settled local/provider compaction boundary. Deterministic public/Codex fixtures complete the P4 protocol/streaming evidence requirement. A real authenticated streamed Responses request remains a mandatory D7/P9 integration gate before overall acceptance, was not run here, and still requires explicit credentials, spending, redaction, and retention approval at the point of use. A skipped live test is never a pass. P4 review `80f0e36` invalidated only the P4 half of the freeze; accepted P3 is unchanged. Corrected P4 evidence is bound to `180759f`, containing product correction `ab26632`. This ruling and correction do not accept P4 or P9. |
 
 ## Accepted boundary and operator guidance
 
@@ -1781,15 +1789,14 @@ or P4.
 
 ## P4. Streaming and replay conformance
 
-**Status:** [ ] Frozen combined source `7f47218` includes the streaming,
-reconciliation, terminal-authority, raw-event, refusal, hosted-search, audio,
-and finite optional-shape work. Accepted D2 source `e9755fe` is unconditionally
-`READY`; M-1/F-2 correction `df47e9e` is confirmed `READY` at `dad0291`; finite
-D11 source `56fd4dd` and its 120/120 evidence are accepted at `5af7308`. The
-common final source-bound gate, policy audit, 60/60 distributions, redaction
-report, and attestation pass at `7f47218`. P3 acceptance is satisfied by
-whole-phase review `06be7c7`; D15 is owner-approved and the independent P4
-phase acceptance review may proceed;
+**Status:** [ ] Review `80f0e36` returned `NOT READY` on one P4 implementation
+defect and one claim-accuracy defect. Product correction `ab26632` rejects core
+preview identities omitted from successful or incomplete terminal authority;
+evidence-only correction `180759f` makes the final redaction generator
+recursively rerunnable. The regenerated source-bound gate, policy audit, 60/60
+distributions, redaction report, and attestation all pass at `180759f`. P3
+acceptance remains satisfied by whole-phase review `06be7c7`; D15 remains
+owner-approved. P4 awaits narrow same-reviewer correction confirmation;
 **candidate coverage:** `STATE-01`, `EVT-01` through
 `EVT-07`; **dependencies:** P3. D13 removes P1/P2 as transitive blockers; D12
 resolves only the missed phase-base timing requirement.
@@ -1809,8 +1816,11 @@ Completed output items drive the canonical transcript. Deltas drive responsive
 UI keyed by item/content identity and reconcile against authoritative completed
 content. Refusal is a non-retryable model outcome distinct from transport error,
 hosted search survives replay, and an unknown output item cannot be reported as
-ordinary success. Call completion is identity-safe and idempotent, and only an
-authoritative completed item can become executable.
+ordinary success. A successful or incomplete terminal cannot promote preview
+content whose identity is absent from authoritative output. Exact duplicate
+sequences processed before terminal delivery are canonical/actionable no-ops;
+the first terminal closes the request and direct post-terminal mapper input
+fails closed. Only an authoritative completed item can become executable.
 
 ### Work checklist
 
@@ -1827,10 +1837,17 @@ authoritative completed item can become executable.
   state mutation.
 - [x] Key deltas by item ID, output index, and content index.
 - [x] Preserve item ID and call ID on added/delta/done/completed events. Reconcile
-  interleaved and duplicate frames idempotently; reject conflicting identity and
-  remove every order-based completion fallback.
+  interleaved frames and exact pre-terminal duplicates idempotently; reject
+  conflicting identity and remove every order-based completion fallback.
 - [x] Reconcile deltas with `.done` and completed item data; repair or emit a
   typed mismatch instead of silently truncating.
+- [x] Require every identity with accepted core text, refusal, reasoning, or
+  reasoning-summary deltas to occur in successful/incomplete terminal output.
+  Return typed `CoreDeltaAbsentFromTerminal` before canonical item, `Done`,
+  ordinary turn success, persistence, or replay when authority omits it.
+  The guard does not mask `response.failed`: authoritative failed-response
+  output items remain preserved before the typed provider failure, while the
+  empty-output regression emits no item or `Done`.
 - [x] Apply identity-keyed delta/completion reconciliation to every supported
   non-audio channel in the current P3 manifest. UI previews and textual
   renderings never replace canonical typed content. Text, refusal, reasoning,
@@ -1850,8 +1867,11 @@ authoritative completed item can become executable.
   `UnsupportedResponseItem` rather than ordinary success unless its exact type
   is on the pinned inert/lifecycle allowlist. Apply the same rule to an unknown
   event not on the pinned lifecycle allowlist.
-- [x] Make parser/mapper terminal delivery exactly once and reject/ignore later
-  frames deterministically. P6 separately owns stopping the network producer.
+- [x] Make parser/mapper terminal delivery exactly once. The first terminal
+  closes the mapper; direct post-terminal input, including an identical terminal
+  retransmit, returns `PostTerminalFrame`. The provider executor fixture proves
+  duplicate terminal bytes still produce one raw terminal, one canonical item
+  set, and one `Done`. P6 separately owns stopping the network producer.
 - [x] Replace empty-string, absent-response-ID, default-EndTurn, and
   delta-only-call fallbacks with typed required/optional or terminal-state
   handling. Unknown reasoning parts survive opaquely; malformed required
@@ -1892,7 +1912,9 @@ authoritative completed content part is preserved canonically.
   focused slice as `READY`. The separate finite optional-shape/lifecycle
   inventory is accepted as D11 evidence at `5af7308`.
 - [x] Interleaved calls prove call two cannot complete call one. Exact duplicate
-  frames are idempotent; conflicting duplicates, delta-only calls, and missing
+  sequences processed before terminal delivery remain raw-observable but are
+  canonical/actionable no-ops. Direct post-terminal mapper input fails closed;
+  conflicting duplicates, delta-only calls, identity rebinding, and missing
   authoritative completion cannot execute.
 - [x] Tests cover arbitrary SSE chunk boundaries, CRLF, multiline data,
   duplicate/out-of-order frames, incomplete EOF, and post-terminal input.
@@ -1900,12 +1922,14 @@ authoritative completed content part is preserved canonically.
   loses classification.
 - [x] An unknown output item and unknown non-allowlisted event preserve raw data
   and terminate with the exact typed unsupported outcome.
-- [x] Final common machine evidence is frozen at source `7f47218`, tree
-  `b8b042f61b8d921b4cb27496d5a72b8d56b8bb0c`, over exact base `a90b730`:
-  strict fmt/Clippy and every complete test
-  legs pass, the syntax-aware full-range policy has zero violations, all three
-  repeated cases pass 20/20 for 60/60 total, the 213-record source-bound
-  redaction report has zero findings, and the single-process attestation binds
+- [x] Corrected P4 machine evidence is frozen at source `180759f`, tree
+  `c588d96639cd6e7725255779afd445d479cbcd69`, over exact base `a90b730`.
+  Strict fmt/Clippy and every complete test leg pass: Norn 4,042/4,042, CLI
+  551/551, TUI 700/700, workspace 5,371/5,371, doctests 8/8, and redaction
+  sentinels 25/25. The syntax-aware full-range policy covers 299 changed Rust
+  files, 78 test-only, with zero LOC/module/added-line violations. All three
+  repeated cases pass 20/20 for 60/60 total; the 219-record source-bound
+  redaction report has zero findings; and the single-process attestation binds
   the gate, policy, distributions, and redaction report with zero errors. The
   credentialed live Codex-subscription fixture was not run. D15 requires it as
   a later D7/P9 integration gate before overall acceptance, not as a P4 scope
@@ -1913,10 +1937,10 @@ authoritative completed content part is preserved canonically.
 
 ### Review and exit gate
 
-- [ ] Streaming/item and UI/session reviewers independently inspect behavior.
-- [ ] The streaming/item review-domain owner confirms every immediate capability
-  is preserved end to end.
-- [ ] A Fable adversarial reviewer returns `READY` on raw-wire fixtures.
+- [x] Review `80f0e36` completed the streaming/item, UI/session, domain-owner,
+  and adversarial seats and found only MAJOR-1 plus MINOR-2.
+- [ ] The same reviewer confirms MAJOR-1 and MINOR-2 closure against corrected
+  source `180759f` and the regenerated five-artifact bundle.
 - [ ] Universal Gates A-D pass and `STATE-01`/`EVT-01` through `EVT-07` close.
 
 ## P5. Conversation and Codex turn semantics
@@ -2414,7 +2438,7 @@ evidence.
 | P1 | Historical Gate A at `2917c8e` is stale against accepted D11 nullable-phase evidence; no Gate B source landed; archived `393f67e` is rejected as a candidate | Historical contract/review chronology and 62-row preregistration remain available but make no current implementation claim | D13 moves generic repository enforcement and D0 to P9. If standalone P1 resumes, restart prospectively with the current contract; do not resurrect the archived prototype |
 | P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and the bounded source fixture matrices are present | D14 establishes retrospective base `6669b9d`. Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks; retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle | Run the live A/B/A validity experiment after explicit credential-use approval, execute and retain the complete candidate gates, then obtain P2 acceptance |
 | P3 | Accepted source `7f47218` over D12 base `a90b730`; tree `b8b042f61b8d921b4cb27496d5a72b8d56b8bb0c`; accepted D2 source `e9755fe`, lifecycle fixtures `f252cbb`, M-1/F-2 correction `df47e9e`, and finite D11 source `56fd4dd` are included | D2 remains unconditionally `READY`; review `dad0291` closes M-1/F-2; review `5af7308` accepts D11's 28/274/659 inventory and seven-by-ten matrix. The final gate passes strict fmt/Clippy, Norn 4,035/4,035, CLI 551/551, TUI 700/700, workspace 5,364/5,364, doctests 8/8, redaction sentinels 23/23, exact diff, and policy. The policy reports 298 changed Rust files, 78 test-only, and zero LOC/module/added-line violations. Three repeated cases pass 60/60; the 213-record redaction report has zero findings; the single-process attestation has zero errors. Whole-phase review `06be7c7` independently reproduces the evidence and returns `READY` | None; accepted 2026-07-18. `STATE-01` and `EVT-01..07` remain P4-owned |
-| P4 | Frozen combined source `7f47218` over D12 base `a90b730`; public/Codex manifests, 53 event contracts, 28 item validators, reconciliation, terminal parsing, raw CLI events, refusal, hosted-search replay, and response-audio persistence are implemented | The same source-bound final gate, zero-violation policy, 60/60 distributions, zero-finding redaction report, and attestation pass. P3 is accepted at `06be7c7`. D15 assigns the mandatory authenticated real-wire test to D7/P9; it was not run and no live-wire success is claimed. P6 separately owns usage-presence projection and retry-attempt UI cleanup | Submit the separate P4 streaming/item, UI/session, domain-owner, adversarial, and phase acceptance review proving `STATE-01` and `EVT-01..07` |
+| P4 | Product correction `ab26632` over accepted common source `7f47218`; corrected source-bound evidence head `180759f`; public/Codex manifests, 53 event contracts, 28 item validators, reconciliation, terminal parsing, raw CLI events, refusal, hosted-search replay, response-audio persistence, and successful-terminal core-delta authority are implemented | Review `80f0e36` returned `NOT READY`; the correction bundle at `8faf1f4` passes strict fmt/Clippy, Norn 4,042, CLI 551, TUI 700, workspace 5,371, doctests 8, 60/60 distributions, 25 redaction sentinels, zero policy violations, 219-record zero-finding redaction, and zero-error attestation. P3 remains accepted at `06be7c7`; D15's D7/P9 live-wire gate is unchanged | Obtain narrow same-reviewer confirmation that MAJOR-1/MINOR-2 are closed, then record P4 acceptance. P6 separately owns usage-presence projection and retry-attempt UI cleanup |
 | P5 | Read-only current-state audit complete: Codex `store:false` and public threaded request shapes are distinct and stateless encrypted-reasoning replay exists; instruction resend and compaction-anchor invalidation are partial; producer ownership, `end_turn`, Codex turn state, credential-bound state, `client_metadata`, and D8 role authority are missing | The first `TRANS-01` slice and synchronized nine-case transport/cancellation evidence matrix are specified; no source or acceptance evidence exists | Obtain the scoped entry disposition if D3/D8 remain open; implement and review `TRANS-01`; then resolve the Codex turn overlay, D3 state/account binding, and D8 provenance/role contract before whole-phase gates |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
@@ -2423,7 +2447,7 @@ evidence.
 | P1 | `2917c8e` | | | | | | [ ] |
 | P2 | `6669b9d` (D14 retrospective timing exception) | | | | | | [ ] |
 | P3 | `a90b730` (D12 retrospective timing exception) | Source `a90b730..7f47218`; evidence/docs `d8c16f3`; review `06be7c7` | [`P3 handoff`](reviews/2026-07-18-p3-final-gate-d-handoff.md); final gate 10/10; Norn 4,035/4,035; CLI 551/551; TUI 700/700; workspace 5,364/5,364; doctests 8/8; distributions 60/60; redaction 23/23 and zero findings; attestation pass; independent reproduction in `06be7c7` | 298 changed Rust files; 78 test-only; 143 writer candidates; zero bypass, over-500, module-shape, or thin-entrypoint violations | Responses-protocol and session/persistence Opus seats plus coordinator, 2026-07-18 | [Fable `READY`](reviews/2026-07-18-p3-final-gate-d-review.md), `06be7c7` | [x] Accepted |
-| P4 | `a90b730` (D12 retrospective timing exception) | | | | | | [ ] |
+| P4 | `a90b730` (D12 retrospective timing exception) | Product correction `ab26632`; evidence support/source `180759f`; evidence commit `8faf1f4` | [`Original P4 review`](reviews/2026-07-18-p4-final-gate-d-review.md) `80f0e36`: `NOT READY`; corrected gate 10/10; Norn 4,042/4,042; CLI 551/551; TUI 700/700; workspace 5,371/5,371; doctests 8/8; distributions 60/60; redaction 25/25 and zero findings; attestation pass | 299 changed Rust files; 78 test-only; zero bypass, over-500, module-shape, or thin-entrypoint violations | Original P4 panel complete; correction confirmation pending | Original adversarial review found MAJOR-1; correction verdict pending | [ ] |
 | P5 | | | | | | | [ ] |
 | P6 | | | | | | | [ ] |
 | P7 | | | | | | | [ ] |

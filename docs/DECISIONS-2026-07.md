@@ -1472,6 +1472,20 @@ approval.
 This ruling is D15. It fixes the source/evidence freeze, settled compaction
 boundary, and P4/P9 live-fixture disposition. It does not accept P4 or P9.
 
+**P4 correction addendum (2026-07-19):** P4 review `80f0e36` invalidated only
+the P4 half of the common `7f47218` freeze; accepted P3 source and verdict remain
+unchanged. Production correction `ab26632` adds the typed successful/incomplete
+terminal core-delta authority guard. Such terminals reject preview identities
+absent from authoritative output. The guard does not mask `response.failed`:
+authoritative failed-response output items remain preserved before the typed
+provider failure, while the empty-output regression emits no item or `Done`.
+Evidence-only commit
+`180759f` changes only redaction support and its tests and is the source-bound
+head for the regenerated P4 bundle. Exact duplicate sequences are idempotent
+only before terminal delivery; direct post-terminal mapper input fails closed.
+This addendum does not accept P4, does not reopen P3, and does not change D15's
+mandatory D7/P9 authenticated real-wire gate.
+
 **P3 status (2026-07-18):** P3 whole-phase review `06be7c7` returned
 `READY` and accepts P3. It issued no P4 verdict. With D15 now owner-approved,
 the separate P4 review may proceed; the mandatory D7/P9 real-wire gate remains
