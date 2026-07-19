@@ -173,6 +173,210 @@ fn terminal_output_cannot_omit_or_reorder_completed_items() -> TestResult {
 }
 
 #[test]
+fn terminal_output_cannot_omit_any_core_preview_delta_identity() -> TestResult {
+    let cases = [
+        (
+            message_start("msg_text"),
+            delta(
+                "response.output_text.delta",
+                2,
+                "msg_text",
+                0,
+                json!({"content_index": 0, "delta": "text", "logprobs": []}),
+            ),
+        ),
+        (
+            message_start("msg_refusal"),
+            delta(
+                "response.refusal.delta",
+                2,
+                "msg_refusal",
+                0,
+                json!({"content_index": 0, "delta": "refusal"}),
+            ),
+        ),
+        (
+            json!({
+                "id": "rs_summary",
+                "type": "reasoning",
+                "summary": [],
+                "content": [],
+                "encrypted_content": null,
+                "status": "in_progress"
+            }),
+            delta(
+                "response.reasoning_summary_text.delta",
+                2,
+                "rs_summary",
+                0,
+                json!({"summary_index": 0, "delta": "summary"}),
+            ),
+        ),
+        (
+            json!({
+                "id": "rs_detail",
+                "type": "reasoning",
+                "summary": [],
+                "content": [],
+                "encrypted_content": null,
+                "status": "in_progress"
+            }),
+            delta(
+                "response.reasoning_text.delta",
+                2,
+                "rs_detail",
+                0,
+                json!({"content_index": 0, "delta": "detail"}),
+            ),
+        ),
+    ];
+
+    for terminal_type in ["response.completed", "response.incomplete"] {
+        for (announced, preview) in &cases {
+            let mut reconciler = ResponseReconciler::new();
+            reconciler.ingest(&added(1, 0, announced.clone()))?;
+            reconciler.ingest(preview)?;
+            let error = reconciler
+                .ingest(&event(
+                    terminal_type,
+                    3,
+                    json!({"response": {"output": []}}),
+                ))
+                .err()
+                .ok_or("expected a core-preview terminal omission error")?;
+            assert_eq!(
+                error,
+                ResponseReconciliationError::CoreDeltaAbsentFromTerminal
+            );
+            assert!(!error.to_string().contains("msg_"));
+            assert!(!error.to_string().contains("rs_"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn failed_terminal_preserves_failure_authority_over_orphan_preview() -> TestResult {
+    let mut reconciler = ResponseReconciler::new();
+    reconciler.ingest(&added(1, 0, message_start("msg_failed")))?;
+    reconciler.ingest(&delta(
+        "response.output_text.delta",
+        2,
+        "msg_failed",
+        0,
+        json!({"content_index": 0, "delta": "partial", "logprobs": []}),
+    ))?;
+    assert!(matches!(
+        reconciler.ingest(&event(
+            "response.failed",
+            3,
+            json!({"response": {"output": []}}),
+        ))?,
+        ReconcileUpdate::Terminal { ref items, .. } if items.is_empty()
+    ));
+    Ok(())
+}
+
+#[test]
+fn terminal_authority_may_supply_core_preview_without_intermediate_done() -> TestResult {
+    let cases = [
+        (
+            message_start("msg_text"),
+            delta(
+                "response.output_text.delta",
+                2,
+                "msg_text",
+                0,
+                json!({"content_index": 0, "delta": "text", "logprobs": []}),
+            ),
+            message("msg_text", "text"),
+        ),
+        (
+            message_start("msg_refusal"),
+            delta(
+                "response.refusal.delta",
+                2,
+                "msg_refusal",
+                0,
+                json!({"content_index": 0, "delta": "refusal"}),
+            ),
+            json!({
+                "id": "msg_refusal",
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "refusal", "refusal": "refusal"}]
+            }),
+        ),
+        (
+            json!({
+                "id": "rs_summary",
+                "type": "reasoning",
+                "summary": [],
+                "content": [],
+                "encrypted_content": null,
+                "status": "in_progress"
+            }),
+            delta(
+                "response.reasoning_summary_text.delta",
+                2,
+                "rs_summary",
+                0,
+                json!({"summary_index": 0, "delta": "summary"}),
+            ),
+            json!({
+                "id": "rs_summary",
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "summary"}],
+                "content": [],
+                "encrypted_content": null,
+                "status": "completed"
+            }),
+        ),
+        (
+            json!({
+                "id": "rs_detail",
+                "type": "reasoning",
+                "summary": [],
+                "content": [],
+                "encrypted_content": null,
+                "status": "in_progress"
+            }),
+            delta(
+                "response.reasoning_text.delta",
+                2,
+                "rs_detail",
+                0,
+                json!({"content_index": 0, "delta": "detail"}),
+            ),
+            json!({
+                "id": "rs_detail",
+                "type": "reasoning",
+                "summary": [],
+                "content": [{"type": "reasoning_text", "text": "detail"}],
+                "encrypted_content": null,
+                "status": "completed"
+            }),
+        ),
+    ];
+
+    for (announced, preview, authoritative) in cases {
+        let mut reconciler = ResponseReconciler::new();
+        reconciler.ingest(&added(1, 0, announced))?;
+        reconciler.ingest(&preview)?;
+        assert!(matches!(
+            reconciler.ingest(&event(
+                "response.completed",
+                3,
+                json!({"response": {"output": [authoritative]}}),
+            ))?,
+            ReconcileUpdate::Terminal { .. }
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn delta_only_and_other_unresolved_executable_items_fail_closed() -> TestResult {
     let mut delta_only = ResponseReconciler::new();
     delta_only.ingest(&added(1, 0, function_call("fc_a", "", "in_progress")))?;

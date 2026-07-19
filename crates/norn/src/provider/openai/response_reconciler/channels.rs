@@ -114,6 +114,24 @@ impl ResponseReconciler {
         }
         Ok(())
     }
+
+    pub(super) fn validate_terminal_core_deltas(
+        &self,
+        terminal_identities: &std::collections::BTreeSet<ResponseItemIdentity>,
+    ) -> Result<(), ResponseReconciliationError> {
+        if self.deltas.keys().any(|(identity, channel)| {
+            matches!(
+                channel,
+                ResponseDeltaChannel::OutputText(_)
+                    | ResponseDeltaChannel::Refusal(_)
+                    | ResponseDeltaChannel::ReasoningSummaryText(_)
+                    | ResponseDeltaChannel::ReasoningText(_)
+            ) && !terminal_identities.contains(identity)
+        }) {
+            return Err(ResponseReconciliationError::CoreDeltaAbsentFromTerminal);
+        }
+        Ok(())
+    }
 }
 
 pub(super) fn channel_matches_item_type(channel: ResponseDeltaChannel, item_type: &str) -> bool {

@@ -380,6 +380,7 @@ impl ResponseReconciler {
         self.validate_terminal_channels(&terminal_identities)?;
         self.validate_terminal_item_channels(&terminal_identities)?;
         if enforce_actionable_resolution {
+            self.validate_terminal_core_deltas(&terminal_identities)?;
             self.validate_actionable_resolution(&terminal_identities, &items)?;
         }
         self.deltas = terminal_deltas;

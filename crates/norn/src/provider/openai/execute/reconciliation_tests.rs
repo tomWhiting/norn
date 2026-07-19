@@ -8,6 +8,7 @@ use crate::provider::response_audio::ResponseAudioEvent;
 use crate::provider::response_item::ResponseItem;
 
 mod equivalence;
+mod terminal_boundaries;
 
 type TestResult = Result<(), Box<dyn Error>>;
 

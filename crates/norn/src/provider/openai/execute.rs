@@ -782,6 +782,62 @@ mod streaming_tests {
     }
 
     #[tokio::test]
+    async fn duplicate_terminal_wire_frames_deliver_one_terminal_outcome()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let terminal = terminal_message_frame(
+            0,
+            "resp_duplicate_terminal",
+            "msg_duplicate_terminal",
+            "answer",
+            MessageTerminal::Completed,
+            7,
+            3,
+        );
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(format!("{terminal}{terminal}")),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = build_provider(server.uri(), 0);
+        let mut stream = provider.stream(build_request())?;
+        let mut raw_terminal_count = 0;
+        let mut canonical_item_count = 0;
+        let mut terminal = None;
+        while let Some(event) = stream.next().await {
+            match event {
+                Ok(ProviderEvent::ResponseStreamEvent { event }) => {
+                    raw_terminal_count += usize::from(event.event_type() == "response.completed");
+                }
+                Ok(ProviderEvent::ResponseItemDone { .. }) => canonical_item_count += 1,
+                Ok(done @ ProviderEvent::Done { .. }) => terminal = Some(done),
+                Ok(_) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+
+        assert_eq!(raw_terminal_count, 1);
+        assert_eq!(canonical_item_count, 1);
+        let Some(ProviderEvent::Done {
+            usage, response_id, ..
+        }) = terminal
+        else {
+            return Err(std::io::Error::other("expected exactly one terminal Done event").into());
+        };
+        assert_eq!(usage.input_tokens, 7);
+        assert_eq!(usage.output_tokens, 3);
+        assert_eq!(response_id.as_deref(), Some("resp_duplicate_terminal"));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn incomplete_stream_completes_with_truncation_stop_not_error() {
         // BLOCKER regression: a stream cut by `response.incomplete`
         // (max_output_tokens) must complete normally — accumulated text

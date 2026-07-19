@@ -308,6 +308,9 @@ pub enum ResponseReconciliationError {
     /// A channel-completed item was absent from terminal output.
     #[error("channel-completed response item was absent from terminal response.output")]
     ChannelCompletionAbsentFromTerminal,
+    /// A core preview delta belonged to an item absent from terminal output.
+    #[error("previewed response item was absent from terminal response.output")]
+    CoreDeltaAbsentFromTerminal,
     /// An item-scoped event referred to an identity not yet announced.
     #[error("item-scoped response event referred to an unannounced item")]
     UnannouncedItemScopedIdentity,
