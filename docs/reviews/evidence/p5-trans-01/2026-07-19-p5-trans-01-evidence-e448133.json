@@ -1,0 +1,3239 @@
+{
+  "acceptance": {
+    "boundary": "candidate evidence only; independent review remains required",
+    "p5_accepted": false,
+    "trans_01_accepted": false
+  },
+  "distribution": {
+    "cases": [
+      {
+        "failed": 0,
+        "observations": [
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 85.341,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-01",
+            "iteration": 1,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 673,
+              "sha256": "b57e19c3b1e5e6dbefec4dd57927b78a57cf060c5f831a22d11f8097aeb7699f"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:49:50.251856+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.952,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-02",
+            "iteration": 2,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "3fccd8bf22cdfe4442b3a7d6e42e633a7a712fd7267502c0d90f1540d70f1017"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:15.624136+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.414,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-03",
+            "iteration": 3,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "28bafc40077dc79e012db9ddf0b0acda67fbf91b4478f6b37c686da9ee759290"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:16.585225+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.411,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-04",
+            "iteration": 4,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "28bafc40077dc79e012db9ddf0b0acda67fbf91b4478f6b37c686da9ee759290"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:17.008366+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.409,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-05",
+            "iteration": 5,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "28bafc40077dc79e012db9ddf0b0acda67fbf91b4478f6b37c686da9ee759290"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:17.427633+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.415,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-06",
+            "iteration": 6,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "d0f6713278c24c7a0ab5b1e0e7b7de3b8ba871caafaa79d0820bfcea0fbd6c1e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:17.844676+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.422,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-07",
+            "iteration": 7,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "d0f6713278c24c7a0ab5b1e0e7b7de3b8ba871caafaa79d0820bfcea0fbd6c1e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:18.268132+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.44,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-08",
+            "iteration": 8,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "a1bad2771d301ade58edeb2e92d4c2796222fd5f97efe6be3047030b7c105276"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:18.699197+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.419,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-09",
+            "iteration": 9,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "d0f6713278c24c7a0ab5b1e0e7b7de3b8ba871caafaa79d0820bfcea0fbd6c1e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:19.148122+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.407,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-10",
+            "iteration": 10,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "28bafc40077dc79e012db9ddf0b0acda67fbf91b4478f6b37c686da9ee759290"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:19.575429+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.409,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-11",
+            "iteration": 11,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "7016dd21382d2963084b9f000a6f5ff2b30266019861ff44feab9441c6f42df7"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:19.991159+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.412,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-12",
+            "iteration": 12,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "28bafc40077dc79e012db9ddf0b0acda67fbf91b4478f6b37c686da9ee759290"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:20.408957+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.404,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-13",
+            "iteration": 13,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "7016dd21382d2963084b9f000a6f5ff2b30266019861ff44feab9441c6f42df7"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:20.829363+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.405,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-14",
+            "iteration": 14,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "7016dd21382d2963084b9f000a6f5ff2b30266019861ff44feab9441c6f42df7"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:21.241390+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.414,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-15",
+            "iteration": 15,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "28bafc40077dc79e012db9ddf0b0acda67fbf91b4478f6b37c686da9ee759290"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:21.654310+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.483,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-16",
+            "iteration": 16,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "1be66fdd325213dfd1750d3d13cfc5080a694298bbe56ef00136d27006d4d98b"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:22.077065+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.442,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-17",
+            "iteration": 17,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "89e2af03083789d0a5c8dede126112c55fbb37d4d0da8efb0a58116fd5cf76e0"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:22.567621+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.408,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-18",
+            "iteration": 18,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "28bafc40077dc79e012db9ddf0b0acda67fbf91b4478f6b37c686da9ee759290"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:23.017748+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.433,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-19",
+            "iteration": 19,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "a1bad2771d301ade58edeb2e92d4c2796222fd5f97efe6be3047030b7c105276"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:23.433965+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait -- --exact",
+            "elapsed_seconds": 0.483,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_a_rate_limiter_wait-20",
+            "iteration": 20,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 385,
+              "sha256": "1be66fdd325213dfd1750d3d13cfc5080a694298bbe56ef00136d27006d4d98b"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:23.875510+00:00"
+          }
+        ],
+        "passed": 20,
+        "result": "pass",
+        "runs": 20,
+        "test": "provider::owned_stream::tests::dropping_stream_aborts_a_rate_limiter_wait"
+      },
+      {
+        "failed": 0,
+        "observations": [
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.438,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-01",
+            "iteration": 1,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "60af3ae7145b8f5f99c0ee4f3c819e60a8d62956644166c4272246ed16727285"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:24.367344+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.423,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-02",
+            "iteration": 2,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "cf71c70bf7165e8218f253b31ee0d2f3f976256755750192045d775ed59fa6dd"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:24.814207+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.445,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-03",
+            "iteration": 3,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "2abb5f543b9e7217ce03b7cba45425c4d9e084fd423f9de3ba60a79ce462c18c"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:25.245593+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.431,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-04",
+            "iteration": 4,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "60af3ae7145b8f5f99c0ee4f3c819e60a8d62956644166c4272246ed16727285"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:25.699316+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.419,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-05",
+            "iteration": 5,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "cf71c70bf7165e8218f253b31ee0d2f3f976256755750192045d775ed59fa6dd"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:26.139226+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.418,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-06",
+            "iteration": 6,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "cf71c70bf7165e8218f253b31ee0d2f3f976256755750192045d775ed59fa6dd"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:26.567577+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.45,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-07",
+            "iteration": 7,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "b28a6b0678f49c2d6727a80dd8cebd9f1cc78afaf863ffcae4ebc0752a39ad4c"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:26.994962+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.428,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-08",
+            "iteration": 8,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "60af3ae7145b8f5f99c0ee4f3c819e60a8d62956644166c4272246ed16727285"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:27.453033+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.422,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-09",
+            "iteration": 9,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "cf71c70bf7165e8218f253b31ee0d2f3f976256755750192045d775ed59fa6dd"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:27.890216+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.418,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-10",
+            "iteration": 10,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "cf71c70bf7165e8218f253b31ee0d2f3f976256755750192045d775ed59fa6dd"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:28.321330+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.439,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-11",
+            "iteration": 11,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "2abb5f543b9e7217ce03b7cba45425c4d9e084fd423f9de3ba60a79ce462c18c"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:28.748193+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.444,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-12",
+            "iteration": 12,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "2abb5f543b9e7217ce03b7cba45425c4d9e084fd423f9de3ba60a79ce462c18c"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:29.195252+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.469,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-13",
+            "iteration": 13,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "df3fb59f331f8653cf7968eb79fdbe85e7addcaee121c832e138f866e5df3c59"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:29.647692+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.493,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-14",
+            "iteration": 14,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "7202422e2978e3a4d0ea7b51053d7691f5ae9425d447bf1931e1a5e79942e1be"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:30.124600+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.472,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-15",
+            "iteration": 15,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "495b0c0f7e16878f7aa6988533062cac038b6df66ff8c4d5f14a80a86e729946"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:30.629055+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.442,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-16",
+            "iteration": 16,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "2abb5f543b9e7217ce03b7cba45425c4d9e084fd423f9de3ba60a79ce462c18c"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:31.109426+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 1.097,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-17",
+            "iteration": 17,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "2d2d45f6eb3f24486566218e2ada128c065b950b05a7f2d1ed0b02f75228d963"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:31.560050+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.528,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-18",
+            "iteration": 18,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "2b2888d9eb4a420f25958e624c0306432248e8c11e85e3b681a770029c118925"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:32.669306+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 1.686,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-19",
+            "iteration": 19,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "9513b848106e294e18c7e402581df1130c1112c7219d43814abfdee96ba62fd8"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:33.218271+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_its_producer_task -- --exact",
+            "elapsed_seconds": 0.999,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_its_producer_task-20",
+            "iteration": 20,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 383,
+              "sha256": "093eb9df012f550877d00c486fd88c008ac696f40b934874c865be6ba609f5ac"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:34.934499+00:00"
+          }
+        ],
+        "passed": 20,
+        "result": "pass",
+        "runs": 20,
+        "test": "provider::owned_stream::tests::dropping_stream_aborts_its_producer_task"
+      },
+      {
+        "failed": 0,
+        "observations": [
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.639,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-01",
+            "iteration": 1,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "789479c4e5bf5b2cf75b3392df063ef8f8c252f32c0c08a31db2f39a3cd98fb5"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:35.948062+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.474,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-02",
+            "iteration": 2,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "fdefafb73f8e55ceb4a509b9a0c24a77154782f6ec4ad95e8b14d718b76d9980"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:36.598519+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.461,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-03",
+            "iteration": 3,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "a7237d6de5079e3a3e94c365a21d9061f0757d954cff1e5d8021d4681c661b3e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:37.080926+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.437,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-04",
+            "iteration": 4,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "7f6a3473db062f0e788c9a9b7b66f3b385b32434f57d2de5109a84263aecc4e3"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:37.555447+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.44,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-05",
+            "iteration": 5,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "7f6a3473db062f0e788c9a9b7b66f3b385b32434f57d2de5109a84263aecc4e3"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:38.000782+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.461,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-06",
+            "iteration": 6,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "a7237d6de5079e3a3e94c365a21d9061f0757d954cff1e5d8021d4681c661b3e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:38.448838+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.44,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-07",
+            "iteration": 7,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "7f6a3473db062f0e788c9a9b7b66f3b385b32434f57d2de5109a84263aecc4e3"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:38.917857+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.435,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-08",
+            "iteration": 8,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "7f6a3473db062f0e788c9a9b7b66f3b385b32434f57d2de5109a84263aecc4e3"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:39.365954+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.442,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-09",
+            "iteration": 9,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "c14cad14f6d84c4616897ce38cc581ec1e1f0e56340b46f04b931fec6819ee0e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:39.809726+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.423,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-10",
+            "iteration": 10,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "2917d9747f2154111080ca5b26fc6a6fb057a4a427905abcc29c8abfab29cabf"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:40.260466+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.44,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-11",
+            "iteration": 11,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "7f6a3473db062f0e788c9a9b7b66f3b385b32434f57d2de5109a84263aecc4e3"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:40.699898+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.446,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-12",
+            "iteration": 12,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "c14cad14f6d84c4616897ce38cc581ec1e1f0e56340b46f04b931fec6819ee0e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:41.151894+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.434,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-13",
+            "iteration": 13,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "7f6a3473db062f0e788c9a9b7b66f3b385b32434f57d2de5109a84263aecc4e3"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:41.606612+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.43,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-14",
+            "iteration": 14,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "7f6a3473db062f0e788c9a9b7b66f3b385b32434f57d2de5109a84263aecc4e3"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:42.048583+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.455,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-15",
+            "iteration": 15,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "55d21a7712f99b3c04e359cfeec58f05c290d452025368462e6d624a5f789b86"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:42.487288+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.455,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-16",
+            "iteration": 16,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "55d21a7712f99b3c04e359cfeec58f05c290d452025368462e6d624a5f789b86"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:42.949908+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.444,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-17",
+            "iteration": 17,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "c14cad14f6d84c4616897ce38cc581ec1e1f0e56340b46f04b931fec6819ee0e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:43.412991+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.437,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-18",
+            "iteration": 18,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "7f6a3473db062f0e788c9a9b7b66f3b385b32434f57d2de5109a84263aecc4e3"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:43.864896+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.445,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-19",
+            "iteration": 19,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "c14cad14f6d84c4616897ce38cc581ec1e1f0e56340b46f04b931fec6819ee0e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:44.310935+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send -- --exact",
+            "elapsed_seconds": 0.511,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_releases_a_blocked_channel_send-20",
+            "iteration": 20,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 390,
+              "sha256": "17d055443e01c69a967d1b9eb51dbcec2c968745b81fd21467dab4a57a8dddb5"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:44.764693+00:00"
+          }
+        ],
+        "passed": 20,
+        "result": "pass",
+        "runs": 20,
+        "test": "provider::owned_stream::tests::dropping_stream_releases_a_blocked_channel_send"
+      },
+      {
+        "failed": 0,
+        "observations": [
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.496,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-01",
+            "iteration": 1,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "dbabe97633113323146037b4ff08a1861411c34721d3c7906e924ee81c7e265c"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:45.284915+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.49,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-02",
+            "iteration": 2,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "f8e8ddf2d3afd9f074fff772a0d6249f2403b5194ed4154c9c8d49e05f35d220"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:45.789998+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.445,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-03",
+            "iteration": 3,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "19bfa503a1ee3986d6dd1ce254a1d2cb7183e1502aa0903d75945c3d5f91d9fa"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:46.289225+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.473,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-04",
+            "iteration": 4,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "8080ef4148c783ee286b1c1278c6bfd77780b14a64a49821ff56d40d041a2350"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:46.743525+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.42,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-05",
+            "iteration": 5,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "e3c8d612e96d8a96b8b1613cc066f9241161269d7e4f4e80cf9921c6dcfe7bb8"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:47.224982+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.551,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-06",
+            "iteration": 6,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "d4213d469fa08ec2cb730b8f34c6adc781da31bbe531171d11b985e33a073b9f"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:47.653170+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.452,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-07",
+            "iteration": 7,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "9201bad9cd4b44afb714f55da164de75e7c3478e68ba4b7670a4b8e9daa5ef50"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:48.211932+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.418,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-08",
+            "iteration": 8,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "e3c8d612e96d8a96b8b1613cc066f9241161269d7e4f4e80cf9921c6dcfe7bb8"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:48.672894+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.421,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-09",
+            "iteration": 9,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "e3c8d612e96d8a96b8b1613cc066f9241161269d7e4f4e80cf9921c6dcfe7bb8"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:49.100047+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.416,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-10",
+            "iteration": 10,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "ee85f899efd2d340128c1789a29e7cad332f863fad2bc5741416985d4b499cda"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:49.529200+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.423,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-11",
+            "iteration": 11,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "e3c8d612e96d8a96b8b1613cc066f9241161269d7e4f4e80cf9921c6dcfe7bb8"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:49.953819+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.423,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-12",
+            "iteration": 12,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "e3c8d612e96d8a96b8b1613cc066f9241161269d7e4f4e80cf9921c6dcfe7bb8"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:50.385605+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.421,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-13",
+            "iteration": 13,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "e3c8d612e96d8a96b8b1613cc066f9241161269d7e4f4e80cf9921c6dcfe7bb8"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:50.817082+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.441,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-14",
+            "iteration": 14,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "e3c8d612e96d8a96b8b1613cc066f9241161269d7e4f4e80cf9921c6dcfe7bb8"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:51.246779+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.447,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-15",
+            "iteration": 15,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "19bfa503a1ee3986d6dd1ce254a1d2cb7183e1502aa0903d75945c3d5f91d9fa"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:51.695666+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.443,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-16",
+            "iteration": 16,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "19bfa503a1ee3986d6dd1ce254a1d2cb7183e1502aa0903d75945c3d5f91d9fa"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:52.151024+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.415,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-17",
+            "iteration": 17,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "e3c8d612e96d8a96b8b1613cc066f9241161269d7e4f4e80cf9921c6dcfe7bb8"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:52.602365+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.43,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-18",
+            "iteration": 18,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "1c54a2dffc0bdbaaa0c65432915a0763bf1c555bbfa579b34bcf65c2d0e16571"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:53.025899+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.412,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-19",
+            "iteration": 19,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "ee85f899efd2d340128c1789a29e7cad332f863fad2bc5741416985d4b499cda"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:53.464519+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff -- --exact",
+            "elapsed_seconds": 0.446,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "dropping_stream_aborts_real_429_backoff-20",
+            "iteration": 20,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 382,
+              "sha256": "e6dddec18357f13c2f8cf8fefde602824430b87f5ae9073491c21e00ab0a03fb"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:53.884596+00:00"
+          }
+        ],
+        "passed": 20,
+        "result": "pass",
+        "runs": 20,
+        "test": "provider::owned_stream::tests::dropping_stream_aborts_real_429_backoff"
+      },
+      {
+        "failed": 0,
+        "observations": [
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.453,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-01",
+            "iteration": 1,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "074c9ac0a48388eec4fc422c172dee0c6392c1f25f978ccbbd66c1eb86dcaf6e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:54.338828+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 7.32,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-02",
+            "iteration": 2,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 458,
+              "sha256": "781a711492b8e7f2a2c01dbd435dbd2e7d343b225a18e85c853b193ac6599876"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:51:54.800361+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.569,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-03",
+            "iteration": 3,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "4a53458c24a35c04a886bc8e50cc52ffb497022bf96a3387663a31535e304490"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:02.133085+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.463,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-04",
+            "iteration": 4,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "882b753205006df7c037b43e473d39f2b3bd456c5c6215095155021279e7ef89"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:02.709884+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.428,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-05",
+            "iteration": 5,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "cd9c21232b41b642c593ca7a5014bdf4154f2ebbbfbe672e89c2f7c7bfd79f07"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:03.180663+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.428,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-06",
+            "iteration": 6,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "cd9c21232b41b642c593ca7a5014bdf4154f2ebbbfbe672e89c2f7c7bfd79f07"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:03.619208+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.438,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-07",
+            "iteration": 7,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "63704d40c67f933bcf81736bac6f389983eb65044cbdcd92a84ae8b2633097b2"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:04.055127+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.457,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-08",
+            "iteration": 8,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "074c9ac0a48388eec4fc422c172dee0c6392c1f25f978ccbbd66c1eb86dcaf6e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:04.501769+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.422,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-09",
+            "iteration": 9,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "cd9c21232b41b642c593ca7a5014bdf4154f2ebbbfbe672e89c2f7c7bfd79f07"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:04.967128+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.435,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-10",
+            "iteration": 10,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "63704d40c67f933bcf81736bac6f389983eb65044cbdcd92a84ae8b2633097b2"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:05.397549+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.45,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-11",
+            "iteration": 11,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "074c9ac0a48388eec4fc422c172dee0c6392c1f25f978ccbbd66c1eb86dcaf6e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:05.841417+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.424,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-12",
+            "iteration": 12,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "cd9c21232b41b642c593ca7a5014bdf4154f2ebbbfbe672e89c2f7c7bfd79f07"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:06.299892+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.447,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-13",
+            "iteration": 13,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "074c9ac0a48388eec4fc422c172dee0c6392c1f25f978ccbbd66c1eb86dcaf6e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:06.731727+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.454,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-14",
+            "iteration": 14,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "074c9ac0a48388eec4fc422c172dee0c6392c1f25f978ccbbd66c1eb86dcaf6e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:07.186983+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.453,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-15",
+            "iteration": 15,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "074c9ac0a48388eec4fc422c172dee0c6392c1f25f978ccbbd66c1eb86dcaf6e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:07.650004+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.45,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-16",
+            "iteration": 16,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "074c9ac0a48388eec4fc422c172dee0c6392c1f25f978ccbbd66c1eb86dcaf6e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:08.111074+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.446,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-17",
+            "iteration": 17,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "bf1a40f29f332bcd91722e7c7e3d8817c6b11d77157abd8656ad3088f21d11fc"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:08.569561+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.433,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-18",
+            "iteration": 18,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "63704d40c67f933bcf81736bac6f389983eb65044cbdcd92a84ae8b2633097b2"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:09.024119+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.43,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-19",
+            "iteration": 19,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "cd9c21232b41b642c593ca7a5014bdf4154f2ebbbfbe672e89c2f7c7bfd79f07"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:09.465173+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket -- --exact",
+            "elapsed_seconds": 0.433,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "compatible_provider_receiver_drop_closes_socket-20",
+            "iteration": 20,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 401,
+              "sha256": "1cf25a1880d4074e689fbc1c75fc27e48a655972c808e4817a3431491796ca5c"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:09.903305+00:00"
+          }
+        ],
+        "passed": 20,
+        "result": "pass",
+        "runs": 20,
+        "test": "provider::owned_stream_integration_tests::compatible_provider_receiver_drop_closes_socket"
+      },
+      {
+        "failed": 0,
+        "observations": [
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.462,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-01",
+            "iteration": 1,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "639f9789dd510153dfbd0e9f16ae88fef9d1fc96d000d74e353948030b720716"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:10.345019+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.465,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-02",
+            "iteration": 2,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "6e87499631c741e15f30d0b81bcdb8723c970ce3ac4dd75b5255f99957ad1ace"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:10.815514+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.471,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-03",
+            "iteration": 3,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "201abf9583028156e3eda8fc3b3d74d62e8fcfdf3915625c28692e4af93fc13c"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:11.288904+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.457,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-04",
+            "iteration": 4,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "2a260cc62c56b8ea98f2484108d040799fbf6a794bda9590bfce6bfadd366182"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:11.773745+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.423,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-05",
+            "iteration": 5,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "7447bc8081a8f80f16734a4b481d8020319584b34e3d5355c9ae227e0593545c"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:12.238867+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.439,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-06",
+            "iteration": 6,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "ee05fd69495e0ff31b5c508f0661caf3ad8a4d14cfd05289e0e07da3ef79d379"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:12.671510+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.419,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-07",
+            "iteration": 7,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "7447bc8081a8f80f16734a4b481d8020319584b34e3d5355c9ae227e0593545c"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:13.119643+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.425,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-08",
+            "iteration": 8,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "7447bc8081a8f80f16734a4b481d8020319584b34e3d5355c9ae227e0593545c"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:13.548174+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.429,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-09",
+            "iteration": 9,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "7447bc8081a8f80f16734a4b481d8020319584b34e3d5355c9ae227e0593545c"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:13.981714+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.426,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-10",
+            "iteration": 10,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "2ad8e9918c7a3e189c88bd3d1f07eb18a732dd2fc09331268e63ef6ce828b03b"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:14.418664+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.53,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-11",
+            "iteration": 11,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "40bcc7778d8e059851584f31b6b3119af875163426fadf729e353954e67d91c9"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:14.854479+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.479,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-12",
+            "iteration": 12,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "79f41c5afeaef68319cd8afba29d268c1566e2f1522df515ecd126b993848b48"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:15.393107+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.492,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-13",
+            "iteration": 13,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "b8bca0137e4e582c4e8b996e7eab7c06af5067700a7699d23ed8a9831f76cf6d"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:15.880453+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 59.611,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-14",
+            "iteration": 14,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 450,
+              "sha256": "03b32b2ba535e027e2aaa1dc58076382951c0bead0d2fa063fd74f6099627d4e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:52:16.382438+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.879,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-15",
+            "iteration": 15,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "5fe825cf3aa6f4c23f017a63a3bacd4e294f260fae935673907ee6cb124029dd"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:16.009963+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.437,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-16",
+            "iteration": 16,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "ee05fd69495e0ff31b5c508f0661caf3ad8a4d14cfd05289e0e07da3ef79d379"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:16.897365+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.666,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-17",
+            "iteration": 17,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "2d4b58572b4d4f5eff1852761f3ad0ca041411722d1a3f498ddeaf369c739714"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:17.343285+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.455,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-18",
+            "iteration": 18,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "2a260cc62c56b8ea98f2484108d040799fbf6a794bda9590bfce6bfadd366182"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:18.018418+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.414,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-19",
+            "iteration": 19,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "526df13af97b74a0bf019521144ce0efc48951b74dd799e387a6649c2379bb1e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:18.481876+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain -- --exact",
+            "elapsed_seconds": 0.424,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_error_body_drain-20",
+            "iteration": 20,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 392,
+              "sha256": "2ad8e9918c7a3e189c88bd3d1f07eb18a732dd2fc09331268e63ef6ce828b03b"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:18.903961+00:00"
+          }
+        ],
+        "passed": 20,
+        "result": "pass",
+        "runs": 20,
+        "test": "provider::owned_stream_integration_tests::receiver_drop_cancels_error_body_drain"
+      },
+      {
+        "failed": 0,
+        "observations": [
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.412,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-01",
+            "iteration": 1,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "df408db2caa2366e3beebede054f0f513dd3d08dcc1a9ff606142addf396d1ee"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:19.336620+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.421,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-02",
+            "iteration": 2,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "2a117ecd0efcba6350aa02a1f0139dd35245d46bb6d26c40e18b7b3d4a20ac49"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:19.757368+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.414,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-03",
+            "iteration": 3,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "df408db2caa2366e3beebede054f0f513dd3d08dcc1a9ff606142addf396d1ee"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:20.186692+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.429,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-04",
+            "iteration": 4,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "419daa9b97c92fa280d61390248b50c7e1778209e96a57dd4a2f0de0eb0396bd"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:20.609258+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.451,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-05",
+            "iteration": 5,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "81951315beb0f40c23368b3cd50f964ef6eae3416371fe9d65f4df5a6a47af2f"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:21.046667+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.434,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-06",
+            "iteration": 6,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "419daa9b97c92fa280d61390248b50c7e1778209e96a57dd4a2f0de0eb0396bd"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:21.506368+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.41,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-07",
+            "iteration": 7,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "df408db2caa2366e3beebede054f0f513dd3d08dcc1a9ff606142addf396d1ee"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:21.948962+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.413,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-08",
+            "iteration": 8,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "2a117ecd0efcba6350aa02a1f0139dd35245d46bb6d26c40e18b7b3d4a20ac49"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:22.367701+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.413,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-09",
+            "iteration": 9,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "df408db2caa2366e3beebede054f0f513dd3d08dcc1a9ff606142addf396d1ee"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:22.790129+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.41,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-10",
+            "iteration": 10,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "df408db2caa2366e3beebede054f0f513dd3d08dcc1a9ff606142addf396d1ee"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:23.214111+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.425,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-11",
+            "iteration": 11,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "45005c97a685627cb7777f83e24cfdd4b9f80836e1cc977d29cfd840df1c7364"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:23.632197+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.476,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-12",
+            "iteration": 12,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "eb709bf17507d74f69b069ae053e0bf27f018bedfd0d794c930073b09c2bb194"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:24.065887+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.462,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-13",
+            "iteration": 13,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "81951315beb0f40c23368b3cd50f964ef6eae3416371fe9d65f4df5a6a47af2f"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:24.549943+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.436,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-14",
+            "iteration": 14,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "419daa9b97c92fa280d61390248b50c7e1778209e96a57dd4a2f0de0eb0396bd"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:25.019246+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.43,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-15",
+            "iteration": 15,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "419daa9b97c92fa280d61390248b50c7e1778209e96a57dd4a2f0de0eb0396bd"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:25.463327+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.436,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-16",
+            "iteration": 16,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "1704420cf81a3bf82e19a12fa3bc9a3aaf5c7284b2facbd913a0a472bfd3cbe6"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:25.902058+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.455,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-17",
+            "iteration": 17,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "81951315beb0f40c23368b3cd50f964ef6eae3416371fe9d65f4df5a6a47af2f"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:26.346147+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.432,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-18",
+            "iteration": 18,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "419daa9b97c92fa280d61390248b50c7e1778209e96a57dd4a2f0de0eb0396bd"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:26.809748+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.432,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-19",
+            "iteration": 19,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "419daa9b97c92fa280d61390248b50c7e1778209e96a57dd4a2f0de0eb0396bd"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:27.250375+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait -- --exact",
+            "elapsed_seconds": 0.437,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_response_header_wait-20",
+            "iteration": 20,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 396,
+              "sha256": "419daa9b97c92fa280d61390248b50c7e1778209e96a57dd4a2f0de0eb0396bd"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:27.690725+00:00"
+          }
+        ],
+        "passed": 20,
+        "result": "pass",
+        "runs": 20,
+        "test": "provider::owned_stream_integration_tests::receiver_drop_cancels_response_header_wait"
+      },
+      {
+        "failed": 0,
+        "observations": [
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.422,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-01",
+            "iteration": 1,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "1f6762fc7de6832426450ea1cffa172646a9e895ac0d12f574f8c2783a00ae1a"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:28.136708+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.427,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-02",
+            "iteration": 2,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "39bbe189340a4ae53f7091feb466839fd4ff6db8ea2f04a106aa593427ea31e5"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:28.567909+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.423,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-03",
+            "iteration": 3,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "41258bddce2dc44a32a2fbc1a991f33c3721ec12cec51341b122d54edd307ce5"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:29.003917+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.426,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-04",
+            "iteration": 4,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "39bbe189340a4ae53f7091feb466839fd4ff6db8ea2f04a106aa593427ea31e5"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:29.435151+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.423,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-05",
+            "iteration": 5,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "1f6762fc7de6832426450ea1cffa172646a9e895ac0d12f574f8c2783a00ae1a"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:29.869312+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.414,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-06",
+            "iteration": 6,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "41258bddce2dc44a32a2fbc1a991f33c3721ec12cec51341b122d54edd307ce5"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:30.300292+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.436,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-07",
+            "iteration": 7,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "6b6d42fb83fb71252ea1bd35bfdd7d5a3ee4a931f0ee82282962b9116b2e01ba"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:30.722642+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.451,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-08",
+            "iteration": 8,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "c93d2742266ed49d8f82283651572efedb24892186e5188b28e0c9b95002cbab"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:31.168270+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.483,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-09",
+            "iteration": 9,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "a73d5e6504113dddb64e6cf412f7988254c89c01d5c08c40459e7c1eeaa72b2b"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:31.634171+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.444,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-10",
+            "iteration": 10,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "d1204375d10b0bc0695b6b4683990e5e06838b9c06ebab0211e7191cacc47a0a"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:32.125682+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.467,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-11",
+            "iteration": 11,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "8993667ebc85e91b30976a5e5f41838e4b4c3a930b5c26bc5ffe06e14ad7eb99"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:32.577568+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.529,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-12",
+            "iteration": 12,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "94df514b70937adaa41136ce9fff732aa3937fa83d2ce77ee006ede7e44f0271"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:33.052427+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.438,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-13",
+            "iteration": 13,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "c93d2742266ed49d8f82283651572efedb24892186e5188b28e0c9b95002cbab"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:33.589224+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.666,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-14",
+            "iteration": 14,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "51160375e8374c436fa56ca2d9735b00ae77f7d8f033c637a2c4b1e07d8bcb6e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:34.036113+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 1.08,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-15",
+            "iteration": 15,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "b535ec3f20d4eaf02a2d856cd5368adfaae6043f9c452f64cf0838eec5109bc7"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:34.717923+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 1.654,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-16",
+            "iteration": 16,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "97860900851248865c64b83c6de081af481329aee3fb2e1692c54807bca7becb"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:35.805855+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 1.133,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-17",
+            "iteration": 17,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "a71a43057abd4353908d54ba86cf55985fe4b1573630b1142a741a83f24ab3a7"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:37.473505+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.609,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-18",
+            "iteration": 18,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "b5218089670887183f1adfdaa0671493378c950880e715b98d796c1917c887c4"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:38.618366+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.493,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-19",
+            "iteration": 19,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "90dadcb938d3dc702e9d5b646552647b5607535cf59382e13920b7f24b8cb799"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:39.236742+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read -- --exact",
+            "elapsed_seconds": 0.467,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "receiver_drop_cancels_silent_sse_read-20",
+            "iteration": 20,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 391,
+              "sha256": "a73d5e6504113dddb64e6cf412f7988254c89c01d5c08c40459e7c1eeaa72b2b"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:39.742376+00:00"
+          }
+        ],
+        "passed": 20,
+        "result": "pass",
+        "runs": 20,
+        "test": "provider::owned_stream_integration_tests::receiver_drop_cancels_silent_sse_read"
+      },
+      {
+        "failed": 0,
+        "observations": [
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.453,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-01",
+            "iteration": 1,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "583cde18d31c32f42995ed9ef565973f3b850d6c523dd5e1eac9a9f5c4f88609"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:40.217281+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.442,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-02",
+            "iteration": 2,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "4bae9c034a32e017a9b586d17374704b2eb18bcd0f7f69171107e7f60dcd0fd3"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:40.680242+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.478,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-03",
+            "iteration": 3,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "ed019b512febe276232f4dff9d8c0bff727293ccda4e6727b4d37099126c625a"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:41.139663+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.426,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-04",
+            "iteration": 4,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "4bae9c034a32e017a9b586d17374704b2eb18bcd0f7f69171107e7f60dcd0fd3"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:41.625093+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.455,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-05",
+            "iteration": 5,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "780fa858d8c75be8ce03203af182378b48ede7d68a2c9642ffb11fe7fae28936"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:42.058628+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.439,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-06",
+            "iteration": 6,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "2e012f90a5803bb7ba1e3b6193b3be04ca1434b29963efc2ad65bc5548bb5496"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:42.521939+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.43,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-07",
+            "iteration": 7,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "4bae9c034a32e017a9b586d17374704b2eb18bcd0f7f69171107e7f60dcd0fd3"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:42.968620+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.423,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-08",
+            "iteration": 8,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "2fb605df117a31616277618588fc435dd979b182c7e0acc21afef62a98e57dd8"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:43.406782+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.438,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-09",
+            "iteration": 9,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "9f1bb0397dd3e98eec13585ebed6c0eef4a3bd6f0970c6d6558347d10f2f5c74"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:43.838227+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.436,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-10",
+            "iteration": 10,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "2e012f90a5803bb7ba1e3b6193b3be04ca1434b29963efc2ad65bc5548bb5496"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:44.283715+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.458,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-11",
+            "iteration": 11,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "1e517f6dfd34bb5730e9f5ce7b780e029f6b434eced17a1b476cd604a72ef513"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:44.727628+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.543,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-12",
+            "iteration": 12,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "e013c978ffd2cc2d44f8da0ff5ced2700effebaea5da0d2c0d579764e0689ac1"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:45.196919+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.456,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-13",
+            "iteration": 13,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "780fa858d8c75be8ce03203af182378b48ede7d68a2c9642ffb11fe7fae28936"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:45.747849+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.449,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-14",
+            "iteration": 14,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "780fa858d8c75be8ce03203af182378b48ede7d68a2c9642ffb11fe7fae28936"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:46.212776+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.44,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-15",
+            "iteration": 15,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "2e012f90a5803bb7ba1e3b6193b3be04ca1434b29963efc2ad65bc5548bb5496"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:46.670380+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.445,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-16",
+            "iteration": 16,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "780fa858d8c75be8ce03203af182378b48ede7d68a2c9642ffb11fe7fae28936"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:47.118654+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.446,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-17",
+            "iteration": 17,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "780fa858d8c75be8ce03203af182378b48ede7d68a2c9642ffb11fe7fae28936"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:47.571199+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.455,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-18",
+            "iteration": 18,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "1e517f6dfd34bb5730e9f5ce7b780e029f6b434eced17a1b476cd604a72ef513"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:48.025199+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.426,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-19",
+            "iteration": 19,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "762dc1c311d5d0c9210c1f7d37b54f4d96558b247dad1c830ff3b702285c1d97"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:48.487811+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket -- --exact",
+            "elapsed_seconds": 0.403,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_loop_cancellation_closes_provider_socket-20",
+            "iteration": 20,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 399,
+              "sha256": "6f41f2d5f69044ca34766a2fd54b3737759d43839d498b5ca4be62182fa54864"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:48.921729+00:00"
+          }
+        ],
+        "passed": 20,
+        "result": "pass",
+        "runs": 20,
+        "test": "provider::owned_stream_integration_tests::real_loop_cancellation_closes_provider_socket"
+      },
+      {
+        "failed": 0,
+        "observations": [
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.493,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-01",
+            "iteration": 1,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "670f994c9b562596e01f5fc3ca2320c9afa46308b04f0b4336e175d26c87a25a"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:49.333000+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.538,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-02",
+            "iteration": 2,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "1ba19038448d2055d23db20d7e4c8779be7b97670323ae260fdb1a96490cd26e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:51.840232+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.545,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-03",
+            "iteration": 3,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "7fc2d07933c4e0bcdacab38c25bf4be28d44457a6c0ae1febfdf96123f554fbe"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:54.389126+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.502,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-04",
+            "iteration": 4,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "f1f44a1e71f1d908c079497bb0ee6bb2878c36fd0ef9a120d3245d493fd9b0a1"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:56.943118+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.495,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-05",
+            "iteration": 5,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "4add164d3ae144eef1a47149f6a709907557f3e11e4cf833d98227fc98d02711"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:53:59.455546+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.516,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-06",
+            "iteration": 6,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "670f994c9b562596e01f5fc3ca2320c9afa46308b04f0b4336e175d26c87a25a"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:54:01.962009+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.528,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-07",
+            "iteration": 7,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "a55e8ed856a21d76ff9a44199a700fe195955b104fbf0c1035cd587459f3ad42"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:54:04.489915+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.496,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-08",
+            "iteration": 8,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "670f994c9b562596e01f5fc3ca2320c9afa46308b04f0b4336e175d26c87a25a"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:54:07.051769+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.533,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-09",
+            "iteration": 9,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "452a66050154f82787179f59180eaa4a41640ae448e021bcc3a4142ea7675861"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:54:09.556115+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.517,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-10",
+            "iteration": 10,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "29b43ddfbf5dde61aeb27a69345f80b7970e5aa1a8913f8a88461c1c77481e7a"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:54:12.100805+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.516,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-11",
+            "iteration": 11,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "f31f309fa0aa2ff33b5d6604bbcbaa857b52b4642133d825c99b1b4c47e77b16"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:54:14.631713+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.492,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-12",
+            "iteration": 12,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "bb0d9f4539550eafe00fcd7733a9990670b5b99d5da404d9cce3fc959f4defa4"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:54:17.155944+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.504,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-13",
+            "iteration": 13,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "4add164d3ae144eef1a47149f6a709907557f3e11e4cf833d98227fc98d02711"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:54:19.655340+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.534,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-14",
+            "iteration": 14,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "452a66050154f82787179f59180eaa4a41640ae448e021bcc3a4142ea7675861"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:54:22.169968+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.465,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-15",
+            "iteration": 15,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "daf4ec955666cc51bcaee115f6592696858fd2dcb1afdd77867bc0e3bf34175e"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:54:24.719774+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.48,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-16",
+            "iteration": 16,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "a055c60dccd637dcdf226309d8a98c44a750e9fa78c38511d694ae17bfd19f1f"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:54:27.199758+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 22.125,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-17",
+            "iteration": 17,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 452,
+              "sha256": "4764b5aab47fc4490f239ec6aade5571a10ca60978f0150eba42d3df0d055b95"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:54:29.688166+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.511,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-18",
+            "iteration": 18,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "f31f309fa0aa2ff33b5d6604bbcbaa857b52b4642133d825c99b1b4c47e77b16"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:54:51.821733+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.506,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-19",
+            "iteration": 19,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "0191e4f40d303106b0bcce3eb4c3db12977bc9a0e8affac3b2008c40ccfcb28c"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:54:54.339978+00:00"
+          },
+          {
+            "command": "cargo +1.94.0 --locked test -p norn --lib provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket -- --exact",
+            "elapsed_seconds": 2.564,
+            "exit_status": 0,
+            "expected_tests": 1,
+            "id": "real_step_timeout_closes_provider_socket-20",
+            "iteration": 20,
+            "observed_tests": 1,
+            "output": {
+              "bytes": 394,
+              "sha256": "ab3e63452136153e23b283f4ee55948b5a695691a3821739bd8c8d8b4b4eb257"
+            },
+            "result": "pass",
+            "started_at": "2026-07-19T04:54:56.869404+00:00"
+          }
+        ],
+        "passed": 20,
+        "result": "pass",
+        "runs": 20,
+        "test": "provider::owned_stream_integration_tests::real_step_timeout_closes_provider_socket"
+      }
+    ],
+    "failed": 0,
+    "passed": 200,
+    "runs_per_test": 20,
+    "tests": 10,
+    "total": 200
+  },
+  "environment": {
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "cargo_target_directory": "<repo>/target",
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)"
+  },
+  "generated_at": "2026-07-19T04:54:59.443320+00:00",
+  "kind": "p5_trans_01_candidate_evidence",
+  "policy": {
+    "passed": true,
+    "path": "docs/reviews/evidence/p5-trans-01/2026-07-19-p5-trans-01-policy-e448133.json",
+    "sha256": "a9757b0983bf880e38a006e1306e24af7f93b44942d57c437fb29a9441e2e819"
+  },
+  "provenance": {
+    "base": "d46bbe2aa7f9556d010b0662d87e002e45304134",
+    "dirty_rust_paths": [],
+    "inventory": {
+      "count": 8,
+      "encoding": "NUL-delimited git diff --name-only -z",
+      "paths": [
+        "crates/norn/src/provider/mod.rs",
+        "crates/norn/src/provider/openai/provider.rs",
+        "crates/norn/src/provider/openai_compatible/provider.rs",
+        "crates/norn/src/provider/owned_stream.rs",
+        "crates/norn/src/provider/owned_stream_integration_tests.rs",
+        "crates/norn/src/provider/owned_stream_test_support.rs",
+        "crates/norn/src/provider/owned_stream_tests.rs",
+        "docs/RESPONSES-API-REMEDIATION-PLAN.md"
+      ],
+      "sha256": "c411a068951adf8e5f7ef28f34a8f639d69466aef80a37407223794563bafe8a"
+    },
+    "later_evidence_rust_paths": [
+      "docs/reviews/evidence/p2/p2_live_refresh_probe.rs"
+    ],
+    "later_product_rust_paths": [],
+    "package_head": "1869828cd269edbdbfda7615de7e526fc306ed28",
+    "package_tree": "ba3758fc8a817492509971a27bfa926bdfd3581d",
+    "rust_blobs": [
+      {
+        "blob": "ec796d743e456251f4697b9ed542278280069848",
+        "path": "crates/norn/src/provider/mod.rs"
+      },
+      {
+        "blob": "aaf7b1a68fbbd3640ca8a319bbdaf96892b6378b",
+        "path": "crates/norn/src/provider/openai/provider.rs"
+      },
+      {
+        "blob": "1313bca95b549562de5ad42749952fb8ee3ccbf6",
+        "path": "crates/norn/src/provider/openai_compatible/provider.rs"
+      },
+      {
+        "blob": "c22ebb3a347d35f01435be0e064fce8c14e8a4ec",
+        "path": "crates/norn/src/provider/owned_stream.rs"
+      },
+      {
+        "blob": "278a9ff8083b1dc92c3077f178d79414ceb961ef",
+        "path": "crates/norn/src/provider/owned_stream_integration_tests.rs"
+      },
+      {
+        "blob": "2093765ec5fac84dd268fa8663166990fb4f39b7",
+        "path": "crates/norn/src/provider/owned_stream_test_support.rs"
+      },
+      {
+        "blob": "8e96a2c2861d4a3d62541734f44cf1f12845ccb9",
+        "path": "crates/norn/src/provider/owned_stream_tests.rs"
+      }
+    ],
+    "source": "e448133d285d9cbabc464ca89d1497a55757f4e1",
+    "source_tree": "065a1a73ebbe9e2fcfaf38f0dbd85e6cd6c4440f"
+  },
+  "result": "pass",
+  "runner": {
+    "path": "docs/reviews/evidence/p5-trans-01/run_p5_trans_01_evidence.py",
+    "sha256": "a2b011c828af5f780fbc62c71e19be560bbbfb3804f47cc9fc92cc381f762fff"
+  },
+  "schema_version": 1,
+  "strict_gates": [
+    {
+      "command": "cargo +1.94.0 --locked fmt --all -- --check",
+      "elapsed_seconds": 1.806,
+      "exit_status": 0,
+      "expected_tests": null,
+      "id": "fmt",
+      "observed_tests": null,
+      "output": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "result": "pass",
+      "started_at": "2026-07-19T04:47:53.769025+00:00"
+    },
+    {
+      "command": "cargo +1.94.0 --locked clippy --workspace --all-targets --all-features -- -D warnings",
+      "elapsed_seconds": 62.833,
+      "exit_status": 0,
+      "expected_tests": null,
+      "id": "clippy",
+      "observed_tests": null,
+      "output": {
+        "bytes": 589,
+        "sha256": "7f686f6868faa1207b580784c4b1302d9c2b03ba4e3a3d8a0b0f17fe0bafde66"
+      },
+      "result": "pass",
+      "started_at": "2026-07-19T04:47:55.583246+00:00"
+    },
+    {
+      "command": "git diff --check d46bbe2aa7f9556d010b0662d87e002e45304134..e448133d285d9cbabc464ca89d1497a55757f4e1",
+      "elapsed_seconds": 0.02,
+      "exit_status": 0,
+      "expected_tests": null,
+      "id": "diff_check",
+      "observed_tests": null,
+      "output": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "result": "pass",
+      "started_at": "2026-07-19T04:48:58.424383+00:00"
+    },
+    {
+      "command": "/opt/homebrew/bin/python3 -I -S -B docs/reviews/evidence/run_p0_policy_evidence.py --base d46bbe2aa7f9556d010b0662d87e002e45304134 --head e448133d285d9cbabc464ca89d1497a55757f4e1 --output <repo>/target/evidence/p5-trans-01-policy-52836.json",
+      "elapsed_seconds": 51.791,
+      "exit_status": 0,
+      "expected_tests": null,
+      "id": "policy",
+      "observed_tests": null,
+      "output": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "result": "pass",
+      "started_at": "2026-07-19T04:48:58.451604+00:00"
+    }
+  ]
+}
