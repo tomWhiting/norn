@@ -179,15 +179,28 @@ fn json_string(value: &Value) -> Option<&str> {
 /// SSE discriminator, because dumping occurs before response validation.
 pub(crate) fn redact_codex_turn_state(value: &Value) -> Value {
     let mut redacted = value.clone();
-    let Some(headers) = redacted.get_mut("headers").and_then(Value::as_object_mut) else {
-        return redacted;
-    };
-    for (name, value) in headers {
-        if name.eq_ignore_ascii_case(CODEX_TURN_STATE_HEADER) {
-            *value = Value::String("[REDACTED]".to_owned());
-        }
-    }
+    redact_codex_turn_state_in_place(&mut redacted);
     redacted
+}
+
+fn redact_codex_turn_state_in_place(value: &mut Value) {
+    match value {
+        Value::Object(fields) => {
+            for (name, field) in fields {
+                if name.eq_ignore_ascii_case(CODEX_TURN_STATE_HEADER) {
+                    *field = Value::String("[REDACTED]".to_owned());
+                } else {
+                    redact_codex_turn_state_in_place(field);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                redact_codex_turn_state_in_place(value);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]
@@ -239,6 +252,25 @@ mod tests {
         let redacted = redact_codex_turn_state(&raw);
         assert_eq!(redacted["headers"]["X-CoDeX-TuRn-StAtE"], "[REDACTED]");
         assert!(!redacted.to_string().contains("secret"));
+
+        let noncanonical = json!({
+            "headers": [
+                {"x-codex-turn-state": "array-secret"},
+                {"nested": {"X-CoDeX-TuRn-StAtE": ["nested-secret"]}}
+            ],
+            "outside_headers": {"x-codex-turn-state": "outside-secret"}
+        });
+        let redacted = redact_codex_turn_state(&noncanonical);
+        assert!(!redacted.to_string().contains("secret"));
+        assert_eq!(redacted["headers"][0]["x-codex-turn-state"], "[REDACTED]");
+        assert_eq!(
+            redacted["headers"][1]["nested"]["X-CoDeX-TuRn-StAtE"],
+            "[REDACTED]"
+        );
+        assert_eq!(
+            redacted["outside_headers"]["x-codex-turn-state"],
+            "[REDACTED]"
+        );
         assert_eq!(
             codex_turn_state_from_metadata(&serde_json::json!({
                 "headers": {"x-codex-turn-state": [["nested-secret"]]}

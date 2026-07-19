@@ -1,4 +1,5 @@
 use std::io;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -48,6 +49,16 @@ fn request() -> ProviderRequest {
 }
 
 fn completed_stream(codex: bool) -> String {
+    response_stream(
+        codex,
+        &serde_json::json!({
+            "type": "response.metadata",
+            "headers": {"x-codex-turn-state": "state-from-metadata"}
+        }),
+    )
+}
+
+fn response_stream(codex: bool, metadata: &serde_json::Value) -> String {
     let mut response = serde_json::json!({
         "id": "resp-turn-state",
         "status": "completed",
@@ -63,10 +74,6 @@ fn completed_stream(codex: bool) -> String {
     if codex {
         response["end_turn"] = serde_json::Value::Bool(true);
     }
-    let metadata = serde_json::json!({
-        "type": "response.metadata",
-        "headers": {"x-codex-turn-state": "state-from-metadata"}
-    });
     let completed = serde_json::json!({
         "type": "response.completed",
         "sequence_number": 0,
@@ -78,6 +85,14 @@ fn completed_stream(codex: bool) -> String {
 }
 
 fn sender(endpoint: String, context: Option<ProviderTurnContext>) -> TestResult<SenderProvider> {
+    sender_with_debug(endpoint, context, None)
+}
+
+fn sender_with_debug(
+    endpoint: String,
+    context: Option<ProviderTurnContext>,
+    debug_dump_file: Option<PathBuf>,
+) -> TestResult<SenderProvider> {
     let auth_provider: Arc<dyn AuthProvider> =
         Arc::new(MockAuthProvider::single("test-access-token"));
     Ok(SenderProvider {
@@ -91,7 +106,7 @@ fn sender(endpoint: String, context: Option<ProviderTurnContext>) -> TestResult<
             rate_limiter: Arc::new(RateLimiter::new(60, Duration::from_secs(60))),
             auth_provider,
             request_headers: super::super::codex_turn::request_headers(context.as_ref()),
-            debug_dump_file: None,
+            debug_dump_file,
             backend_label: "responses",
         },
         catalog_backend: CATALOG_BACKEND_CODEX_SUBSCRIPTION,
@@ -223,6 +238,60 @@ async fn codex_state_replays_within_turn_and_resets_for_the_next_turn() -> TestR
             "request_kind": "turn"
         })
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn noncanonical_metadata_redacts_turn_state_from_every_output_sink() -> TestResult {
+    const SECRET: &str = "LEAKED-SECRET-XYZ";
+
+    let metadata = serde_json::json!({
+        "type": "response.metadata",
+        "headers": [
+            {"x-codex-turn-state": SECRET},
+            {"nested": {"X-CoDeX-TuRn-StAtE": [SECRET]}}
+        ]
+    });
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .insert_header("x-codex-turn-state", SECRET)
+                .set_body_string(response_stream(true, &metadata)),
+        )
+        .mount(&server)
+        .await;
+    let directory = tempfile::tempdir()?;
+    let debug_dump = directory.path().join("responses-debug.jsonl");
+    let context = ProviderTurnContext::for_turn("session-redaction", "turn-redaction")?;
+
+    let events = execute_sender(&sender_with_debug(
+        format!("{}/responses", server.uri()),
+        Some(context.clone()),
+        Some(debug_dump.clone()),
+    )?)
+    .await?;
+
+    assert_eq!(
+        context
+            .codex_turn_state_header()
+            .as_ref()
+            .and_then(|value| value.to_str().ok()),
+        Some(SECRET)
+    );
+    let raw = required_metadata_event(&events)?;
+    assert!(!raw.to_string().contains(SECRET));
+    assert_eq!(raw["headers"][0]["x-codex-turn-state"], "[REDACTED]");
+    assert_eq!(
+        raw["headers"][1]["nested"]["X-CoDeX-TuRn-StAtE"],
+        "[REDACTED]"
+    );
+    assert!(!format!("{events:?}").contains(SECRET));
+
+    let debug_output = std::fs::read_to_string(debug_dump)?;
+    assert!(!debug_output.contains(SECRET));
+    assert!(debug_output.contains("[REDACTED]"));
     Ok(())
 }
 
