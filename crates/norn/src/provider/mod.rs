@@ -53,6 +53,7 @@ pub mod mock;
 pub mod openai;
 pub mod openai_compatible;
 pub mod openai_oauth;
+pub(crate) mod owned_stream;
 pub mod reasoning;
 pub mod request;
 pub mod response_audio;
@@ -62,3 +63,11 @@ pub mod surface;
 pub mod tools;
 pub mod traits;
 pub mod usage;
+
+#[cfg(test)]
+#[path = "owned_stream_integration_tests.rs"]
+mod owned_stream_integration_tests;
+
+#[cfg(test)]
+#[path = "owned_stream_test_support.rs"]
+mod owned_stream_test_support;

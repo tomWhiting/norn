@@ -9,6 +9,7 @@ use crate::provider::auth::{AuthProvider, AuthSource, build_from_auth_source};
 use crate::provider::events::ProviderEvent;
 use crate::provider::exec::{DEFAULT_RETRY_BACKOFF, StreamExecutor};
 use crate::provider::openai::rate_limiter::RateLimiter;
+use crate::provider::owned_stream::task_owned_provider_stream;
 use crate::provider::request::{ProviderConfig, ProviderOptions, ProviderRequest};
 use crate::provider::startup_trace;
 use crate::provider::tools::ProviderCapabilities;
@@ -143,12 +144,12 @@ impl Provider for OpenAiCompatibleProvider {
         };
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<ProviderEvent, ProviderError>>(64);
-        tokio::spawn(async move {
+        let producer = tokio::spawn(async move {
             if let Err(err) = sender.execute(request, tx.clone()).await {
                 let _ = tx.send(Err(err)).await;
             }
         });
-        Ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(task_owned_provider_stream(rx, producer))
     }
 }
 
