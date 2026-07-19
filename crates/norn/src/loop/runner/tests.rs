@@ -524,7 +524,8 @@ async fn text_only_no_schema_completes() {
 }
 
 #[tokio::test]
-async fn explicit_continue_turn_replays_text_then_completes() {
+async fn explicit_continue_turn_replays_text_then_completes()
+-> Result<(), Box<dyn std::error::Error>> {
     let provider = MockProvider::new(vec![
         vec![
             text_delta("first response"),
@@ -553,7 +554,7 @@ async fn explicit_continue_turn_replays_text_then_completes() {
     assert_eq!(output, Value::String("final response".to_owned()));
     assert_eq!(provider.call_count(), 2);
 
-    let requests = provider.requests().expect("requests recorded");
+    let requests = provider.requests()?;
     assert_eq!(requests.len(), 2);
     assert!(requests[1].messages.iter().any(|message| {
         message.role == MessageRole::Assistant
@@ -569,6 +570,7 @@ async fn explicit_continue_turn_replays_text_then_completes() {
         })
         .collect();
     assert_eq!(stop_reasons, ["continue_turn", "end_turn"]);
+    Ok(())
 }
 
 #[tokio::test]
