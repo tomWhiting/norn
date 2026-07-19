@@ -295,6 +295,25 @@ fn mapper_validates_metadata_before_seeding_turn_state() -> TestResult {
     ));
     assert!(context.codex_turn_state_header().is_none());
 
+    let invalid_header = SseEvent {
+        event_type: "response.metadata".to_owned(),
+        data: serde_json::json!({
+            "type": "response.metadata",
+            "headers": {"x-codex-turn-state": "invalid\nstate"}
+        }),
+    };
+    let mut mapper = ResponsesMapper::with_turn_context(
+        CATALOG_BACKEND_CODEX_SUBSCRIPTION,
+        Some(context.clone()),
+    );
+    let invalid_events = mapper
+        .map_event(&invalid_header)
+        .into_iter()
+        .collect::<Result<Vec<_>, ProviderError>>()?;
+    let invalid_raw = required_metadata_event(&invalid_events)?;
+    assert_eq!(invalid_raw["headers"]["x-codex-turn-state"], "[REDACTED]");
+    assert!(context.codex_turn_state_header().is_none());
+
     let valid = SseEvent {
         event_type: "response.metadata".to_owned(),
         data: serde_json::json!({

@@ -94,6 +94,10 @@ impl ProviderTurnContext {
 
     /// Captures a server-issued state value without ever replacing the first.
     pub(crate) fn observe_codex_turn_state(&self, value: &str) -> TurnStateObservation {
+        if HeaderValue::try_from(value).is_err() {
+            tracing::debug!("ignored Codex turn-state value that cannot be replayed as a header");
+            return TurnStateObservation::Rejected;
+        }
         if let Some(current) = self.inner.codex_turn_state.get() {
             return observation_for_existing(current, value);
         }
@@ -130,6 +134,8 @@ impl ProviderTurnContext {
 /// Result of observing a turn-state candidate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TurnStateObservation {
+    /// The candidate could not be represented as the replay header.
+    Rejected,
     /// This was the first accepted value.
     Captured,
     /// The candidate exactly repeated the authoritative value.
@@ -193,6 +199,11 @@ mod tests {
     #[test]
     fn first_turn_state_wins_without_debug_disclosure() {
         let context = ProviderTurnContext::new(Some("session-a".to_owned()), "turn-a".to_owned());
+        assert_eq!(
+            context.observe_codex_turn_state("invalid\nstate"),
+            TurnStateObservation::Rejected
+        );
+        assert!(context.codex_turn_state_header().is_none());
         assert_eq!(
             context.observe_codex_turn_state("first-secret"),
             TurnStateObservation::Captured
