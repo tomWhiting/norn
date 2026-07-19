@@ -205,6 +205,7 @@ impl StepMachine<'_> {
                 },
                 stop_reason: match &response.stop_reason {
                     StopReason::EndTurn => "end_turn",
+                    StopReason::ContinueTurn => "continue_turn",
                     StopReason::ToolUse => "tool_use",
                     StopReason::MaxTokens => "max_tokens",
                     StopReason::ContentFilter => "content_filter",

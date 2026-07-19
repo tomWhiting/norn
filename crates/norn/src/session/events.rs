@@ -224,8 +224,8 @@ pub enum SessionEvent {
         tool_calls: Vec<ToolCallEvent>,
         /// Token usage for this provider call.
         usage: EventUsage,
-        /// Why the model stopped generating (`end_turn`, `tool_use`,
-        /// `max_tokens`, `content_filter`). Empty string for events
+        /// Why the model stopped generating (`end_turn`, `continue_turn`,
+        /// `tool_use`, `max_tokens`, `content_filter`). Empty string for events
         /// persisted before this field was added.
         #[serde(default)]
         stop_reason: String,

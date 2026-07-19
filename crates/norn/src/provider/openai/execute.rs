@@ -14,7 +14,7 @@ use super::response_reconciler::{
     ResponseReconciliationError,
 };
 use super::response_stream_event::{ResponseStreamEvent, ResponseStreamEventManifest};
-use super::response_terminal::decode_terminal;
+use super::response_terminal::{ResponsesDialect, decode_terminal};
 use super::sse::{SseEvent, map_sse_event, output_item_added_call_id};
 use crate::error::ProviderError;
 use crate::provider::events::ProviderEvent;
@@ -55,7 +55,7 @@ impl SenderProvider {
             message_count = request.messages.len(),
             "responses request starting"
         );
-        let mut mapper = ResponsesMapper::default();
+        let mut mapper = ResponsesMapper::for_catalog_backend(self.catalog_backend);
         self.executor.execute(body, &mut mapper, &tx).await
     }
 }
@@ -76,6 +76,8 @@ struct ResponsesMapper {
     reconciler: ResponseReconciler,
     /// Whether this mapper already delivered a terminal outcome.
     terminal: bool,
+    /// Trusted response dialect selected before request dispatch.
+    dialect: ResponsesDialect,
 }
 
 impl SseEventMapper for ResponsesMapper {
@@ -190,7 +192,7 @@ impl SseEventMapper for ResponsesMapper {
             event.event_type.as_str(),
             "response.completed" | "response.incomplete"
         ) {
-            Some(decode_terminal(event, &update))
+            Some(decode_terminal(event, &update, self.dialect))
         } else {
             map_sse_event(event)
         };
@@ -232,6 +234,19 @@ impl SseEventMapper for ResponsesMapper {
 }
 
 impl ResponsesMapper {
+    fn new(dialect: ResponsesDialect) -> Self {
+        Self {
+            call_ids: HashMap::new(),
+            reconciler: ResponseReconciler::new(),
+            terminal: false,
+            dialect,
+        }
+    }
+
+    fn for_catalog_backend(catalog_backend: &str) -> Self {
+        Self::new(ResponsesDialect::for_catalog_backend(catalog_backend))
+    }
+
     fn finish(&mut self) {
         self.terminal = true;
         self.call_ids.clear();
@@ -343,14 +358,84 @@ mod streaming_tests {
     use super::*;
     use crate::r#loop::retry::RetryPolicy;
     use crate::provider::auth::{AuthProvider, AuthSource, MockAuthProvider};
-    use crate::provider::events::ProviderEvent;
+    use crate::provider::events::{ProviderEvent, StopReason};
     use crate::provider::openai::OpenAiProvider;
+    use crate::provider::openai::request::{
+        CATALOG_BACKEND_CODEX_SUBSCRIPTION, CATALOG_BACKEND_RESPONSES_API,
+    };
     use crate::provider::request::{
         Message, MessageRole, ProviderConfig, ProviderRequest, SecretString,
     };
     use crate::provider::traits::Provider as _;
     use futures_util::StreamExt;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn completed_with_end_turn(end_turn: bool) -> SseEvent {
+        SseEvent {
+            event_type: "response.completed".to_owned(),
+            data: serde_json::json!({
+                "type": "response.completed",
+                "sequence_number": 0,
+                "response": {
+                    "id": "resp_end_turn",
+                    "status": "completed",
+                    "output": [],
+                    "end_turn": end_turn,
+                    "usage": {
+                        "input_tokens": 1,
+                        "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+                        "output_tokens": 0,
+                        "output_tokens_details": {"reasoning_tokens": 0},
+                        "total_tokens": 1
+                    }
+                }
+            }),
+        }
+    }
+
+    #[test]
+    fn mapper_honors_end_turn_only_for_the_codex_dialect() {
+        let event = completed_with_end_turn(false);
+        let mut codex = ResponsesMapper::new(ResponsesDialect::Codex);
+        assert!(codex.map_event(&event).iter().any(|mapped| {
+            matches!(
+                mapped,
+                Ok(ProviderEvent::Done {
+                    stop_reason: StopReason::ContinueTurn,
+                    ..
+                })
+            )
+        }));
+
+        let mut public = ResponsesMapper::new(ResponsesDialect::Public);
+        let public_events = public.map_event(&event);
+        assert!(
+            public_events
+                .iter()
+                .any(|mapped| { matches!(mapped, Err(ProviderError::ResponseParseError { .. })) })
+        );
+        assert!(
+            !public_events
+                .iter()
+                .any(|mapped| { matches!(mapped, Ok(ProviderEvent::Done { .. })) })
+        );
+    }
+
+    #[test]
+    fn trusted_catalog_backend_selects_the_terminal_dialect() {
+        assert_eq!(
+            ResponsesMapper::for_catalog_backend(CATALOG_BACKEND_CODEX_SUBSCRIPTION).dialect,
+            ResponsesDialect::Codex,
+        );
+        assert_eq!(
+            ResponsesMapper::for_catalog_backend(CATALOG_BACKEND_RESPONSES_API).dialect,
+            ResponsesDialect::Public,
+        );
+        assert_eq!(
+            ResponsesMapper::for_catalog_backend("unknown_backend").dialect,
+            ResponsesDialect::Public,
+        );
+    }
 
     #[test]
     fn responses_mapper_stamps_call_id_from_output_item_added() {

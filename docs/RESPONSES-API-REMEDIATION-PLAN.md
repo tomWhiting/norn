@@ -484,7 +484,7 @@ artifacts to the same clean head with zero errors.
 | P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; D14 records base `6669b9d`; retained Gate C, live A/B/A, and independent acceptance remain open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
 | P3. Canonical ordered transcript | [x] Accepted by whole-phase Gate D review `06be7c7` on 2026-07-18. Frozen combined source `7f47218` contains the exact 28-item union, canonical model/replay/persistence, caller ownership, strict format-2 store, offline migration, explicit resume classifications, and response-scoped private audio artifacts. The reviewer independently reproduced the final source-bound gate, zero-violation policy audit, 60/60 distributions, redaction report, and attestation | Responses items survive stream, persistence, resume, and replay in order; explicit context edits change only the provider-facing view, not the audit timeline. |
 | P4. Streaming and replay conformance | [x] Accepted on 2026-07-19 by corrected Gate D review `0095f5c`. Product correction `ab26632` closes the orphan-core-preview authority defect; evidence binds to source `180759f`, and the independently reproduced five-artifact bundle is retained at `8faf1f4`. P3 remains accepted and D15's D7/P9 live-wire boundary is unchanged | Supported events/items are complete, reconciled against terminal authority, and fail closed without promoting preview-only content. |
-| P5. Conversation and Codex turn semantics | [ ] The owner-approved isolated `TRANS-01` implementation candidate and focused source-bound tests are present; review, retained distributions, D3/D8, and the remaining P5 source work are open | Local/provider history and turn-scoped state have explicit lifetimes. |
+| P5. Conversation and Codex turn semantics | [ ] The `TRANS-01` retained 200/200 candidate and the `CODEX-01` `end_turn` implementation candidate are present. External acceptance, D3/D8, turn state, client metadata, and the remaining P5 work are open | Local/provider history and turn-scoped state have explicit lifetimes. |
 | P6. Transport, retry, and usage | [ ] | Retries terminate once; observed and unknown attempt usage remain explicit. |
 | P7. Request, schema, and model controls | [ ] | Advertised capabilities match validated payload and tool behavior. |
 | P8. Prompt-cache measurement and policy | [ ] | Cache policy is observable, backend-specific, and empirically justified. |
@@ -1948,9 +1948,12 @@ authoritative completed content part is preserved canonically.
 
 ## P5. Conversation and Codex turn semantics
 
-**Status:** [ ] The owner-approved isolated `TRANS-01` implementation candidate
-and focused source-bound tests are present; review, retained distributions,
-D3/D8, and the remaining source work are open; **findings owned:** `STATE-02`,
+**Status:** [ ] The owner-approved isolated `TRANS-01` implementation candidate,
+focused source-bound tests, and retained 200/200 candidate distribution are
+present. The `CODEX-01` `end_turn` candidate is implemented at `98b0266` with
+the no-shortcut fixture correction at `fcaf0e4`; external acceptance, D3/D8,
+and the remaining source work are open;
+**findings owned:** `STATE-02`,
 `STATE-03`, `ROLE-01`, `CODEX-01`, `CODEX-02`, `TRANS-01`; **dependencies:**
 P2-P4 and D3/D8/D9.
 
@@ -1958,17 +1961,20 @@ No P5 finding is closed. The current behavior audit distinguishes prerequisites 
 ChatGPT/Codex `store:false` versus public Responses threading split and
 stateless encrypted-reasoning replay foundation exist. Stable top-level
 instruction resend and compaction-anchor invalidation are only partial.
-`end_turn`, Codex turn-state capture/replay, account-bound anchors, D8 role
-authority, and Codex `client_metadata` remain behaviorally open. Producer
-ownership now has an implementation candidate but remains unclosed pending its
-focused review and retained evidence.
+Codex turn-state capture/replay, account-bound anchors, D8 role authority, and
+Codex `client_metadata` remain behaviorally open. Producer ownership has an
+implementation candidate and retained candidate evidence. `end_turn` now has a
+source candidate, a core static `READY` review, and a final internal `READY`
+audit covering its downstream CLI projection. The later `fcaf0e4` test-only
+no-shortcut correction was rerun but awaits the same external review as the
+source. Neither finding is closed pending external review and whole-phase gates.
 
 ### What this phase fixes
 
 Local removal of managed Developer context does not remove it from a
-`previous_response_id` chain. Norn also ignores the backend's explicit
-`end_turn` decision and `x-codex-turn-state`, so continuation and sticky-routing
-semantics are inferred or omitted. A stored thread does not return replayable
+`previous_response_id` chain. Before the `CODEX-01` candidate, Norn ignored the
+backend's explicit `end_turn` decision; `x-codex-turn-state` remains ignored, so
+sticky-routing semantics are still omitted. A stored thread does not return replayable
 encrypted reasoning, so resetting its anchor after local compaction can silently
 lose reasoning continuity. Repository `NORN.md`, rules, and profile bodies also
 receive inconsistent System/Developer authority based on discovery path.
@@ -2010,8 +2016,11 @@ credential identity and cannot cross an account switch.
   threading and prove both wire shapes.
 - [ ] Resend top-level instructions with a response anchor while ensuring
   replaceable Developer context has the intended effective lifetime.
-- [ ] Preserve `response.completed.response.end_turn` as typed terminal metadata
-  and define its interaction with calls, refusals, and no-output continuation.
+- [x] Preserve the exact `response.completed.response.end_turn` wire value in
+  the lossless raw event and project it into typed terminal behavior: Codex
+  `false` without an actionable call continues; `true`, `null`, and absence
+  end; actionable function/custom/schema calls continue as tool use; public
+  Responses rejects any presence of this private field.
 - [ ] Capture `x-codex-turn-state` from headers/metadata, replay it within the
   same turn, and clear it at the turn boundary.
 - [ ] Emit the exact Codex `client_metadata` request shape only on the approved
@@ -2046,25 +2055,73 @@ dropped.
 
 Focused evidence uses synchronized local raw-TCP fixtures, not sleeps or server
 task abortion, to prove producer completion and peer-observed socket closure
-while waiting for headers, reading silent SSE, draining an error body, and
-sleeping in 429 backoff. Parity coverage includes the compatible provider, real
-loop cancellation, real step timeout, and a primitive producer-task drop probe.
-Each of these concurrency/socket cases runs at least 20 times with the complete
-distribution retained.
+while waiting for headers, after the fixtures emit silent-SSE and error-body
+shapes, and while sleeping in 429 backoff. The fixture synchronization proves
+server-side emission before cancellation; it does not claim to observe the
+exact reqwest client read state. Parity coverage includes the compatible
+provider, real loop cancellation, real step timeout, and a primitive
+producer-task drop probe. Each of these concurrency/socket cases runs at least
+20 times with the complete distribution retained.
 
 Candidate state on 2026-07-19: one crate-private stream wrapper owns the
 pre-existing bounded receiver and spawned producer handle, aborting that handle
 on drop. Both provider call sites use it without changing the public stream,
 executor, request, retry, capacity, or timeout contracts. Four task-state probes
 and six synchronized provider/loop socket cases are source-bound; each case
-encodes 20 repetitions. The retained distribution artifact, strict candidate
-gate record, and independent review are still open, so `TRANS-01` is not closed
-and this is not P5 Gate B completion.
+encodes 20 repetitions. The retained source-bound artifact records 200/200 exact
+process-isolated observations, 20/20 per case, plus clean strict fmt, Clippy,
+diff, and policy gates. Independent review remains open, so `TRANS-01` is not
+closed and this is not P5 Gate B completion. See the
+[`TRANS-01` Gate D handoff](reviews/2026-07-19-p5-trans-01-gate-d-handoff.md).
 
 D3 and D8 remain open and therefore still block whole-P5 Gate A. `TRANS-01` is
 specified as an isolated first slice because it does not decide either policy;
 starting its source work before those decisions requires an explicit scoped
 owner disposition and cannot be represented as P5 Gate B completion.
+
+### Second reviewable implementation slice: `CODEX-01`
+
+Candidate commits `98b0266` and `fcaf0e4` implement the Codex-only completed
+response directive without changing the public Responses contract. Backend
+dialect comes from the trusted catalog backend before dispatch. The public
+dialect rejects an `end_turn` field even when it is `null`; unknown backends
+also select public semantics. `response.completed` no longer has a second
+backend-blind projection in `map_sse_event`, while the pre-existing
+`response.incomplete` compatibility arm remains outside this slice.
+
+The exact raw `ResponseStreamEvent` retains `false`, `true`, `null`, or field
+absence. The typed behavioral projection intentionally collapses `true`,
+`null`, and absence to `StopReason::EndTurn`; only explicit `false` without an
+actionable call becomes `ContinueTurn`. Function, custom, and schema calls take
+`ToolUse` precedence so their results are returned. Refusal-only plus `false`
+is persisted and replayed before another sample; a malformed refusal plus any
+actionable call remains refusal-authoritative and executes nothing.
+
+This matrix freezes the campaign's source-derived Codex contract. Its wire
+field and overlay identity trace to the immutable official Codex snapshot
+`0396f99cf1a27fc87dd12d23403b25e840b6ecbd` recorded in the
+[`P1 Gate A contract`](reviews/2026-07-15-p1-gate-a-contract.md). The current
+public `/v1/responses` OpenAPI schema remains a separate contract and does not
+authorize this private overlay on public/custom backends.
+
+An intermediate response is durably appended with `stop_reason =
+"continue_turn"` before the next provider call; empty continuation adds no
+synthetic assistant input. This is durable replay within the live step, not a
+claim that ordinary process/session resume automatically restarts an
+interrupted in-flight turn. Repeated `false` uses the existing optional
+cancellation, `max_iterations`, and step-timeout controls. No new default or
+arbitrary limit is introduced, so an unbounded configuration remains
+unbounded by design.
+
+Candidate verification is clean: workspace all-target/all-feature Clippy with
+`-D warnings`, rustfmt, and diff checks pass; `norn-cli` library tests pass
+501/501; the focused terminal, mapper, schema, custom-tool, replay, persistence,
+and CLI projections pass. A core static review and a final internal audit
+covering the downstream CLI projection each returned `READY` with no blocker,
+major, or minor; the later test-only no-shortcut correction was rerun locally.
+External Gate D review remains open, so `CODEX-01` is not yet accepted and P5
+remains open. See the
+[`CODEX-01` Gate D handoff](reviews/2026-07-19-p5-codex-01-gate-d-handoff.md).
 
 ### Phase-specific evidence
 
@@ -2074,8 +2131,9 @@ owner disposition and cannot be represented as P5 Gate B completion.
   top-level instruction behavior.
 - [ ] Root and nested repository context, rule/profile bodies, user input, and
   trusted operator policy produce the exact D8 roles for root, spawn, and fork.
-- [ ] `end_turn:Some(false)`, `Some(true)`, and `None` each have explicit tested
-  loop semantics.
+- [x] Raw `end_turn:false`, `true`, `null`, and absence plus typed loop
+  projections have explicit tests; function/custom/schema calls, refusal-only,
+  mixed refusal-plus-tool, text, and empty continuation interactions are pinned.
 - [ ] Concurrent-agent and resume tests prove turn state never crosses user-turn,
   agent, session, cancellation, or error boundaries.
 - [ ] Account-affinity tests prove anchors and turn state never cross credential
@@ -2084,8 +2142,10 @@ owner disposition and cannot be represented as P5 Gate B completion.
   rather than silently replacing or leaking the first value.
 - [ ] Codex request fixtures prove the exact `client_metadata` shape and prove
   its absence from public Responses and incompatible profiles.
-- [ ] A controllable local server promptly observes producer/socket termination on
-  receiver drop, cancellation, and timeout, with no surviving task.
+- [x] A controllable local server promptly observes producer/socket termination on
+  receiver drop, cancellation, and timeout, with no surviving task. The retained
+  candidate record is 200/200 across ten exact cases; independent acceptance is
+  still required.
 - [ ] Compaction and anchor-reset tests show local and provider-visible history
   remain semantically aligned.
 - [ ] Public, nested, and opaque response-item fixtures prove compaction leaves
@@ -2454,7 +2514,7 @@ evidence.
 | P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and the bounded source fixture matrices are present | D14 establishes retrospective base `6669b9d`. Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks; retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle | Run the live A/B/A validity experiment after explicit credential-use approval, execute and retain the complete candidate gates, then obtain P2 acceptance |
 | P3 | Accepted source `7f47218` over D12 base `a90b730`; tree `b8b042f61b8d921b4cb27496d5a72b8d56b8bb0c`; accepted D2 source `e9755fe`, lifecycle fixtures `f252cbb`, M-1/F-2 correction `df47e9e`, and finite D11 source `56fd4dd` are included | D2 remains unconditionally `READY`; review `dad0291` closes M-1/F-2; review `5af7308` accepts D11's 28/274/659 inventory and seven-by-ten matrix. The final gate passes strict fmt/Clippy, Norn 4,035/4,035, CLI 551/551, TUI 700/700, workspace 5,364/5,364, doctests 8/8, redaction sentinels 23/23, exact diff, and policy. The policy reports 298 changed Rust files, 78 test-only, and zero LOC/module/added-line violations. Three repeated cases pass 60/60; the 213-record redaction report has zero findings; the single-process attestation has zero errors. Whole-phase review `06be7c7` independently reproduces the evidence and returns `READY` | None; accepted 2026-07-18. `STATE-01` and `EVT-01..07` remain P4-owned |
 | P4 | Accepted product correction `ab26632` over common source `7f47218`; corrected source-bound evidence head `180759f`; public/Codex manifests, 53 event contracts, 28 item validators, reconciliation, terminal parsing, raw CLI events, refusal, hosted-search replay, response-audio persistence, and successful-terminal core-delta authority are implemented | The correction bundle at `8faf1f4` passes strict fmt/Clippy, Norn 4,042, CLI 551, TUI 700, workspace 5,371, doctests 8, 60/60 distributions, 25 redaction sentinels, zero policy violations, 219-record zero-finding redaction, and zero-error attestation. Same-reviewer confirmation `0095f5c` reproduces the evidence and returns corrected P4 Gate D `READY`. P3 remains accepted at `06be7c7`; D15's D7/P9 live-wire gate is unchanged | None; accepted 2026-07-19. P6 separately owns usage-presence projection and retry-attempt UI cleanup |
-| P5 | Read-only current-state audit complete: Codex `store:false` and public threaded request shapes are distinct and stateless encrypted-reasoning replay exists; instruction resend and compaction-anchor invalidation are partial. The owner-approved isolated `TRANS-01` candidate adds one crate-private abort-on-drop stream owner used by both HTTP providers, with four task-state probes and six synchronized provider/loop socket cases. `end_turn`, Codex turn state, credential-bound state, `client_metadata`, and D8 role authority remain missing | The `TRANS-01` test source encodes 20 repetitions per case. No retained distribution artifact, strict candidate gate record, or acceptance review exists yet | Retain and independently review the `TRANS-01` candidate evidence; then resolve the Codex turn overlay, D3 state/account binding, and D8 provenance/role contract before whole-phase gates |
+| P5 | Codex `store:false` and public threaded request shapes are distinct; stateless encrypted-reasoning replay exists; `TRANS-01` owns provider producers; `CODEX-01` now scopes and projects `end_turn` with durable intermediate replay. Instruction resend and compaction-anchor invalidation remain partial; Codex turn state, credential-bound state, `client_metadata`, and D8 role authority remain missing | `TRANS-01` retains 200/200 exact process-isolated observations plus strict gates. `CODEX-01` commits `98b0266`/`fcaf0e4` pass workspace strict Clippy, rustfmt/diff, 501/501 CLI tests, and focused semantic fixtures. Core static and downstream-final internal audits returned `READY`; the later test-only correction was rerun. External acceptance remains open | Obtain external review for both candidates; then implement D3 state/account binding, `CODEX-02`, Codex metadata, and D8 provenance/role authority before whole-phase gates |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|

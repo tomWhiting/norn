@@ -76,6 +76,9 @@ pub(super) enum ResponseClass {
     /// No tool calls and model stopped (text-only response).
     TextStopNoSchema,
 
+    /// The backend requested another response in the current user turn.
+    ContinueTurn,
+
     /// The model returned refusal content. This takes precedence over tool
     /// dispatch so a mixed malformed response cannot execute calls after a
     /// refusal outcome.
@@ -107,6 +110,16 @@ pub(super) fn classify_response(
     output_schema: Option<&Value>,
     schema_tool_name: &str,
 ) -> ResponseClass {
+    // Current Codex treats `end_turn: false` as an independent request for
+    // another model sample. Preserve a refusal-only response canonically, then
+    // continue instead of reporting that intermediate refusal as the turn's
+    // final outcome. A malformed mixed refusal-plus-tool response does not
+    // reach this arm: the refusal-authoritative check below still prevents
+    // execution of calls embedded alongside refusal content.
+    if response.tool_calls.is_empty() && response.stop_reason == StopReason::ContinueTurn {
+        return ResponseClass::ContinueTurn;
+    }
+
     if let Some(refusal) = &response.refusal {
         return ResponseClass::Refused {
             refusal: refusal.clone(),
@@ -134,7 +147,7 @@ pub(super) fn classify_response(
                         kind: TruncationKind::ContentFilter,
                     };
                 }
-                StopReason::EndTurn | StopReason::ToolUse => {}
+                StopReason::EndTurn | StopReason::ContinueTurn | StopReason::ToolUse => {}
             }
         }
         return ResponseClass::TextStopNoSchema;
@@ -431,6 +444,19 @@ mod tests {
         assert!(matches!(
             classify_response(&response, None, "structured_output"),
             ResponseClass::Refused { refusal } if refusal.is_empty()
+        ));
+    }
+
+    #[test]
+    fn explicit_continuation_precedes_a_refusal_without_tool_calls() {
+        let mut response = schema_call_response("{\"answer\":\"unused\"}");
+        response.tool_calls.clear();
+        response.stop_reason = StopReason::ContinueTurn;
+        response.refusal = Some("not terminal yet".to_owned());
+
+        assert!(matches!(
+            classify_response(&response, None, "structured_output"),
+            ResponseClass::ContinueTurn
         ));
     }
 

@@ -3,6 +3,8 @@ use std::error::Error;
 use serde_json::{Value, json};
 
 use super::*;
+use crate::provider::events::StopReason;
+use crate::provider::response_item::{ResponseStreamProvenance, ResponseTranscriptItem};
 
 fn terminal_update(items: Vec<ResponseTranscriptItem>) -> ReconcileUpdate {
     ReconcileUpdate::Terminal {
@@ -33,6 +35,20 @@ fn completed_event(data: Value) -> SseEvent {
         event_type: "response.completed".to_owned(),
         data,
     }
+}
+
+fn decode_public_terminal(
+    event: &SseEvent,
+    update: &ReconcileUpdate,
+) -> Result<ProviderEvent, ProviderError> {
+    decode_terminal(event, update, ResponsesDialect::Public)
+}
+
+fn decode_codex_terminal(
+    event: &SseEvent,
+    update: &ReconcileUpdate,
+) -> Result<ProviderEvent, ProviderError> {
+    decode_terminal(event, update, ResponsesDialect::Codex)
 }
 
 fn remove_fixture_field(
@@ -71,6 +87,20 @@ fn set_fixture_field(
     Ok(())
 }
 
+fn insert_response_field(
+    data: &mut Value,
+    field: &str,
+    value: Value,
+) -> Result<(), Box<dyn Error>> {
+    let Some(response) = data.pointer_mut("/response").and_then(Value::as_object_mut) else {
+        return Err("fixture omitted /response object".into());
+    };
+    if response.insert(field.to_owned(), value).is_some() {
+        return Err(format!("fixture already contained /response/{field}").into());
+    }
+    Ok(())
+}
+
 #[test]
 fn completed_projects_identity_and_valid_usage() -> Result<(), Box<dyn Error>> {
     let event = completed_event(valid_completed_data());
@@ -78,7 +108,7 @@ fn completed_projects_identity_and_valid_usage() -> Result<(), Box<dyn Error>> {
         stop_reason,
         usage,
         response_id,
-    } = decode_terminal(&event, &terminal_update(Vec::new()))?
+    } = decode_public_terminal(&event, &terminal_update(Vec::new()))?
     else {
         return Err("terminal decoder returned a non-Done event".into());
     };
@@ -92,12 +122,110 @@ fn completed_projects_identity_and_valid_usage() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn completed_end_turn_directive_has_explicit_semantics() -> Result<(), Box<dyn Error>> {
+    let absent = decode_codex_terminal(
+        &completed_event(valid_completed_data()),
+        &terminal_update(Vec::new()),
+    )?;
+    assert!(matches!(
+        absent,
+        ProviderEvent::Done {
+            stop_reason: StopReason::EndTurn,
+            ..
+        }
+    ));
+
+    for (wire_value, expected) in [
+        (Value::Null, StopReason::EndTurn),
+        (Value::Bool(true), StopReason::EndTurn),
+        (Value::Bool(false), StopReason::ContinueTurn),
+    ] {
+        let mut data = valid_completed_data();
+        insert_response_field(&mut data, "end_turn", wire_value)?;
+        let ProviderEvent::Done { stop_reason, .. } =
+            decode_codex_terminal(&completed_event(data), &terminal_update(Vec::new()))?
+        else {
+            return Err("terminal decoder returned a non-Done event".into());
+        };
+        assert_eq!(stop_reason, expected);
+    }
+    Ok(())
+}
+
+#[test]
+fn completed_rejects_malformed_end_turn_directives() -> Result<(), Box<dyn Error>> {
+    for wire_value in [
+        Value::String("false".to_owned()),
+        json!(0),
+        json!([]),
+        json!({}),
+    ] {
+        let mut data = valid_completed_data();
+        insert_response_field(&mut data, "end_turn", wire_value.clone())?;
+        assert!(
+            decode_codex_terminal(&completed_event(data), &terminal_update(Vec::new())).is_err(),
+            "terminal decoder accepted invalid end_turn value {wire_value}",
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn public_responses_rejects_the_codex_end_turn_overlay() -> Result<(), Box<dyn Error>> {
+    for wire_value in [Value::Null, Value::Bool(true), Value::Bool(false)] {
+        let mut data = valid_completed_data();
+        insert_response_field(&mut data, "end_turn", wire_value)?;
+        assert!(
+            decode_public_terminal(&completed_event(data), &terminal_update(Vec::new())).is_err(),
+            "public terminal decoder accepted a Codex-only end_turn field",
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn actionable_calls_continue_for_every_end_turn_value() -> Result<(), Box<dyn Error>> {
+    let function_call = json!({
+        "type": "function_call",
+        "id": "fc_1",
+        "call_id": "call_1",
+        "name": "structured_output",
+        "arguments": "{\"answer\":\"accepted\"}"
+    });
+    let custom_call = json!({
+        "type": "custom_tool_call",
+        "id": "ctc_1",
+        "call_id": "call_2",
+        "name": "apply_patch",
+        "input": "patch content"
+    });
+
+    for raw_item in [function_call, custom_call] {
+        let items = vec![ResponseTranscriptItem {
+            item: ResponseItem::from_value(raw_item)?,
+            provenance: ResponseStreamProvenance::default(),
+        }];
+        for wire_value in [Value::Null, Value::Bool(true), Value::Bool(false)] {
+            let mut data = valid_completed_data();
+            insert_response_field(&mut data, "end_turn", wire_value)?;
+            let ProviderEvent::Done { stop_reason, .. } =
+                decode_codex_terminal(&completed_event(data), &terminal_update(items.clone()))?
+            else {
+                return Err("terminal decoder returned a non-Done event".into());
+            };
+            assert_eq!(stop_reason, StopReason::ToolUse);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn completed_accepts_absent_optional_status() -> Result<(), Box<dyn Error>> {
     let mut data = valid_completed_data();
     remove_fixture_field(&mut data, "/response", "status")?;
 
     let ProviderEvent::Done { response_id, .. } =
-        decode_terminal(&completed_event(data), &terminal_update(Vec::new()))?
+        decode_public_terminal(&completed_event(data), &terminal_update(Vec::new()))?
     else {
         return Err("terminal decoder returned a non-Done event".into());
     };
@@ -111,7 +239,7 @@ fn completed_rejects_null_or_inconsistent_status() -> Result<(), Box<dyn Error>>
         let mut data = valid_completed_data();
         set_fixture_field(&mut data, "/response", "status", status.clone())?;
         assert!(
-            decode_terminal(&completed_event(data), &terminal_update(Vec::new())).is_err(),
+            decode_public_terminal(&completed_event(data), &terminal_update(Vec::new())).is_err(),
             "terminal decoder accepted invalid status {status}"
         );
     }
@@ -124,7 +252,7 @@ fn missing_response_id_is_not_fabricated() {
         event_type: "response.completed".to_owned(),
         data: json!({"response": {"status": "completed", "output": []}}),
     };
-    assert!(decode_terminal(&event, &terminal_update(Vec::new())).is_err());
+    assert!(decode_public_terminal(&event, &terminal_update(Vec::new())).is_err());
 }
 
 #[test]
@@ -138,7 +266,8 @@ fn absent_usage_remains_distinguishable_on_raw_event() -> Result<(), Box<dyn Err
         event_type: "response.completed".to_owned(),
         data: raw.clone(),
     };
-    let ProviderEvent::Done { usage, .. } = decode_terminal(&event, &terminal_update(Vec::new()))?
+    let ProviderEvent::Done { usage, .. } =
+        decode_public_terminal(&event, &terminal_update(Vec::new()))?
     else {
         return Err("terminal decoder returned a non-Done event".into());
     };
@@ -151,7 +280,7 @@ fn absent_usage_remains_distinguishable_on_raw_event() -> Result<(), Box<dyn Err
 fn present_usage_cannot_be_null() -> Result<(), Box<dyn Error>> {
     let mut data = valid_completed_data();
     set_fixture_field(&mut data, "/response", "usage", Value::Null)?;
-    assert!(decode_terminal(&completed_event(data), &terminal_update(Vec::new())).is_err());
+    assert!(decode_public_terminal(&completed_event(data), &terminal_update(Vec::new())).is_err());
     Ok(())
 }
 
@@ -174,14 +303,15 @@ fn present_usage_requires_every_field_and_rejects_null_fields() -> Result<(), Bo
         let mut missing = valid_completed_data();
         remove_fixture_field(&mut missing, parent_pointer, field)?;
         assert!(
-            decode_terminal(&completed_event(missing), &terminal_update(Vec::new())).is_err(),
+            decode_public_terminal(&completed_event(missing), &terminal_update(Vec::new()))
+                .is_err(),
             "terminal decoder accepted omitted usage field {path}"
         );
 
         let mut null = valid_completed_data();
         set_fixture_field(&mut null, parent_pointer, field, Value::Null)?;
         assert!(
-            decode_terminal(&completed_event(null), &terminal_update(Vec::new())).is_err(),
+            decode_public_terminal(&completed_event(null), &terminal_update(Vec::new())).is_err(),
             "terminal decoder accepted null usage field {path}"
         );
     }

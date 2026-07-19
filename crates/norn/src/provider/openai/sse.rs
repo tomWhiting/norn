@@ -21,7 +21,7 @@ use super::sse_completed_item::map_completed_item;
 pub use super::sse_parser::{SseEvent, SseParseError, SseParser};
 use super::sse_types::{ResponseFailedPayload, classify_failed_error, incomplete_stop_reason};
 use crate::error::ProviderError;
-use crate::provider::events::{ProviderEvent, StopReason};
+use crate::provider::events::ProviderEvent;
 use crate::provider::request::ToolCallKind;
 use crate::provider::usage::Usage;
 
@@ -163,16 +163,6 @@ pub(crate) fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, Pr
         }
 
         "response.output_item.done" => Some(map_completed_item(event)),
-
-        "response.completed" => {
-            let usage = extract_usage(&event.data);
-            let stop_reason = extract_stop_reason(&event.data);
-            Some(Ok(ProviderEvent::Done {
-                stop_reason,
-                usage,
-                response_id: extract_response_id(&event.data),
-            }))
-        }
 
         "response.failed" => {
             // The error nests under `response.error`. Reject a malformed
@@ -319,27 +309,6 @@ fn extract_response_id(data: &serde_json::Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Derives the [`StopReason`] for a `response.completed` event.
-///
-/// Only reachable from `response.completed`, whose status is always
-/// `"completed"` — truncation stops arrive on the dedicated
-/// `response.incomplete` event and are mapped by
-/// [`incomplete_stop_reason`] instead.
-fn extract_stop_reason(data: &serde_json::Value) -> StopReason {
-    let end_turn = data
-        .get("response")
-        .and_then(|r| r.get("output"))
-        .and_then(|o| o.as_array())
-        .and_then(|arr| arr.last())
-        .and_then(|item| item.get("type"))
-        .and_then(|v| v.as_str());
-
-    match end_turn {
-        Some("function_call") => StopReason::ToolUse,
-        _ => StopReason::EndTurn,
-    }
-}
-
 /// Extracts the `(item_id, call_id)` correlation pair announced by a
 /// `response.output_item.added` event for a tool-call item.
 ///
@@ -395,6 +364,7 @@ mod tests {
 
     use super::*;
     use crate::error::TransientKind;
+    use crate::provider::events::StopReason;
 
     #[test]
     fn parse_multi_frame_sse() {
@@ -778,7 +748,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     }
 
     #[test]
-    fn completed_event_mapping() {
+    fn completed_event_is_owned_by_the_stateful_terminal_mapper() {
         let event = SseEvent {
             event_type: "response.completed".to_string(),
             data: serde_json::json!({
@@ -788,16 +758,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
                 }
             }),
         };
-        match map_sse_event(&event) {
-            Some(Ok(ProviderEvent::Done {
-                stop_reason, usage, ..
-            })) => {
-                assert_eq!(stop_reason, StopReason::EndTurn);
-                assert_eq!(usage.input_tokens, 100);
-                assert_eq!(usage.output_tokens, 50);
-            }
-            other => panic!("expected Done, got {other:?}"),
-        }
+        assert!(map_sse_event(&event).is_none());
     }
 
     // Helper: build a `response.failed` event whose error nests under
@@ -1465,7 +1426,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     }
 
     #[test]
-    fn tool_use_stop_reason() {
+    fn completed_tool_call_is_owned_by_the_stateful_terminal_mapper() {
         let event = SseEvent {
             event_type: "response.completed".to_string(),
             data: serde_json::json!({
@@ -1476,12 +1437,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
                 }
             }),
         };
-        match map_sse_event(&event) {
-            Some(Ok(ProviderEvent::Done { stop_reason, .. })) => {
-                assert_eq!(stop_reason, StopReason::ToolUse);
-            }
-            other => panic!("expected ToolUse stop reason, got {other:?}"),
-        }
+        assert!(map_sse_event(&event).is_none());
     }
 
     #[test]
