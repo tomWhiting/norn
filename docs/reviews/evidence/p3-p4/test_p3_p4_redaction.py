@@ -175,6 +175,24 @@ class RedactionFalsePositiveTests(unittest.TestCase):
         )
         self.assertTrue(record["passed"], record["findings"])
 
+    def test_exact_redaction_rule_identifiers_are_schema_metadata(self) -> None:
+        record = json_record(
+            {
+                "findings": [{"rule": "private_prompt_content"}],
+                "rule_matches": {rule: 0 for rule in redaction.RULES},
+                "rules": redaction.RULES,
+            },
+            historical=True,
+        )
+        self.assertTrue(record["passed"], record["findings"])
+
+    def test_rule_identifier_does_not_exempt_private_content(self) -> None:
+        record = json_record(
+            {"input": "private_prompt_content: my password is production-secret"}
+        )
+        self.assertFalse(record["passed"])
+        self.assertEqual(record["rule_matches"]["private_prompt_content"], 1)
+
     def test_reserved_email_and_placeholders_are_allowed(self) -> None:
         record = json_record(
             {

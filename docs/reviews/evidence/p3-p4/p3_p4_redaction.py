@@ -187,7 +187,10 @@ def _generic_findings(value: str, location: str) -> list[dict[str, str]]:
             findings.append(_finding(rule, location))
     if any(not _safe_cache_key(match.group(1)) for match in CACHE_FIELD.finditer(value)):
         findings.append(_finding("raw_cache_key", location))
-    if PRIVATE_PROMPT_MARKER.search(value) or _private_email(value):
+    is_rule_identifier = value.strip().lower() in RULES
+    if (
+        not is_rule_identifier and PRIVATE_PROMPT_MARKER.search(value)
+    ) or _private_email(value):
         findings.append(_finding("private_prompt_content", location))
     return findings
 
