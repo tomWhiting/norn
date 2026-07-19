@@ -1,0 +1,83 @@
+{
+  "fixture_format": "ns0-logical-candidate-v1",
+  "fixture_id": "norn-event",
+  "status": "candidate_not_canonical_bytes",
+  "classification": "event",
+  "record": {
+    "record_type": "EventRecordV1",
+    "event_id": {
+      "domain": "norn",
+      "kind": "session_event",
+      "native_value": "018f0000-0000-7000-8000-000000000002",
+      "scope": [
+        {
+          "role": "owning_session_incarnation",
+          "ref": {
+            "domain": "norn",
+            "kind": "session_incarnation",
+            "native_value": {
+              "session_id": "fixture-session",
+              "generation": "10000000-0000-4000-8000-000000000001"
+            },
+            "scope": []
+          }
+        }
+      ]
+    },
+    "event_kind": "norn.session.user_message",
+    "schema_ref": {
+      "domain": "norn",
+      "kind": "session_event_schema",
+      "native_value": "SessionEvent.UserMessage@format-2",
+      "scope": []
+    },
+    "producer_ref": {
+      "domain": "norn",
+      "kind": "candidate_session_producer",
+      "native_value": "owner-decision-required",
+      "scope": []
+    },
+    "producer_epoch": {
+      "domain": "norn",
+      "kind": "candidate_producer_epoch",
+      "native_value": "owner-decision-required",
+      "scope": []
+    },
+    "subjects": [],
+    "direct_causes": [
+      {
+        "role": "parent",
+        "event_ref": {
+          "domain": "norn",
+          "kind": "session_event",
+          "native_value": "018f0000-0000-7000-8000-000000000001",
+          "scope": [
+            {
+              "role": "owning_session_incarnation",
+              "ref": {
+                "domain": "norn",
+                "kind": "session_incarnation",
+                "native_value": {
+                  "session_id": "fixture-session",
+                  "generation": "10000000-0000-4000-8000-000000000001"
+                },
+                "scope": []
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "links": [],
+    "occurred_at": "2026-01-01T00:00:00Z",
+    "payload": {
+      "native_type": "SessionEvent.UserMessage",
+      "value": {"content": "public fixture input"}
+    }
+  },
+  "authority_notes": {
+    "observed": ["event_id", "owning_session_incarnation", "single_parent", "payload_type"],
+    "proposed": ["projection_shape"],
+    "owner_decision": ["producer_ref", "producer_epoch", "projection_identity"]
+  }
+}

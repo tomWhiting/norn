@@ -1,0 +1,22 @@
+{
+  "fixture_format": "ns0-logical-candidate-v1",
+  "fixture_id": "opaque-unknown",
+  "status": "candidate_not_canonical_bytes",
+  "classification": "opaque_unknown",
+  "record": {
+    "record_type": "OpaqueNativeRecordV1",
+    "native_domain": "fixture.future-domain",
+    "native_kind": "future_variant_73",
+    "executable": false,
+    "opaque_payload": {
+      "future_variant": 73,
+      "nested": {"preserve": [true, null, "exact logical value"]},
+      "unknown_field": "must-not-be-dropped"
+    }
+  },
+  "authority_notes": {
+    "observed": [],
+    "proposed": ["opaque_non_executable_carriage"],
+    "owner_decision": ["canonical_bytes", "schema_owner", "decoder_policy"]
+  }
+}

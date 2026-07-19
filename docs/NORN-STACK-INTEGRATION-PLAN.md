@@ -210,7 +210,7 @@ explicitly ruled; they are not silently deferred.
 
 | Phase | Status | Visible outcome |
 |---|---|---|
-| NS0. Architecture and contract boundary | [ ] Drafted; review open | The stack has one documented authority map and compatible contract vocabulary. |
+| NS0. Architecture and contract boundary | [ ] Mechanically verified source and logical-fixture candidate prepared; owner decisions and review open | The stack has one documented authority map and compatible contract vocabulary. |
 | NS1. Responses transcript and event substrate | [x] Satisfied by accepted Responses P3 (`06be7c7`) and corrected P4 (`0095f5c`). The exact 28-item output union, shipped non-audio nested/tool schemas, canonical caller-aware persistence/replay, pinned public manifest and scoped Codex overlay, identity-keyed reconciliation, refusal and hosted-search matrices, lifecycle evidence, authoritative UI repair, strict format-2 storage, offline migration, and response-scoped private audio artifacts are accepted | Norn has a lossless canonical provider transcript and complete event reconciliation. |
 | NS2. Norn semantic projection and read model | [ ] Not started | Existing session history is queryable through stable typed records and cursors. |
 | NS3. Local detachable read supervisor | [ ] Not started | A session can continue while local read clients observe, detach, and reconnect without acquiring mutation authority. |
@@ -232,6 +232,17 @@ post-P4 contract-fixture phase with minimal test-only Rust and TypeScript
 decoders; it creates no Norn production integration or shared runtime crate.
 
 ### NS0A: non-blocking authority and identity inventory
+
+**2026-07-19 checkpoint:** The current candidate pins 11 committed repository
+objects and retains exact source selection, exclusions, four discovery-query
+hashes, 34 source-bound semantic records, and seven negative assertions in
+[`reviews/evidence/ns0/inventory-manifest.json`](reviews/evidence/ns0/inventory-manifest.json).
+The pinned objects, not mutable checkout HEADs, are the retained evidence;
+HEAD equality is informational and re-pinning requires an explicit freshness
+sweep.
+The verifier is green, but the exhaustive item below remains open because every
+lexical discovery match has not yet received an individual semantic
+disposition. This is an explicit M0 review boundary, not inferred completion.
 
 - [x] Record the cross-stack authority map.
 - [x] Separate semantic record, delivery wrapper, and component contribution
@@ -276,10 +287,12 @@ This arm may run beside P3/P4 and must not freeze Norn payload bytes.
 
 ### NS0B: post-P4 shared contract freeze
 
-- [ ] Produce canonical fixture candidates for one accepted Norn event, one
+- [x] Produce canonical fixture candidates for one accepted Norn event, one
   Aion event, one Frame contribution event, one durable relation, one opaque
   unknown payload, and a future multi-parent example labelled unsupported by
-  current Norn persistence.
+  current Norn persistence. The six logical candidates and file-integrity
+  hashes are retained under `reviews/evidence/ns0/`; their status explicitly
+  withholds canonical-byte and digest acceptance pending the next two decisions.
 - [ ] Decide the owner repository for shared contract types and generated
   bindings.
 - [ ] Resolve the canonical encoding, digest construction, and versioning rule.
@@ -295,6 +308,18 @@ Teams can implement against one small vocabulary without assuming that one
 system owns all history. No runtime behavior changes.
 
 ### Evidence and gate
+
+Current candidate evidence:
+
+- `python3 -B docs/reviews/evidence/ns0/verify_inventory.py --manifest
+  docs/reviews/evidence/ns0/inventory-manifest.json` verifies the
+  committed-source inventory. It derives the sibling-repository root from
+  Git's common directory unless an explicit `--ablative-root` is supplied.
+- `python3 -B docs/reviews/evidence/ns0/verify_contract_fixtures.py --manifest
+  docs/reviews/evidence/ns0/contract-fixture-manifest.json` verifies all six
+  logical fixture cases without treating their file hashes as record digests.
+- [`design/ablative-stack-contract-freeze.md`](design/ablative-stack-contract-freeze.md)
+  separates observed facts, proposed logical shapes, and owner decisions.
 
 - [ ] Each current-state claim links to source or is labelled owner-confirmed.
 - [ ] Every proposed type has one owning authority and no duplicate semantic

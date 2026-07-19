@@ -3,7 +3,7 @@
 **Status:** NS0A source-inventory candidate; owner and source-owner decisions
 remain open.
 
-**Date:** 2026-07-18
+**Date:** 2026-07-19
 
 **Architecture:**
 [`ablative-stack-composition.md`](ablative-stack-composition.md)
@@ -36,17 +36,26 @@ The governing rules are:
 
 ## 2. Method and pinned snapshots
 
-This candidate was produced from committed objects with `git show` and
+This candidate was produced from pinned committed objects with `git show` and
 `git grep`. Dirty working-copy changes in adjacent repositories were excluded.
-The semantic review covered Rust runtime crates, TypeScript applications and
-SDKs, and the identifier classes named by NS0A: component, producer,
-participant, schema, artifact, stream, signing, session, agent, workspace,
-snapshot, change, diagnostic, action principal, and replacement epoch. It also
-retained adjacent message, credential, connection, capability, and
-storage-lifecycle tokens where omitting them would create a substitution risk.
-The exact discovery queries and candidate dispositions were not retained, so
-this document does not claim an exhaustive mechanical sweep. That reproducible
-completion gate remains open in the execution plan.
+The exact Rust/TypeScript source selection, exclusions, four discovery queries,
+34 source-bound semantic records, and seven negative assertions are retained in
+[`../reviews/evidence/ns0/inventory-manifest.json`](../reviews/evidence/ns0/inventory-manifest.json).
+[`../reviews/evidence/ns0/verify_inventory.py`](../reviews/evidence/ns0/verify_inventory.py)
+replays them without reading uncommitted source. Its retained report records 11
+verified commit pins and zero failed assertions in
+[`../reviews/evidence/ns0/inventory-report.json`](../reviews/evidence/ns0/inventory-report.json).
+
+The semantic review covers the identifier classes named by NS0A: component,
+producer, participant, schema, artifact, stream, signing, session, agent,
+workspace, snapshot, change, diagnostic, action principal, and replacement
+epoch. It also retains adjacent message, credential, connection, capability,
+and storage-lifecycle tokens where omitting them would create a substitution
+risk. The discovery query hashes establish a reproducible lexical baseline;
+the 34 semantic records bind the load-bearing authority seams. They do not yet
+give every lexical match an individual semantic disposition, so the plan's
+exhaustive-sweep acceptance item remains open rather than being inferred from a
+green verifier.
 
 The inclusion boundary is mechanical but not lexical: a value is retained when
 it crosses a durable, wire, tool, process, storage, ownership, or adapter seam,
@@ -55,32 +64,31 @@ indices, test-only values, and private collection keys that add no scope or
 lifetime beyond already inventoried components are excluded. This prevents a
 type-name grep from being mistaken for either completeness or relevance.
 
-Only Aion, Yggdrasil, and Liminal contain relevant production TypeScript at the
-pinned snapshots. Frame, Norn, Beamr, Haematite, Lys, Tharsis, and Prospekt have
-none; Chiron's sole TypeScript file is a diagnostic test fixture. Their current
-identity authorities are therefore Rust-only.
+The selected committed source includes Rust plus TypeScript/TSX from Aion,
+Yggdrasil, Liminal, and Frame. Frame's current TypeScript includes applications,
+packages, and examples; the manifest binds `FeedEnvelope` specifically as an
+example protocol rather than a shared authority. The other selected
+repositories expose the inventoried authorities through Rust at these pins.
 
 | Repository | Committed snapshot | Inventory role |
 |---|---|---|
-| Norn | combined source candidate `0512953e650c4961e790f5987896c131e82ba4f3`; accepted D2 source `e9755fe2533979410f53eda88966349437a54517` | Session, agent, message/input/schedule, event, rule/task/process, provider, credential, MCP, artifact, workspace, and local lifecycle values |
-| Aion | `810c71464caf94eeb90d4bcf828d89ed546458f1` | Workflow/run/activity/timer/schedule, attempt and stream order, agent/worker/caller, supervisor/routing, authoring, write capability, and SDK aliases |
-| Yggdrasil | `411b3d47364ec34664bad42dff77aa3b515ea1ba` | Repository, Git snapshot, logical branch, dependency module, workspace, issue, change, and operation values |
+| Norn | `2ee67c5b708c6eb4f57bb9ffb494960a49869de0` | Accepted Responses P3/P4 base plus session, agent, event, provider, credential, MCP, artifact, workspace, and local lifecycle values |
+| Aion | `eef93212ed0c8ef2406bcd387903495c8462835b` | Workflow/run/activity/timer/schedule, attempt and stream order, agent/worker/caller, supervisor/routing, authoring, write capability, and SDK aliases |
+| Yggdrasil | `6ccaeb89f457ef57880e683249608182b7681e8f` | Repository, Git snapshot, logical branch, dependency module, workspace, issue, change, and operation values |
 | Chiron | `399ec98c006a7b16b03b6d9416d8bdec7f332fa3` | Diagnostic kind, commit, custom/LSP request, logical server, and daemon-instance correlation |
-| Frame | `1e615f8d42c7` | Component/entity/reference, capability/grant, schema absence, storage incarnation, and component metadata values |
-| Beamr | `acf7c69e04b8` | Runtime namespace/actor/handle, module/readiness/connection/peer lifecycle, event subscription, service instance, replay, and capability-audit values |
-| Liminal | `2e5a731b5f00` | Participant process/credential, publisher/consumer/subscriber, conversation, binding, schema, message, delivery, connection, and stream values |
-| Haematite | `495427e7800f` | Storage hash/stream/branch, carrier connection, distributed node/write, ownership ballot/stamp, and local expiry values |
-| Lys | `28e01a4fb9f0` | Signing/note/certificate identities, attestation/payload digest, transparency root/checkpoint/proof, and sealed-envelope values |
+| Frame | `fbc03b55c53913f7f62d900152aae68552157bba` | Component/entity/reference, capability/grant, schema absence, storage incarnation, lifecycle news, and TypeScript example/application values |
+| Beamr | `c716992fdbe72a8b0949009d941c8bafcb784b66` | Runtime namespace/actor/handle, module/readiness/connection/peer lifecycle, event subscription, service instance, replay, and capability-audit values |
+| Liminal | `2bf71c43ad693963a96a15b99f3b2b0b989c2e23` | Participant process/credential, publisher/consumer/subscriber, conversation, binding, schema, message, delivery, connection, and stream values |
+| Haematite | `dc907a78e028a0027362775af4279b830aae3ca5` | Storage hash/stream/branch, carrier connection, distributed node/write, ownership ballot/stamp, and local expiry values |
+| Lys | `28e01a4fb9f0a3626b8b471fe8b55c3109596472` | Signing/note/certificate identities, attestation/payload digest, transparency root/checkpoint/proof, and sealed-envelope values |
 | Tharsis, including its Urd documents | `acac7baec611d7020366f07ca042dfba288c5dd7` | Provisional layer/snapshot/branch/actor/build-lock/NFS-file/bracket/tree-root types and absences |
 | Prospekt | `f00d919b2679bcfc45f694eab8fbabed112644ef` | Model-local document, relation, schema-file, and workspace-path values |
 
-The short Frame, Beamr, and other revision labels above are unambiguous in the
-inspected repositories. They are evidence pins, not dependency declarations.
-Unless a row says otherwise, every Norn source location below resolves against
-the combined source candidate `0512953e650c4961e790f5987896c131e82ba4f3`.
-The accepted D2 source is recorded separately to distinguish accepted storage
-semantics from the later combined Responses candidate; it is not an alternate
-line-number base for the table.
+The full revisions above are evidence pins, not dependency declarations.
+Unless a row explicitly labels historical input, source locations below resolve
+against the corresponding pinned committed object. Checkout HEAD is
+informational freshness metadata: later commits do not change the retained
+object evidence, and only an explicit freshness sweep may re-pin it.
 
 ## 3. Native identity inventory
 
@@ -100,7 +108,7 @@ line-number base for the table.
 | Named authentication account | A user-facing alias resolves through a private catalog to an opaque UUID storage ID, so the alias never becomes a path component. `AccountIdentityFingerprint` privately hashes the remote account ID; `CredentialRevision` hashes the exact serialized credential bytes for compare-and-swap. `ProviderProfileId` names a deployment/auth target. These are respectively selection, storage, remote-identity, byte-revision, and provider-profile domains, not action principals or interchangeable hashes. | `crates/norn/src/provider/openai_oauth/account_catalog.rs:34-59,315-417`; `provider/openai_oauth/account_identity.rs:1-32`; `provider/openai_oauth/credential_revision.rs:1-30`; `provider/api_shape.rs:85-118` |
 | Credential coordination | The in-process manager key combines trusted auth root, storage mode, token URL, and private remote account tuple. `RefreshLineage` hashes the refresh token, while the durable recovery marker carries an operation nonce, prior/proposed credential revisions, and salted lineage/integrity proofs. These are redacted single-flight and no-replay mechanisms, not user-visible account identity or interchangeable credential hashes. | `crates/norn/src/provider/openai_oauth/manager.rs:52-104`; `provider/openai_oauth/manager_registry.rs:11-55`; `provider/openai_oauth/credential_recovery.rs:72-168` |
 | MCP server, definition, tool, request, and client instance | A configured logical server name and `McpDefinitionFingerprint` identify the normalized definition consumed by approval policy; approval scope additionally uses the canonical project path and server name. A qualified tool name is derived for registry exposure. Numeric JSON-RPC request IDs are client/connection-local; `mcp_client.instance_id` is a client-lifecycle token; `tool_list_revision` is a separate client-local replacement counter. None is a remote MCP server identity or general execution epoch. | `crates/norn/src/config/mcp.rs:35-80,329-379`; `config/mcp_approval.rs:188-229`; `integration/mcp_proxy.rs:132-140`; `integration/mcp_stdio.rs:229-245,332-390`; `integration/mcp_client.rs:61`; `integration/mcp_protocol.rs:80-116` |
-| Response-audio artifact | `ResponseAudioArtifactRef` is a canonical UUIDv4. Files physically live below `root_session_id`, while the artifact header and every operation bind the originating timeline's `owner_session_id` and exact `owner_generation`. Provider `response_id` is metadata, never artifact identity. | `crates/norn/src/session/response_audio.rs:64-105,136-210` at `0512953` |
+| Response-audio artifact | `ResponseAudioArtifactRef` is a canonical UUIDv4. Files physically live below `root_session_id`, while the artifact header and every operation bind the originating timeline's `owner_session_id` and exact `owner_generation`. Provider `response_id` is metadata, never artifact identity. | `crates/norn/src/session/response_audio.rs:64-105,136-210` |
 | Spool artifact | Spool files have no separate artifact ID; their immutable reference is derived from the owning `EventId` beneath the root-session namespace. | `crates/norn/src/session/spool.rs:59`; `session/events.rs:247` |
 | Session-storage transaction | Deletion journals and timeline/audio publication recovery allocate independent UUIDv4 transaction strings. They correlate one recoverable filesystem mutation and its owned stage/journal paths; they are not session, generation, artifact, run, or producer identity. | `crates/norn/src/session/persistence/index_deletion.rs:22-30,72-84`; `session/persistence/publication_recovery.rs:93-103` |
 | Action principal | `ActionLogEntry` has no self-contained authenticated principal. Runtime attribution is structural through the owning in-memory per-agent log/tree; `ActionOrigin` records causality, not authorization. Durable `ToolResult` rows carry no agent principal, and resume does not reconstruct a complete durable action-log tree. | `crates/norn/src/session/action_log.rs:50-77`; `session/action_log_scope.rs:1`; `session/action_log_tree.rs:1-37`; `session/events.rs:247-276` |
@@ -228,12 +236,12 @@ wire or presentation aliases and never become a second native authority.
 
 | Surface | TypeScript representation | Consequence | Evidence |
 |---|---|---|---|
-| Aion generated console types | `WorkflowId`, `RunId`, `PackageVersion`, and `ScheduleId` are strings; `ActivityId` and `cluster_seq` are numbers; `TimerId` is a named/anonymous union | Generated aliases mirror serialized Rust values but provide no runtime domain separation. JavaScript number representation is also a transport constraint, not sequence authority. | `apps/aion-ops-console/src/types/generated/index.ts:1-16,669` at Aion `810c71464caf` |
+| Aion generated console types | `WorkflowId`, `RunId`, `PackageVersion`, and `ScheduleId` are strings; `ActivityId` and `cluster_seq` are numbers; `TimerId` is a named/anonymous union | Generated aliases mirror serialized Rust values but provide no runtime domain separation. JavaScript number representation is also a transport constraint, not sequence authority. | `apps/aion-ops-console/src/types/generated/index.ts:1-16,669` |
 | Aion client protobuf facade | `ProtoWorkflowId` and `ProtoRunId` are objects containing `uuid: string` | These preserve field shape but not Rust newtype authority; optional run IDs must not be silently dropped during correlation. | `sdks/typescript/aion-client/src/client.ts:117-147` |
 | Aion worker SDK | `WorkerIdentity`, `WorkflowId`, and `ActivityIdKey` are strings; activity IDs are decimalized from wire sequence positions | `ActivityIdKey` is a transport key, not a new activity allocator. The SDK task still omits `RunId`, workspace, and Norn session identity. | `sdks/typescript/aion-worker/src/session.ts:14,80-95,519-536` |
 | Yggdrasil web branch and operations | Branch-node UUIDs, process-local operation UUIDs, and pipeline IDs are plain strings. `OperationId` is separately a string-literal union of UI command kinds. | These aliases mirror distinct Rust/server concepts. Neither the in-memory operation UUID nor a command-kind label is the missing durable file-operation reference. | `apps/ygg-web/src/types/branch.ts:1-17`; `lib/api.ts:17-22,267-290`; `components/OperationsSidebar.tsx:23-40` |
 | Liminal WASM SDK | `connectionId` and `streamId` are numbers; `schemaId` is `Uint8Array` | The TS surface does not brand connection, stream, or schema domains. Callers must retain the protocol scope and exact 32-byte schema rule. | `sdks/liminal-ts/src/wasm.ts:3-28,59-64` |
-| Frame and Chiron | No authoritative TypeScript identity type was found at the pinned snapshots | Future browser or diagnostic clients must consume explicit bindings rather than infer authority from strings or paths. | Frame `1e615f8d42c7`; Chiron `399ec98c006a` source inventories |
+| Frame example envelope and Chiron | Frame's `FeedEnvelope` is an example-local encoded envelope; no authoritative Chiron TypeScript identity type is selected | A demonstration carrier cannot become the shared event contract, and future diagnostic clients must consume explicit bindings rather than infer authority from strings or paths. | Frame `examples/frame-demo/src/protocol.ts`; Chiron source inventory |
 
 ## 5. Collision and substitution register
 

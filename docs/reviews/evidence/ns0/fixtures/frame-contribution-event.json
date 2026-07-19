@@ -1,0 +1,56 @@
+{
+  "fixture_format": "ns0-logical-candidate-v1",
+  "fixture_id": "frame-contribution-event",
+  "status": "candidate_not_canonical_bytes",
+  "classification": "event",
+  "record": {
+    "record_type": "EventRecordV1",
+    "event_id": {
+      "domain": "frame",
+      "kind": "candidate_contribution_event",
+      "native_value": "owner-decision-required",
+      "scope": []
+    },
+    "event_kind": "frame.contribution.snapshot_published",
+    "schema_ref": {
+      "domain": "frame",
+      "kind": "candidate_contribution_event_schema",
+      "native_value": "owner-decision-required",
+      "scope": []
+    },
+    "producer_ref": {
+      "domain": "frame",
+      "kind": "component",
+      "native_value": "1111111111111111111111111111111111111111111111111111111111111111",
+      "scope": []
+    },
+    "producer_epoch": {
+      "domain": "frame",
+      "kind": "candidate_component_generation",
+      "native_value": "owner-decision-required",
+      "scope": []
+    },
+    "subjects": [
+      {
+        "role": "component",
+        "ref": {
+          "domain": "frame",
+          "kind": "component",
+          "native_value": "1111111111111111111111111111111111111111111111111111111111111111",
+          "scope": []
+        }
+      }
+    ],
+    "direct_causes": [],
+    "links": [],
+    "payload": {
+      "native_type": "candidate_contribution_snapshot_publication",
+      "value": {"snapshot_ref": "owner-decision-required"}
+    }
+  },
+  "authority_notes": {
+    "observed": ["component_id"],
+    "proposed": ["contribution_event", "projection_shape"],
+    "owner_decision": ["event_id", "schema_ref", "component_generation", "snapshot_ref"]
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "fixture_format": "ns0-logical-candidate-v1",
+  "fixture_id": "multi-parent-unsupported",
+  "status": "candidate_not_canonical_bytes",
+  "classification": "future_multi_parent",
+  "norn_support": "unsupported_by_current_format_2_persistence",
+  "record": {
+    "record_type": "EventRecordV1",
+    "event_id": {
+      "domain": "fixture.future-domain",
+      "kind": "convergence_event",
+      "native_value": "future-event-1",
+      "scope": []
+    },
+    "event_kind": "fixture.future.convergence",
+    "schema_ref": {
+      "domain": "fixture.future-domain",
+      "kind": "convergence_schema",
+      "native_value": "owner-decision-required",
+      "scope": []
+    },
+    "producer_ref": {
+      "domain": "fixture.future-domain",
+      "kind": "producer",
+      "native_value": "future-producer-1",
+      "scope": []
+    },
+    "producer_epoch": {
+      "domain": "fixture.future-domain",
+      "kind": "producer_epoch",
+      "native_value": "future-producer-epoch-1",
+      "scope": []
+    },
+    "subjects": [],
+    "direct_causes": [
+      {
+        "role": "left_parent",
+        "event_ref": {
+          "domain": "norn",
+          "kind": "session_event",
+          "native_value": "018f0000-0000-7000-8000-000000000010",
+          "scope": [
+            {
+              "role": "owning_session_incarnation",
+              "ref": {
+                "domain": "norn",
+                "kind": "session_incarnation",
+                "native_value": {
+                  "session_id": "fixture-left-session",
+                  "generation": "10000000-0000-4000-8000-000000000010"
+                },
+                "scope": []
+              }
+            }
+          ]
+        }
+      },
+      {
+        "role": "right_parent",
+        "event_ref": {
+          "domain": "norn",
+          "kind": "session_event",
+          "native_value": "018f0000-0000-7000-8000-000000000020",
+          "scope": [
+            {
+              "role": "owning_session_incarnation",
+              "ref": {
+                "domain": "norn",
+                "kind": "session_incarnation",
+                "native_value": {
+                  "session_id": "fixture-right-session",
+                  "generation": "10000000-0000-4000-8000-000000000020"
+                },
+                "scope": []
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "links": [],
+    "payload": {
+      "native_type": "future_convergence",
+      "value": {"ordering": "none_claimed"}
+    }
+  },
+  "authority_notes": {
+    "observed": ["norn_current_single_parent_limit"],
+    "proposed": ["multi_parent_logical_shape"],
+    "owner_decision": ["native_convergence_record", "parent_ordering", "canonical_bytes"]
+  }
+}

@@ -859,24 +859,35 @@ The following are non-negotiable:
 
 ## 18. Evidence basis
 
-The repository-observed statements above were initially grounded against these
-adjacent working copies on 2026-07-16. The Norn evidence was refreshed through
-accepted P3 and corrected P4 on 2026-07-19. The paths are evidence pointers,
-not a claim that the sibling repositories are vendored dependencies of Norn.
-Two read-only specialist agents performed the initial Frame/Beamr/Aion and
-Liminal/Lys inspections; the primary implementer reconciled their findings into
-this draft. Source-owner acceptance remains an open NS0 gate.
+The repository-observed identity, event, cursor, and authority statements were
+refreshed from pinned committed objects on 2026-07-19. The exact source
+selection, exclusions, discovery-query hashes, semantic source needles, and
+negative assertions live in the NS0
+[`inventory-manifest.json`](../reviews/evidence/ns0/inventory-manifest.json) and
+its [`verifier`](../reviews/evidence/ns0/verify_inventory.py). Dirty adjacent
+working-copy changes are outside that evidence boundary. The paths are evidence
+pointers, not vendored dependencies or source-owner acceptance. Checkout HEAD
+is informational only; the named committed object remains the evidence
+authority until a later explicit freshness sweep re-pins it.
+
+The broader architecture also retains earlier bounded semantic review and the
+accepted Norn Responses phase evidence. The mechanical manifest binds the
+load-bearing current authority seams; it does not turn every proposed
+architecture statement into an implemented or owner-approved contract.
 
 | Repository snapshot | Inspected evidence |
 |---|---|
-| Norn accepted P3 source `7f47218`, corrected P4 evidence source `180759f`, accepted D2 source `e9755fe` | `crates/norn/src/provider/openai/response_contract.rs`, `crates/norn/src/provider/openai/response_reconciler/item_channels/authority/`, and `crates/norn/src/provider/openai/output_item_test_fixtures.rs` for the exact 28-item inventory and schema/actionability contract; `crates/norn/src/provider/request/tool_call_caller.rs`, `crates/norn/src/session/events.rs`, and the canonical lifecycle fixtures for caller-aware persistence and representative child replay; `crates/norn/src/provider/response_audio.rs`, `crates/norn/src/loop/response_audio_capture.rs`, and `crates/norn/src/session/response_audio.rs` for the sidecar contract; the Responses plan plus P3 verdict `06be7c7` and corrected P4 verdict `0095f5c` for accepted evidence; `26b4e28` for unconditional D2 acceptance |
-| Beamr `d60f826` | `module_management.rs:17`, `spawning.rs:99`, `module.rs:280`, `tests/hot_code_loading.rs:171` under `crates/beamr` |
-| Frame `dadd430` | `frame-core/src/component.rs:10`, `frame-core/src/registry.rs:132,182`, `frame-state/src/handle.rs:39`, `frame-view/src/lib.rs:1`, `docs/briefs/F-5a-fragment-registration-assembly.md:1,103`, `docs/briefs/F-7b-frame-dev.md` |
-| Aion `833f271e` | `apps/aion-ops-console/src/app/routes.tsx:57,89`, `AppShell.tsx:22`, `providers.tsx:31`, `crates/aion-integration-norn/src/translate.rs:277` |
-| Liminal participant worktree `55856ae` | `PARTICIPANT-CONTRACT.md:474,509,1797,6005,6013,6147`; core/protocol/durability envelopes at lines `42`, `33`, and `15`; `services_schema.rs:43` |
-| Lys `28e01a4` | `attestation/artifact.rs:30,59`, `attestation/mod.rs:33`, `seal/authenticated.rs:41` under `crates/lys-core/src` |
-| Chiron dependency `25161bc8` (`399ec98` working copy) | Norn pins Chiron `diagnostics`, `lsp`, and `syntax` at root `Cargo.toml:19-21`; broader Chiron jobserver ownership remains proposed until its source-owner review |
-| Haematite `02b8592` | Norn requirements reconciled through `tree-sessions/haematite-branch-requirements.md`; runtime adoption remains proposed |
+| Norn `2ee67c5b708c6eb4f57bb9ffb494960a49869de0` | Current NS0 source base. P3 verdict `06be7c7`, corrected P4 verdict `0095f5c`, and D2 correction verdict `26b4e28` retain the accepted transcript and persistence evidence. |
+| Aion `eef93212ed0c8ef2406bcd387903495c8462835b` | Workflow/run/activity identity, workflow-local order, authenticated caller state, private write capability, and TypeScript aliases. |
+| Haematite `dc907a78e028a0027362775af4279b830aae3ca5` | Caller-keyed stream order, storage hashes, and per-shard ownership ballot/stamp. Runtime adoption remains proposed. |
+| Liminal `2bf71c43ad693963a96a15b99f3b2b0b989c2e23` | Participant/binding authority, participant cursor, durable-channel cursor, and distinct schema-ID domains. |
+| Lys `28e01a4fb9f0a3626b8b471fe8b55c3109596472` | Signing identity and attestation evidence; application principal/grant meaning remains outside the cryptographic type. |
+| Yggdrasil `6ccaeb89f457ef57880e683249608182b7681e8f` | Repository path identity, Git object identity, and ref-movement source event; stable workspace/change references remain absent. |
+| Tharsis `acac7baec611d7020366f07ca042dfba288c5dd7` | Provisional snapshot and in-memory build-lock correlation; not an accepted workspace or lease authority. |
+| Chiron `399ec98c006a7b16b03b6d9416d8bdec7f332fa3` | Diagnostic event and connection-local LSP request correlation; stable diagnostic identity remains absent. |
+| Beamr `c716992fdbe72a8b0949009d941c8bafcb784b66` | Runtime namespace, service instance, exit news, and capability-audit attribution. |
+| Frame `fbc03b55c53913f7f62d900152aae68552157bba` | Component identity, host grant provenance, lifecycle sequence, storage incarnation, and example-only TypeScript feed envelope. |
+| Prospekt `f00d919b2679bcfc45f694eab8fbabed112644ef` | Model-local document identity; no runtime event/cursor authority is inferred. |
 
 The Aion/Yggdrasil/Norn crash-resumable execution chain is labelled
 owner-confirmed because this document did not rerun the complete live workflow.

@@ -1,0 +1,425 @@
+{
+  "discovery": [
+    {
+      "axis": "identity",
+      "match_count": 46,
+      "match_sha256": "b456286642eb52dd4bfcd89274e56b6fc1a8dc9d8b28107f64237bef7e1fcde4",
+      "repository": "norn"
+    },
+    {
+      "axis": "event",
+      "match_count": 60,
+      "match_sha256": "408761010396abfd4b6ccc22e346882ba6ad5e560928d619fd7f34785af2d802",
+      "repository": "norn"
+    },
+    {
+      "axis": "cursor",
+      "match_count": 1124,
+      "match_sha256": "46f793a3dc1d0cfb1d7ad22ab81721f889dbbb20f23096b027a6317ffddc472a",
+      "repository": "norn"
+    },
+    {
+      "axis": "authority",
+      "match_count": 38,
+      "match_sha256": "fff93ffc9471d416cc7faea0173c7c02da46b7929ceba72c894a78546a7d8f4d",
+      "repository": "norn"
+    },
+    {
+      "axis": "identity",
+      "match_count": 103,
+      "match_sha256": "027c7e07b6067dabc02502ae70a38a2fc21995ae434d86cd683679e102f03c44",
+      "repository": "aion"
+    },
+    {
+      "axis": "event",
+      "match_count": 171,
+      "match_sha256": "62529e09ad19417470a9b6ff54afebdcfd9fa1842944810294ec5ca2fff5b746",
+      "repository": "aion"
+    },
+    {
+      "axis": "cursor",
+      "match_count": 1402,
+      "match_sha256": "c1ff6f4ddbf601d675438e04edea08800f99368bc82c3a86d79435aa614a3f16",
+      "repository": "aion"
+    },
+    {
+      "axis": "authority",
+      "match_count": 20,
+      "match_sha256": "277fb6cb1eec20f7db6f8b3224a35e4157f2ef0115412e4155c816ebf285ccbc",
+      "repository": "aion"
+    },
+    {
+      "axis": "identity",
+      "match_count": 25,
+      "match_sha256": "c7ce5f766bf9c8c1fa344d76be19b99316e84ebac2c1499d97e18604785bf440",
+      "repository": "haematite"
+    },
+    {
+      "axis": "event",
+      "match_count": 9,
+      "match_sha256": "14e7734803976cb798d420c0c2159fe9fab836a69f5fdce16f539b0253f7e3be",
+      "repository": "haematite"
+    },
+    {
+      "axis": "cursor",
+      "match_count": 329,
+      "match_sha256": "a40ff7e792ecf95d200973f1dd6998fd20ee586dcd4cc4fab2294a4d5cd00c12",
+      "repository": "haematite"
+    },
+    {
+      "axis": "authority",
+      "match_count": 5,
+      "match_sha256": "dfa89daf67cb499e4eb6200313698f6903e164cd7069814c7ad8b216c50d3055",
+      "repository": "haematite"
+    },
+    {
+      "axis": "identity",
+      "match_count": 67,
+      "match_sha256": "fbd03dfd14c01c598b22859ad83da48f81a60e2d1ac1ca3eb2bc68dcec50367f",
+      "repository": "liminal"
+    },
+    {
+      "axis": "event",
+      "match_count": 105,
+      "match_sha256": "5964bfa489965589dcc05e3af42b38ef8bcce4488198d0194f7a3a5c305b7385",
+      "repository": "liminal"
+    },
+    {
+      "axis": "cursor",
+      "match_count": 1836,
+      "match_sha256": "b3860dadd819c3f8ece7e80942d032c5de73acd20d0e1143969a541d575a9d33",
+      "repository": "liminal"
+    },
+    {
+      "axis": "authority",
+      "match_count": 77,
+      "match_sha256": "6d4cffbf4c51bca32c35369f565f4717be357ddc50b299b3da21698a5f76d4fb",
+      "repository": "liminal"
+    },
+    {
+      "axis": "identity",
+      "match_count": 5,
+      "match_sha256": "a2671e2de567e4362af31ba8ed2cd9b3a17183f97d989b59b390fb874a825f40",
+      "repository": "lys"
+    },
+    {
+      "axis": "event",
+      "match_count": 1,
+      "match_sha256": "8159f8227b979cc8827b8e8c0bfcae6c43cfed214f5cf21d8c26152102957635",
+      "repository": "lys"
+    },
+    {
+      "axis": "cursor",
+      "match_count": 7,
+      "match_sha256": "f892159ad3cd177ac545119f59dac93aacd85e961bec7ff74c531a65a3794caa",
+      "repository": "lys"
+    },
+    {
+      "axis": "authority",
+      "match_count": 1,
+      "match_sha256": "020c8624ef03b3a9c8533ad7086de09a61bfab184aec8094b815692c3d5e9e50",
+      "repository": "lys"
+    },
+    {
+      "axis": "identity",
+      "match_count": 22,
+      "match_sha256": "c215804be8810167b3660445f4e5d872b46c1165a6be12525721fe2199d56a62",
+      "repository": "yggdrasil"
+    },
+    {
+      "axis": "event",
+      "match_count": 17,
+      "match_sha256": "4f200f34e30aa9f4124712d28b1eb8821415df64045fa6d1611a4c51b54d8e91",
+      "repository": "yggdrasil"
+    },
+    {
+      "axis": "cursor",
+      "match_count": 73,
+      "match_sha256": "ff49a42444ab3e154c9465416a6fed69e44996e019dc8228b68885d1826fa0fd",
+      "repository": "yggdrasil"
+    },
+    {
+      "axis": "authority",
+      "match_count": 6,
+      "match_sha256": "dea7f12d65b2f56ab1494390a1c8f840f94d676475d92a6dc564ab2b6c9fab04",
+      "repository": "yggdrasil"
+    },
+    {
+      "axis": "identity",
+      "match_count": 12,
+      "match_sha256": "b0c082009d45e800d95acdd18d57c983e1e637c2737c8b4cc0cc0d34ac254106",
+      "repository": "tharsis"
+    },
+    {
+      "axis": "event",
+      "match_count": 3,
+      "match_sha256": "f9f48028adc1fa44504822fa807e8b82b3259061d8728963fbf1a51e11993127",
+      "repository": "tharsis"
+    },
+    {
+      "axis": "cursor",
+      "match_count": 1,
+      "match_sha256": "e5d73707847a68856095abd70e4ead88b028d67bef7d4cce4e9e544227476978",
+      "repository": "tharsis"
+    },
+    {
+      "axis": "authority",
+      "match_count": 1,
+      "match_sha256": "58b1ef4fd40fafc97dd0c9545a5764208acca83fa9fb9b7318a524a35f04002a",
+      "repository": "tharsis"
+    },
+    {
+      "axis": "identity",
+      "match_count": 18,
+      "match_sha256": "fa288f14ebf810c2ec593d08c3c9698a218f6b150ebb8e78bd5e23dbbc75592c",
+      "repository": "chiron"
+    },
+    {
+      "axis": "event",
+      "match_count": 4,
+      "match_sha256": "4a10d4c6be165de02f04b6ce0b0a0d435db0b10c989cc8278b8dd91dd4a51f72",
+      "repository": "chiron"
+    },
+    {
+      "axis": "cursor",
+      "match_count": 53,
+      "match_sha256": "467cd9be5de2ccc7c51eb32c744385d3c1eaaaefd7c3babf7345581b2011ed3c",
+      "repository": "chiron"
+    },
+    {
+      "axis": "authority",
+      "match_count": 0,
+      "match_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repository": "chiron"
+    },
+    {
+      "axis": "identity",
+      "match_count": 22,
+      "match_sha256": "d9f3849f8d8945b75b63f5d3e03da2b9d1d87ea5f276a7c6d3ec464a5fb217a3",
+      "repository": "beamr"
+    },
+    {
+      "axis": "event",
+      "match_count": 38,
+      "match_sha256": "17fe38817e16957d6653271a3f23ec7a6c76de52566f88bd726eb07543a083bc",
+      "repository": "beamr"
+    },
+    {
+      "axis": "cursor",
+      "match_count": 452,
+      "match_sha256": "faa97529a1b0e8504387336968262728c60da7269b725c681a84c8ccca504cf0",
+      "repository": "beamr"
+    },
+    {
+      "axis": "authority",
+      "match_count": 8,
+      "match_sha256": "41efcdd12e359ead5e2db572e7adcf595e44077ac668d81e46aa9c33fd6e00b8",
+      "repository": "beamr"
+    },
+    {
+      "axis": "identity",
+      "match_count": 27,
+      "match_sha256": "e3b24b14fb12a2bea61d88c25ac18201c9d4f0e3ba56d6c1bb1339f776f0cca2",
+      "repository": "frame"
+    },
+    {
+      "axis": "event",
+      "match_count": 40,
+      "match_sha256": "1b4bb227e0816b1b4c048ff8a38b6e634ddb7692e4897d18c138e46d74328291",
+      "repository": "frame"
+    },
+    {
+      "axis": "cursor",
+      "match_count": 79,
+      "match_sha256": "f8d537c0ceb7ed9a673900170e954762b418621e3ae9bfa8350925627d0f1ac7",
+      "repository": "frame"
+    },
+    {
+      "axis": "authority",
+      "match_count": 18,
+      "match_sha256": "fb0bd2c23ab0930b77cb26df19836bd19689fae25c9c2706078c53b9f619091a",
+      "repository": "frame"
+    },
+    {
+      "axis": "identity",
+      "match_count": 1,
+      "match_sha256": "cf806bedde913043b8343343eb0586a11fd7cd204f2400d56bca2404fd5b2e89",
+      "repository": "prospekt"
+    },
+    {
+      "axis": "event",
+      "match_count": 0,
+      "match_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repository": "prospekt"
+    },
+    {
+      "axis": "cursor",
+      "match_count": 0,
+      "match_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repository": "prospekt"
+    },
+    {
+      "axis": "authority",
+      "match_count": 0,
+      "match_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repository": "prospekt"
+    }
+  ],
+  "errors": [],
+  "format": 1,
+  "manifest": "docs/reviews/evidence/ns0/inventory-manifest.json",
+  "manifest_sha256": "8dce77bdf390f0eca6ee1be380a417b6a91dbe72d5457e0db3575396cf2db843",
+  "negative_assertion_count": 7,
+  "negative_assertions": [
+    {
+      "id": "norn.no-shared-reference-or-epoch-types",
+      "match_count": 0,
+      "repository": "norn"
+    },
+    {
+      "id": "liminal.no-generic-delivery-stream-epoch",
+      "match_count": 0,
+      "repository": "liminal"
+    },
+    {
+      "id": "yggdrasil.no-stable-workspace-or-change-types",
+      "match_count": 0,
+      "repository": "yggdrasil"
+    },
+    {
+      "id": "tharsis.no-stable-workspace-reference",
+      "match_count": 0,
+      "repository": "tharsis"
+    },
+    {
+      "id": "chiron.no-stable-diagnostic-reference",
+      "match_count": 0,
+      "repository": "chiron"
+    },
+    {
+      "id": "frame.no-loaded-or-browser-generation-types",
+      "match_count": 0,
+      "repository": "frame"
+    },
+    {
+      "id": "prospekt.no-runtime-event-or-cursor-contract",
+      "match_count": 0,
+      "repository": "prospekt"
+    }
+  ],
+  "passed": true,
+  "record_count": 34,
+  "repositories": [
+    {
+      "head": "394c07c23a0d40f357a92a6c4adcb6b31bb47c74",
+      "head_match_required": false,
+      "head_matches_pin": false,
+      "name": "norn",
+      "pin_verified": true,
+      "revision": "2ee67c5b708c6eb4f57bb9ffb494960a49869de0",
+      "source_path_count": 684,
+      "source_path_sha256": "99d59ef81f83dfc1cbe266448cda0293cb4c60631980be3adf40a546a8d61175"
+    },
+    {
+      "head": "eef93212ed0c8ef2406bcd387903495c8462835b",
+      "head_match_required": false,
+      "head_matches_pin": true,
+      "name": "aion",
+      "pin_verified": true,
+      "revision": "eef93212ed0c8ef2406bcd387903495c8462835b",
+      "source_path_count": 969,
+      "source_path_sha256": "7b2da4b13946ca5e3f995f9742aeec58727b4d5fa975b0d7f245a8c8e082729b"
+    },
+    {
+      "head": "dc907a78e028a0027362775af4279b830aae3ca5",
+      "head_match_required": false,
+      "head_matches_pin": true,
+      "name": "haematite",
+      "pin_verified": true,
+      "revision": "dc907a78e028a0027362775af4279b830aae3ca5",
+      "source_path_count": 157,
+      "source_path_sha256": "ec38e8cbb78d75cbf6ac8d5ec309cfe9fdeac291169df5026f09cfb252acfef4"
+    },
+    {
+      "head": "2bf71c43ad693963a96a15b99f3b2b0b989c2e23",
+      "head_match_required": false,
+      "head_matches_pin": true,
+      "name": "liminal",
+      "pin_verified": true,
+      "revision": "2bf71c43ad693963a96a15b99f3b2b0b989c2e23",
+      "source_path_count": 315,
+      "source_path_sha256": "77929e81dd9ae974079cd8b303189b8451d610c5e1049e8ec64b24afa80f44ca"
+    },
+    {
+      "head": "28e01a4fb9f0a3626b8b471fe8b55c3109596472",
+      "head_match_required": false,
+      "head_matches_pin": true,
+      "name": "lys",
+      "pin_verified": true,
+      "revision": "28e01a4fb9f0a3626b8b471fe8b55c3109596472",
+      "source_path_count": 46,
+      "source_path_sha256": "f8edbb999113d7c491c5f184db98662720fc96cd563deb727b36786da16d64e8"
+    },
+    {
+      "head": "6ccaeb89f457ef57880e683249608182b7681e8f",
+      "head_match_required": false,
+      "head_matches_pin": true,
+      "name": "yggdrasil",
+      "pin_verified": true,
+      "revision": "6ccaeb89f457ef57880e683249608182b7681e8f",
+      "source_path_count": 374,
+      "source_path_sha256": "1a107bd5c4b57ee5ab09dead7ed16f89392e1d772b2e6c77d681a54240ebd573"
+    },
+    {
+      "head": "acac7baec611d7020366f07ca042dfba288c5dd7",
+      "head_match_required": false,
+      "head_matches_pin": true,
+      "name": "tharsis",
+      "pin_verified": true,
+      "revision": "acac7baec611d7020366f07ca042dfba288c5dd7",
+      "source_path_count": 19,
+      "source_path_sha256": "21f6030034f2dda399b325a8498c2bf9783bc10d2b2869bd937044281c80074a"
+    },
+    {
+      "head": "399ec98c006a7b16b03b6d9416d8bdec7f332fa3",
+      "head_match_required": false,
+      "head_matches_pin": true,
+      "name": "chiron",
+      "pin_verified": true,
+      "revision": "399ec98c006a7b16b03b6d9416d8bdec7f332fa3",
+      "source_path_count": 245,
+      "source_path_sha256": "599cda948735acd98e4f303f9346f1d7c2f063ebf452b81c6671ad73cee3aebf"
+    },
+    {
+      "head": "c716992fdbe72a8b0949009d941c8bafcb784b66",
+      "head_match_required": false,
+      "head_matches_pin": true,
+      "name": "beamr",
+      "pin_verified": true,
+      "revision": "c716992fdbe72a8b0949009d941c8bafcb784b66",
+      "source_path_count": 273,
+      "source_path_sha256": "694c61562f829300ae3d01ea417b568362426d419e3450502dc05417130b8896"
+    },
+    {
+      "head": "fbc03b55c53913f7f62d900152aae68552157bba",
+      "head_match_required": false,
+      "head_matches_pin": true,
+      "name": "frame",
+      "pin_verified": true,
+      "revision": "fbc03b55c53913f7f62d900152aae68552157bba",
+      "source_path_count": 205,
+      "source_path_sha256": "e6e3edf1983803c2ab08b27d4455e151d4a19b294a0ee05ed6a6b5bb93c6c013"
+    },
+    {
+      "head": "f00d919b2679bcfc45f694eab8fbabed112644ef",
+      "head_match_required": false,
+      "head_matches_pin": true,
+      "name": "prospekt",
+      "pin_verified": true,
+      "revision": "f00d919b2679bcfc45f694eab8fbabed112644ef",
+      "source_path_count": 11,
+      "source_path_sha256": "e99a498e55eeb51604c6546caf17f1e6ec796e1eace70fe02c652c05ea745e97"
+    }
+  ],
+  "repository_count": 11
+}

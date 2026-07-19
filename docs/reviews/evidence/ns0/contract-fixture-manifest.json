@@ -1,0 +1,50 @@
+{
+  "format": 1,
+  "status": "logical_candidates_not_canonical_bytes",
+  "contract_document": "../../../design/ablative-stack-contract-freeze.md",
+  "hash_purpose": "fixture_file_integrity_only",
+  "fixtures": [
+    {
+      "id": "norn-event",
+      "path": "fixtures/norn-event.json",
+      "sha256": "1a8a0d75f1e70efc6a9a1b26387c5047ae89b2d131ac8e321394ab44ac23ae65",
+      "classification": "event",
+      "record_type": "EventRecordV1"
+    },
+    {
+      "id": "aion-event",
+      "path": "fixtures/aion-event.json",
+      "sha256": "d9a8d98dc4de63b2c67994082ff32fab72ca6e8a8bccf5627afb47e4fee6f87b",
+      "classification": "event",
+      "record_type": "EventRecordV1"
+    },
+    {
+      "id": "frame-contribution-event",
+      "path": "fixtures/frame-contribution-event.json",
+      "sha256": "2daa8582460d4e8169501750b225693d6f707b1d4ba43ce6a36f978bfefe72f7",
+      "classification": "event",
+      "record_type": "EventRecordV1"
+    },
+    {
+      "id": "durable-relation",
+      "path": "fixtures/durable-relation.json",
+      "sha256": "5b9a305c1d3ff8e47c636026d6138ad3e98dfcbebe3b60a095a5bfed2d37fac5",
+      "classification": "relation",
+      "record_type": "RelationRecordV1"
+    },
+    {
+      "id": "opaque-unknown",
+      "path": "fixtures/opaque-unknown.json",
+      "sha256": "5795472d3dad97b18741f8148ba4d16f8d76afd9bd3b9b2258cdeb9cf3f93553",
+      "classification": "opaque_unknown",
+      "record_type": "OpaqueNativeRecordV1"
+    },
+    {
+      "id": "multi-parent-unsupported",
+      "path": "fixtures/multi-parent-unsupported.json",
+      "sha256": "aba2306c101ecaf2f69b2d98a2fc0860a2cc4ce86e4e1e35274674a2de9507af",
+      "classification": "future_multi_parent",
+      "record_type": "EventRecordV1"
+    }
+  ]
+}

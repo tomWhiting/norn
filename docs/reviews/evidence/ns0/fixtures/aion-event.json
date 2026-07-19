@@ -1,0 +1,60 @@
+{
+  "fixture_format": "ns0-logical-candidate-v1",
+  "fixture_id": "aion-event",
+  "status": "candidate_not_canonical_bytes",
+  "classification": "event",
+  "record": {
+    "record_type": "EventRecordV1",
+    "event_id": {
+      "domain": "aion",
+      "kind": "candidate_workflow_event",
+      "native_value": {"workflow_id": "20000000-0000-4000-8000-000000000001", "sequence": 7},
+      "scope": []
+    },
+    "event_kind": "aion.workflow.completed",
+    "schema_ref": {
+      "domain": "aion",
+      "kind": "workflow_event_schema",
+      "native_value": "Event.WorkflowCompleted",
+      "scope": []
+    },
+    "producer_ref": {
+      "domain": "aion",
+      "kind": "workflow_history",
+      "native_value": "20000000-0000-4000-8000-000000000001",
+      "scope": []
+    },
+    "producer_epoch": {
+      "domain": "aion",
+      "kind": "candidate_producer_epoch",
+      "native_value": "owner-decision-required",
+      "scope": []
+    },
+    "subjects": [
+      {
+        "role": "workflow_run",
+        "ref": {
+          "domain": "aion",
+          "kind": "workflow_run",
+          "native_value": {
+            "workflow_id": "20000000-0000-4000-8000-000000000001",
+            "run_id": "20000000-0000-4000-8000-000000000002"
+          },
+          "scope": []
+        }
+      }
+    ],
+    "direct_causes": [],
+    "links": [],
+    "occurred_at": "2026-01-01T00:00:01Z",
+    "payload": {
+      "native_type": "Event.WorkflowCompleted",
+      "value": {"result": {"fixture": "complete"}}
+    }
+  },
+  "authority_notes": {
+    "observed": ["workflow_id", "run_id", "workflow_local_sequence", "payload_type"],
+    "proposed": ["projection_shape", "event_identity_from_workflow_sequence"],
+    "owner_decision": ["producer_epoch", "projection_identity"]
+  }
+}

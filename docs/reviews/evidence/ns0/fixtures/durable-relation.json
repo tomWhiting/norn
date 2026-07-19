@@ -1,0 +1,74 @@
+{
+  "fixture_format": "ns0-logical-candidate-v1",
+  "fixture_id": "durable-relation",
+  "status": "candidate_not_canonical_bytes",
+  "classification": "relation",
+  "record": {
+    "record_type": "RelationRecordV1",
+    "relation_id": {
+      "domain": "aion",
+      "kind": "candidate_workflow_session_relation",
+      "native_value": "owner-decision-required",
+      "scope": []
+    },
+    "relation_kind": "aion.workflow_run_executes_norn_session",
+    "schema_ref": {
+      "domain": "aion",
+      "kind": "candidate_relation_schema",
+      "native_value": "owner-decision-required",
+      "scope": []
+    },
+    "asserting_producer_ref": {
+      "domain": "aion",
+      "kind": "workflow_history",
+      "native_value": "20000000-0000-4000-8000-000000000001",
+      "scope": []
+    },
+    "asserting_producer_epoch": {
+      "domain": "aion",
+      "kind": "candidate_producer_epoch",
+      "native_value": "owner-decision-required",
+      "scope": []
+    },
+    "endpoints": [
+      {
+        "role": "workflow_run",
+        "ref": {
+          "domain": "aion",
+          "kind": "workflow_run",
+          "native_value": {
+            "workflow_id": "20000000-0000-4000-8000-000000000001",
+            "run_id": "20000000-0000-4000-8000-000000000002"
+          },
+          "scope": []
+        }
+      },
+      {
+        "role": "executed_session",
+        "ref": {
+          "domain": "norn",
+          "kind": "session_incarnation",
+          "native_value": {
+            "session_id": "fixture-session",
+            "generation": "10000000-0000-4000-8000-000000000001"
+          },
+          "scope": []
+        }
+      }
+    ],
+    "supporting_native_refs": [
+      {
+        "domain": "aion",
+        "kind": "candidate_session_execution_binding_record",
+        "native_value": "owner-decision-required",
+        "scope": []
+      }
+    ],
+    "direct_causes": []
+  },
+  "authority_notes": {
+    "observed": ["workflow_run", "norn_session_incarnation"],
+    "proposed": ["relation_shape", "relation_kind"],
+    "owner_decision": ["asserting_authority", "relation_id", "supporting_native_record"]
+  }
+}

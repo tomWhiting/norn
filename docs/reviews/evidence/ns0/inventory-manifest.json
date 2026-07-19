@@ -1,0 +1,318 @@
+{
+  "format": 1,
+  "scope": "NS0 committed Rust and TypeScript authority inventory",
+  "source_selection": {
+    "extensions": ["rs", "ts", "tsx"],
+    "committed_objects_only": true,
+    "exclusions": [
+      "(^|/)(target|node_modules|\\.worktrees|\\.yggdrasil-worktrees)(/|$)",
+      "(^|/)\\.meridian(/|$)",
+      "(^|/)(tests?|testdata|fixtures|attribution)(/|$)",
+      "(^|/)tests\\.rs$",
+      "_tests\\.rs$",
+      "\\.test\\.(ts|tsx)$"
+    ]
+  },
+  "repositories": [
+    {"name": "norn", "directory": "norn", "revision": "2ee67c5b708c6eb4f57bb9ffb494960a49869de0", "require_head_match": false},
+    {"name": "aion", "directory": "aion", "revision": "eef93212ed0c8ef2406bcd387903495c8462835b", "require_head_match": false},
+    {"name": "haematite", "directory": "haematite", "revision": "dc907a78e028a0027362775af4279b830aae3ca5", "require_head_match": false},
+    {"name": "liminal", "directory": "liminal", "revision": "2bf71c43ad693963a96a15b99f3b2b0b989c2e23", "require_head_match": false},
+    {"name": "lys", "directory": "lys", "revision": "28e01a4fb9f0a3626b8b471fe8b55c3109596472", "require_head_match": false},
+    {"name": "yggdrasil", "directory": "yggdrasil", "revision": "6ccaeb89f457ef57880e683249608182b7681e8f", "require_head_match": false},
+    {"name": "tharsis", "directory": "tharsis", "revision": "acac7baec611d7020366f07ca042dfba288c5dd7", "require_head_match": false},
+    {"name": "chiron", "directory": "chiron", "revision": "399ec98c006a7b16b03b6d9416d8bdec7f332fa3", "require_head_match": false},
+    {"name": "beamr", "directory": "beamr", "revision": "c716992fdbe72a8b0949009d941c8bafcb784b66", "require_head_match": false},
+    {"name": "frame", "directory": "frame", "revision": "fbc03b55c53913f7f62d900152aae68552157bba", "require_head_match": false},
+    {"name": "prospekt", "directory": "prospekt", "revision": "f00d919b2679bcfc45f694eab8fbabed112644ef", "require_head_match": false}
+  ],
+  "discovery_queries": [
+    {"axis": "identity", "pattern": "(struct|enum|type|interface|class)[[:space:]]+[A-Za-z0-9_]*(Id|ID|Identity|Ref|Key|Hash|Digest|Fingerprint)[A-Za-z0-9_]*"},
+    {"axis": "event", "pattern": "(struct|enum|type|interface|class)[[:space:]]+[A-Za-z0-9_]*(Event|Record|Envelope)[A-Za-z0-9_]*"},
+    {"axis": "cursor", "pattern": "(struct|enum|type|interface|class)[[:space:]]+[A-Za-z0-9_]*(Cursor|Sequence|Stream|Offset)[A-Za-z0-9_]*|cursor|sequence"},
+    {"axis": "authority", "pattern": "(struct|enum|type|interface|class)[[:space:]]+[A-Za-z0-9_]*(Authority|Principal|Grant|Capability|Epoch|Generation|Incarnation|Lease|Token|Credential)[A-Za-z0-9_]*|granted_by"}
+  ],
+  "records": [
+    {
+      "id": "norn.session-event",
+      "repository": "norn",
+      "axes": ["identity", "event"],
+      "path": "crates/norn/src/session/events.rs",
+      "needles": ["pub struct EventId(String);", "pub enum SessionEvent"],
+      "disposition": "native_event_authority"
+    },
+    {
+      "id": "norn.session-incarnation",
+      "repository": "norn",
+      "axes": ["identity", "authority"],
+      "path": "crates/norn/src/session/persistence/types.rs",
+      "needles": ["pub struct SessionIndexEntry {", "pub generation: Uuid", "pub rel_path: Option<String>"],
+      "disposition": "native_storage_authority"
+    },
+    {
+      "id": "norn.action-attribution",
+      "repository": "norn",
+      "axes": ["event", "authority"],
+      "path": "crates/norn/src/session/action_log.rs",
+      "needles": ["pub struct ActionLogEntry", "pub enum ActionOrigin"],
+      "disposition": "attribution_not_authenticated_principal"
+    },
+    {
+      "id": "aion.execution-spine",
+      "repository": "aion",
+      "axes": ["identity"],
+      "path": "crates/aion-core/src/ids.rs",
+      "needles": ["pub struct WorkflowId(Uuid);", "pub struct ActivityId(u64);", "pub struct RunId(Uuid);"],
+      "disposition": "native_workflow_authority"
+    },
+    {
+      "id": "aion.workflow-order",
+      "repository": "aion",
+      "axes": ["event", "cursor"],
+      "path": "crates/aion-core/src/event.rs",
+      "needles": ["pub struct EventEnvelope", "pub seq: u64"],
+      "disposition": "workflow_local_order_not_global_cursor"
+    },
+    {
+      "id": "aion.caller-principal",
+      "repository": "aion",
+      "axes": ["identity", "authority"],
+      "path": "crates/aion-server/src/namespace/resolver.rs",
+      "needles": ["pub struct CallerIdentity {", "    subject: String,"],
+      "disposition": "native_request_principal_not_norn_grant"
+    },
+    {
+      "id": "aion.write-capability",
+      "repository": "aion",
+      "axes": ["authority"],
+      "path": "crates/aion-store/src/store.rs",
+      "needles": ["pub struct WriteToken"],
+      "disposition": "private_append_capability_not_identity"
+    },
+    {
+      "id": "aion.typescript-aliases",
+      "repository": "aion",
+      "axes": ["identity"],
+      "path": "apps/aion-ops-console/src/types/generated/index.ts",
+      "needles": ["export type WorkflowId = string;", "export type RunId = string;", "export type ActivityId = number;"],
+      "disposition": "wire_alias_not_second_authority"
+    },
+    {
+      "id": "yggdrasil.repository",
+      "repository": "yggdrasil",
+      "axes": ["identity", "authority"],
+      "path": "crates/libyggd/src/events/repo_id.rs",
+      "needles": ["pub struct RepoId(pub(crate) PathBuf);"],
+      "disposition": "local_path_identity"
+    },
+    {
+      "id": "yggdrasil.snapshot",
+      "repository": "yggdrasil",
+      "axes": ["identity"],
+      "path": "crates/libyggd/src/git/repo.rs",
+      "needles": ["pub struct ObjectId([u8; 20]);"],
+      "disposition": "native_git_object_identity"
+    },
+    {
+      "id": "yggdrasil.ref-event",
+      "repository": "yggdrasil",
+      "axes": ["event"],
+      "path": "crates/libyggd/src/events/ref_moved.rs",
+      "needles": ["pub struct RefMoved"],
+      "disposition": "native_source_event"
+    },
+    {
+      "id": "chiron.diagnostic",
+      "repository": "chiron",
+      "axes": ["identity", "event"],
+      "path": "crates/diagnostics/src/event.rs",
+      "needles": ["pub struct DiagnosticEvent", "pub source_tool: String"],
+      "disposition": "event_without_stable_finding_identity"
+    },
+    {
+      "id": "chiron.lsp-request",
+      "repository": "chiron",
+      "axes": ["identity", "cursor"],
+      "path": "crates/lsp/src/transport/message.rs",
+      "needles": ["pub enum RequestId"],
+      "disposition": "connection_local_correlation_not_cursor"
+    },
+    {
+      "id": "frame.component",
+      "repository": "frame",
+      "axes": ["identity", "authority"],
+      "path": "crates/frame-capability/src/lib.rs",
+      "needles": ["pub struct ComponentId([u8; 32]);", "frame/component-id/v1", "pub struct Grant {", "pub granted_by: String"],
+      "disposition": "native_component_identity_and_host_grant"
+    },
+    {
+      "id": "frame.lifecycle-news",
+      "repository": "frame",
+      "axes": ["event", "cursor"],
+      "path": "crates/frame-core/src/event.rs",
+      "needles": ["pub struct LifecycleEvent", "pub sequence: u64"],
+      "disposition": "process_registry_order_not_durable_cursor"
+    },
+    {
+      "id": "frame.storage-incarnation",
+      "repository": "frame",
+      "axes": ["identity", "authority"],
+      "path": "crates/frame-state/src/handle.rs",
+      "needles": ["pub struct ComponentStoreHandle {\n    shared: Arc<Shared>,\n    component: ComponentId,\n    incarnation: u64,"],
+      "disposition": "native_storage_fence_not_runtime_generation"
+    },
+    {
+      "id": "frame.demo-envelope",
+      "repository": "frame",
+      "axes": ["event"],
+      "path": "examples/frame-demo/src/protocol.ts",
+      "needles": ["export interface FeedEnvelope", "export function encodeEnvelope"],
+      "disposition": "example_protocol_not_shared_authority"
+    },
+    {
+      "id": "beamr.namespace",
+      "repository": "beamr",
+      "axes": ["identity"],
+      "path": "crates/beamr/src/namespace.rs",
+      "needles": ["pub struct NamespaceId"],
+      "disposition": "scheduler_local_namespace"
+    },
+    {
+      "id": "beamr.service-instance",
+      "repository": "beamr",
+      "axes": ["identity", "authority"],
+      "path": "crates/beamr/src/scheduler/service.rs",
+      "needles": ["pub struct ServiceInstanceId"],
+      "disposition": "process_local_instance_not_supervisor_epoch"
+    },
+    {
+      "id": "beamr.exit-news",
+      "repository": "beamr",
+      "axes": ["event"],
+      "path": "crates/beamr/src/scheduler/exit_events.rs",
+      "needles": ["pub enum ExitEvent {"],
+      "disposition": "runtime_news_not_semantic_event"
+    },
+    {
+      "id": "beamr.capability-audit",
+      "repository": "beamr",
+      "axes": ["event", "authority"],
+      "path": "crates/beamr/src/capability/audit.rs",
+      "needles": ["pub struct CapabilityAuditEvent"],
+      "disposition": "runtime_attribution_not_application_principal"
+    },
+    {
+      "id": "liminal.participant-binding",
+      "repository": "liminal",
+      "axes": ["identity", "authority"],
+      "path": "crates/liminal-protocol/src/wire/primitives.rs",
+      "needles": ["pub type ConversationId = u64;", "pub type ParticipantId = u64;", "pub struct Generation", "pub struct BindingEpoch"],
+      "disposition": "participant_protocol_authority"
+    },
+    {
+      "id": "liminal.participant-cursor",
+      "repository": "liminal",
+      "axes": ["cursor", "authority"],
+      "path": "crates/liminal-protocol/src/lifecycle/cursor_facts.rs",
+      "needles": ["pub struct BoundParticipantCursor {\n    participant_id: ParticipantId,\n    active_binding_epoch: BindingEpoch,\n    cursor: DeliverySeq,"],
+      "disposition": "participant_scoped_cumulative_cursor"
+    },
+    {
+      "id": "liminal.channel-cursor",
+      "repository": "liminal",
+      "axes": ["cursor"],
+      "path": "crates/liminal/src/durability/cursor.rs",
+      "needles": ["pub struct ConsumerCursor", "pub consumer_id: String", "pub partition_key: String"],
+      "disposition": "channel_partition_cursor_not_participant_cursor"
+    },
+    {
+      "id": "liminal.protocol-schema",
+      "repository": "liminal",
+      "axes": ["identity"],
+      "path": "crates/liminal/src/protocol/envelope.rs",
+      "needles": ["pub struct SchemaId([u8; Self::WIRE_LEN]);"],
+      "disposition": "protocol_content_schema_identity"
+    },
+    {
+      "id": "liminal.channel-schema",
+      "repository": "liminal",
+      "axes": ["identity"],
+      "path": "crates/liminal/src/channel/schema.rs",
+      "needles": ["pub struct SchemaId(Uuid);"],
+      "disposition": "channel_schema_version_not_protocol_schema"
+    },
+    {
+      "id": "haematite.event-stream",
+      "repository": "haematite",
+      "axes": ["event", "cursor"],
+      "path": "crates/haematite/src/api/types.rs",
+      "needles": ["pub struct Event", "pub seq: u64"],
+      "disposition": "caller_keyed_stream_order"
+    },
+    {
+      "id": "haematite.storage-hash",
+      "repository": "haematite",
+      "axes": ["identity"],
+      "path": "crates/haematite/src/tree/node.rs",
+      "needles": ["pub struct Hash([u8; HASH_SIZE]);"],
+      "disposition": "storage_address_not_semantic_digest"
+    },
+    {
+      "id": "haematite.ownership-fence",
+      "repository": "haematite",
+      "axes": ["cursor", "authority"],
+      "path": "crates/haematite/src/sync_codec/ballot.rs",
+      "needles": ["pub struct Ballot", "pub struct Stamp"],
+      "disposition": "native_per_shard_ownership_epoch_and_order"
+    },
+    {
+      "id": "lys.signing-identity",
+      "repository": "lys",
+      "axes": ["identity", "authority"],
+      "path": "crates/lys-core/src/keys/identity.rs",
+      "needles": ["pub struct Ed25519Identity"],
+      "disposition": "cryptographic_identity_not_application_principal"
+    },
+    {
+      "id": "lys.attestation",
+      "repository": "lys",
+      "axes": ["event", "authority"],
+      "path": "crates/lys-core/src/attestation/artifact.rs",
+      "needles": ["pub struct Attestation", "pub payload_hash: [u8; 32]"],
+      "disposition": "evidence_not_semantic_event_or_grant"
+    },
+    {
+      "id": "tharsis.provisional-identities",
+      "repository": "tharsis",
+      "axes": ["identity"],
+      "path": "crates/tharsis-core/src/snapshot.rs",
+      "needles": ["pub struct SnapshotId(pub String);"],
+      "disposition": "provisional_snapshot_identity"
+    },
+    {
+      "id": "tharsis.build-lock",
+      "repository": "tharsis",
+      "axes": ["identity", "authority"],
+      "path": "crates/tharsis-server/src/build_lock.rs",
+      "needles": ["pub struct TicketId(pub u64);"],
+      "disposition": "in_memory_lock_correlation_not_durable_lease"
+    },
+    {
+      "id": "prospekt.document-id",
+      "repository": "prospekt",
+      "axes": ["identity"],
+      "path": "crates/prospekt-core/src/document.rs",
+      "needles": ["pub fn mint_next_id"],
+      "disposition": "model_local_document_reference"
+    }
+  ],
+  "negative_assertions": [
+    {"id": "norn.no-shared-reference-or-epoch-types", "repository": "norn", "pattern": "(struct|enum|type)[[:space:]]+(SessionRef|AgentRef|SessionRunEpoch|ProducerEpoch|DeliveryStreamEpoch)"},
+    {"id": "yggdrasil.no-stable-workspace-or-change-types", "repository": "yggdrasil", "pattern": "(struct|enum|type|interface)[[:space:]]+(WorkspaceId|WorkspaceRef|ChangeId|ChangeRef)"},
+    {"id": "chiron.no-stable-diagnostic-reference", "repository": "chiron", "pattern": "(struct|enum|type)[[:space:]]+(DiagnosticId|DiagnosticRef|DiagnosticRunId)"},
+    {"id": "frame.no-loaded-or-browser-generation-types", "repository": "frame", "pattern": "(struct|enum|type|interface)[[:space:]]+(ComponentGenerationId|BrowserActivationId)"},
+    {"id": "liminal.no-generic-delivery-stream-epoch", "repository": "liminal", "pattern": "(struct|enum|type|interface)[[:space:]]+DeliveryStreamEpoch"},
+    {"id": "tharsis.no-stable-workspace-reference", "repository": "tharsis", "pattern": "(struct|enum|type)[[:space:]]+(WorkspaceId|WorkspaceRef)"},
+    {"id": "prospekt.no-runtime-event-or-cursor-contract", "repository": "prospekt", "pattern": "(struct|enum|type)[[:space:]]+(EventRecord|DeliveryCursor|ProducerEpoch)"}
+  ]
+}
