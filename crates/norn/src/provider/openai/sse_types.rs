@@ -25,6 +25,7 @@ use std::time::Duration;
 
 use regex::Regex;
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::error::{ProviderError, TransientKind};
 use crate::provider::events::StopReason;
@@ -60,6 +61,45 @@ pub(super) struct ApiErrorDetail {
 #[derive(Debug, Deserialize)]
 pub(super) struct IncompleteDetail {
     pub(super) reason: Option<String>,
+}
+
+/// Optional ChatGPT/Codex turn directive on a completed response.
+#[derive(Debug, Deserialize)]
+struct CompletedTurnDirective {
+    #[serde(default)]
+    end_turn: Option<bool>,
+}
+
+/// Maps a completed Responses terminal onto its loop stop reason.
+///
+/// Locally actionable calls always require a follow-up request so their
+/// results can be returned. Without one, an explicit Codex `false` continues
+/// the same user turn; `true`, `null`, and absence retain the public Responses
+/// terminal behavior. Deserialization is deliberately strict when the field is
+/// present so an unknown wire shape cannot silently end a turn.
+pub(super) fn completed_stop_reason(
+    response: &Value,
+    has_actionable_call: bool,
+    codex_overlay: bool,
+) -> Result<StopReason, ProviderError> {
+    if !codex_overlay && response.get("end_turn").is_some() {
+        return Err(ProviderError::ResponseParseError {
+            reason: "public Responses backend returned a Codex-only end_turn directive".to_owned(),
+        });
+    }
+    let directive = CompletedTurnDirective::deserialize(response).map_err(|_source| {
+        ProviderError::ResponseParseError {
+            reason: "completed response carried an invalid end_turn directive".to_owned(),
+        }
+    })?;
+
+    if has_actionable_call {
+        Ok(StopReason::ToolUse)
+    } else if directive.end_turn == Some(false) {
+        Ok(StopReason::ContinueTurn)
+    } else {
+        Ok(StopReason::EndTurn)
+    }
 }
 
 /// Classifies a `response.failed` error detail into a typed [`ProviderError`].

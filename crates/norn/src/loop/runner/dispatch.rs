@@ -43,6 +43,7 @@ impl StepMachine<'_> {
                 self.on_tools_only(&response, tool_calls).await
             }
             ResponseClass::TextStopNoSchema => self.on_text_stop(response).await,
+            ResponseClass::ContinueTurn => Ok(StepFlow::Next(StepState::Gate)),
             ResponseClass::Refused { refusal } => Ok(StepFlow::Done(AgentStepResult::Refused {
                 refusal,
                 iterations: self.iterations,

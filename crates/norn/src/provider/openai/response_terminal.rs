@@ -2,19 +2,42 @@
 
 use serde_json::Value;
 
+use super::request::CATALOG_BACKEND_CODEX_SUBSCRIPTION;
 use super::response_reconciler::ReconcileUpdate;
 use super::sse::SseEvent;
-use super::sse_types::incomplete_stop_reason;
+use super::sse_types::{completed_stop_reason, incomplete_stop_reason};
 use crate::error::ProviderError;
-use crate::provider::events::{ProviderEvent, StopReason};
-use crate::provider::response_item::{ResponseItem, ResponseTranscriptItem};
+use crate::provider::events::ProviderEvent;
+use crate::provider::response_item::ResponseItem;
 use crate::provider::usage::Usage;
+
+/// Terminal dialect selected from the trusted provider backend.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum ResponsesDialect {
+    /// Public Responses semantics; private Codex fields fail closed.
+    #[default]
+    Public,
+    /// ChatGPT/Codex subscription semantics, including `end_turn`.
+    Codex,
+}
+
+impl ResponsesDialect {
+    /// Selects private overlay semantics only for the trusted Codex backend.
+    pub(super) fn for_catalog_backend(catalog_backend: &str) -> Self {
+        if catalog_backend == CATALOG_BACKEND_CODEX_SUBSCRIPTION {
+            Self::Codex
+        } else {
+            Self::Public
+        }
+    }
+}
 
 /// Decode one reconciled completed or incomplete event into the legacy
 /// provider terminal projection.
 pub(super) fn decode_terminal(
     event: &SseEvent,
     update: &ReconcileUpdate,
+    dialect: ResponsesDialect,
 ) -> Result<ProviderEvent, ProviderError> {
     let ReconcileUpdate::Terminal { items, .. } = update else {
         return Err(parse_error(
@@ -44,7 +67,16 @@ pub(super) fn decode_terminal(
             .and_then(Value::as_str);
         incomplete_stop_reason(reason)?
     } else {
-        completed_stop_reason(items)
+        completed_stop_reason(
+            response,
+            items.iter().any(|item| {
+                matches!(
+                    &item.item,
+                    ResponseItem::FunctionCall(_) | ResponseItem::CustomToolCall(_)
+                )
+            }),
+            dialect == ResponsesDialect::Codex,
+        )?
     };
 
     Ok(ProviderEvent::Done {
@@ -52,19 +84,6 @@ pub(super) fn decode_terminal(
         usage,
         response_id: Some(response_id),
     })
-}
-
-fn completed_stop_reason(items: &[ResponseTranscriptItem]) -> StopReason {
-    if items.iter().any(|item| {
-        matches!(
-            &item.item,
-            ResponseItem::FunctionCall(_) | ResponseItem::CustomToolCall(_)
-        )
-    }) {
-        StopReason::ToolUse
-    } else {
-        StopReason::EndTurn
-    }
 }
 
 fn decode_usage(raw: Option<&Value>) -> Result<Usage, ProviderError> {

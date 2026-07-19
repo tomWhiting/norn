@@ -13,6 +13,11 @@ use crate::error::ProviderError;
 pub enum StopReason {
     /// The model finished its turn naturally.
     EndTurn,
+    /// The backend requested another response within the same user turn.
+    ///
+    /// The ChatGPT/Codex Responses overlay emits this when
+    /// `response.completed.response.end_turn` is explicitly `false`.
+    ContinueTurn,
     /// The model wants to call one or more tools.
     ToolUse,
     /// The model hit the maximum token limit.

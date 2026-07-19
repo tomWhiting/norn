@@ -476,7 +476,7 @@ mod raw_stream_event_tests;
 mod tests {
     use super::*;
     use norn::integration::DiagnosticSeverity;
-    use norn::provider::events::ProviderEvent;
+    use norn::provider::events::{ProviderEvent, StopReason};
     use serde_json::json;
 
     /// Test-only shim preserving the pre-refactor `String`-returning shape
@@ -741,6 +741,23 @@ mod tests {
         let parsed: Value = serde_json::from_str(&line).unwrap();
         assert_eq!(parsed["type"].as_str(), Some("thinking_delta"));
         assert_eq!(parsed["text"].as_str(), Some("let me think"));
+    }
+
+    #[test]
+    fn provider_event_continue_turn_serialises_without_collapsing_to_end_turn()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let event = ProviderEvent::Done {
+            stop_reason: StopReason::ContinueTurn,
+            usage: Usage::default(),
+            response_id: Some("resp_continue".to_owned()),
+        };
+        let line = provider_event_to_ndjson(&event)
+            .ok_or_else(|| std::io::Error::other("Done event was not serializable"))?;
+        let parsed: Value = serde_json::from_str(&line)?;
+        assert_eq!(parsed["type"].as_str(), Some("done"));
+        assert_eq!(parsed["stop_reason"].as_str(), Some("continue_turn"));
+        assert_eq!(parsed["response_id"].as_str(), Some("resp_continue"));
+        Ok(())
     }
 
     #[test]

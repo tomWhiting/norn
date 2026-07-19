@@ -99,6 +99,7 @@ pub(super) fn is_delta_event(event: &ProviderEvent) -> bool {
 fn stop_reason_label(reason: &StopReason) -> &'static str {
     match reason {
         StopReason::EndTurn => "end_turn",
+        StopReason::ContinueTurn => "continue_turn",
         StopReason::ToolUse => "tool_use",
         StopReason::MaxTokens => "max_tokens",
         StopReason::ContentFilter => "content_filter",
