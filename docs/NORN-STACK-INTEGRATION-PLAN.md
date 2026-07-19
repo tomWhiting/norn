@@ -5,7 +5,7 @@ review gate is complete.
 
 **Date:** 2026-07-16
 
-**Last reconciled:** 2026-07-18
+**Last reconciled:** 2026-07-19
 
 **Architecture:** [`design/ablative-stack-composition.md`](design/ablative-stack-composition.md)
 
@@ -65,13 +65,16 @@ independent recovery evidence.
 The acceptance dependency is direct. This is not a chronology of when source
 candidates were developed: candidate work may exist ahead of an unmet gate, but
 it cannot close the dependent phase or authorize downstream production work.
+Under Responses decision D13, P1 release governance and P2 credential lifecycle
+acceptance are independent tracks rather than prerequisites for P3/P4 or NS1.
 
 ```text
-Responses P1 accepted
-  -> Responses P2 accepted
-  -> Responses D2 implemented and accepted
+Responses D2 implemented and accepted
   -> Responses P3 canonical transcript
   -> Responses P4 complete event/item reconciliation
+  -> NS1 Responses transcript and event substrate
+
+NS0 architecture and contract boundary + NS1 accepted
   -> NS2 stable Norn event projection and read model
   -> NS3 local read supervisor
   -> NS4/NS5A Frame views and actions
@@ -208,7 +211,7 @@ explicitly ruled; they are not silently deferred.
 | Phase | Status | Visible outcome |
 |---|---|---|
 | NS0. Architecture and contract boundary | [ ] Drafted; review open | The stack has one documented authority map and compatible contract vocabulary. |
-| NS1. Responses transcript and event substrate | [ ] Combined P3/P4 transcript, streaming, and response-audio candidate through `0512953`, plus accepted D2 persistence source `e9755fe`: the exact 28-item output union, shipped non-audio nested/tool schemas, canonical caller-aware persistence/replay, the complete pinned public manifest and scoped Codex overlay, identity-keyed reconciliation, refusal and hosted-search matrices, representative real spawn/fork paths, authoritative UI suffix repair, strict format-2 storage, offline migration, and response-scoped private audio artifacts are implemented; the exhaustive lifecycle matrix and independent P3/P4 phase gates remain open | Norn has a lossless canonical provider transcript and complete event reconciliation. |
+| NS1. Responses transcript and event substrate | [x] Satisfied by accepted Responses P3 (`06be7c7`) and corrected P4 (`0095f5c`). The exact 28-item output union, shipped non-audio nested/tool schemas, canonical caller-aware persistence/replay, pinned public manifest and scoped Codex overlay, identity-keyed reconciliation, refusal and hosted-search matrices, lifecycle evidence, authoritative UI repair, strict format-2 storage, offline migration, and response-scoped private audio artifacts are accepted | Norn has a lossless canonical provider transcript and complete event reconciliation. |
 | NS2. Norn semantic projection and read model | [ ] Not started | Existing session history is queryable through stable typed records and cursors. |
 | NS3. Local detachable read supervisor | [ ] Not started | A session can continue while local read clients observe, detach, and reconnect without acquiring mutation authority. |
 | NS4. Read-only Frame contribution | [ ] Not started | Norn sessions, agents, status, and timelines appear in a Frame host. |
@@ -311,12 +314,11 @@ it does not duplicate that implementation here.
 
 ### Work
 
-At `0512953`, the transcript, streaming, and response-audio
-implementation-candidate work is marked complete below. The separate accepted
-D2 source is `e9755fe`, with exact-head verification retained at 10/10 gates
-and 280/280 distributions. D2 holds unconditional Gate D `READY`; these checks
-do not accept P3, P4, or NS1. The exhaustive lifecycle matrix and independent
-P3/P4 review remain open where noted.
+Responses P3 is accepted at `06be7c7`; corrected P4 is accepted at `0095f5c`.
+The separate accepted D2 source is `e9755fe`, with exact-head verification
+retained at 10/10 gates and 280/280 distributions. D2 holds unconditional Gate D
+`READY`. The accepted D11 lifecycle inventory and P3/P4 reviews satisfy NS1's
+delegated evidence path; NS1 adds no second acceptance gate.
 
 - [x] Complete the ordered canonical 28-discriminator Responses output-item
   union under P3, including one authoritative validator and an explicit
@@ -333,8 +335,9 @@ P3/P4 review remain open where noted.
 - [x] Reconcile deltas with authoritative completed items by stable identity.
 - [x] Persist and replay representative canonical non-audio vectors through
   uninterrupted, resumed, spawned, and forked sessions.
-- [ ] Complete the exhaustive all-discriminator/optional-shape lifecycle matrix;
-  the representative real spawn/fork fixtures do not imply that broader claim.
+- [x] Complete the D11 finite all-discriminator/optional-shape inventory and
+  equivalence-class lifecycle matrix without claiming that every legal state
+  traverses every surface.
 - [x] Implement the decided Responses D2 contract: strict new sessions under
   `~/.norn/session-store/`, untouched legacy `~/.norn/sessions/`, and a separate
   offline atomic migration with canonical, degraded/fresh-epoch, and
@@ -353,10 +356,13 @@ projections rather than the canonical record.
 ### Evidence and gate
 
 The P3 and P4 Gate C/D evidence is authoritative. NS1 adds no second acceptance
-path. Both Responses phases must be `READY` before NS2 production code begins.
+path. P3 is accepted at `06be7c7`; corrected P4 is accepted at `0095f5c`, so
+NS1 is complete. NS0 remains a separate dependency before NS2 production code
+begins.
 
-**Review stop M1:** Review P3 and P4 as a cohesive transcript/event milestone
-before supervisor or Frame production work.
+**Review stop M1:** [x] Satisfied by P3 acceptance `06be7c7` and corrected P4
+acceptance `0095f5c`. NS0 remains required before NS2, supervisor, or Frame
+production work.
 
 ## 8. NS2: Norn semantic projection and read model
 
@@ -965,31 +971,32 @@ Recommended use by phase:
 The next implementation milestone is not the supervisor or distributed stack.
 The critical and parallel paths are:
 
-1. Complete P1 acceptance.
-2. Complete P2 retained evidence and acceptance.
-3. In parallel, retain NS0A's revision-pinned candidate, complete its
+1. Preserve accepted P3/P4 evidence and treat NS1 as closed; do not reopen the
+   transcript implementation from downstream stack phases.
+2. Retain NS0A's revision-pinned candidate, complete its
    reproducible identity sweep and owner decisions, and do not edit the P3/P4
    transcript implementation from that arm.
-4. Close P3's remaining exhaustive lifecycle-fixture, full-range evidence, and
-   independent-review gates, then obtain P3 acceptance.
-5. Close P4's remaining exhaustive lifecycle-matrix, full-range evidence, and
-   independent-review gates, then obtain P4 acceptance.
-6. After P2-P4 acceptance, prepare P5 as the next Responses arm. Its first
+3. Complete the post-P4 NS0B contract freeze; after NS0 acceptance, begin NS2's
+   read-only event projection. NS0 and NS1, not P1/P2, are its prerequisites.
+4. Under D13, prepare P5 as the next Responses arm while P2 acceptance remains
+   an independently gated credential-lifecycle track. P5's first
    compact review boundary is HTTP producer ownership; starting that isolated
    source slice before D3/D8 are decided requires the scoped owner disposition
    recorded by the Responses plan. Codex turn semantics and the eventual D3/D8
    state and role contracts remain outside NS2's read-only event projection.
-7. Complete the post-P4 NS0B contract freeze. P5 and NS0B may proceed in
+5. Complete P2 retained evidence and acceptance independently; do not treat it
+   as authorization for account selection or state replay in P5.
+6. Carry D15's authenticated D7/P9 live-wire gate into overall integration, and
+   keep P1/D0 generic release governance in P9 as D13 requires.
+7. P5 and NS0B may proceed in
    parallel only while their file ownership and authority contracts remain
    disjoint.
-8. Stop at M1 and confirm that the canonical event substrate is sufficient for
-   Norn's tree/session projection before beginning NS2.
+8. M1 is complete; before NS2 production begins, confirm only that the accepted
+   NS1 contract still matches the frozen NS0 identity/authority contract.
 
-Under the current owner ruling, P1 work and its deterministic local gate proceed
-without GitHub Actions, but D0 still needs an explicit exit disposition before
-P1 can be called `READY`. No remote-enforcement claim may be inferred from the
-local gate. This decision does not block implementing or reviewing the local P1
-foundation while the exit mechanism is unresolved.
+Decision D13 moves generic P1 policy-product work and D0 remote enforcement to
+P9 release governance. Neither blocks P5 or NS2, and no remote-enforcement claim
+may be inferred before that integrated release gate closes.
 
 In practice, this is the work that delivers the missing Responses items,
 events, refusals, phases, annotations, hosted-search records, compaction data,
@@ -1002,7 +1009,7 @@ rather than implied side effects of Frame integration.
 ## 22. Completion checklist
 
 - [ ] NS0 contract reviewed and frozen.
-- [ ] Responses P3-P4 accepted and NS1 closed.
+- [x] Responses P3-P4 accepted and NS1 closed.
 - [ ] NS2 read model accepted.
 - [ ] NS3 local detachable read supervisor accepted.
 - [ ] NS4 read-only Frame contribution accepted.

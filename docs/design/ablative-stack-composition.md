@@ -4,7 +4,7 @@
 
 **Date:** 2026-07-16
 
-**Last reconciled:** 2026-07-18
+**Last reconciled:** 2026-07-19
 
 **Scope:** The shared contracts that let Norn, Aion, Frame, Beamr, Haematite,
 Liminal, Lys, Yggdrasil, Tharsis, Urd, Chiron, Prospekt, and adjacent services
@@ -19,20 +19,19 @@ The revision-pinned current-state identifier candidate lives in
 it records reviewed scoped authorities and absences without claiming exhaustive
 enumeration or freezing the proposed cross-domain identity contract.
 
-The current combined Norn Responses candidate at `0512953` inventories and
-validates all 28 public output-item discriminators, preserves the shipped
-non-audio nested content/tool shapes and caller lineage canonically, exercises
-representative real spawn/fork replay, and retains the four response-audio event
-families as lossless private sidecar artifacts through reload, cancellation,
-retry, and ownership-changing fork publication. This is an implementation
-candidate, not phase acceptance. The pre-D2 transcript source remains
-`07bf9c1`; corrected D2 source `e9755fe` provides the versionless strict
+The Norn Responses substrate is accepted through P3 verdict `06be7c7` and
+corrected P4 verdict `0095f5c`. It inventories and validates all 28 public
+output-item discriminators, preserves the shipped non-audio nested content/tool
+shapes and caller lineage canonically, exercises representative real spawn/fork
+replay, and retains the four response-audio event families as lossless private
+sidecar artifacts through reload, cancellation, retry, and ownership-changing
+fork publication. Corrected D2 source `e9755fe` provides the versionless strict
 format-2 store, explicit offline migration, bounded cutover guard, deep verifier,
-three fidelity classes, and standard library constructor. Gate D at `59dc244`
-returned `READY` contingent; F1 was fixed and re-evidenced, and the same
-coordinator closed it at `26b4e28`. Corrected D2 is accepted with unconditional
-Gate D `READY`. The exhaustive all-lifecycle media matrix, final full-range
-P3/P4 evidence, and independent P3/P4 acceptance remain open.
+three fidelity classes, and standard library constructor; `26b4e28` records its
+unconditional Gate D `READY`. Corrected P4 evidence binds to source `180759f`;
+the five-artifact machine bundle is retained at `8faf1f4`. The authenticated
+real-wire test remains mandatory under D7/P9 before overall integrated
+Responses acceptance.
 
 ## 1. Executive position
 
@@ -862,7 +861,7 @@ The following are non-negotiable:
 
 The repository-observed statements above were initially grounded against these
 adjacent working copies on 2026-07-16. The Norn evidence was refreshed through
-the combined `0512953` candidate on 2026-07-18. The paths are evidence pointers,
+accepted P3 and corrected P4 on 2026-07-19. The paths are evidence pointers,
 not a claim that the sibling repositories are vendored dependencies of Norn.
 Two read-only specialist agents performed the initial Frame/Beamr/Aion and
 Liminal/Lys inspections; the primary implementer reconciled their findings into
@@ -870,7 +869,7 @@ this draft. Source-owner acceptance remains an open NS0 gate.
 
 | Repository snapshot | Inspected evidence |
 |---|---|
-| Norn combined candidate `0512953` (`07bf9c1` transcript/fork substrate; accepted D2 source `e9755fe`; `0512953` response audio) | `crates/norn/src/provider/openai/response_contract.rs`, `crates/norn/src/provider/openai/response_reconciler/item_channels/authority/`, and `crates/norn/src/provider/openai/output_item_test_fixtures.rs` for the exact 28-item inventory and schema/actionability contract; `crates/norn/src/provider/request/tool_call_caller.rs`, `crates/norn/src/session/events.rs`, and the canonical lifecycle fixtures for caller-aware persistence and representative child replay; `crates/norn/src/provider/response_audio.rs`, `crates/norn/src/loop/response_audio_capture.rs`, and `crates/norn/src/session/response_audio.rs` for the sidecar contract; the Responses plan and `reviews/2026-07-17-p3-p4-response-audio-handoff.md` for candidate status and retained evidence; `26b4e28` for unconditional D2 acceptance |
+| Norn accepted P3 source `7f47218`, corrected P4 evidence source `180759f`, accepted D2 source `e9755fe` | `crates/norn/src/provider/openai/response_contract.rs`, `crates/norn/src/provider/openai/response_reconciler/item_channels/authority/`, and `crates/norn/src/provider/openai/output_item_test_fixtures.rs` for the exact 28-item inventory and schema/actionability contract; `crates/norn/src/provider/request/tool_call_caller.rs`, `crates/norn/src/session/events.rs`, and the canonical lifecycle fixtures for caller-aware persistence and representative child replay; `crates/norn/src/provider/response_audio.rs`, `crates/norn/src/loop/response_audio_capture.rs`, and `crates/norn/src/session/response_audio.rs` for the sidecar contract; the Responses plan plus P3 verdict `06be7c7` and corrected P4 verdict `0095f5c` for accepted evidence; `26b4e28` for unconditional D2 acceptance |
 | Beamr `d60f826` | `module_management.rs:17`, `spawning.rs:99`, `module.rs:280`, `tests/hot_code_loading.rs:171` under `crates/beamr` |
 | Frame `dadd430` | `frame-core/src/component.rs:10`, `frame-core/src/registry.rs:132,182`, `frame-state/src/handle.rs:39`, `frame-view/src/lib.rs:1`, `docs/briefs/F-5a-fragment-registration-assembly.md:1,103`, `docs/briefs/F-7b-frame-dev.md` |
 | Aion `833f271e` | `apps/aion-ops-console/src/app/routes.tsx:57,89`, `AppShell.tsx:22`, `providers.tsx:31`, `crates/aion-integration-norn/src/translate.rs:277` |
@@ -893,8 +892,9 @@ versionless strict `~/.norn/session-store/` namespace, untouched legacy
 degraded/fresh-epoch, and inspect/export-only outcomes. Corrected source
 `e9755fe` represents that decision with retained exact-head evidence. Gate D at
 `59dc244` returned `READY` contingent; the same coordinator closed F1 at
-`26b4e28`, making corrected D2 unconditionally `READY` and accepted. P3/P4
-acceptance remains open in the Responses plan.
+`26b4e28`, making corrected D2 unconditionally `READY` and accepted. P3 is
+accepted at `06be7c7`; corrected P4 is accepted at `0095f5c`. D7/P9 live-wire
+integration remains open in the Responses plan.
 
 1. The canonical encoding and digest construction for `EventRecordV1`.
 2. Which repository owns the shared contract crate and TypeScript bindings.

@@ -1490,3 +1490,14 @@ mandatory D7/P9 authenticated real-wire gate.
 `READY` and accepts P3. It issued no P4 verdict. With D15 now owner-approved,
 the separate P4 review may proceed; the mandatory D7/P9 real-wire gate remains
 open.
+
+## 22. P4 acceptance and final review disposition (2026-07-19)
+
+Same-reviewer correction confirmation `0095f5c` closes MAJOR-1 and MINOR-2 and
+returns corrected P4 Gate D `READY`. Owner-authorized P4 acceptance is recorded
+for evidence source `180759f`, containing product correction `ab26632`, with
+reviewed handoff head `84949b2`.
+
+P3 remains accepted unchanged at `06be7c7`. This accepts only P4; P2 and P9
+remain open. D15 is unchanged: authenticated real-wire conformance remains
+mandatory under D7/P9 before overall integrated Responses acceptance.

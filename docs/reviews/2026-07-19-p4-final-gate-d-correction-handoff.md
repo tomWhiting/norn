@@ -5,6 +5,12 @@
 **Status:** READY FOR COORDINATOR-ONLY SAME-REVIEWER CONFIRMATION; not P4
 acceptance
 
+**Subsequent result:** Same-reviewer confirmation
+[`0095f5c`](2026-07-19-p4-final-gate-d-correction-review.md) closes MAJOR-1 and
+MINOR-2 and returns corrected P4 Gate D `READY`. The remediation plan records
+owner-authorized P4 acceptance; the handoff below remains the historical
+pre-verdict submission.
+
 **Historical P4 verdict:** `NOT READY` at
 [`80f0e36`](2026-07-18-p4-final-gate-d-review.md)
 
