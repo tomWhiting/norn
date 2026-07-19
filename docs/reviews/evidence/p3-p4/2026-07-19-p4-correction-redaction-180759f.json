@@ -1,0 +1,3978 @@
+{
+  "base": "a90b730091bccaeaa03ba98c3b31425e40e32dac",
+  "findings": [],
+  "inventory": [
+    {
+      "bytes": 33758,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-cli/src/cli/args.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "f73e4d3d09298d33b4b492956077cf319e6255af7ebc26650a73a8dbbc5d7c62"
+    },
+    {
+      "bytes": 29886,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-cli/src/commands/session.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "b2c1067f6d972a5661f8e52f186eac583d4d8832de734f203ebd6f49c5e2dd55"
+    },
+    {
+      "bytes": 5375,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-cli/src/commands/session_legacy.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "aa8e94ecb185f9a32f2e0caf7d93c5170bf89eb0efe8234749d49db31e1ec3c3"
+    },
+    {
+      "bytes": 24619,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-cli/src/commands/slash/actions.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "65e0d5a4f9546dbc9df4c6064dce2010100ee28862b1367f9f4c6856feb67758"
+    },
+    {
+      "bytes": 13762,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-cli/src/commands/slash/state.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "6c6c91d4e74dca31ac2595fa7aa5a953dbb648eb1d699f52fd49a853eb7386b0"
+    },
+    {
+      "bytes": 11056,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-cli/src/config/paths.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "9ec79268584a06ea6189466762f7dc7b1ab31e581672b36006f4f6a55d989f1f"
+    },
+    {
+      "bytes": 49469,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-cli/src/print/orchestrator.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "e2a23e96a628279bd35e4e68698b4ad90e3c54f66799d54b60fa9e6d0f0a45db"
+    },
+    {
+      "bytes": 37472,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-cli/src/print/output.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "15d5a334ff8a0fe06bcc98cc8fb0add2edc22a108f47373ecd87edb4bee84775"
+    },
+    {
+      "bytes": 5668,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-cli/src/print/output/raw_stream_event_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "1d4c9dc7c1cbd6ed164a830e91cab303c8e5c0067906ebed3e0981d33061cfbe"
+    },
+    {
+      "bytes": 15652,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-cli/src/runtime/from_cli.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "509374e7ebff58ed9c48298a3af89fd7ea04613d9cdbe91aa6ddfc89f1fd0720"
+    },
+    {
+      "bytes": 14959,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-cli/src/runtime/wiring.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "03103a661d1edef3db5a54849b6ba3c6eb109d2891eb0cfcf6fb12264f7f9852"
+    },
+    {
+      "bytes": 13753,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-cli/src/runtime/wiring/inline_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "088e2c5b991c362dba85a139602010ac98ebbefb65c91a04121c3163bfe865b2"
+    },
+    {
+      "bytes": 791,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-cli/src/session/mod.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "66e2f90dfb66eadbb2faf4d1896831b49cc4fd7401c1dc94b4e657f808bacac1"
+    },
+    {
+      "bytes": 14388,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-cli/src/tui/driver.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "c9bfe48d653ce7770ce4d6b88698fdcf3b3a54c9d9abbf80027feebf74bc2adb"
+    },
+    {
+      "bytes": 25656,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-tui/src/agents/tabs.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "92605858e4923de2c2080465579edf0736aa18efc865b2666c0b9794ce444e29"
+    },
+    {
+      "bytes": 41028,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-tui/src/app/dispatch.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "96f61c1b114c9481acbc532bab6485dc84a16823ec01067089f61d45500a0e0b"
+    },
+    {
+      "bytes": 39698,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-tui/src/app/slash.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "50555df6f3171f4929eb36253b738078f7d8b0284ac9209a883c6ff4b16ad4ad"
+    },
+    {
+      "bytes": 11783,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-tui/src/app/turn/mid.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "797c1602f7dd9e86ad7491696df4d02f71128483f754c81e1f36e5ff23c6aa25"
+    },
+    {
+      "bytes": 31559,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-tui/src/events/schema_render.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "bea48db590a61c73b9f33de7c53f010dde08777ec569c158121d2dca37dd04b0"
+    },
+    {
+      "bytes": 53077,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn-tui/tests/pty_smoke.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "ec7bae198476b133e8b25d5d4da90c07740ef7212a57122785aec1319f72faae"
+    },
+    {
+      "bytes": 165044,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/agent/builder.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "0bd0d8a1349c2d33a839c06ad25699e72ef30c2bfb73645bc2cb8bd147218393"
+    },
+    {
+      "bytes": 39211,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/agent/fork.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "50df6e65d64c2e0ea85e0947b97020c7e73f1cdf1583991ccc4213eb6d56966f"
+    },
+    {
+      "bytes": 10770,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/agent/fork_canonical_resolution_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "cd1043306d4c12884c9c719d7a6daf0968ef93c6f4b009965c7deabc7246ab1c"
+    },
+    {
+      "bytes": 19583,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/agent/instance.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "d7922fe4eedd7af35409cacd2db3de677b47ecb4b3e6903eac28918976f1ce5f"
+    },
+    {
+      "bytes": 2099,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/agent/mod.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "b756c903b1480400d1c4c89ce839f847dc8f7f6e07143997e16ba0ed82b71a44"
+    },
+    {
+      "bytes": 23530,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/agent/output.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "47394230b092ef6ad1e3fe89d0252fe23366a797ab1de9d13c3baa1904237569"
+    },
+    {
+      "bytes": 25453,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/agent/resume.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "2dce4e6db4a4cfce1a8211ab35283e6ab03c0ac8a38e624bc8cbaf8b4c61405f"
+    },
+    {
+      "bytes": 14091,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/agent/session_spec.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "226ca47ad11029671d3d4f44bb51284c41205f70d61ea4702a390123b035e9db"
+    },
+    {
+      "bytes": 15192,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/config/paths.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "53d2bda24b991973e166b4bf08b4cc77e40a9abe3c8ede81ba9ddd24d325bf37"
+    },
+    {
+      "bytes": 2501,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/config/paths_session_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "c22f2ceffa1b31989b6bb6bc49a29dc2860b5a57ad36b27a331d3e22b987904a"
+    },
+    {
+      "bytes": 68217,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/config/types.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "22934a23e6f5b4fda3c2b3c25b1bfa32239a1d5a9197030f042f61ea7c5cf07e"
+    },
+    {
+      "bytes": 41621,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/error.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "d6098317379eeb81a9868f35ce93867646149c65d4d7807b588656762c6bb549"
+    },
+    {
+      "bytes": 27097,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/integration/claude/adapter.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "dff4621cc788209c43926e1da071ce0fb2057369b9e6b8470b7df43bc91fde34"
+    },
+    {
+      "bytes": 12679,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/integration/claude/wrapped.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "c7428a8aaf56c925f7c44dd0db46badd09ac8088d2cababed5c334ab81b4b53f"
+    },
+    {
+      "bytes": 23707,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/integration/hooks/shell.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "bb574c3be5d3b8fb9d42e8359ab3d8d2efe9707c164267e05ca97766fb0b26d9"
+    },
+    {
+      "bytes": 29239,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/integration/hooks/traits.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "45240198a5c08c4b70d19904c8a3aa3e638d3c8d7f66c0eadab210de854ba570"
+    },
+    {
+      "bytes": 69169,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/integration/rhai/agent_ops.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "6fef8ff3f35b1e252ca036327bb2469c1aa586ed0d5c068f38e287eeacf458ae"
+    },
+    {
+      "bytes": 9921,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/internal/extraction.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "dfb5cf02a5d10cc25b15c461e0fa9ccf123af38168c5e583c35c1495be363004"
+    },
+    {
+      "bytes": 35717,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/assembly.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "e564bdf6cf69554ee45dca459b14831ee0e4ed973de1745e1ee16b4fd4702899"
+    },
+    {
+      "bytes": 6664,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/assembly/canonical_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "705729015db4be4eff4a23a78b2aad688780328e183fa41a4318382014a44bd6"
+    },
+    {
+      "bytes": 2402,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/caller_propagation_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "dc280f9479660523a753806e2cf777843745870e90c980f1bd2196e030340e57"
+    },
+    {
+      "bytes": 2054,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/canonical_tool_resolution_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "e7f4cb8c31c55c59d27a1abb3bbb8408510a4b53eb8e58c390599cbf214cbcfe"
+    },
+    {
+      "bytes": 29671,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/classify.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "3fbd29a11ddb61cf548cda254abd9f255d02ad4b8809dd81722890b4c1da47a6"
+    },
+    {
+      "bytes": 15195,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/classify_audio_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "7e9784119491bd6f6fe166fd92d953e5f40d40f63b1e89f2ae1c00cb29d2397e"
+    },
+    {
+      "bytes": 28137,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/commands.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "8950a7a2726b25f070fcab0bfa0c9a9b1e7da5178bbbdb05a5dd0b81f37a6ff5"
+    },
+    {
+      "bytes": 54825,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/compaction.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "00745681a7f159377e826d8b5b4f221c362b5701ac982c3929dc9780c81c39e0"
+    },
+    {
+      "bytes": 28889,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/config.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "732630cb4486aa149eb6c9da06275567281d1404ce1656bfc79bc67f612b4a5b"
+    },
+    {
+      "bytes": 18915,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/context.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "a4df44f4c56c93755c0971dcb3e1513acae7363dac15dc767bebdd1e44958b97"
+    },
+    {
+      "bytes": 26494,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/conversation_state.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "58313dc6121acfd9877888f87b310ff48ec82671ec0656df20819fd5ba5f9551"
+    },
+    {
+      "bytes": 15508,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/dev_context.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "bd95f30d22e9f33d496a7e5fd6d9facc9cb8b18e40e9bb7ccb38883de6f75e85"
+    },
+    {
+      "bytes": 24059,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/helpers.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "feabba57babcc374c62e323894768e435819281d5f3897411ef449ec4f324bb2"
+    },
+    {
+      "bytes": 28293,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/inflight_compaction.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "4e357083593ad227ff96c8216f4d9fa45c01bafd8b850496996743b630df0300"
+    },
+    {
+      "bytes": 2621,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/mod.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "c70cc274bee52e0e28ff1fe67b024c1c57a9c810146db9551a884c0dc055cb1c"
+    },
+    {
+      "bytes": 7971,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/programmatic_calling.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "813c558938fd8080a22e40c7a5361077dc3305ffa02bc67c04cc31b965150670"
+    },
+    {
+      "bytes": 14899,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/response_audio_end_to_end_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "3137cdc80520853eaf1942c9144462418bbec5f714ec95882e4648fe682cb426"
+    },
+    {
+      "bytes": 11975,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/response_audio_lifecycle_loop_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "df28aa3a01e520fe794c19953285ae4359b64c79e0c489aa52018c32a497f25c"
+    },
+    {
+      "bytes": 21630,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/retry.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "11d98caee230ee16ca2367889a8dbbb283898af74e27531095ad2678e7372293"
+    },
+    {
+      "bytes": 10592,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/rule_wiring.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "139e44a5d67bd55236d4271fa8a3d691350a58881518eda5a959c443fd742f8d"
+    },
+    {
+      "bytes": 234612,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/runner/tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "1d2a9f26fddbfd4642c61a90ebcff6af9a6731a242fd403aca1c89f4f68881e8"
+    },
+    {
+      "bytes": 11104,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/runner/tests/refusal_matrix.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "fbafb2342f119d6619d1a405cb36fc4bcce22c851f7cc51b5008cd0ac215e757"
+    },
+    {
+      "bytes": 6613,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/runner/tests/responses_replay_matrix.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "ab668cf15f064e4a2f2459dccb9496f11d77e960aaf81c8e79561b719e1e4f12"
+    },
+    {
+      "bytes": 15568,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/summarization.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "fbf6a766372d75c076b97ae1c78e38da9390cdfdc6be50a6bc0cd5ed446d887f"
+    },
+    {
+      "bytes": 15186,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/tokens.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "0a3c2cddd0f1026b674e3cdaa448d8d3d6ed3d8a5014a121c6ee0c7476f1df27"
+    },
+    {
+      "bytes": 74344,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/tool_dispatch.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "6113bf59eab6c49ac83a8429b36dc62e14f98f047e175a60b9e9aa650e862ee0"
+    },
+    {
+      "bytes": 23469,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/tool_dispatch/batch.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "618d50f27db778bd9713f952e8e6b2181e66e8a9ae914ea9f1b5ef4134eba027"
+    },
+    {
+      "bytes": 4797,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/loop/unsupported_response_loop_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "cf94e4318a50167689378b29a6e0288d96c90ded4467c6260273d036afd513f8"
+    },
+    {
+      "bytes": 22442,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/exec.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "8a1712cc1c44d175c3e2835dad59dd14f13280b0261f49ea91371afcd5c606fb"
+    },
+    {
+      "bytes": 79281,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/execute.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "1267ab1ba16c798d89c5f00b39863c9d05a7062d2ddbe0d31397c2b3e0cb77c9"
+    },
+    {
+      "bytes": 15319,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/execute/reconciliation_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "60d6f854a6351788b8aa06d7748bb0658240581168eacb0858f906fdee853914"
+    },
+    {
+      "bytes": 14646,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/execute/reconciliation_tests/equivalence.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "d8f2394e1d5c5043254e027770b20f4c953cba705092768e7a269e2ba25bf980"
+    },
+    {
+      "bytes": 3588,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/execute/reconciliation_tests/terminal_boundaries.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "b19da3d98504a990ae7c8e9627d53162537ae2603d8d95700e8bf50f401c70ac"
+    },
+    {
+      "bytes": 503,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/mod.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "dc9fe51bbe568f002cefbe4141094edf7db7ef75478e1768a90cbdcd9a56b49e"
+    },
+    {
+      "bytes": 17082,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/output_item_test_fixtures.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "007bb3eb271cd6c459615052784c7992da1ddce5899afc1d0615665fae6bb774"
+    },
+    {
+      "bytes": 9941,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/output_item_test_fixtures/minimal.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "c29cf77cfd3c209bdf58cdc188328f0e1688495b341f1e29acec45ac83e93bab"
+    },
+    {
+      "bytes": 6834,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/output_item_test_fixtures/nested.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "be83a1f3d61b30269dd5068c467a39056c12328c16b9cda71ddc7dc9d57dae54"
+    },
+    {
+      "bytes": 3124,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/output_item_test_fixtures/nested_persistence_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "315c12eb602557bfe379f5d383a19b02fad2ecd9054aea77e5bb33a91e68e791"
+    },
+    {
+      "bytes": 6331,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/output_item_test_fixtures/reconciler_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "aa60a8c196f91c609efcd062d567ff618ae851204d55acaa8f03f659bf99fa36"
+    },
+    {
+      "bytes": 7159,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/output_item_test_fixtures/tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "0ecd10dcb1e3e7947a7fd8748f8b18e523fc06e00ef87c3efac99a19b603abda"
+    },
+    {
+      "bytes": 4940,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/output_item_test_fixtures/tools.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "4e6ae827db5a248ba5c7a87bd498c98a29ba41b6b6449731736e42d5beffaec1"
+    },
+    {
+      "bytes": 35205,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/provider.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "53369c4baeb816addbf0457e1a421c3068cc5f045b978d9cb52dc7db716f73a4"
+    },
+    {
+      "bytes": 58455,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/request.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "7105549632a5e2b972e9cd3331b9fa5c0d5983aa45013c3226ba2c06812acd73"
+    },
+    {
+      "bytes": 7650,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/request/caller_projection_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "d63cc6bfd6863e83aa2c252d5419411a9be1bcf982e0dc794f961cff64277a3b"
+    },
+    {
+      "bytes": 12489,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/request/canonical_replay_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "3bf1f5d63243982595fdd3e0266bf7844e192fdaea8496d735b3e3761175cbca"
+    },
+    {
+      "bytes": 6115,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/request/opaque_lifecycle_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "e43105b773a6a6b2c1e16b3e8821d5b2fe067cb0d88d0ca1198ef9b141a45d13"
+    },
+    {
+      "bytes": 20270,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_contract.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "550d8952c4364e383a0d47f829c00e28cdfdb77c236e2ae6417ae93068d7eb84"
+    },
+    {
+      "bytes": 19244,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "bf0f4bb620cd68225beb056d6dc01bf8d8416f2a54ce24e497dd761d20ce866c"
+    },
+    {
+      "bytes": 8597,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/item_channels/authority.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "fce9a6bdd82c5847bf01d0060e9b767df1a951ba3ca1969af06d70f548299115"
+    },
+    {
+      "bytes": 8612,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/item_channels/authority/schema.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "d7573e17f150454a5eb5038dbcc4f64f1d36df10072b80675e2a22b5d06b01ee"
+    },
+    {
+      "bytes": 12283,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "fb31306c78fb8fa00faba57059503d9bed34a92af79f40dbad7fade8117d10bb"
+    },
+    {
+      "bytes": 6603,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests/audio.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "3d3743960806e5e29d986734c69ed95e821e4357d99c1b0de6963fde3a4a5663"
+    },
+    {
+      "bytes": 13464,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests/call_identity.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "dbeac2057d7fc6fd008d393677a956babf4c5c2e3b8222fdf945149caf927c8d"
+    },
+    {
+      "bytes": 11709,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests/channels.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "2ded02a797d12c95bcd57b7b29546b6ae51437507f13a2b21ef9ae61fd04fa6d"
+    },
+    {
+      "bytes": 10742,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests/content_parts.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "0e632f8dfb1a3fbc0f7f81cf488ee6e8a993264b01fe1c09d5de856958904257"
+    },
+    {
+      "bytes": 13053,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests/core_item_schema.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "1beed3acaf5026e396988d99954ea3fe4c11a47c54d5b45f5e017f2c706439e8"
+    },
+    {
+      "bytes": 13656,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests/hosted_items.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "a270915dcc7fa55dccc0847abc51b2c7a073b55a95729c6bb645dc6e7478cb52"
+    },
+    {
+      "bytes": 15275,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests/known_item_schema.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "f6faa903f9ae212124cd210aa5df2e92fb03ca137bf1369d425ddb384fe88c8c"
+    },
+    {
+      "bytes": 2702,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests/known_item_schema/client_calls.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "85af16c7480297d187903649e9ac8d899ef4f834df156d5c3dfcf05534952902"
+    },
+    {
+      "bytes": 1133,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests/roles.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "b64f262ce7333c433fbf889ddac3b5771be3d6c71665000fff33e4e3f733f71e"
+    },
+    {
+      "bytes": 10217,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests/schema_contract.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "3a91dd4cbc07b80f95bf12f3531ab7d74ba0adf897ce55a05c8d4b1cc54bcd7c"
+    },
+    {
+      "bytes": 5064,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests/sequence.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "cfc77f64c2e809a3890eea39151ff64b3c3885cd3f02da23bed1bda26a941e70"
+    },
+    {
+      "bytes": 7969,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests/support.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "b07fcd54bc28d0208010c49ae5f39144b5194a625cc44659e45b36dec6436b49"
+    },
+    {
+      "bytes": 14100,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests/terminal.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "6fd5c3c05d79e4f423febdd6e0794bba9902e6f83585a66a5320b5467871fe0e"
+    },
+    {
+      "bytes": 8480,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests/tool_actionability.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "a05f1b29192c06168238949a78a030534988c8a82f25aece4e981cdaf1509f89"
+    },
+    {
+      "bytes": 5312,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_reconciler/tests/tool_definition_schema.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "cb8a08377ace101c45d7a0538e401058ca383c81ebc54f003101911294fb4b95"
+    },
+    {
+      "bytes": 17803,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_stream_event.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "27a7cc5f64601bc1d37fb87d2611e99a1b678365ed89b2bfaec8ce256584c35f"
+    },
+    {
+      "bytes": 3213,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_stream_event/official_shape_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "1d7878fcb42065fda4694574b236061cf6d200849f4e6b1759d0ab36f98c1880"
+    },
+    {
+      "bytes": 4838,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_terminal.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "090f89e63c7b71c2355be2e659d2249a154f4e2258f2b9ae2d6c3908b7b1e5d2"
+    },
+    {
+      "bytes": 6117,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/response_terminal/tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "3e8df217dfea8b95cbcffa38912136f498ece9a9d77b683b520f0c5424795083"
+    },
+    {
+      "bytes": 63677,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/sse.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "845e717f7f03f970866c0236d1fbc70f8460fa044c050e10587034258802172c"
+    },
+    {
+      "bytes": 10858,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/sse_parser.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "d7d6c0e2337f0dd1491848067b03194c0d2fbd8b9d70b4d8b137bf3b24d511cc"
+    },
+    {
+      "bytes": 13597,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai/sse_types.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "763730d8260c8c5aa4f0704ed503b58fea2075538f8c163e73ddfeab8303816f"
+    },
+    {
+      "bytes": 17540,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai_compatible/execute.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "dc33e10a13c54bea56032a0ad15161a5b84437ba841b5b3d337ed67590a248dd"
+    },
+    {
+      "bytes": 23699,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/openai_compatible/request.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "aef9f92b6ac6126f178e8450a907af18a79c34142a9e0715283626a88c266cd6"
+    },
+    {
+      "bytes": 21724,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/request.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "634cba703a37ad8b2c67afa41dd53d48884cbb42f1d7a237c600f10b60c993e6"
+    },
+    {
+      "bytes": 3693,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/request/tool_call_caller.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "5f8f19587c76f416bd8ba350b186338a4796ba6d08ca1941f3c5eacec80a0c00"
+    },
+    {
+      "bytes": 11029,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/response_audio.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "01eb21b0bed281918a6e53851df7b4281b6469b67f7b6b1c4a398b0486b37112"
+    },
+    {
+      "bytes": 13238,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/response_item.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "401249d1d1fa96b4ce61665a7cddd2466d3f11d61dad24a9094e07e25864d882"
+    },
+    {
+      "bytes": 13572,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/provider/response_item/response_item_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "a4926c6c02da21f3a684bceed377d89592ad7ac80c9f5a50b66edc4846fcec41"
+    },
+    {
+      "bytes": 10623,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/resource/descriptor_governor.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "0dff81c44f22129fc9c5f4b6504c1496ed1852b75fa8d7ea035bb2080031e078"
+    },
+    {
+      "bytes": 4118,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/artifacts.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "f582dea682d8de677d7536975af8a1213b8962eb11fa3100746c4970aa0a887f"
+    },
+    {
+      "bytes": 4495,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/artifacts_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "d72e115affc8a5394a07d959b719cd05d1c087f3926cc9b54700e2b7696f7be0"
+    },
+    {
+      "bytes": 40623,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/branch.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "f1801d037cca2015f51e587ddfc77e492e5d6292c796c92b240359f7b0f08acb"
+    },
+    {
+      "bytes": 6622,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/canonical_persistence_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "b50703b62cec927841e2282a5958d2bd30d4bb6ef902c76b10ffdaa5918a7cfd"
+    },
+    {
+      "bytes": 6473,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/canonical_tool_resolution_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "c2c5e5e08eef8180dddd318967c3a6fd04132b1ec5e590143cbaf49c5287daf1"
+    },
+    {
+      "bytes": 5492,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/canonical_transcript_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "7f1a55c3b03bf237660857eebc048e1442ee1a37b0aa9096780de752dba3018d"
+    },
+    {
+      "bytes": 52151,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/context_edit.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "9f5d003616b1a854d057656f4d9b15666d76c426b87a6cbf755ecd76acc275ba"
+    },
+    {
+      "bytes": 25919,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/conversion.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "2e19b605d8094ba6c065fb58a743269457aa604c932f62c294c97b2ae360a1e2"
+    },
+    {
+      "bytes": 38472,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/events.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "9c557572483230f417762d39c06d46c469452a30579b7bb9a15c9b02ccb0eea7"
+    },
+    {
+      "bytes": 14757,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/jsonl_sink.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "1cca7983b4bad57cee608b19e0dd9d8ab4ac51bdcc90b143d55b3c35c6cd782c"
+    },
+    {
+      "bytes": 13592,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/manager.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "812a197c2163c9883db735431a9d1323e0852a7d33a76b5f68e33eee4f9f3d00"
+    },
+    {
+      "bytes": 791,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/manager/standard.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "270cd88f0f85f27efaed0a4266effd05e4309bd6aec7d87c68e5909de964d8fe"
+    },
+    {
+      "bytes": 444,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/manager/standard_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "45930fc292d6062d4a8c3c97d4dc7877369bad9d0d2bc5e2b5d4f88cb13bbdf2"
+    },
+    {
+      "bytes": 1901,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/manager/tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "d26542aef1c13349ca4a707d3f2fc0e48f5f00182cf4084d155c97bb036f1ad0"
+    },
+    {
+      "bytes": 8420,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/manager/tests/admin.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "631c3c81bff40ed1d4371a0b2482bb503b010ec349d92657bf0cf7d5f7f45acd"
+    },
+    {
+      "bytes": 3737,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/manager/tests/fork_audio.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "c0ce2ca38e147cbeb1990f3bea8de01eec62311db59519130abf4796b7c41340"
+    },
+    {
+      "bytes": 12522,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/manager/tests/lifecycle.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "b2b2c06bd2161e88bf45c7513728caf0291a3cb12c03226657db6aa2022c88c0"
+    },
+    {
+      "bytes": 11552,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/manager/tests/open_id.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "48827cf7ee6024e7ab73b2440a9ec444ea6d0855923cb3fbd12f49309a0a9bc6"
+    },
+    {
+      "bytes": 8094,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/manager/tests/resume_policy.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "df53a16b52eb39609cf6e892173c7b7a3a87e4a66cb692a61015ed05069250da"
+    },
+    {
+      "bytes": 9669,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/migration/classify_relationships.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "4a75e94dc655343811fe653a254504567c79810267281f2a527db7bfac577b7c"
+    },
+    {
+      "bytes": 14067,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/migration/hardening_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "1a8e51ff18ebe9796af8722b23839f0916a2870c59418a4c035eeb7bed484fc9"
+    },
+    {
+      "bytes": 4156,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/migration/manifest_sources.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "0d45a098472cffa521ed4270e741bed4cbf755e899760f726ec912fb42b5ffb2"
+    },
+    {
+      "bytes": 965,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/migration/mod.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "e510525ac8ad638380bd0141078d3416fd35aca9c322688755969f8c830d380f"
+    },
+    {
+      "bytes": 16191,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/migration/tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "4e1b15aa1c230e1cb48bc610ca5e86bf665b542fd89f56eff55846777db42ff7"
+    },
+    {
+      "bytes": 8447,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/migration/tests/recovery.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "288d44a0328a06276374af0132866e5efeeb6f5b34d22d1123c70ba7518ca11d"
+    },
+    {
+      "bytes": 17876,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/migration/transaction.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "072f02d607c85d7d907f3acb4edc77f7793fce463e7f07b607b7141e815d0103"
+    },
+    {
+      "bytes": 2978,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/mod.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "74e93ca10418665e8c560b8fbc461dd28a2e8e074b14bc962c2a014c98b71d49"
+    },
+    {
+      "bytes": 11992,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/counter_overflow_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "c6ea1aa4af8fbf1e478fd24c09995268c16a9abaa9d6357ec69cb1513905fe10"
+    },
+    {
+      "bytes": 3888,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/counters.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "0aecff1eee8bfc80fa336da9e0c697be529cdd0bd687d53779fe9ef358384fe9"
+    },
+    {
+      "bytes": 9937,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/deletion_runtime_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "c571aaa97dc62e5d0a483f5494e159b50ba1af8b9fcbb7fe1f3bb44e362091bf"
+    },
+    {
+      "bytes": 4358,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/event_reader.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "b221f71f948c9349b7018608addb66fee70267dc4d28f127cf94fa5abff8d2bb"
+    },
+    {
+      "bytes": 12447,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/index.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "e8a6241232ba428f632f609b0ae91417d3db9dcb16fc8f72c5fc787a41367ecc"
+    },
+    {
+      "bytes": 2429,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/index_artifacts.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "e95262068a9f0c9cb599c45509be53e4c671eab10b5e6c33db7f6b0f32d1a57b"
+    },
+    {
+      "bytes": 4329,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/index_codec.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "43ce3262acdc27a721857bd9367758391dd3e6a5cabe1d496255bfa204fa9043"
+    },
+    {
+      "bytes": 1592,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/index_deadline_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "c3a387795a12e1d2debeccf57561220e91bfbf4a8ba67779dacf7bb1a67fb473"
+    },
+    {
+      "bytes": 9042,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/index_deletion.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "9e169746da63174909543809a6e37211333620f9ab1b8fb49d2e35108de7e4d5"
+    },
+    {
+      "bytes": 6009,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/index_resolve.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "30e002a587095e310f06ad149f4908042bab9b8690b678b612cae051fbc24109"
+    },
+    {
+      "bytes": 2639,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/index_security_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "a5739a41f7d63173ba39ed885b78ae1acce8de90be1d0c3918d69b98c0cc2ba0"
+    },
+    {
+      "bytes": 9274,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/index_strict_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "07ee3f02b510335fd1ff353397178968efae26fb2b1ac2b8733f1088953d7b38"
+    },
+    {
+      "bytes": 6734,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/index_timeline.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "48dd0414ebc7e634b287f141ebaffd1b8a03d1b10d8806436c773d5d10599ed4"
+    },
+    {
+      "bytes": 9071,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/io.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "b621135d16118db111d79aade10accda551542358acda5e32845e0fff7fce134"
+    },
+    {
+      "bytes": 3127,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/mod.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "f4a54586ce0ead8a2c443c1d58e045234292eb13fcf9511ec0c1868151a88e85"
+    },
+    {
+      "bytes": 13979,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/publication.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "b63e87d723215178438cf992d9809294e33580d3db84e43262527d87ac178d58"
+    },
+    {
+      "bytes": 17535,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/publication_audio_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "708ac89afeb1672c2d5f554a356ad788fb64a4273a8660e7755788ae96ab49b9"
+    },
+    {
+      "bytes": 2921,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/publication_names.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "1c7a3bb3d219e6230d64ef34a51b499d9d7fe494511f0c83c0f1e062e67f46ba"
+    },
+    {
+      "bytes": 15848,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/publication_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "6330414f1d14043690250556a9d04afbfb5773d104b8941fbdeabfdb25f37916"
+    },
+    {
+      "bytes": 1847,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/strict/index_relationship_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "0f6286c7fd5a7c9fb10cf97344767b6dfc741105b9d3ad08bcc0efe7f33a8385"
+    },
+    {
+      "bytes": 956,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/strict/mod.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "687ca03cfbd83e45cd4b2e61e28817e3b9b89fe6cf9300d30750b7ec61916948"
+    },
+    {
+      "bytes": 11960,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/strict/reader_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "e15f2f296537f725ce622388ade0b4e30c8462a783c4f72ff2675007ea4aaa49"
+    },
+    {
+      "bytes": 6385,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/strict/validation_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "c83c2bca2b9136d128995600beea077e3171c94b84645299b874defa9ef0878a"
+    },
+    {
+      "bytes": 88435,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "77572080cf583afef81a6a43140a59fde0adff812f4b5dbfa5de78c6e6c52c09"
+    },
+    {
+      "bytes": 16502,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/timeline_concurrency_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "5709dee0e1cbe725a4444d4c9805f8fee5292679cab826c58ec94116e07050e7"
+    },
+    {
+      "bytes": 11645,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/timeline_file.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "aa59630461111fc6bc7eb3fce93ab3c6de3d786a9c5337a3375fb350f0609574"
+    },
+    {
+      "bytes": 9368,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/timeline_lock.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "672ca62d24094863c2b4c04de3c0553530ea9c8e02b3e3a2a15f5d4ddb17bb0c"
+    },
+    {
+      "bytes": 13083,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/persistence/timeline_runtime_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "1889f19adabd0d878ce3d0fca4dcc5be91b1a2d1edfa456d0ddf1e0f4e0ff101"
+    },
+    {
+      "bytes": 747,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/provider_epoch_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "c3b669cbc77046f41de1cb203f268cd28b74ad27e7dc63b60b4e7f08a20d36cd"
+    },
+    {
+      "bytes": 9874,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/response_audio.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "5a7e18cad346495b15826e56b4ec99a1ff0447f8270b0d57b9f077d43eb0d001"
+    },
+    {
+      "bytes": 10061,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/response_audio_lifecycle_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "874ada80fe8da53873e5386fb28e4001a4cbc4366d5d488c21137b2850729070"
+    },
+    {
+      "bytes": 6083,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/response_audio_link_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "61940f2544a15a1f30a137551212bcacef1ae8c5bff497124c7dbba4ff6d7e91"
+    },
+    {
+      "bytes": 14623,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/response_audio_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "19e2a87a1a949ff8d81ba0bff34bbe1d2f34be7158c18d5197ec96812e10db6f"
+    },
+    {
+      "bytes": 18364,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/resume_repair.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "da5d046e5a43aacc76fce3f1f844d97f0209e4b72b66ef68109ad83a27d07787"
+    },
+    {
+      "bytes": 21721,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/spool.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "e42c7083fc6acb566c46e95f0bc5e8d29fa8f9a4a5d3b5c3b1ff70e9d2376ed0"
+    },
+    {
+      "bytes": 28020,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/session/store.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "04df8499a84a2af71bf16eda1437f07ca35a897be39e166eb695e3b9f6f771c4"
+    },
+    {
+      "bytes": 12950,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/tests/descriptor_retention.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "10566de341bebac7490b302214c3a6f501250ceb9a191b631927ef7eca85487d"
+    },
+    {
+      "bytes": 57432,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/tests/integration.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "a4d4ea858fe2958166e63be2ebd55a6d34ccd1cd257e4dd074e4125119a9c48c"
+    },
+    {
+      "bytes": 3432,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/tools/agent/canonical_lifecycle_test_support.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "e86d4317b8c8fe970d456b8d9eb1840e10c9ae61659ad6e75287012971303fd8"
+    },
+    {
+      "bytes": 24989,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/tools/agent/fork_outcome.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "a533bc40b57817fca796ac83b4f771ee5d2e67f81e6b5ae9db260e3f10edb3d4"
+    },
+    {
+      "bytes": 9750,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/tools/agent/fork_seed.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "9a8839b926013d8ca4776d212753c5d719741c8a9c725300942ec8e4febd8af8"
+    },
+    {
+      "bytes": 1674,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/tools/agent/fork_seed_canonical_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "12156d7fa4e3f65289ab8ca8f3a056f45f48aa03a5806f581dbc95a7b84c3863"
+    },
+    {
+      "bytes": 181481,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/tools/agent/fork_tool.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "e813778a3c12923872b5b56b7fff08ed07cf7f3787fb161560cad534c22023fd"
+    },
+    {
+      "bytes": 1378,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/tools/agent/mod.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "332fccbeba013bfd8684b8ed8bdfef1c0686aa0e07be6d74fd5202b03cab688e"
+    },
+    {
+      "bytes": 283882,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/tools/agent/spawn.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "0aac8a767ead3a3c04c152c596dcd962f49850f8e4ef47f51c1f811fada87558"
+    },
+    {
+      "bytes": 45560,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/tools/agent/spawn_context.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "f1eda8dad2ea028799141d45aea96ad45a5d8533b4ea50cc3a4553920b99fe6d"
+    },
+    {
+      "bytes": 20716,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/tools/agent/spawn_outcome.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "1abb9a4841cbffd7ef6a0ede07971b35aaed599731b8e97a4dcd01937dbf6d70"
+    },
+    {
+      "bytes": 4369,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/tools/task/disk/admission_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "25cf3fe2b055e46d2ed19c0cc18a9879a489b74f1c4d338bb31b6cb0fafe6a31"
+    },
+    {
+      "bytes": 41622,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/tools/web/fetch.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "99521ff7580a942d0373a7f2b02d4d8bb097ae9e5fc806fc1b6f2ece7e31b70d"
+    },
+    {
+      "bytes": 17079,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/util/private_fs.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "421d962c42b863ed5f2288e9dce095901eeed3769fb0d832ea5a170df9807248"
+    },
+    {
+      "bytes": 7229,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/util/private_fs_directory_publish_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "51b517b2d79051b998f6d1753e2c8dccc94495f2f8820c27047fba422b2d258f"
+    },
+    {
+      "bytes": 3584,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/util/private_fs_observation_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "b663b5cbdaf9ae0c580312f965e46051fb971d4c9f361e2fd217c0b0667801fd"
+    },
+    {
+      "bytes": 17794,
+      "category": "phase_fixture",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "crates/norn/src/util/private_fs_tests.rs",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "89cc4d0b04f8415f72fe77142ec9a8d747a7ee97f3787cb3a463159cfc09a9d2"
+    },
+    {
+      "bytes": 384281,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 2,
+      "passed": true,
+      "path": "docs/reviews/evidence/d2/2026-07-17-d2-f1-correction-gate-e9755fe.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "8cb4caf0b5724bf49de4fe53e9b7a4c4296751d2fb09a73fdb1e809aacd9e077"
+    },
+    {
+      "bytes": 63191,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "docs/reviews/evidence/d2/2026-07-17-d2-f1-correction-policy-e9755fe.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "c8565b5cf75f7ae88ae94b862ab6e0a6572e988eb333b7c74d27191e9cc6a024"
+    },
+    {
+      "bytes": 383877,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 2,
+      "passed": true,
+      "path": "docs/reviews/evidence/d2/2026-07-17-d2-gate-3ebc468.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "51267b197a7229c166a5bb610d725d090d682f66d98d84c96b31888838c8b7f8"
+    },
+    {
+      "bytes": 63191,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "docs/reviews/evidence/d2/2026-07-17-d2-policy-3ebc468.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "309aca517a0bd998a2fbc79c234c5c02ba73e110ebf15413f702da3ac937016c"
+    },
+    {
+      "bytes": 10131,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 13,
+      "passed": true,
+      "path": "docs/reviews/evidence/p3-p4-audio/2026-07-17-response-audio-correction-gate-df47e9e.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "d76ee1809907ab2d981da2c91be21975c56f5be2aaae85c69cbd2b3f0a651bb5"
+    },
+    {
+      "bytes": 27147,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "docs/reviews/evidence/p3-p4-audio/2026-07-17-response-audio-distributions-0512953.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "d4bac58deea36713ef6ead9522cc2f639babf0dd1f497aa58a5bef06ac6113a6"
+    },
+    {
+      "bytes": 12983,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "docs/reviews/evidence/p3-p4-audio/2026-07-17-response-audio-gate-0512953.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "38a20fb6d99f7eea23327870d79dbb40233039df6e2d3475984b5f911abe824c"
+    },
+    {
+      "bytes": 25765,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 8,
+      "passed": true,
+      "path": "docs/reviews/evidence/p3-p4-audio/2026-07-17-response-audio-lifecycle-distributions-f252cbb.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "4f1d5f81ecceb608972b8a803e193c2f3f3d23b1cb3ddf9462dba76dcab41798"
+    },
+    {
+      "bytes": 663,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "docs/reviews/evidence/p3-p4/2026-07-18-p3-p4-final-attestation-7f47218.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "8d5907283f1cfcb7adc2580aefa47591f6e13d1bc07408a9434f5ee6ca1f6123"
+    },
+    {
+      "bytes": 237041,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "docs/reviews/evidence/p3-p4/2026-07-18-p3-p4-final-distributions-7f47218.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "99c3c4f126d38d7260bd4774ddd23e893402b220e8105584b46b7636dcba3e63"
+    },
+    {
+      "bytes": 205034,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "docs/reviews/evidence/p3-p4/2026-07-18-p3-p4-final-gate-7f47218.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "b7e86b9ede8add13f68ceb1e88f9fa949dbe01a97e7577228eca8bcb65e2a451"
+    },
+    {
+      "bytes": 100984,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "docs/reviews/evidence/p3-p4/2026-07-18-p3-p4-final-policy-7f47218.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "aecbd180b4678783fc0cf7e7127adbcbaa76de3e10aef86c454b88e284524fd5"
+    },
+    {
+      "bytes": 126518,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 1,
+      "passed": true,
+      "path": "docs/reviews/evidence/p3-p4/2026-07-18-p3-p4-final-redaction-7f47218.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "63a4fbbb86fbf1e90d660905baa91064e84148cb5ba156c121aafd2935f9d182"
+    },
+    {
+      "bytes": 27713,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "docs/reviews/evidence/p3-p4/2026-07-18-response-lifecycle-surface-inventory.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "561f9cc099d31a9d6c0e7ac40f28cd477db8058e7d71a7b400ccabe7f3ad11f0"
+    },
+    {
+      "bytes": 82993,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 52,
+      "passed": true,
+      "path": "docs/reviews/evidence/p3-p4/2026-07-18-response-optional-lifecycle-gate-56fd4dd.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "848e44f34ed075065a7a5370c811dad68daa15139f72e0dd534edd826f3936f0"
+    },
+    {
+      "bytes": 156835,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 275,
+      "passed": true,
+      "path": "docs/reviews/evidence/p3-p4/2026-07-18-response-optional-shape-contract.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "7ea54c502732510a8c7e55a2acbfd481b92ed267ded34ce747af79216883dea3"
+    },
+    {
+      "bytes": 1850,
+      "category": "retained_historical",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "docs/reviews/evidence/p3-p4/p3_p4_final_contract.json",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "79d395c6a7f29a55b6a881bef96a81601fd911a852a52c08bcad4a789ad94cea"
+    },
+    {
+      "bytes": 238038,
+      "category": "generated_final",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "distributions",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "2c752d3c688fa53529bb1f8a3f7b8ed1454c909b0bd9c3eb53fc29c7d397cecb"
+    },
+    {
+      "bytes": 206026,
+      "category": "generated_final",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "gate",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "5da34ced37cf0481ec5e5cdc6cddf6cb1ed1ad30b2e803fb62455a73b1f85547"
+    },
+    {
+      "bytes": 101196,
+      "category": "generated_final",
+      "findings": [],
+      "historical_absolute_path_disclosures": 0,
+      "passed": true,
+      "path": "policy",
+      "rule_matches": {
+        "absolute_private_path": 0,
+        "artifact_integrity": 0,
+        "credential_material": 0,
+        "private_prompt_content": 0,
+        "raw_cache_key": 0,
+        "real_account_identifier": 0,
+        "reusable_turn_state": 0
+      },
+      "sha256": "2ecce2709d7affb52fc8a8c9cef8faf5526352e48d1e2b65d959064ae63df22b"
+    }
+  ],
+  "kind": "p3_p4_final_redaction",
+  "method": {
+    "generated_inventory": "final gate, policy, and distributions before attestation",
+    "phase_fixture_inventory": "whole source blobs for changed crates/**/*.rs paths whose path or source identifies test or fixture code",
+    "placeholder_policy": "exact redaction tokens or structured leading fixture markers; arbitrary substring matches are rejected",
+    "retained_inventory": "all changed JSON below docs/reviews/evidence in the phase range plus every hash-pinned reused artifact",
+    "semantic_limit": "arbitrary human prose cannot be classified as private mechanically; the hash-bound inventory supports mandatory reviewer inspection",
+    "synthetic_path_policy": "only exact checked-in fixture paths in SYNTHETIC_FIXTURE_PATHS; unlisted roots and descendants are rejected"
+  },
+  "passed": true,
+  "rules": {
+    "absolute_private_path": "absolute user or private temporary paths",
+    "artifact_integrity": "UTF-8 and JSON artifact integrity",
+    "credential_material": "API keys, bearer credentials, JWTs, and private keys",
+    "private_prompt_content": "personal prompt content and private contact data",
+    "raw_cache_key": "non-placeholder cache identity",
+    "real_account_identifier": "non-fixture account identifiers",
+    "reusable_turn_state": "reusable response, conversation, or encrypted turn state"
+  },
+  "schema_version": 1,
+  "source": "180759f506d9ca365999dab645794a8fc833a44f",
+  "summary": {
+    "files": 219,
+    "findings": 0,
+    "generated_final": 3,
+    "historical_absolute_path_disclosures": 353,
+    "phase_fixtures": 199,
+    "retained_historical": 17
+  },
+  "tree": "c588d96639cd6e7725255779afd445d479cbcd69"
+}
