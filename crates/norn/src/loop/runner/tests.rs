@@ -1,6 +1,7 @@
 //! Integration-style tests for the agent step runner.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -693,11 +694,16 @@ async fn custom_tool_call_precedes_an_explicit_continue_directive() {
         vec![text_delta("done"), done_event(StopReason::EndTurn)],
     ]);
     let store = EventStore::new();
+    let executions = Arc::new(AtomicUsize::new(0));
+    let handler_executions = Arc::clone(&executions);
     let mut handlers: std::collections::HashMap<String, ToolHandler> =
         std::collections::HashMap::new();
     handlers.insert(
         "apply_patch".to_owned(),
-        Box::new(|_| Ok(serde_json::json!({"applied": true}))),
+        Box::new(move |_| {
+            handler_executions.fetch_add(1, Ordering::SeqCst);
+            Ok(serde_json::json!({"applied": true}))
+        }),
     );
     let executor = MockToolExecutor::new(handlers);
     let tools = [ToolDefinition {
@@ -727,9 +733,14 @@ async fn custom_tool_call_precedes_an_explicit_continue_directive() {
                 if tool_calls.iter().any(|tool| {
                     tool.kind == crate::provider::request::ToolCallKind::Custom
                         && tool.call_id == "call_continue"
-                })
+            })
         )
     }));
+    assert_eq!(
+        executions.load(Ordering::SeqCst),
+        1,
+        "the custom tool must execute exactly once before continuation",
+    );
 }
 
 #[tokio::test]
