@@ -95,3 +95,21 @@ after the review.
 
 No credential, browser login, token refresh, or external provider request was
 used while preparing this package.
+
+## First deterministic attempt
+
+The first clean-main invocation on 2026-07-19 exited `2` after 0.412 seconds,
+before any build or test, with `ignored worktree paths would invalidate P2
+evidence`. It emitted no P2 evidence artifact and is not a Gate C observation.
+The bootstrap had rejected every ignored path in the working tree, including
+the mandated shared repository `target/`; clean main contained 44,290 ordinary
+ignored entries.
+
+The evidence-only correction removes that impossible global check. Tracked
+changes and nonignored untracked paths still fail through `git status
+--porcelain --untracked-files=all`; fixed support files remain hash-checked
+against the evidence-package commit; Cargo still runs only an exact `git
+archive` of `fcd1b30`; and every generated output remains confined below the
+shared repository `target/`. A self-test creates an isolated Git fixture below
+that target and proves an ignored `target/` entry passes while a nonignored
+untracked `source.rs` fails. A corrected deterministic result remains pending.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -78,6 +79,37 @@ class ContractTests(unittest.TestCase):
                 self.repo, "show", f"{self.contract['implementation_source']}:{path}"
             )
             self.assertEqual(support.sha256(data), expected)
+
+    def test_cleanliness_ignores_ignored_target_but_rejects_untracked_source(self) -> None:
+        parent = support.target_root(self.repo)
+        with tempfile.TemporaryDirectory(prefix="p2-cleanliness-", dir=parent) as raw:
+            fixture = Path(raw)
+            support.run(["git", "init", "--quiet"], cwd=fixture)
+            (fixture / ".gitignore").write_text("target/\n", encoding="utf-8")
+            (fixture / "tracked.txt").write_text("fixture\n", encoding="utf-8")
+            support.run(["git", "add", ".gitignore", "tracked.txt"], cwd=fixture)
+            support.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=P2 Evidence",
+                    "-c",
+                    "user.email=p2-evidence@example.invalid",
+                    "commit",
+                    "--quiet",
+                    "-m",
+                    "fixture",
+                ],
+                cwd=fixture,
+            )
+            ignored = fixture / "target" / "cache.bin"
+            ignored.parent.mkdir()
+            ignored.write_bytes(b"ignored\n")
+            support.require_clean_package(fixture)
+
+            (fixture / "source.rs").write_text("fn main() {}\n", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                support.require_clean_package(fixture)
 
     def test_phase_fixture_and_historical_evidence_inventory_is_redacted(self) -> None:
         report = p2_redaction.build(

@@ -77,6 +77,12 @@ def commit(repo: Path, value: str) -> str:
     return git(repo, "rev-parse", f"{value}^{{commit}}").decode().strip()
 
 
+def require_clean_package(repo: Path) -> None:
+    """Reject tracked or nonignored changes; ignored files cannot enter the archive."""
+    if git(repo, "status", "--porcelain", "--untracked-files=all"):
+        raise RuntimeError("P2 evidence requires a clean package worktree")
+
+
 def target_root(repo: Path) -> Path:
     common = Path(
         git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")

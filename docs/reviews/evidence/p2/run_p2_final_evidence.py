@@ -47,10 +47,7 @@ def bootstrap() -> None:
     p0_support = importlib.import_module("p0_evidence_support")
     repo = support.repo_root()
     package = support.commit(repo, "HEAD")
-    if support.git(repo, "status", "--porcelain", "--untracked-files=all"):
-        raise RuntimeError("P2 evidence requires a completely clean package worktree")
-    if support.git(repo, "ls-files", "--others", "--ignored", "--exclude-standard"):
-        raise RuntimeError("ignored worktree paths would invalidate P2 evidence")
+    support.require_clean_package(repo)
     fixed = (
         CONTRACT_PATH,
         SUPPORT_PATH,
