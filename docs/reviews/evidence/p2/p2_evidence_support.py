@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tarfile
 import time
+from collections import Counter, defaultdict
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -159,9 +160,7 @@ def auth_path_inventory(
 ) -> dict[str, Any]:
     paths = path_inventory(repo, base, implementation)["paths"]
     owned = sorted(
-        path
-        for path in paths
-        if path in AUTH_PATHS or path.startswith(AUTH_PREFIXES)
+        path for path in paths if path in AUTH_PATHS or path.startswith(AUTH_PREFIXES)
     )
     records = []
     for path in owned:
@@ -174,6 +173,18 @@ def auth_path_inventory(
         records.append({"path": path, "blob": blobs[0]})
     raw = "".join(f"{item['blob']} {item['path']}\0" for item in records).encode()
     return {"count": len(records), "nul_sha256": sha256(raw), "paths": records}
+
+
+def blob_manifest(
+    repo: Path, source: str, paths: tuple[str, ...]
+) -> list[dict[str, str]]:
+    return [
+        {
+            "path": path,
+            "blob": git(repo, "rev-parse", f"{source}:{path}").decode().strip(),
+        }
+        for path in paths
+    ]
 
 
 def command_text(repo: Path, args: list[str]) -> str:
@@ -204,10 +215,14 @@ def execute_case(
     before = time.monotonic()
     completed = run(args, cwd=cwd, env=env, check=False)
     elapsed = round(time.monotonic() - before, 3)
-    matches = re.findall(rb"test result: (?:ok|FAILED)\. (\d+) passed;", completed.stdout)
+    matches = re.findall(
+        rb"test result: (?:ok|FAILED)\. (\d+) passed;", completed.stdout
+    )
     python_matches = re.findall(rb"Ran (\d+) tests?", completed.stdout)
     observed_matches = matches or python_matches
-    observed = sum(int(value) for value in observed_matches) if observed_matches else None
+    observed = (
+        sum(int(value) for value in observed_matches) if observed_matches else None
+    )
     passed = (
         completed.returncode == 0
         and (not require_tests or isinstance(observed, int) and observed > 0)
@@ -229,6 +244,108 @@ def execute_case(
         "output_sha256": sha256(completed.stdout),
         "result": "pass" if passed else "fail",
     }
+
+
+def test_list_command(cargo: str, package: str, target: str) -> list[str]:
+    args = [cargo, "--locked", "test", "-p", package]
+    if target == "lib":
+        args.append("--lib")
+    else:
+        args.extend(("--test", target))
+    args.extend(("--", "--list"))
+    return args
+
+
+def required_selector_groups(
+    evidence_contract: dict[str, Any],
+) -> list[tuple[str, str, tuple[str, ...]]]:
+    grouped: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for case in evidence_contract["phase_cases"]:
+        grouped[(case["package"], case["target"])].add(case["test"])
+    grouped[("norn", "lib")].update(evidence_contract["distribution_tests"])
+    return [
+        (package, target, tuple(sorted(tests)))
+        for (package, target), tests in sorted(grouped.items())
+    ]
+
+
+def require_selector_listing(
+    output: bytes, required: tuple[str, ...], identity: str
+) -> int:
+    listed = re.findall(rb"^(.+): test$", output, flags=re.MULTILINE)
+    counts = Counter(item.decode(errors="strict") for item in listed)
+    missing = [name for name in required if counts[name] == 0]
+    ambiguous = [name for name in required if counts[name] > 1]
+    if missing or ambiguous:
+        details = []
+        if missing:
+            details.append("missing=" + ",".join(missing))
+        if ambiguous:
+            details.append("ambiguous=" + ",".join(ambiguous))
+        raise RuntimeError(
+            f"selector inventory mismatch for {identity}: {'; '.join(details)}"
+        )
+    return len(counts)
+
+
+def selector_inventory(
+    repo: Path,
+    source: Path,
+    env: dict[str, str],
+    cargo: str,
+    evidence_contract: dict[str, Any],
+) -> list[dict[str, Any]]:
+    records = []
+    for package, target, required in required_selector_groups(evidence_contract):
+        args = test_list_command(cargo, package, target)
+        started = datetime.now(UTC).isoformat()
+        before = time.monotonic()
+        completed = run(args, cwd=source, env=env, check=False)
+        elapsed = round(time.monotonic() - before, 3)
+        identity = f"{package}:{target}"
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"selector inventory command failed for {identity} with "
+                f"status {completed.returncode}"
+            )
+        listed_count = require_selector_listing(completed.stdout, required, identity)
+        records.append(
+            {
+                "package": package,
+                "target": target,
+                "command": command_text(repo, args),
+                "started_at": started,
+                "elapsed_seconds": elapsed,
+                "listed_test_count": listed_count,
+                "required_test_count": len(required),
+                "required_tests": list(required),
+                "output_sha256": sha256(completed.stdout),
+                "result": "pass",
+            }
+        )
+    return records
+
+
+def selector_inventory_errors(
+    records: object, evidence_contract: dict[str, Any]
+) -> list[str]:
+    groups = required_selector_groups(evidence_contract)
+    if not isinstance(records, list) or len(records) != len(groups):
+        return ["selector inventory shape mismatch"]
+    errors = []
+    for record, (package, target, required) in zip(records, groups, strict=True):
+        if (
+            not isinstance(record, dict)
+            or record.get("package") != package
+            or record.get("target") != target
+            or record.get("required_tests") != list(required)
+            or record.get("required_test_count") != len(required)
+            or not isinstance(record.get("listed_test_count"), int)
+            or record["listed_test_count"] < len(required)
+            or record.get("result") != "pass"
+        ):
+            errors.append(f"selector inventory mismatch: {package}:{target}")
+    return errors
 
 
 def write_json(path: Path, value: dict[str, Any]) -> None:
@@ -260,3 +377,22 @@ def source_checkout(repo: Path, source: str, label: str) -> Iterator[Path]:
         yield root
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+
+@contextmanager
+def detached_worktree(repo: Path, source: str, label: str) -> Iterator[Path]:
+    root = target_root(repo) / "worktrees" / f"p2-{label}-{source[:8]}-{os.getpid()}"
+    root.parent.mkdir(parents=True, exist_ok=True)
+    if root.exists():
+        raise RuntimeError("detached evidence worktree path already exists")
+    run(
+        ["git", "worktree", "add", "--detach", str(root), source],
+        cwd=repo,
+    )
+    try:
+        yield root
+    finally:
+        run(
+            ["git", "worktree", "remove", "--force", str(root)],
+            cwd=repo,
+        )

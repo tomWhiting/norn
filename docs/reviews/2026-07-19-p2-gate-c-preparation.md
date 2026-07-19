@@ -113,3 +113,58 @@ archive` of `fcd1b30`; and every generated output remains confined below the
 shared repository `target/`. A self-test creates an isolated Git fixture below
 that target and proves an ignored `target/` entry passes while a nonignored
 untracked `source.rs` fails. A corrected deterministic result remains pending.
+
+## Second deterministic attempt
+
+The next clean-main invocation reached every Gate C leg but did not reach the
+distribution runner. It retained
+`target/evidence/p2-gate.json` with SHA-256
+`9341ca15b9370f300c18a1e0ce8b523287a866953f068c5a7028bdc3852de90b`.
+The artifact records 24 checks, 6 passes, 18 failures, and 524.922 seconds of
+summed check time. The passes were the public embedder selector (`1/1`), fmt,
+strict workspace Clippy, doctests (`8/8`), redaction self-tests (`25/25`), and
+the frozen-range diff check.
+
+This is a retained failed harness observation, not a product verdict:
+
+- Fourteen focused selectors exited successfully after running zero tests. The
+  contract named source fixture modules rather than the complete compiled Rust
+  test identities. The sole integration-test selector ran `1/1`.
+- The exact-source `norn` fence recorded 3,471 passing executions and 107
+  failures. Every directly rendered root panic in the retained run was an OS
+  `PermissionDenied` while binding a loopback listener inside the execution
+  sandbox; the remaining failures were dependent or aggregated failures in
+  the same listener-backed targets. The `norn-cli` fence recorded 527 passes
+  and three failures, all at the JSON-RPC test stub listener with the same OS
+  error. The workspace fence repeated those failures and also reported the
+  compile-fail target red. These sandbox results cannot satisfy Gate C and
+  cannot establish a product regression.
+- The policy leg exited with `IndexError`. The reused P0 scanner computes diff
+  line numbers for `6669b9d..fcd1b30` but had read the later main-worktree file
+  bodies. That scanner's valid precondition is that its worktree is the
+  requested head.
+
+The narrow evidence correction now uses the real fully qualified identities
+for all 15 focused cases and all nine repeated cases. Before any gate case it
+compiles each distinct frozen-source target with `--list` and requires every
+declared identity to occur exactly once; a basename grep can no longer certify
+a vacuous selector. The policy leg runs the package-pinned syntax-aware scanner
+against files from a detached `fcd1b30` worktree under the repository's ignored
+`target/worktrees/` lane. Cargo output and retained artifacts continue to use
+the shared repository `target/`; `/tmp` is not used. The failed artifact above
+must be replaced, not reinterpreted, by a clean corrected run.
+
+The correction checks are non-vacuous. A compiled `--list` inventory of the
+exact frozen source resolved all required identities exactly once: 17 unique
+selectors within 3,554 Norn library tests, one within the two-test public API
+target, and three within 482 CLI library tests. The historical policy check
+then passed over 102 changed Rust files with no over-500 production file, thin
+entrypoint violation, module-shape violation, or added-line policy match. Its
+intermediate artifact is
+`target/evidence/p2-policy-historical-check.json`, SHA-256
+`192b076447311ffa173ebc7e9a11e7cba386ef1a2ad058eb45ca5f5e32989123`.
+Two earlier policy correction probes emitted no artifact: the P2-era scanner
+could not parse a statement-level `#[cfg(test)]`, and the first package-scanner
+probe retained a rule path relative to the wrong worktree. Both premises now
+fail in focused tests or explicit source-binding checks rather than during the
+final gate.

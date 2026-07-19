@@ -11,98 +11,98 @@
       "id": "jwt_namespaced_login_chain",
       "package": "norn",
       "target": "lib",
-      "test": "provider::openai_oauth::oauth_chain_tests::namespaced_login_identity_survives_durable_reload_and_reaches_request_header",
+      "test": "provider::openai_oauth::chain_tests::namespaced_login_identity_survives_durable_reload_and_reaches_request_header",
       "claims": ["AUTH-01"]
     },
     {
       "id": "jwt_flat_refresh_chain",
       "package": "norn",
       "target": "lib",
-      "test": "provider::openai_oauth::oauth_chain_tests::flat_refresh_identity_survives_durable_reload_and_reaches_request_headers",
+      "test": "provider::openai_oauth::chain_tests::flat_refresh_identity_survives_durable_reload_and_reaches_request_headers",
       "claims": ["AUTH-01"]
     },
     {
       "id": "same_process_single_flight",
       "package": "norn",
       "target": "lib",
-      "test": "provider::openai_oauth::manager_tests::concurrent_refreshes_collapse_into_single_exchange",
+      "test": "provider::openai_oauth::manager::tests::concurrent_refreshes_collapse_into_single_exchange",
       "claims": ["AUTH-02"]
     },
     {
       "id": "cross_process_single_exchange",
       "package": "norn",
       "target": "lib",
-      "test": "provider::openai_oauth::manager_process_tests::two_process_refresh_converges_with_one_authority_exchange",
+      "test": "provider::openai_oauth::manager::process_tests::two_process_refresh_converges_with_one_authority_exchange",
       "claims": ["AUTH-02"]
     },
     {
       "id": "foreign_writer_conflict",
       "package": "norn",
       "target": "lib",
-      "test": "provider::openai_oauth::credential_transaction_tests::compare_before_save_rejects_lock_ignoring_foreign_write",
+      "test": "provider::openai_oauth::credential_transaction::tests::compare_before_save_rejects_lock_ignoring_foreign_write",
       "claims": ["AUTH-02"]
     },
     {
       "id": "typed_local_state",
       "package": "norn-cli",
       "target": "lib",
-      "test": "commands::auth_state_matrix_tests::status_and_doctor_share_real_file_classification_and_semantics",
+      "test": "commands::auth::state_matrix_tests::status_and_doctor_share_real_file_classification_and_semantics",
       "claims": ["AUTH-03"]
     },
     {
       "id": "browser_success_after_commit",
       "package": "norn",
       "target": "lib",
-      "test": "provider::openai_oauth::login_server_commit_tests::caller_commit_precedes_success_acknowledgement",
+      "test": "provider::openai_oauth::login_server::commit_tests::caller_commit_precedes_success_acknowledgement",
       "claims": ["AUTH-04"]
     },
     {
       "id": "local_first_logout",
       "package": "norn",
       "target": "lib",
-      "test": "provider::openai_oauth::revoke_tests::revoke_failure_still_removes_local_credential",
+      "test": "provider::openai_oauth::revoke::tests::revoke_failure_still_removes_local_credential",
       "claims": ["AUTH-05"]
     },
     {
       "id": "publication_fault_matrix",
       "package": "norn",
       "target": "lib",
-      "test": "provider::openai_oauth::credential_recovery_fault_tests::credential_publication_faults_converge_without_refresh_replay",
+      "test": "provider::openai_oauth::credential_recovery::fault_tests::credential_publication_faults_converge_without_refresh_replay",
       "claims": ["AUTH-06"]
     },
     {
       "id": "restart_recovery",
       "package": "norn",
       "target": "lib",
-      "test": "provider::openai_oauth::manager_recovery_protocol_tests::ambiguous_outcome_survives_process_restart_without_replay",
+      "test": "provider::openai_oauth::credential_recovery::protocol_tests::ambiguous_outcome_survives_process_restart_without_replay",
       "claims": ["AUTH-06"]
     },
     {
       "id": "named_account_isolation",
       "package": "norn",
       "target": "lib",
-      "test": "provider::openai_oauth::account_catalog_tests::named_slots_coexist_and_switching_changes_only_future_resolution",
+      "test": "provider::openai_oauth::account_catalog::tests::named_slots_coexist_and_switching_changes_only_future_resolution",
       "claims": ["AUTH-07"]
     },
     {
       "id": "foreign_codex_home_boundary",
       "package": "norn-cli",
       "target": "lib",
-      "test": "commands::auth_foreign_home_tests::default_auth_surfaces_leave_foreign_home_unchanged_at_each_checkpoint",
+      "test": "commands::auth::foreign_home_tests::default_auth_surfaces_leave_foreign_home_unchanged_at_each_checkpoint",
       "claims": ["AUTH-07", "CONFIG-02"]
     },
     {
       "id": "resume_explicit_account",
       "package": "norn-cli",
       "target": "lib",
-      "test": "print::provider_tests::resumed_oauth_uses_explicit_account_after_active_selection_changes",
+      "test": "print::provider::tests::resumed_oauth_uses_explicit_account_after_active_selection_changes",
       "claims": ["CONFIG-02"]
     },
     {
       "id": "library_auth_matrix",
       "package": "norn",
       "target": "lib",
-      "test": "config::provider_auth_tests::provider_auth_matrix_is_exhaustive",
+      "test": "config::provider_auth::tests::provider_auth_matrix_is_exhaustive",
       "claims": ["CONFIG-01", "CONFIG-02"]
     },
     {
@@ -114,15 +114,15 @@
     }
   ],
   "distribution_tests": [
-    "provider::openai_oauth::manager_tests::concurrent_refreshes_collapse_into_single_exchange",
-    "provider::openai_oauth::manager_tests::canceled_waiter_does_not_cancel_owned_refresh_attempt",
-    "provider::openai_oauth::manager_process_tests::two_process_refresh_converges_with_one_authority_exchange",
-    "provider::openai_oauth::manager_supervision_tests::aborted_worker_wakes_every_waiter_with_indeterminate_outcome",
-    "provider::openai_oauth::manager_supervision_tests::aborted_supervisor_closes_the_attempt_for_waiters",
-    "provider::openai_oauth::manager_supervision_tests::abort_after_dispatch_blocks_replay_until_lineage_changes",
-    "provider::openai_oauth::manager_recovery_protocol_tests::ambiguous_outcome_survives_process_restart_without_replay",
-    "provider::openai_oauth::login_server_commit_tests::dropping_completion_during_transaction_acquisition_never_commits",
-    "provider::openai_oauth::revoke_tests::cancellation_during_remote_revoke_cannot_restore_local_credential"
+    "provider::openai_oauth::manager::tests::concurrent_refreshes_collapse_into_single_exchange",
+    "provider::openai_oauth::manager::tests::canceled_waiter_does_not_cancel_owned_refresh_attempt",
+    "provider::openai_oauth::manager::process_tests::two_process_refresh_converges_with_one_authority_exchange",
+    "provider::openai_oauth::manager::supervision_tests::aborted_worker_wakes_every_waiter_with_indeterminate_outcome",
+    "provider::openai_oauth::manager::supervision_tests::aborted_supervisor_closes_the_attempt_for_waiters",
+    "provider::openai_oauth::manager::supervision_tests::abort_after_dispatch_blocks_replay_until_lineage_changes",
+    "provider::openai_oauth::credential_recovery::protocol_tests::ambiguous_outcome_survives_process_restart_without_replay",
+    "provider::openai_oauth::login_server::commit_tests::dropping_completion_during_transaction_acquisition_never_commits",
+    "provider::openai_oauth::revoke::tests::cancellation_during_remote_revoke_cannot_restore_local_credential"
   ],
   "historical_artifacts": {
     "docs/reviews/evidence/2026-07-15-p2-credential-lock.json": "b7565111ec4a01af74844ac5b2754834da72f30cfb699150f2d7c2c176e79f09"

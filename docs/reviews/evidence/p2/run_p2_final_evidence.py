@@ -25,12 +25,13 @@ REDACTION_PATH: Final = "docs/reviews/evidence/p2/p2_redaction.py"
 RUNNER_PATH: Final = "docs/reviews/evidence/p2/run_p2_final_evidence.py"
 LIVE_PATH: Final = "docs/reviews/evidence/p2/run_p2_live_aba.py"
 PROBE_PATH: Final = "docs/reviews/evidence/p2/p2_live_refresh_probe.rs"
-POLICY_RUNNER: Final = "docs/reviews/evidence/run_p0_policy_evidence.py"
+POLICY_PATH: Final = "docs/reviews/evidence/p2/p2_policy_support.py"
 COMMON_REDACTION: Final = "docs/reviews/evidence/p3-p4/p3_p4_redaction.py"
 COMMON_REDACTION_TEST: Final = "docs/reviews/evidence/p3-p4/test_p3_p4_redaction.py"
 
 support: Any = None
 p2_redaction: Any = None
+policy_support: Any = None
 scanner: Any = None
 p0_support: Any = None
 contract: dict[str, Any] = {}
@@ -40,9 +41,10 @@ def bootstrap() -> None:
     if not (sys.flags.isolated and sys.flags.no_site and sys.flags.dont_write_bytecode):
         raise RuntimeError("P2 evidence requires Python -I -S -B")
     sys.path[:0] = [str(HERE), str(EVIDENCE), str(P3_EVIDENCE)]
-    global support, p2_redaction, scanner, p0_support, contract
+    global support, p2_redaction, policy_support, scanner, p0_support, contract
     support = importlib.import_module("p2_evidence_support")
     p2_redaction = importlib.import_module("p2_redaction")
+    policy_support = importlib.import_module("p2_policy_support")
     scanner = importlib.import_module("p3_p4_redaction")
     p0_support = importlib.import_module("p0_evidence_support")
     repo = support.repo_root()
@@ -55,9 +57,10 @@ def bootstrap() -> None:
         RUNNER_PATH,
         LIVE_PATH,
         PROBE_PATH,
-        POLICY_RUNNER,
+        POLICY_PATH,
         COMMON_REDACTION,
         COMMON_REDACTION_TEST,
+        *policy_support.POLICY_SUPPORT,
     )
     for path in fixed:
         expected = support.git(repo, "show", f"{package}:{path}")
@@ -74,7 +77,9 @@ def bootstrap() -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     ).returncode:
-        raise RuntimeError("P2 evidence package does not descend from the integration anchor")
+        raise RuntimeError(
+            "P2 evidence package does not descend from the integration anchor"
+        )
 
 
 def environment() -> tuple[dict[str, str], int]:
@@ -92,16 +97,28 @@ def provenance() -> dict[str, Any]:
     repo = support.repo_root()
     package = support.commit(repo, "HEAD")
     implementation = contract["implementation_source"]
-    fixed = (CONTRACT_PATH, SUPPORT_PATH, REDACTION_PATH, RUNNER_PATH, LIVE_PATH, PROBE_PATH)
+    fixed = (
+        CONTRACT_PATH,
+        SUPPORT_PATH,
+        REDACTION_PATH,
+        RUNNER_PATH,
+        LIVE_PATH,
+        PROBE_PATH,
+        POLICY_PATH,
+    )
     return {
         "base": contract["base"],
         "implementation_source": implementation,
         "implementation_tree": support.git(
             repo, "rev-parse", f"{implementation}^{{tree}}"
-        ).decode().strip(),
+        )
+        .decode()
+        .strip(),
         "integration_anchor": contract["integration_anchor"],
         "evidence_package": package,
-        "evidence_package_tree": support.git(repo, "rev-parse", f"{package}^{{tree}}").decode().strip(),
+        "evidence_package_tree": support.git(repo, "rev-parse", f"{package}^{{tree}}")
+        .decode()
+        .strip(),
         "changed_paths": support.path_inventory(repo, contract["base"], implementation),
         "rust_manifest": support.rust_manifest(repo, implementation),
         "auth_product_paths": support.auth_path_inventory(
@@ -111,10 +128,15 @@ def provenance() -> dict[str, Any]:
             contract["integration_anchor"],
             package,
         ),
+        "policy_support": support.blob_manifest(
+            repo, package, policy_support.POLICY_SUPPORT
+        ),
         "evidence_support": [
             {
                 "path": path,
-                "sha256": support.sha256(support.git(repo, "show", f"{package}:{path}")),
+                "sha256": support.sha256(
+                    support.git(repo, "show", f"{package}:{path}")
+                ),
             }
             for path in fixed
         ],
@@ -135,9 +157,7 @@ def exact_test(case: dict[str, Any], cargo: str) -> list[str]:
     return command
 
 
-def gate_cases(
-    cargo: str, policy: Path
-) -> list[tuple[str, list[str], Path, bool, int | None]]:
+def gate_cases(cargo: str) -> list[tuple[str, list[str], Path, bool, int | None]]:
     repo = support.repo_root()
     cases = [
         (case["id"], exact_test(case, cargo), Path("<source>"), True, 1)
@@ -159,13 +179,6 @@ def gate_cases(
             ("doctests", [cargo, "--locked", "test", "--workspace", "--doc", "--no-fail-fast"], Path("<source>"), True, None),
             ("redaction_tests", [sys.executable, "-I", "-S", "-B", COMMON_REDACTION_TEST], repo, True, None),
             ("diff_check", ["git", "diff", "--check", f"{contract['base']}...{contract['implementation_source']}"], repo, False, None),
-            (
-                "policy",
-                [sys.executable, "-I", "-S", "-B", POLICY_RUNNER, "--base", contract["base"], "--head", contract["implementation_source"], "--output", str(policy)],
-                repo,
-                False,
-                None,
-            ),
         )
     )
     return cases
@@ -179,9 +192,10 @@ def run_gate(output: Path, policy: Path) -> int:
     scratch.mkdir(parents=True, exist_ok=False)
     try:
         with support.source_checkout(repo, contract["implementation_source"], "gate-source") as source:
+            selectors = support.selector_inventory(repo, source, env, cargo_executable(env), contract)
             records = []
             for case_id, command, cwd, require_tests, expected in gate_cases(
-                cargo_executable(env), policy
+                cargo_executable(env)
             ):
                 records.append(
                     support.execute_case(
@@ -195,6 +209,19 @@ def run_gate(output: Path, policy: Path) -> int:
                         expected,
                     )
                 )
+        with support.detached_worktree(repo, contract["implementation_source"], "policy-source") as policy_source:
+            records.append(
+                support.execute_case(
+                    repo,
+                    policy_source,
+                    scratch,
+                    env,
+                    "policy",
+                    policy_support.command(sys.executable, repo, policy_source, policy, contract),
+                    False,
+                    None,
+                )
+            )
         policy_doc = json.loads(policy.read_bytes()) if policy.exists() else {}
         passed = all(record["result"] == "pass" for record in records)
         passed = passed and policy_doc.get("policy_passed") is True
@@ -208,10 +235,15 @@ def run_gate(output: Path, policy: Path) -> int:
                 "environment": {
                     "target": "<repo>/target",
                     "removed_ambient_variable_count": removed,
-                    "fingerprint": p0_support.environment_fingerprint(env, contract["toolchain"]),
+                    "fingerprint": p0_support.environment_fingerprint(
+                        env, contract["toolchain"]
+                    ),
                 },
+                "selector_inventory": selectors,
                 "checks": records,
-                "policy_sha256": support.file_sha256(policy) if policy.exists() else None,
+                "policy_sha256": support.file_sha256(policy)
+                if policy.exists()
+                else None,
                 "passed": passed,
             },
         )
@@ -228,7 +260,9 @@ def run_distributions(output: Path) -> int:
     scratch.mkdir(parents=True, exist_ok=False)
     cases = []
     try:
-        with support.source_checkout(repo, contract["implementation_source"], "distribution-source") as source:
+        with support.source_checkout(
+            repo, contract["implementation_source"], "distribution-source"
+        ) as source:
             for test in contract["distribution_tests"]:
                 observations = []
                 command = exact_test(
@@ -253,7 +287,9 @@ def run_distributions(output: Path) -> int:
                         "test": test,
                         "runs": contract["distribution_runs"],
                         "observations": observations,
-                        "passed": all(item["result"] == "pass" for item in observations),
+                        "passed": all(
+                            item["result"] == "pass" for item in observations
+                        ),
                     }
                 )
         passed = all(case["passed"] for case in cases)
@@ -267,7 +303,9 @@ def run_distributions(output: Path) -> int:
                 "environment": {
                     "target": "<repo>/target",
                     "removed_ambient_variable_count": removed,
-                    "fingerprint": p0_support.environment_fingerprint(env, contract["toolchain"]),
+                    "fingerprint": p0_support.environment_fingerprint(
+                        env, contract["toolchain"]
+                    ),
                 },
                 "cases": cases,
                 "observations": sum(case["runs"] for case in cases),
@@ -286,7 +324,9 @@ def attest(args: argparse.Namespace) -> int:
         "distributions": args.distributions.read_bytes(),
         "redaction": args.redaction.read_bytes(),
     }
-    docs = {name: p0_support.strict_json_loads(data) for name, data in artifacts.items()}
+    docs = {
+        name: p0_support.strict_json_loads(data) for name, data in artifacts.items()
+    }
     errors = []
     expected = {
         "gate": "p2_final_gate",
@@ -318,16 +358,27 @@ def attest(args: argparse.Namespace) -> int:
         )
     )
     checks = docs["gate"].get("checks")
-    if not isinstance(checks, list) or [item.get("id") for item in checks] != expected_gate_ids:
+    if (
+        not isinstance(checks, list)
+        or [item.get("id") for item in checks] != expected_gate_ids
+    ):
         errors.append("gate inventory mismatch")
     elif any(
         item.get("exit_status") != 0
         or item.get("result") != "pass"
         or item.get("required_tests") is True
-        and (not isinstance(item.get("observed_tests"), int) or item["observed_tests"] < 1)
+        and (
+            not isinstance(item.get("observed_tests"), int)
+            or item["observed_tests"] < 1
+        )
         for item in checks
     ):
         errors.append("gate result mismatch")
+    errors.extend(
+        support.selector_inventory_errors(
+            docs["gate"].get("selector_inventory"), contract
+        )
+    )
     distribution_cases = docs["distributions"].get("cases")
     if docs["distributions"].get("observations") != 180:
         errors.append("distribution denominator mismatch")
@@ -378,7 +429,9 @@ def attest(args: argparse.Namespace) -> int:
             "kind": "p2_machine_attestation",
             "generated_at": datetime.now(UTC).isoformat(),
             "source": contract["implementation_source"],
-            "artifacts": {name: support.sha256(data) for name, data in artifacts.items()},
+            "artifacts": {
+                name: support.sha256(data) for name, data in artifacts.items()
+            },
             "live_aba": "required_not_included",
             "phase_acceptance": False,
             "errors": errors,

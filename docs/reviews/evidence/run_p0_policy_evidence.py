@@ -120,13 +120,28 @@ def added_line_evidence(repo: Path, base: str, head: str) -> dict[str, list[dict
 
 
 def main() -> int:
+    runner_repo = Path(__file__).resolve().parents[3]
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", default="41ea210")
     parser.add_argument("--head", default="HEAD")
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--repository",
+        type=Path,
+        default=runner_repo,
+    )
     args = parser.parse_args()
 
-    repo = Path(__file__).resolve().parents[3]
+    repo = args.repository.resolve()
+    top_level = Path(command("git", "rev-parse", "--show-toplevel", cwd=repo).strip())
+    if top_level.resolve() != repo:
+        raise RuntimeError("policy repository must be a Git worktree root")
+    requested_head = command(
+        "git", "rev-parse", f"{args.head}^{{commit}}", cwd=repo
+    ).strip()
+    worktree_head = command("git", "rev-parse", "HEAD^{commit}", cwd=repo).strip()
+    if requested_head != worktree_head:
+        raise RuntimeError("policy repository HEAD must equal the requested head")
     layout = paths.RepositoryTargetLayout.locate(repo)
     output = (
         layout.require_lane_path(args.output, "evidence", "policy output")
@@ -215,7 +230,7 @@ def main() -> int:
         "method": {
             "parser": command("ast-grep", "--version", cwd=repo).strip(),
             "counter": command("tokei", "--version", cwd=repo).strip(),
-            "rule": str(rule.relative_to(repo)),
+            "rule": str(rule.relative_to(runner_repo)),
             "cfg_policy": "remove AST items whose cfg cannot be true with test=false",
             "module_shape_policy": (
                 "repository-wide AST sweep requires production mod.rs files to contain "
