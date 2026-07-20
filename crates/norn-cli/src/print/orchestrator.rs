@@ -49,6 +49,7 @@ use serde_json::Value;
 use super::driven::{
     driven_background_failure, execute_driven, finish_intervene_loop, spawn_intervene_loop,
 };
+use super::error::preserve_run_failure;
 use super::jsonrpc::{DrivenRun, SharedRunDriver};
 use super::output::{StopInfo, drain_diagnostics, extract_output_and_usage};
 use super::provider::build_provider;
@@ -608,18 +609,10 @@ async fn orchestrate_run(
         } else {
             None
         };
-        if let Some(error) =
-            driven_background_failure(intervene_error.as_ref(), emitter_error.as_ref())
-        {
-            return Err(error);
-        }
-
-        let result = match result {
-            Ok(value) => value,
-            Err(err) => {
-                return Err(err.into());
-            }
-        };
+        let result = preserve_run_failure(
+            result,
+            driven_background_failure(intervene_error.as_ref(), emitter_error.as_ref()),
+        )?;
 
         // The diagnostic collector the builder wired onto the loop context
         // (via `load_runtime_base`) is the one runtime post-checks report

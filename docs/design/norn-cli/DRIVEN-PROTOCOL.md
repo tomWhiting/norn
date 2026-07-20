@@ -79,12 +79,14 @@ idempotent and read-only. The result:
 
 Guarantees on the acceptance boundary:
 
-- **Every accepted `run/execute` is answered.** Any failure after
+- **Every accepted `run/execute` is answered while the peer transport remains
+  writable.** Any failure after
   acceptance — output-schema parse, runtime assembly, provider
   authentication, or the run itself — is returned as the id-matched
   **error** response (`-32603`, message carrying the typed CLI error text)
-  before the process exits. The peer never observes EOF in place of a
-  Response.
+  before the process exits. If stdout write or flush fails, delivery cannot be
+  completed; that sink failure is retained in the process diagnostic and the
+  process exits nonzero rather than pretending a response was delivered.
 - A `run/execute` with no string prompt is answered `-32600` and the
   pre-run loop keeps serving (the request was not accepted).
 - A prompt that resolves entirely to a local slash command (no agent call)
