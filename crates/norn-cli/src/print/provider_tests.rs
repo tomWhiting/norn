@@ -87,6 +87,37 @@ fn connection_failed_provider_error_converts_to_provider_variant() {
 }
 
 #[cfg(unix)]
+#[tokio::test]
+#[serial]
+async fn missing_oauth_credentials_keep_login_guidance_and_auth_exit() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let result = temp_env::async_with_vars(
+        [("NORN_HOME", Some(directory.path().as_os_str()))],
+        build_provider(
+            ProviderKind::Openai,
+            &ProviderConfigOverrides::default(),
+            "gpt-5.6-sol",
+            None,
+            false,
+        ),
+    )
+    .await;
+    let Err(ProviderBuildError::Auth(reason)) = result else {
+        return Err(std::io::Error::other(
+            "missing OAuth credentials were not classified as authentication",
+        )
+        .into());
+    };
+    assert!(reason.contains("no OAuth token found"));
+    assert!(reason.contains("norn auth login"));
+    assert_eq!(
+        ProviderBuildError::Auth(reason).exit_code(),
+        ExitCode::AuthError
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
 #[test]
 #[serial]
 fn non_unicode_api_key_value_is_not_rendered() -> TestResult {

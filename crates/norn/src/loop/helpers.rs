@@ -17,7 +17,9 @@ use crate::r#loop::assembly::AssembledResponse;
 use crate::r#loop::commands::{PreprocessResult, preprocess_input};
 use crate::r#loop::config::{AgentLoopConfig, ToolExecutor};
 use crate::r#loop::context::construct_prompt;
-use crate::r#loop::conversation_state::{ResponseThreadAnchor, latest_response_anchor};
+use crate::r#loop::conversation_state::{
+    ResponseThreadAnchor, latest_response_anchor_for_prompt_view,
+};
 use crate::r#loop::iteration::{IterationSignal, format_handoff_message};
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::notifications::ToolBatchNotificationHook;
@@ -121,8 +123,12 @@ pub(super) fn build_initial_messages(
     // plus history form one stable, cacheable prefix. The prefix is therefore
     // exactly the System message.
     let prefix_len = messages.len();
-    let response_thread_anchor =
-        latest_response_anchor(&history_events, prefix_len, include_compactions);
+    let response_thread_anchor = latest_response_anchor_for_prompt_view(
+        &history_events,
+        store,
+        prefix_len,
+        include_compactions,
+    );
 
     let history = if include_compactions {
         crate::session::conversion::prompt_events_to_messages(&history_events)
@@ -498,6 +504,11 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::r#loop::config::{AgentLoopConfig, ConversationStateMode};
+    use crate::r#loop::conversation_state::ConversationRequestState;
+    use crate::provider::tools::ProviderCapabilities;
+    use crate::session::context_edit::ContextEdits;
+    use crate::session::events::{EventUsage, ProviderEpochBoundaryReason};
     use crate::session::persistence::SessionPersistError;
     use crate::session::store::PersistenceSink;
 
@@ -506,6 +517,70 @@ mod tests {
             base: EventBase::new(None),
             content: content.to_owned(),
         }
+    }
+
+    fn assistant_event(store: &EventStore, response_id: &str) -> SessionEvent {
+        SessionEvent::AssistantMessage {
+            base: EventBase::new(store.last_event_id()),
+            response_items: Vec::new(),
+            content: format!("answer from {response_id}"),
+            thinking: String::new(),
+            reasoning: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: EventUsage::default(),
+            stop_reason: "end_turn".to_owned(),
+            response_id: Some(response_id.to_owned()),
+        }
+    }
+
+    fn threaded_state(initial: InitialMessages) -> Result<ConversationRequestState, NornError> {
+        Ok(ConversationRequestState::new(
+            &AgentLoopConfig {
+                conversation_state: ConversationStateMode::ProviderThreaded,
+                ..AgentLoopConfig::default()
+            },
+            ProviderCapabilities::openai_responses(),
+            initial.prefix_len,
+            initial.response_thread_anchor,
+        )?)
+    }
+
+    #[test]
+    fn context_edited_prompt_respects_provider_epoch_boundaries() -> Result<(), NornError> {
+        let store = EventStore::new();
+        store.append(assistant_event(&store, "response_before_adoption"))?;
+        store.append(SessionEvent::ProviderEpochBoundary {
+            base: EventBase::new(store.last_event_id()),
+            reason: ProviderEpochBoundaryReason::ProviderIdentityAdoption,
+        })?;
+        let mut loop_context = LoopContext::new("system");
+        loop_context.context_edits = Some(ContextEdits::new());
+
+        let initial = build_initial_messages(Some("next"), &loop_context, &store)?;
+        let state = threaded_state(initial)?;
+        assert!(state.previous_response_id().is_none());
+
+        store.append(assistant_event(&store, "response_after_adoption"))?;
+        store.append(SessionEvent::UserMessage {
+            base: EventBase::new(store.last_event_id()),
+            content: "queued after the new response".to_owned(),
+        })?;
+        let initial = build_initial_messages(Some("next"), &loop_context, &store)?;
+        let messages = initial.messages.clone();
+        let state = threaded_state(initial)?;
+        assert_eq!(
+            state.previous_response_id().as_deref(),
+            Some("response_after_adoption"),
+        );
+        let request_messages = state.request_messages(&messages);
+        assert_eq!(request_messages.len(), 3);
+        assert_eq!(request_messages[0].role, MessageRole::System);
+        assert_eq!(
+            request_messages[1].content.as_deref(),
+            Some("queued after the new response"),
+        );
+        assert_eq!(request_messages[2].content.as_deref(), Some("next"));
+        Ok(())
     }
 
     /// A sink whose `persist` blocks until a handshake task — which can

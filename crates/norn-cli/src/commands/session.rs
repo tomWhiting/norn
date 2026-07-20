@@ -28,6 +28,7 @@ use crate::print::orchestrator::PrintError;
 use crate::session::{SessionIndexEntry, SessionManager, SessionPersistError};
 
 use super::session_export;
+use super::session_output::PublicSessionIndexEntry;
 
 /// Dispatch to a `norn session` subcommand. Takes ownership of the
 /// outer [`Cli`] so resume/fork can mutate it before forwarding to the
@@ -262,7 +263,11 @@ fn print_table(entries: &[SessionIndexEntry]) -> ExitCode {
 }
 
 fn print_json_array(entries: &[SessionIndexEntry]) -> ExitCode {
-    match serde_json::to_string_pretty(entries) {
+    let public_entries = entries
+        .iter()
+        .map(PublicSessionIndexEntry::from)
+        .collect::<Vec<_>>();
+    match serde_json::to_string_pretty(&public_entries) {
         Ok(text) => {
             println!("{text}");
             ExitCode::Success

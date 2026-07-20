@@ -9,6 +9,7 @@
 //! actually ran with — callers never duplicate (or contradict) the
 //! builder's own configuration.
 
+use crate::provider::ProviderStateIdentity;
 use crate::session::store::DurabilityPolicy;
 use crate::session::{
     CreateSessionOptions, OpenSession, ResumePolicy, SessionManager, SessionPersistError,
@@ -193,22 +194,23 @@ impl SessionRequest {
         self,
         model: &str,
         working_dir: &str,
+        provider_state_identity: Option<ProviderStateIdentity>,
     ) -> Result<OpenSession, SessionPersistError> {
         let options = |name: Option<String>| CreateSessionOptions {
             model: model.to_owned(),
             working_dir: working_dir.to_owned(),
             name,
         };
+        let manager = self.manager.open_with_affinity(provider_state_identity);
         match self.spec {
-            SessionSpec::Create { name } => self.manager.create(options(name), self.durability),
+            SessionSpec::Create { name } => manager.create(options(name), self.durability),
             SessionSpec::Resume { id_or_name, policy } => {
-                self.manager
-                    .resume_with_policy(&id_or_name, self.durability, policy)
+                manager.resume_with_policy(&id_or_name, self.durability, policy)
             }
             SessionSpec::ResumeLatestInWorkingDir {
                 working_dir,
                 policy,
-            } => self.manager.resume_latest_in_working_dir_with_policy(
+            } => manager.resume_latest_in_working_dir_with_policy(
                 &working_dir,
                 self.durability,
                 policy,
@@ -217,25 +219,21 @@ impl SessionRequest {
                 source,
                 name,
                 policy,
-            } => self
-                .manager
-                .fork_with_policy(&source, options(name), self.durability, policy),
+            } => manager.fork_with_policy(&source, options(name), self.durability, policy),
             SessionSpec::ForkLatestInWorkingDir {
                 working_dir,
                 policy,
-            } => self.manager.fork_latest_in_working_dir_with_policy(
+            } => manager.fork_latest_in_working_dir_with_policy(
                 &working_dir,
                 options(None),
                 self.durability,
                 policy,
             ),
             SessionSpec::OpenOrResume { id, policy } => {
-                self.manager
-                    .open_or_resume_with_policy(&id, options(None), self.durability, policy)
+                manager.open_or_resume_with_policy(&id, options(None), self.durability, policy)
             }
             SessionSpec::CreateWithId { id, name } => {
-                self.manager
-                    .create_with_id(&id, options(name), self.durability)
+                manager.create_with_id(&id, options(name), self.durability)
             }
         }
     }
@@ -291,8 +289,11 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(5));
         let other_id = seed(&manager, "/repo/other", "other work");
 
-        let opened = request(&manager, SessionSpec::resume_latest("/repo/current"))
-            .open("test-model", "/repo/current")?;
+        let opened = request(&manager, SessionSpec::resume_latest("/repo/current")).open(
+            "test-model",
+            "/repo/current",
+            None,
+        )?;
         assert_eq!(
             opened.entry.id, current_id,
             "must resume the current-dir session, not globally newer {other_id}",
@@ -314,8 +315,11 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(5));
         let _other_id = seed(&manager, "/repo/other", "other source");
 
-        let opened = request(&manager, SessionSpec::fork_latest("/repo/current"))
-            .open("test-model", "/repo/current")?;
+        let opened = request(&manager, SessionSpec::fork_latest("/repo/current")).open(
+            "test-model",
+            "/repo/current",
+            None,
+        )?;
         assert_ne!(opened.entry.id, current_id, "fork mints a new session id");
         let events = opened.store.events();
         assert!(
@@ -355,7 +359,7 @@ mod tests {
             &manager,
             SessionSpec::resume_with_policy(&id, ResumePolicy::ApproveFreshEpochProjection),
         )
-        .open("test-model", "/repo/current")?;
+        .open("test-model", "/repo/current", None)?;
         assert!(approved.store.events().iter().any(|event| matches!(
             event,
             crate::session::events::SessionEvent::ProviderEpochBoundary {

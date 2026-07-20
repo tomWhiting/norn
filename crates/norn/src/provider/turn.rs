@@ -8,6 +8,7 @@ use serde_json::Value;
 use crate::error::ProviderError;
 
 use super::request::SecretString;
+use super::state_identity::ProviderStateIdentity;
 
 /// Private Codex sticky-routing header carried between requests in one turn.
 pub(crate) const CODEX_TURN_STATE_HEADER: &str = "x-codex-turn-state";
@@ -25,6 +26,7 @@ pub struct ProviderTurnContext {
 struct ProviderTurnContextInner {
     session_id: Option<String>,
     turn_id: String,
+    state_identity: OnceLock<ProviderStateIdentity>,
     codex_turn_state: OnceLock<SecretString>,
 }
 
@@ -34,6 +36,10 @@ impl std::fmt::Debug for ProviderTurnContext {
             .debug_struct("ProviderTurnContext")
             .field("session_id_present", &self.inner.session_id.is_some())
             .field("turn_id_present", &!self.inner.turn_id.is_empty())
+            .field(
+                "state_identity_present",
+                &self.inner.state_identity.get().is_some(),
+            )
             .field(
                 "codex_turn_state_present",
                 &self.inner.codex_turn_state.get().is_some(),
@@ -75,6 +81,7 @@ impl ProviderTurnContext {
             inner: Arc::new(ProviderTurnContextInner {
                 session_id,
                 turn_id,
+                state_identity: OnceLock::new(),
                 codex_turn_state: OnceLock::new(),
             }),
         }
@@ -90,6 +97,27 @@ impl ProviderTurnContext {
     #[must_use]
     pub fn turn_id(&self) -> &str {
         &self.inner.turn_id
+    }
+
+    /// Binds this live turn to one credential and provider authority.
+    ///
+    /// Rebinding the same identity is idempotent. A different identity fails
+    /// without exposing either value.
+    pub(crate) fn bind_state_identity(
+        &self,
+        identity: ProviderStateIdentity,
+    ) -> Result<(), ProviderError> {
+        if let Some(current) = self.inner.state_identity.get() {
+            return identity_matches(current, &identity);
+        }
+
+        match self.inner.state_identity.set(identity) {
+            Ok(()) => Ok(()),
+            Err(candidate) => self.inner.state_identity.get().map_or(
+                Err(ProviderError::ProviderStateIdentityMismatch),
+                |current| identity_matches(current, &candidate),
+            ),
+        }
     }
 
     /// Captures a server-issued state value without ever replacing the first.
@@ -128,6 +156,17 @@ impl ProviderTurnContext {
                 value.set_sensitive(true);
                 value
             })
+    }
+}
+
+fn identity_matches(
+    current: &ProviderStateIdentity,
+    candidate: &ProviderStateIdentity,
+) -> Result<(), ProviderError> {
+    if current == candidate {
+        Ok(())
+    } else {
+        Err(ProviderError::ProviderStateIdentityMismatch)
     }
 }
 
@@ -208,6 +247,26 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn provider_state_identity_binding_is_idempotent_and_non_disclosing() {
+        let context = ProviderTurnContext::new(Some("session-a".to_owned()), "turn-a".to_owned());
+        let first = ProviderStateIdentity::derive("provider-a", b"credential-a");
+        let second = ProviderStateIdentity::derive("provider-b", b"credential-b");
+
+        assert!(context.bind_state_identity(first).is_ok());
+        assert!(context.bind_state_identity(first).is_ok());
+        let error = context.bind_state_identity(second);
+        assert!(matches!(
+            error,
+            Err(ProviderError::ProviderStateIdentityMismatch)
+        ));
+        let rendered = format!("{context:?} {error:?}");
+        assert!(!rendered.contains("provider-a"));
+        assert!(!rendered.contains("provider-b"));
+        assert!(!rendered.contains("credential-a"));
+        assert!(!rendered.contains("credential-b"));
+    }
 
     #[test]
     fn first_turn_state_wins_without_debug_disclosure() {

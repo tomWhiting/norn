@@ -96,6 +96,9 @@ pub fn render_event(
         SessionEvent::ProviderEpochBoundary { reason, .. } => {
             let reason = match reason {
                 ProviderEpochBoundaryReason::MigratedLegacy => "migrated legacy session",
+                ProviderEpochBoundaryReason::ProviderIdentityAdoption => {
+                    "provider identity adoption"
+                }
             };
             render_dim_status_line(&format!("provider epoch boundary: {reason}"))
         }

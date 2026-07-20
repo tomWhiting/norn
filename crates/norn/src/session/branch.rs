@@ -706,6 +706,7 @@ mod tests {
             parent_id: Some(root.id.clone()),
             fidelity: crate::session::persistence::ResumeFidelity::Canonical,
             origin: crate::session::persistence::SessionRecordOrigin::Native,
+            provider_state_identity: None,
         };
         insert_child_index_entry(root.manager.data_dir(), &foreign, None).unwrap();
 

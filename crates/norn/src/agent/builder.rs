@@ -71,7 +71,7 @@ use crate::agent_loop::config::{AgentLoopConfig, ToolExecutor};
 use crate::agent_loop::event_schemas::EventSchemaSet;
 use crate::agent_loop::inbound::{InboundChannel, InboundSender};
 use crate::agent_loop::retry::RetryPolicy;
-use crate::error::{ConfigError, NornError};
+use crate::error::{ConfigError, NornError, ProviderError};
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
 use crate::integration::variables::{SessionVariable, VariableSource, VariableStore};
@@ -226,6 +226,8 @@ impl AgentBuilder {
     ///   [`ChildPolicy::inbound_capacity`] is zero.
     /// - [`NornError::Session`] when [`Self::open_session`] fails to
     ///   create, resume, or fork the persisted session.
+    /// - [`NornError::Provider`] when a threaded provider has no stable
+    ///   state identity, or a managed session is bound to another identity.
     pub fn build(mut self) -> Result<Agent, NornError> {
         let invalid = |reason: String| NornError::Config(ConfigError::InvalidConfig { reason });
         validate_build_inputs(
@@ -299,6 +301,11 @@ impl AgentBuilder {
             ));
         }
         let profile_name = (!profile.name.is_empty()).then(|| profile.name.clone());
+        let provider_capabilities = self.provider.capabilities();
+        let provider_state_identity = self.provider.state_identity();
+        if provider_capabilities.response_threading && provider_state_identity.is_none() {
+            return Err(ProviderError::ProviderStateIdentityRequired.into());
+        }
 
         // Open the managed persisted session now that the model and
         // working directory are resolved (see `session_open` for the full
@@ -318,6 +325,7 @@ impl AgentBuilder {
                 request,
                 &model,
                 &working_dir.display().to_string(),
+                provider_state_identity,
             )?;
             session_binding = opened.binding;
             artifact_store = Some(opened.artifacts);
@@ -536,7 +544,7 @@ impl AgentBuilder {
                 system_prompt_override: self.system_prompt,
                 append_system_prompt: self.append_system_prompt,
                 has_auto_compact,
-                capabilities: self.provider.capabilities(),
+                capabilities: provider_capabilities,
             },
         );
 

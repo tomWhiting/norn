@@ -343,6 +343,63 @@ async fn public_backend_ignores_private_turn_context() -> TestResult {
     Ok(())
 }
 
+#[tokio::test]
+async fn turn_context_rejects_another_credential_before_dispatch() -> TestResult {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(completed_stream(false)),
+        )
+        .mount(&server)
+        .await;
+    let config_for = |key: &str| ProviderConfig {
+        auth_source: AuthSource::ApiKey {
+            key: SecretString::new(key),
+        },
+        base_url: Some(format!("{}/v1", server.uri())),
+        timeout: Duration::from_secs(5),
+        max_retries: 0,
+        provider_options: None,
+        debug_dump_file: None,
+        rate_limit: None,
+        rate_limit_interval: None,
+        retry_backoff: None,
+        retry_after_ceiling: None,
+    };
+    let first = OpenAiProvider::with_auth_provider(
+        config_for("first-credential-sentinel"),
+        Arc::new(MockAuthProvider::single("first-credential-sentinel")),
+    )?;
+    let second = OpenAiProvider::with_auth_provider(
+        config_for("second-credential-sentinel"),
+        Arc::new(MockAuthProvider::single("second-credential-sentinel")),
+    )?;
+    let context = ProviderTurnContext::for_turn("session-affinity", "turn-affinity")?;
+
+    let mut stream = first.stream_with_context(request(), context.clone())?;
+    while let Some(event) = stream.next().await {
+        event?;
+    }
+
+    let mismatch = second.stream_with_context(request(), context.clone());
+    let error = mismatch
+        .err()
+        .ok_or_else(|| io::Error::other("another credential reused a bound turn context"))?;
+    assert!(matches!(
+        error,
+        ProviderError::ProviderStateIdentityMismatch
+    ));
+    let rendered = format!("{error:?} {context:?}");
+    assert!(!rendered.contains("first-credential-sentinel"));
+    assert!(!rendered.contains("second-credential-sentinel"));
+
+    let requests = recorded_requests(&server).await?;
+    assert_eq!(requests.len(), 1, "mismatch must fail before dispatch");
+    Ok(())
+}
+
 #[test]
 fn mapper_validates_metadata_before_seeding_turn_state() -> TestResult {
     let context = ProviderTurnContext::for_turn("session-mapper", "turn-mapper")?;

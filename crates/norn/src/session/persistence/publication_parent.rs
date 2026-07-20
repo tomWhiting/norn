@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::provider::ProviderStateIdentity;
+
 use super::publication_conflict::conflict;
 use super::{SessionIndexEntry, SessionPersistError};
 
@@ -9,6 +11,8 @@ use super::{SessionIndexEntry, SessionPersistError};
 pub(super) struct ParentPrecondition {
     id: String,
     generation: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provider_state_identity: Option<ProviderStateIdentity>,
 }
 
 pub(super) fn child_precondition(
@@ -21,7 +25,11 @@ pub(super) fn child_precondition(
             "child publication requires an indexed parent identity",
         )
     })?;
-    Ok(ParentPrecondition { id, generation })
+    Ok(ParentPrecondition {
+        id,
+        generation,
+        provider_state_identity: entry.provider_state_identity,
+    })
 }
 
 pub(super) fn validate_parent_precondition_shape(
@@ -53,14 +61,15 @@ pub(super) fn validate_parent_generation(
     let Some(parent) = parent else {
         return Ok(());
     };
-    if entries
+    let current = entries
         .iter()
-        .any(|entry| entry.id == parent.id && entry.generation == parent.generation)
-    {
+        .find(|entry| entry.id == parent.id && entry.generation == parent.generation)
+        .ok_or_else(|| SessionPersistError::GenerationChanged {
+            id: parent.id.clone(),
+        })?;
+    if current.provider_state_identity == parent.provider_state_identity {
         Ok(())
     } else {
-        Err(SessionPersistError::GenerationChanged {
-            id: parent.id.clone(),
-        })
+        Err(SessionPersistError::ProviderStateIdentityMismatch)
     }
 }

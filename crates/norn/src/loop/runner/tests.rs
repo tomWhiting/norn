@@ -4942,7 +4942,11 @@ async fn compaction_drops_response_thread_anchor() {
             vec![text_delta("done"), done_event(StopReason::EndTurn)],
         ],
         crate::provider::tools::ProviderCapabilities::openai_responses(),
-    );
+    )
+    .with_state_identity(crate::provider::ProviderStateIdentity::derive(
+        "norn.runner.compaction-test",
+        b"threaded-compaction-fixture",
+    ));
     let executor = MockToolExecutor::empty();
 
     let mut loop_ctx = LoopContext::new("system");

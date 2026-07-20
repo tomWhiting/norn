@@ -56,4 +56,6 @@ pub use resume::rebuild_action_log;
 pub use session_spec::SessionSpec;
 
 #[cfg(test)]
+mod credential_affinity_tests;
+#[cfg(test)]
 mod fork_canonical_resolution_tests;

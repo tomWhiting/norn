@@ -35,6 +35,7 @@ fn entry(id: &str) -> SessionIndexEntry {
         parent_id: None,
         fidelity: ResumeFidelity::Canonical,
         origin: SessionRecordOrigin::Native,
+        provider_state_identity: None,
     }
 }
 

@@ -44,6 +44,7 @@ pub use resume_policy::ResumePolicy;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::provider::ProviderStateIdentity;
 use crate::session::store::EventStore;
 
 use super::persistence::index::{
@@ -139,6 +140,23 @@ pub struct SessionManager {
     index_lock_deadline: Option<Duration>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) enum AffinityMode {
+    StorageOnly,
+    Validate(Option<ProviderStateIdentity>),
+}
+
+/// Provider-aware view over one [`SessionManager`].
+///
+/// This narrow facade keeps credential affinity out of generic creation
+/// metadata while ensuring every lifecycle arm validates before returning a
+/// managed store or publishing a fork.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SessionAffinityRequest<'a> {
+    pub(super) manager: &'a SessionManager,
+    pub(super) identity: Option<ProviderStateIdentity>,
+}
+
 impl SessionManager {
     /// Create a manager over `data_dir`. The directory (and the index
     /// inside it) is created lazily on first write. Index-lock waits
@@ -170,6 +188,20 @@ impl SessionManager {
     #[must_use]
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
+    }
+
+    /// Open sessions through a provider-state affinity check.
+    ///
+    /// `None` may create or use an unbound session, but cannot reopen a row
+    /// already bound to an identity.
+    pub(crate) fn open_with_affinity(
+        &self,
+        identity: Option<ProviderStateIdentity>,
+    ) -> SessionAffinityRequest<'_> {
+        SessionAffinityRequest {
+            manager: self,
+            identity,
+        }
     }
 
     /// The configured inter-process index-lock acquisition deadline

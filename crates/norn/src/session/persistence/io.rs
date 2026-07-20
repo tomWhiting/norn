@@ -173,15 +173,18 @@ pub(super) fn retry_prefix_from_file(
     requested: &[SessionEvent],
 ) -> Result<TimelineAppendFacts, SessionPersistError> {
     let mut planner = RetryPlanner::new(requested)?;
+    let mut tail = None;
     file.seek(SeekFrom::Start(0))?;
     let (_, _, counters) = visit_strict_event_file(BufReader::new(file), display_path, |event| {
         planner.observe(&event);
+        tail = Some(event);
     })
     .map_err(map_strict_error)?;
     Ok(TimelineAppendFacts {
         #[cfg(test)]
         retry_prefix: planner.finish()?,
         counters,
+        tail,
     })
 }
 
@@ -189,6 +192,7 @@ pub(super) struct TimelineAppendFacts {
     #[cfg(test)]
     pub(super) retry_prefix: usize,
     pub(super) counters: super::IndexCounters,
+    pub(super) tail: Option<SessionEvent>,
 }
 
 struct RetryPlanner {

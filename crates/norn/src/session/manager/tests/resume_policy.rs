@@ -218,6 +218,7 @@ fn native_entry(id: &str, fidelity: ResumeFidelity) -> SessionIndexEntry {
         parent_id: None,
         fidelity,
         origin: SessionRecordOrigin::Native,
+        provider_state_identity: None,
     }
 }
 

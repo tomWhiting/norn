@@ -109,6 +109,7 @@ fn strict_index_entry(session: &ClassifiedSession) -> SessionIndexEntry {
             source_format: session.source_format,
             source_sha256: session.source_sha256.clone(),
         },
+        provider_state_identity: None,
     }
 }
 

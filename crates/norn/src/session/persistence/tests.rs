@@ -224,6 +224,7 @@ fn index_only_entry(dir: &Path) -> SessionIndexEntry {
         parent_id: None,
         fidelity: ResumeFidelity::Canonical,
         origin: SessionRecordOrigin::Native,
+        provider_state_identity: None,
     };
     append_index_entry(dir, &entry, None).unwrap();
     entry
@@ -922,6 +923,7 @@ fn resume_ambiguous_prefix_returns_error() {
             parent_id: None,
             fidelity: ResumeFidelity::Canonical,
             origin: SessionRecordOrigin::Native,
+            provider_state_identity: None,
         });
     }
     write_index_atomic(tmp.path(), &entries).unwrap();
@@ -1731,6 +1733,7 @@ fn reserved_ids_rejected_at_every_persistence_boundary() {
         parent_id: None,
         fidelity: ResumeFidelity::Canonical,
         origin: SessionRecordOrigin::Native,
+        provider_state_identity: None,
     };
 
     // Index insertion: a reserved id must never enter the index.

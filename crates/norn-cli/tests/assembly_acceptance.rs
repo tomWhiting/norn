@@ -25,6 +25,7 @@ use clap::Parser;
 
 use norn::agent::AgentParts;
 use norn::config::NornSettings;
+use norn::provider::ProviderStateIdentity;
 use norn::provider::mock::MockProvider;
 use norn::provider::tools::ProviderCapabilities;
 use norn::provider::traits::Provider;
@@ -115,10 +116,13 @@ fn print_prompt_is_provider_aware() -> Result<(), Box<dyn std::error::Error>> {
         let cli = Cli::parse_from(["norn", "-m", "gpt-5.5", "--no-session"]);
 
         // Hosted-search provider: the assembled prompt reframes web_search.
-        let hosted: Arc<dyn Provider> = Arc::new(MockProvider::with_capabilities(
-            Vec::new(),
-            ProviderCapabilities::openai_responses(),
-        ));
+        let hosted: Arc<dyn Provider> = Arc::new(
+            MockProvider::with_capabilities(Vec::new(), ProviderCapabilities::openai_responses())
+                .with_state_identity(ProviderStateIdentity::derive(
+                    "norn.cli.assembly-acceptance",
+                    b"hosted-provider-fixture",
+                )),
+        );
         let hosted_prompt = build_parts_with(&cli, hosted)?
             .loop_context
             .system_sections

@@ -284,6 +284,7 @@ fn deletion_entry(
         parent_id,
         fidelity: ResumeFidelity::Canonical,
         origin: SessionRecordOrigin::Native,
+        provider_state_identity: None,
     }
 }
 

@@ -10,6 +10,7 @@ use crate::session::persistence::types::{
     ResumeFidelity, SESSION_FORMAT_VERSION, SessionIndexEntry, SessionPersistError,
     SessionRecordOrigin, SessionStatus,
 };
+use crate::session::provider_affinity::ManagedProviderAffinity;
 use crate::session::spool::SpoolWriter;
 use crate::session::store::{EventStore, JsonlSink};
 
@@ -42,6 +43,7 @@ pub(super) fn materialize_child(
         parent_id: Some(parent.id.clone()),
         fidelity: ResumeFidelity::Canonical,
         origin: SessionRecordOrigin::Native,
+        provider_state_identity: parent.provider_state_identity,
     };
     let entry = publish_new_child_session(
         brancher.manager.data_dir(),
@@ -57,6 +59,11 @@ pub(super) fn materialize_child(
         brancher.manager.index_lock_deadline(),
     )?;
     let mut store = EventStore::with_sink_and_events(Box::new(sink), vec![provenance]);
+    store.attach_provider_affinity(ManagedProviderAffinity::new(
+        brancher.manager.data_dir().to_path_buf(),
+        entry.clone(),
+        brancher.manager.index_lock_deadline(),
+    ));
     store.attach_spool(SpoolWriter::for_session(
         brancher.manager.data_dir(),
         &entry,

@@ -12,6 +12,33 @@ fn bearer_header(request: &reqwest::Request) -> TestResultString<'_> {
 
 type TestResultString<'a> = Result<&'a str, Box<dyn std::error::Error>>;
 
+fn oauth_manager_identity(
+    account_id: &str,
+    user_id: Option<&str>,
+    access_token: &str,
+) -> Result<CredentialIdentity, Box<dyn std::error::Error>> {
+    let mut id_token = super::super::openai_oauth::IdTokenInfo::create_for_testing(account_id);
+    id_token.chatgpt_user_id = user_id.map(str::to_owned);
+    let auth = super::super::openai_oauth::CodexAuth::ChatGpt(Box::new(
+        super::super::openai_oauth::AuthDotJson::from_tokens(
+            super::super::openai_oauth::ChatGptTokens {
+                id_token,
+                access_token: access_token.to_owned(),
+                refresh_token: "refresh-token".to_owned(),
+                account_id: Some(account_id.to_owned()),
+                additional_fields: std::collections::BTreeMap::new(),
+            },
+        ),
+    ));
+    let manager = super::super::openai_oauth::AuthManager::from_static_auth(
+        auth,
+        OAuthHttpOptions::default(),
+    )?;
+    OAuthAuthProvider::from_manager(manager)
+        .credential_identity()
+        .ok_or_else(|| std::io::Error::other("OAuth principal identity was absent").into())
+}
+
 #[test]
 fn auth_source_default_is_oauth_with_no_auth_root_override() {
     assert!(matches!(
@@ -253,6 +280,25 @@ async fn oauth_provider_sets_bearer_and_account_id_headers() -> TestResult {
         .get("chatgpt-account-id")
         .ok_or_else(|| std::io::Error::other("chatgpt-account-id header is missing"))?;
     assert_eq!(account.to_str()?, "account_id");
+    Ok(())
+}
+
+#[test]
+fn oauth_manager_identity_tracks_the_full_pinned_principal() -> TestResult {
+    let first = oauth_manager_identity("account-a", Some("user-a"), "access-a")?;
+    let refreshed = oauth_manager_identity("account-a", Some("user-a"), "access-b")?;
+    let other_user = oauth_manager_identity("account-a", Some("user-b"), "access-a")?;
+    let missing_user = oauth_manager_identity("account-a", None, "access-a")?;
+
+    assert_eq!(
+        first, refreshed,
+        "access-token rotation is not a principal change"
+    );
+    assert_ne!(first, other_user, "user identity is part of the principal");
+    assert_ne!(
+        first, missing_user,
+        "user presence is part of the principal"
+    );
     Ok(())
 }
 

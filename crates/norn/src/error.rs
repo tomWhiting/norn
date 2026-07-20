@@ -419,6 +419,18 @@ pub enum ProviderError {
         source: crate::provider::openai::response_reconciler::ResponseReconciliationError,
     },
 
+    /// Credential-scoped provider state was requested without a stable identity.
+    ///
+    /// No identity or credential material is carried by this error.
+    #[error("credential-scoped provider state requires a stable provider identity")]
+    ProviderStateIdentityRequired,
+
+    /// Provider state is already bound to another credential or authority.
+    ///
+    /// No identity or credential material is carried by this error.
+    #[error("provider state belongs to a different credential or authority")]
+    ProviderStateIdentityMismatch,
+
     /// The request exceeded the model's context window.
     ///
     /// Classified from a `response.failed` SSE event carrying the
@@ -488,6 +500,8 @@ impl ProviderError {
             | Self::UnsupportedResponseItem
             | Self::UnsupportedResponseMedia
             | Self::ResponseProtocolViolation { .. }
+            | Self::ProviderStateIdentityRequired
+            | Self::ProviderStateIdentityMismatch
             | Self::RedirectPolicyRefused { .. }
             | Self::ContextWindowExceeded
             | Self::QuotaExceeded
@@ -667,6 +681,14 @@ pub enum SessionError {
         /// Description of the storage failure.
         reason: String,
     },
+
+    /// Credential-scoped session state has no stable provider identity.
+    #[error("credential-scoped session state requires a stable provider identity")]
+    ProviderStateIdentityRequired,
+
+    /// Session provider state belongs to another credential or authority.
+    #[error("session provider state belongs to a different credential or authority")]
+    ProviderStateIdentityMismatch,
 
     /// The process or system descriptor pool was exhausted.
     #[error(transparent)]
@@ -1035,6 +1057,21 @@ mod tests {
         };
         assert_eq!(err.class(), ErrorClass::Terminal);
         assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn provider_state_identity_failures_are_payload_free_and_terminal() {
+        for error in [
+            ProviderError::ProviderStateIdentityRequired,
+            ProviderError::ProviderStateIdentityMismatch,
+        ] {
+            assert_eq!(error.class(), ErrorClass::Terminal);
+            assert!(!error.is_retryable());
+            let rendered = format!("{error:?}");
+            assert!(!rendered.contains("account"));
+            assert!(!rendered.contains("token"));
+            assert!(!rendered.contains("digest"));
+        }
     }
 
     #[test]

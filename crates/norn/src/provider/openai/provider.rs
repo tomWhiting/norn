@@ -8,7 +8,6 @@ use super::codex_turn;
 use super::execute::SenderProvider;
 use super::rate_limiter::RateLimiter;
 use crate::error::ProviderError;
-use crate::provider::ProviderTurnContext;
 use crate::provider::auth::{
     AuthProvider, AuthSource, StaticCodexAuthProvider, StaticCodexCredential,
     build_from_auth_source,
@@ -19,6 +18,7 @@ use crate::provider::owned_stream::task_owned_provider_stream;
 use crate::provider::request::{ProviderConfig, ProviderOptions, ProviderRequest};
 use crate::provider::startup_trace;
 use crate::provider::traits::{Provider, ProviderStream};
+use crate::provider::{ProviderStateIdentity, ProviderTurnContext};
 
 /// Deliberate, owner-approved default (2026-06-11) used when
 /// [`ProviderConfig::rate_limit`] is `None`: 60 permits per interval.
@@ -40,6 +40,7 @@ pub struct OpenAiProvider {
     config: ProviderConfig,
     rate_limiter: Arc<RateLimiter>,
     auth_provider: Arc<dyn AuthProvider>,
+    state_identity: ProviderStateIdentity,
 }
 
 impl std::fmt::Debug for OpenAiProvider {
@@ -142,6 +143,18 @@ impl OpenAiProvider {
         backend: OpenAiBackend,
         auth_provider: Arc<dyn AuthProvider>,
     ) -> Result<Self, ProviderError> {
+        let auth_identity = auth_provider.credential_identity().ok_or_else(|| {
+            if matches!(&config.auth_source, AuthSource::OAuth { .. }) {
+                ProviderError::AuthenticationFailed {
+                    reason: "no OAuth token found; run `norn auth login`".to_owned(),
+                }
+            } else {
+                ProviderError::ProviderStateIdentityRequired
+            }
+        })?;
+        let normalized_endpoint = format!("{}/responses", backend.base_url());
+        let state_identity =
+            auth_identity.scoped_to_openai_backend(backend.label(), &normalized_endpoint);
         let client_started = startup_trace::start("openai_http_client_build_start");
         let client = build_http_client(config.timeout)?;
         startup_trace::elapsed("openai_http_client_build_done", client_started);
@@ -161,6 +174,7 @@ impl OpenAiProvider {
             config,
             rate_limiter,
             auth_provider,
+            state_identity,
         })
     }
 
@@ -233,6 +247,10 @@ fn build_http_client(timeout: Duration) -> Result<reqwest::Client, ProviderError
 }
 
 impl Provider for OpenAiProvider {
+    fn state_identity(&self) -> Option<ProviderStateIdentity> {
+        Some(self.state_identity)
+    }
+
     fn capabilities(&self) -> crate::provider::tools::ProviderCapabilities {
         if self.backend.is_codex_subscription() {
             return crate::provider::tools::ProviderCapabilities {
@@ -253,6 +271,7 @@ impl Provider for OpenAiProvider {
         request: ProviderRequest,
         context: ProviderTurnContext,
     ) -> Result<ProviderStream, ProviderError> {
+        context.bind_state_identity(self.state_identity)?;
         Ok(self.stream_inner(request, Some(context)))
     }
 }
@@ -271,6 +290,22 @@ mod security_tests {
     };
     use crate::provider::request::{Message, MessageRole, SecretString, ServiceTier};
     use futures_util::StreamExt;
+
+    struct IdentitylessAuthProvider;
+
+    #[async_trait::async_trait]
+    impl AuthProvider for IdentitylessAuthProvider {
+        async fn apply_auth(
+            &self,
+            request: reqwest::RequestBuilder,
+        ) -> Result<reqwest::RequestBuilder, ProviderError> {
+            Ok(request)
+        }
+
+        async fn on_unauthorized(&self) -> Result<bool, ProviderError> {
+            Ok(false)
+        }
+    }
 
     fn oauth_config(base_url: Option<&str>) -> ProviderConfig {
         ProviderConfig {
@@ -295,6 +330,53 @@ mod security_tests {
             SecretString::new(access_token),
             account_id.map(SecretString::new),
         )
+    }
+
+    #[test]
+    fn stateful_openai_provider_rejects_identityless_authentication() {
+        let config = ProviderConfig {
+            auth_source: AuthSource::ApiKey {
+                key: SecretString::new("config-secret-sentinel"),
+            },
+            base_url: Some("https://api.example/v1".to_owned()),
+            ..oauth_config(None)
+        };
+        let result = OpenAiProvider::with_auth_provider(config, Arc::new(IdentitylessAuthProvider));
+        let error = result.err();
+
+        assert!(matches!(
+            error,
+            Some(ProviderError::ProviderStateIdentityRequired)
+        ));
+        assert!(!format!("{error:?}").contains("config-secret-sentinel"));
+    }
+
+    #[test]
+    fn provider_state_identity_commits_to_credential_and_normalized_endpoint()
+    -> Result<(), ProviderError> {
+        let config_for = |key: &str, base_url: &str| ProviderConfig {
+            auth_source: AuthSource::ApiKey {
+                key: SecretString::new(key),
+            },
+            base_url: Some(base_url.to_owned()),
+            ..oauth_config(None)
+        };
+        let provider_for = |key: &str, base_url: &str| {
+            OpenAiProvider::with_auth_provider(
+                config_for(key, base_url),
+                Arc::new(MockAuthProvider::single(key)),
+            )
+        };
+
+        let first = provider_for("credential-a", "https://api.example/v1/")?;
+        let normalized_same = provider_for("credential-a", "https://api.example/v1")?;
+        let other_credential = provider_for("credential-b", "https://api.example/v1")?;
+        let other_endpoint = provider_for("credential-a", "https://other.example/v1")?;
+
+        assert_eq!(first.state_identity(), normalized_same.state_identity());
+        assert_ne!(first.state_identity(), other_credential.state_identity());
+        assert_ne!(first.state_identity(), other_endpoint.state_identity());
+        Ok(())
     }
 
     #[tokio::test]
@@ -332,6 +414,25 @@ mod security_tests {
         let unauthorized_rendered = unauthorized_error.to_string();
         assert!(unauthorized_rendered.contains("credential owner must replace or refresh"));
         assert!(!unauthorized_rendered.contains("dispatch-access-token"));
+        Ok(())
+    }
+
+    #[test]
+    fn static_codex_constructor_binds_real_credential_identity() -> Result<(), ProviderError> {
+        let provider_for = |token: &str, account: Option<&str>| {
+            OpenAiProvider::with_static_codex_credential(
+                oauth_config(None),
+                static_credential(token, account)?,
+            )
+        };
+        let first = provider_for("dispatch-token-a", Some("dispatch-account-a"))?;
+        let same = provider_for("dispatch-token-a", Some("dispatch-account-a"))?;
+        let other_token = provider_for("dispatch-token-b", Some("dispatch-account-a"))?;
+        let other_account = provider_for("dispatch-token-a", Some("dispatch-account-b"))?;
+
+        assert_eq!(first.state_identity(), same.state_identity());
+        assert_ne!(first.state_identity(), other_token.state_identity());
+        assert_ne!(first.state_identity(), other_account.state_identity());
         Ok(())
     }
 

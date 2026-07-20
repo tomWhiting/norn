@@ -14,6 +14,7 @@ mod mcp_config;
 pub mod session;
 pub mod session_export;
 mod session_legacy;
+mod session_output;
 pub mod slash;
 
 pub use auth::run_auth;

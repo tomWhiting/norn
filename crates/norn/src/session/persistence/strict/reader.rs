@@ -31,6 +31,7 @@ const INDEX_FIELDS: &[&str] = &[
     "parent_id",
     "fidelity",
     "origin",
+    "provider_state_identity",
 ];
 
 /// Decode a strict format-2 index without skipping or repairing any row.

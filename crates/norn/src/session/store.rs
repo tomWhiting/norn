@@ -11,8 +11,10 @@ use std::io::Write;
 use parking_lot::{Mutex, RwLock};
 
 use crate::error::SessionError;
-use crate::session::events::{EventId, SessionEvent};
+use crate::provider::ProviderStateIdentity;
+use crate::session::events::{EventId, ProviderEpochBoundaryReason, SessionEvent};
 use crate::session::persistence::SessionPersistError;
+use crate::session::provider_affinity::{ManagedProviderAffinity, ProviderAffinity};
 use crate::session::response_audio::ResponseAudioStore;
 use crate::session::spool::SpoolWriter;
 
@@ -34,6 +36,7 @@ pub struct EventStore {
     sink: Option<Mutex<Box<dyn PersistenceSink>>>,
     spool: Option<SpoolWriter>,
     response_audio: Option<ResponseAudioStore>,
+    provider_affinity: ProviderAffinity,
 }
 
 impl std::fmt::Debug for EventStore {
@@ -43,6 +46,10 @@ impl std::fmt::Debug for EventStore {
             .field("has_sink", &self.sink.is_some())
             .field("has_spool", &self.spool.is_some())
             .field("has_response_audio", &self.response_audio.is_some())
+            .field(
+                "provider_state_identity_present",
+                &self.provider_affinity.identity().is_some(),
+            )
             .finish()
     }
 }
@@ -80,6 +87,13 @@ pub trait PersistenceSink: Send {
     fn checkpoint(&mut self) -> Result<(), SessionPersistError> {
         Ok(())
     }
+
+    /// Update the provider-state identity expected by subsequent appends.
+    ///
+    /// Registered session sinks use this as an append-time compare-and-swap
+    /// guard. Generic embedder sinks may ignore it because their affinity is
+    /// enforced by the owning in-memory [`EventStore`].
+    fn set_provider_state_identity(&mut self, _identity: Option<ProviderStateIdentity>) {}
 }
 
 #[derive(Debug)]
@@ -93,6 +107,20 @@ impl StoreInner {
         let pos = self.events.len();
         self.events.push(event);
         self.index.insert(id, pos);
+    }
+
+    fn provider_identity_adoption_parent(&self) -> Option<EventId> {
+        let previous = self.events.last()?;
+        if matches!(
+            previous,
+            SessionEvent::ProviderEpochBoundary {
+                reason: ProviderEpochBoundaryReason::ProviderIdentityAdoption,
+                ..
+            }
+        ) {
+            return None;
+        }
+        Some(previous.base().id.clone())
     }
 }
 
@@ -108,6 +136,7 @@ impl EventStore {
             sink: None,
             spool: None,
             response_audio: None,
+            provider_affinity: ProviderAffinity::sinkless(),
         }
     }
 
@@ -121,6 +150,7 @@ impl EventStore {
             sink: Some(Mutex::new(sink)),
             spool: None,
             response_audio: None,
+            provider_affinity: ProviderAffinity::sinkless(),
         }
     }
 
@@ -139,6 +169,7 @@ impl EventStore {
             sink: Some(Mutex::new(sink)),
             spool: None,
             response_audio: None,
+            provider_affinity: ProviderAffinity::sinkless(),
         }
     }
 
@@ -171,6 +202,85 @@ impl EventStore {
     #[must_use]
     pub fn response_audio(&self) -> Option<&ResponseAudioStore> {
         self.response_audio.as_ref()
+    }
+
+    /// Attach the durable provider-state affinity authority for this managed
+    /// session. Called by [`SessionManager`](crate::session::SessionManager)
+    /// before the store is shared.
+    pub(super) fn attach_provider_affinity(&mut self, authority: ManagedProviderAffinity) {
+        self.provider_affinity = ProviderAffinity::managed(authority);
+    }
+
+    /// The opaque provider identity currently bound to this store, if any.
+    #[must_use]
+    pub fn provider_state_identity(&self) -> Option<ProviderStateIdentity> {
+        self.provider_affinity.identity()
+    }
+
+    /// Bind this store to `requested` exactly once or validate the existing
+    /// provider-state identity.
+    ///
+    /// Managed stores perform the transition under the recovered
+    /// inter-process index lock and exact generation check. Sink-less stores
+    /// retain the same one-time binding in memory. `None` is accepted only
+    /// while the store remains unbound; it cannot bypass an existing binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed persistence error when the identity differs, is absent
+    /// for an already-bound store, or cannot be committed durably.
+    pub fn validate_or_bind_provider_state_identity(
+        &self,
+        requested: Option<ProviderStateIdentity>,
+    ) -> Result<(), SessionPersistError> {
+        // The sink lock is the store's append-order authority. Hold it while a
+        // managed late adoption writes its boundary directly, then mirror that
+        // already-durable event into memory before another local append or
+        // provider request can observe the store.
+        if let Some(sink) = &self.sink {
+            let mut sink = sink.lock();
+            let adoption_parent = self.inner.read().provider_identity_adoption_parent();
+            let boundary = self.provider_affinity.validate_or_bind(
+                requested,
+                adoption_parent.as_ref(),
+                |event| {
+                    sink.persist(event)?;
+                    let id = event.base().id.clone();
+                    self.inner.write().push(id, event.clone());
+                    Ok(())
+                },
+            )?;
+            sink.set_provider_state_identity(self.provider_affinity.identity());
+            if let Some(event) = boundary {
+                let id = event.base().id.clone();
+                let mut inner = self.inner.write();
+                if !inner.index.contains_key(&id) {
+                    inner.push(id, event);
+                }
+            }
+        } else {
+            // The write guard is the append-order authority for an in-memory
+            // store. It keeps first adoption and concurrent appends in one
+            // order while the provider-affinity transition is committed.
+            let mut inner = self.inner.write();
+            let adoption_parent = inner.provider_identity_adoption_parent();
+            let boundary = self.provider_affinity.validate_or_bind(
+                requested,
+                adoption_parent.as_ref(),
+                |event| {
+                    let id = event.base().id.clone();
+                    inner.push(id, event.clone());
+                    Ok(())
+                },
+            )?;
+            if let Some(event) = boundary {
+                let id = event.base().id.clone();
+                if !inner.index.contains_key(&id) {
+                    inner.push(id, event);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Append an event. Returns its [`EventId`].

@@ -7,18 +7,23 @@ use crate::provider::usage::Usage;
 use crate::session::persistence::index::{
     publish_new_session, resolve_latest_session_in_working_dir_with_deadline,
     resolve_session_with_deadline, revalidate_registered_entry, update_registered_entry,
+    validate_or_bind_provider_state_identity,
 };
 use crate::session::persistence::read_session_events_for_entry_with_deadline;
 use crate::session::persistence::{
     ResumeFidelity, SESSION_FORMAT_VERSION, SessionIndexEntry, SessionPersistError,
     SessionRecordOrigin, SessionStatus,
 };
+use crate::session::provider_affinity::ManagedProviderAffinity;
 use crate::session::spool::SpoolWriter;
 use crate::session::store::{DurabilityPolicy, EventStore, JsonlSink};
 use crate::session::{ResponseAudioStore, referenced_response_audio_artifacts};
 
 use super::resume_policy::{authorize_resume, ensure_migrated_epoch_boundary, lock_migrated_epoch};
-use super::{CreateSessionOptions, OpenSession, ReplaySummary, ResumePolicy, SessionManager};
+use super::{
+    AffinityMode, CreateSessionOptions, OpenSession, ReplaySummary, ResumePolicy,
+    SessionAffinityRequest, SessionManager,
+};
 
 impl SessionManager {
     /// Create a fresh canonical native session with a random identifier.
@@ -27,7 +32,17 @@ impl SessionManager {
         options: CreateSessionOptions,
         durability: DurabilityPolicy,
     ) -> Result<OpenSession, SessionPersistError> {
-        let candidate = new_index_entry(Uuid::new_v4().to_string(), options);
+        self.create_inner(options, durability, AffinityMode::StorageOnly)
+    }
+
+    fn create_inner(
+        &self,
+        options: CreateSessionOptions,
+        durability: DurabilityPolicy,
+        affinity: AffinityMode,
+    ) -> Result<OpenSession, SessionPersistError> {
+        let candidate =
+            new_index_entry_with_affinity(Uuid::new_v4().to_string(), options, affinity);
         let entry = publish_new_session(&self.data_dir, &candidate, &[], self.index_lock_deadline)?;
         self.open_fresh(entry, durability)
     }
@@ -39,8 +54,18 @@ impl SessionManager {
         options: CreateSessionOptions,
         durability: DurabilityPolicy,
     ) -> Result<OpenSession, SessionPersistError> {
+        self.create_with_id_inner(id, options, durability, AffinityMode::StorageOnly)
+    }
+
+    fn create_with_id_inner(
+        &self,
+        id: &str,
+        options: CreateSessionOptions,
+        durability: DurabilityPolicy,
+        affinity: AffinityMode,
+    ) -> Result<OpenSession, SessionPersistError> {
         validate_explicit_session_id(id)?;
-        let candidate = new_index_entry(id.to_owned(), options);
+        let candidate = new_index_entry_with_affinity(id.to_owned(), options, affinity);
         let entry = publish_new_session(&self.data_dir, &candidate, &[], self.index_lock_deadline)?;
         self.open_fresh(entry, durability)
     }
@@ -63,7 +88,7 @@ impl SessionManager {
     ) -> Result<OpenSession, SessionPersistError> {
         let entry =
             resolve_session_with_deadline(&self.data_dir, id_or_name, self.index_lock_deadline)?;
-        self.resume_entry(&entry, durability, policy)
+        self.resume_entry(&entry, durability, policy, AffinityMode::StorageOnly)
     }
 
     /// Resume the latest canonical session belonging to `working_dir`.
@@ -91,7 +116,7 @@ impl SessionManager {
             working_dir.as_ref(),
             self.index_lock_deadline,
         )?;
-        self.resume_entry(&entry, durability, policy)
+        self.resume_entry(&entry, durability, policy, AffinityMode::StorageOnly)
     }
 
     /// Idempotently create or canonical-only resume an exact session id.
@@ -112,8 +137,19 @@ impl SessionManager {
         durability: DurabilityPolicy,
         policy: ResumePolicy,
     ) -> Result<OpenSession, SessionPersistError> {
+        self.open_or_resume_inner(id, options, durability, policy, AffinityMode::StorageOnly)
+    }
+
+    fn open_or_resume_inner(
+        &self,
+        id: &str,
+        options: CreateSessionOptions,
+        durability: DurabilityPolicy,
+        policy: ResumePolicy,
+        affinity: AffinityMode,
+    ) -> Result<OpenSession, SessionPersistError> {
         validate_explicit_session_id(id)?;
-        let candidate = new_index_entry(id.to_owned(), options);
+        let candidate = new_index_entry_with_affinity(id.to_owned(), options, affinity);
         match publish_new_session(&self.data_dir, &candidate, &[], self.index_lock_deadline) {
             Ok(entry) => self.open_fresh(entry, durability),
             Err(SessionPersistError::IdExists { .. }) => {
@@ -128,7 +164,7 @@ impl SessionManager {
                     },
                     other => other,
                 })?;
-                self.resume_entry(&existing, durability, policy)
+                self.resume_entry(&existing, durability, policy, affinity)
             }
             Err(error) => Err(error),
         }
@@ -146,6 +182,11 @@ impl SessionManager {
             self.index_lock_deadline,
         )?;
         let mut store = EventStore::with_sink(Box::new(sink));
+        store.attach_provider_affinity(ManagedProviderAffinity::new(
+            self.data_dir.clone(),
+            entry.clone(),
+            self.index_lock_deadline,
+        ));
         store.attach_spool(SpoolWriter::for_session(
             &self.data_dir,
             &entry,
@@ -170,16 +211,29 @@ impl SessionManager {
         entry: &SessionIndexEntry,
         durability: DurabilityPolicy,
         policy: ResumePolicy,
+        affinity: AffinityMode,
     ) -> Result<OpenSession, SessionPersistError> {
         authorize_resume(entry, policy)?;
-        let _epoch_guard = lock_migrated_epoch(&self.data_dir, entry)?;
+        let entry = match affinity {
+            AffinityMode::StorageOnly => entry.clone(),
+            AffinityMode::Validate(identity) => {
+                validate_or_bind_provider_state_identity(
+                    &self.data_dir,
+                    entry,
+                    identity,
+                    self.index_lock_deadline,
+                )?
+                .entry
+            }
+        };
+        let _epoch_guard = lock_migrated_epoch(&self.data_dir, &entry)?;
         let artifacts = read_session_events_for_entry_with_deadline(
             &self.data_dir,
-            entry,
+            &entry,
             self.index_lock_deadline,
         )?;
         referenced_response_audio_artifacts(&artifacts.events)?;
-        let entry = revalidate_registered_entry(&self.data_dir, entry, self.index_lock_deadline)?;
+        let entry = revalidate_registered_entry(&self.data_dir, &entry, self.index_lock_deadline)?;
         let actual_count = u64::try_from(artifacts.events.len()).map_err(|error| {
             SessionPersistError::EventStore(format!(
                 "session '{}' event count is not representable: {error}",
@@ -203,6 +257,11 @@ impl SessionManager {
             replayed_events: artifacts.events.len(),
         };
         let mut store = EventStore::with_sink_and_events(Box::new(sink), artifacts.events);
+        store.attach_provider_affinity(ManagedProviderAffinity::new(
+            self.data_dir.clone(),
+            entry.clone(),
+            self.index_lock_deadline,
+        ));
         store.attach_spool(SpoolWriter::for_session(
             &self.data_dir,
             &entry,
@@ -227,6 +286,14 @@ impl SessionManager {
 }
 
 pub(super) fn new_index_entry(id: String, options: CreateSessionOptions) -> SessionIndexEntry {
+    new_index_entry_with_affinity(id, options, AffinityMode::StorageOnly)
+}
+
+fn new_index_entry_with_affinity(
+    id: String,
+    options: CreateSessionOptions,
+    affinity: AffinityMode,
+) -> SessionIndexEntry {
     let now = Utc::now();
     SessionIndexEntry {
         id,
@@ -246,6 +313,89 @@ pub(super) fn new_index_entry(id: String, options: CreateSessionOptions) -> Sess
         parent_id: None,
         fidelity: ResumeFidelity::Canonical,
         origin: SessionRecordOrigin::Native,
+        provider_state_identity: match affinity {
+            AffinityMode::StorageOnly => None,
+            AffinityMode::Validate(identity) => identity,
+        },
+    }
+}
+
+impl SessionAffinityRequest<'_> {
+    pub(crate) fn create(
+        self,
+        options: CreateSessionOptions,
+        durability: DurabilityPolicy,
+    ) -> Result<OpenSession, SessionPersistError> {
+        self.manager
+            .create_inner(options, durability, AffinityMode::Validate(self.identity))
+    }
+
+    pub(crate) fn create_with_id(
+        self,
+        id: &str,
+        options: CreateSessionOptions,
+        durability: DurabilityPolicy,
+    ) -> Result<OpenSession, SessionPersistError> {
+        self.manager.create_with_id_inner(
+            id,
+            options,
+            durability,
+            AffinityMode::Validate(self.identity),
+        )
+    }
+
+    pub(crate) fn resume_with_policy(
+        self,
+        id_or_name: &str,
+        durability: DurabilityPolicy,
+        policy: ResumePolicy,
+    ) -> Result<OpenSession, SessionPersistError> {
+        let entry = resolve_session_with_deadline(
+            &self.manager.data_dir,
+            id_or_name,
+            self.manager.index_lock_deadline,
+        )?;
+        self.manager.resume_entry(
+            &entry,
+            durability,
+            policy,
+            AffinityMode::Validate(self.identity),
+        )
+    }
+
+    pub(crate) fn resume_latest_in_working_dir_with_policy(
+        self,
+        working_dir: impl AsRef<Path>,
+        durability: DurabilityPolicy,
+        policy: ResumePolicy,
+    ) -> Result<OpenSession, SessionPersistError> {
+        let entry = resolve_latest_session_in_working_dir_with_deadline(
+            &self.manager.data_dir,
+            working_dir.as_ref(),
+            self.manager.index_lock_deadline,
+        )?;
+        self.manager.resume_entry(
+            &entry,
+            durability,
+            policy,
+            AffinityMode::Validate(self.identity),
+        )
+    }
+
+    pub(crate) fn open_or_resume_with_policy(
+        self,
+        id: &str,
+        options: CreateSessionOptions,
+        durability: DurabilityPolicy,
+        policy: ResumePolicy,
+    ) -> Result<OpenSession, SessionPersistError> {
+        self.manager.open_or_resume_inner(
+            id,
+            options,
+            durability,
+            policy,
+            AffinityMode::Validate(self.identity),
+        )
     }
 }
 

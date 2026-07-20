@@ -8,6 +8,8 @@ use crate::session::{SessionIndexEntry, SessionManager, SessionPersistError};
 
 use norn::session::events::{ProviderEpochBoundaryReason, SessionEvent};
 
+use super::session_output::PublicSessionIndexEntry;
+
 /// Execute the `norn session export` subcommand: resolve the session,
 /// load its events, and render in the requested format.
 pub fn run_export(data_dir: &Path, input: &str, format: Option<SessionExportFormat>) -> ExitCode {
@@ -55,7 +57,7 @@ fn export_jsonl(events: &[SessionEvent]) -> ExitCode {
 
 fn export_json(entry: &SessionIndexEntry, events: &[SessionEvent]) -> ExitCode {
     let doc = serde_json::json!({
-        "session": entry,
+        "session": PublicSessionIndexEntry::from(entry),
         "events": events,
     });
     match serde_json::to_string_pretty(&doc) {
@@ -128,6 +130,9 @@ fn export_markdown(entry: &SessionIndexEntry, events: &[SessionEvent]) -> ExitCo
             SessionEvent::ProviderEpochBoundary { reason, .. } => {
                 let reason = match reason {
                     ProviderEpochBoundaryReason::MigratedLegacy => "migrated legacy session",
+                    ProviderEpochBoundaryReason::ProviderIdentityAdoption => {
+                        "provider identity adoption"
+                    }
                 };
                 println!("_Provider epoch boundary: {reason}_\n");
             }

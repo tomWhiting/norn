@@ -11,7 +11,7 @@ use super::endpoints::TOKEN_URL;
 use super::options::OAuthHttpOptions;
 use super::storage::{AuthCredentialsStoreMode, StorageError};
 use super::types::{AuthDotJson, CodexAuth};
-use crate::provider::startup_trace;
+use crate::provider::{CredentialIdentity, startup_trace};
 
 #[path = "manager_attempt.rs"]
 mod attempt;
@@ -220,6 +220,16 @@ fn map_transaction_build_error(
 }
 
 impl AuthManager {
+    /// Stable opaque identity of the account pinned when this manager opened.
+    pub(crate) fn credential_identity(&self) -> Option<CredentialIdentity> {
+        self.account_identity.as_ref().map(|identity| {
+            CredentialIdentity::from_oauth_principal(
+                &identity.account_id,
+                identity.user_id.as_deref(),
+            )
+        })
+    }
+
     /// Creates a shared manager and loads cached credentials from disk.
     ///
     /// The file-backed credential directory must cross the validated

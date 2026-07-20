@@ -21,6 +21,7 @@ pub mod manager;
 pub mod migration;
 pub mod mutation_ledger;
 pub mod persistence;
+mod provider_affinity;
 pub mod response_audio;
 pub mod resume_repair;
 pub mod spool;
@@ -73,6 +74,10 @@ mod canonical_persistence_tests;
 mod canonical_tool_resolution_tests;
 #[cfg(test)]
 mod canonical_transcript_tests;
+#[cfg(test)]
+mod provider_affinity_embedder_tests;
+#[cfg(test)]
+mod provider_affinity_tests;
 #[cfg(test)]
 mod provider_epoch_tests;
 #[cfg(test)]

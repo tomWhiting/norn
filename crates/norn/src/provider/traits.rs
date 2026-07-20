@@ -6,6 +6,7 @@ use futures_util::Stream;
 
 use super::events::ProviderEvent;
 use super::request::ProviderRequest;
+use super::state_identity::ProviderStateIdentity;
 use super::tools::ProviderCapabilities;
 use super::turn::ProviderTurnContext;
 use crate::error::ProviderError;
@@ -22,6 +23,16 @@ pub type ProviderStream = Pin<Box<dyn Stream<Item = Result<ProviderEvent, Provid
 /// The trait is object-safe: all methods take `&self` and the async
 /// `stream` method returns a boxed stream.
 pub trait Provider: Send + Sync {
+    /// Stable opaque identity for credential-and-authority-scoped provider
+    /// state.
+    ///
+    /// Providers that support response threading or private turn state return
+    /// `Some`; the loop rejects those stateful paths when the identity is
+    /// absent. Stateless providers return `None`.
+    fn state_identity(&self) -> Option<ProviderStateIdentity> {
+        None
+    }
+
     /// Returns provider capabilities that affect request construction.
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities::default()

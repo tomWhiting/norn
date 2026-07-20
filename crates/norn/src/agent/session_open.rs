@@ -10,7 +10,8 @@
 use std::sync::Arc;
 
 use crate::agent::session_spec::SessionRequest;
-use crate::error::{NornError, SessionError};
+use crate::error::{NornError, ProviderError, SessionError};
+use crate::provider::ProviderStateIdentity;
 use crate::session::manager::ReplaySummary;
 use crate::session::store::EventStore;
 use crate::session::{SessionArtifactStore, SessionBinding, SessionBrancher, SessionIndexEntry};
@@ -53,16 +54,18 @@ pub(super) struct OpenedRootSession {
 /// # Errors
 ///
 /// [`NornError::Session`] when the request fails to create, resume, or
-/// fork the persisted session.
+/// fork the persisted session, or [`NornError::Provider`] when its durable
+/// provider-state identity is absent or mismatched.
 pub(super) fn open_root_session(
     request: SessionRequest,
     model: &str,
     working_dir: &str,
+    provider_state_identity: Option<ProviderStateIdentity>,
 ) -> Result<OpenedRootSession, NornError> {
     let manager = request.manager.clone();
     let durability = request.durability;
     let opened = request
-        .open(model, working_dir)
+        .open(model, working_dir, provider_state_identity)
         .map_err(|error| map_session_open_error("open_session failed", error))?;
     // Heal a transcript killed mid-turn before the first provider request is
     // ever assembled from it: a persisted assistant turn whose tool result
@@ -113,12 +116,14 @@ pub(super) fn open_root_session(
 }
 
 fn map_session_open_error(context: &str, error: crate::session::SessionPersistError) -> NornError {
-    match error {
-        crate::session::SessionPersistError::DescriptorExhausted(source) => {
-            NornError::Session(SessionError::DescriptorExhausted(source))
+    match SessionError::from(error) {
+        SessionError::ProviderStateIdentityRequired
+        | SessionError::ProviderStateIdentityMismatch => {
+            NornError::Provider(ProviderError::ProviderStateIdentityMismatch)
         }
-        other => NornError::Session(SessionError::StorageError {
-            reason: format!("{context}: {other}"),
+        SessionError::StorageError { reason } => NornError::Session(SessionError::StorageError {
+            reason: format!("{context}: {reason}"),
         }),
+        other => NornError::Session(other),
     }
 }

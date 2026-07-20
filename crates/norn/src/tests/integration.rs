@@ -49,6 +49,7 @@ use crate::provider::mock::MockProvider;
 use crate::provider::request::ToolDefinition;
 use crate::provider::tools::ProviderCapabilities;
 use crate::provider::usage::Usage;
+use crate::provider::{Provider, ProviderStateIdentity};
 use crate::rules::engine::RuleEngine;
 use crate::rules::types::{
     DeliveryMode as RuleDelivery, Rule, RuleId, TriggerCondition, TriggerTiming,
@@ -125,6 +126,14 @@ fn tool_def(name: &str, description: &str) -> ToolDefinition {
     }
 }
 
+fn threaded_provider(responses: Vec<Vec<ProviderEvent>>) -> MockProvider {
+    MockProvider::with_capabilities(responses, ProviderCapabilities::openai_responses())
+        .with_state_identity(ProviderStateIdentity::derive(
+            "norn.integration.threaded-provider",
+            b"shared-fixture-credential",
+        ))
+}
+
 /// Unwrap a `Completed` result or panic with a descriptive message.
 #[track_caller]
 fn assert_completed(result: AgentStepResult) -> (Value, Usage) {
@@ -169,13 +178,10 @@ async fn default_auto_state_threads_supported_provider() {
     let store = EventStore::new();
     let executor = MockToolExecutor::empty();
 
-    let first_provider = MockProvider::with_capabilities(
-        vec![vec![
-            text_delta("first"),
-            done_event_with_response(StopReason::EndTurn, "resp_first"),
-        ]],
-        ProviderCapabilities::openai_responses(),
-    );
+    let first_provider = threaded_provider(vec![vec![
+        text_delta("first"),
+        done_event_with_response(StopReason::EndTurn, "resp_first"),
+    ]]);
     let mut first_ctx = LoopContext::new("system");
     let first = run_step_with_ctx(
         &first_provider,
@@ -189,13 +195,10 @@ async fn default_auto_state_threads_supported_provider() {
     .await;
     assert_completed(first);
 
-    let second_provider = MockProvider::with_capabilities(
-        vec![vec![
-            text_delta("second"),
-            done_event_with_response(StopReason::EndTurn, "resp_second"),
-        ]],
-        ProviderCapabilities::openai_responses(),
-    );
+    let second_provider = threaded_provider(vec![vec![
+        text_delta("second"),
+        done_event_with_response(StopReason::EndTurn, "resp_second"),
+    ]]);
     let mut second_ctx = LoopContext::new("system");
     let second = run_step_with_ctx(
         &second_provider,
@@ -229,13 +232,10 @@ async fn provider_threaded_second_step_uses_response_anchor() {
     let store = EventStore::new();
     let executor = MockToolExecutor::empty();
 
-    let first_provider = MockProvider::with_capabilities(
-        vec![vec![
-            text_delta("first"),
-            done_event_with_response(StopReason::EndTurn, "resp_first"),
-        ]],
-        ProviderCapabilities::openai_responses(),
-    );
+    let first_provider = threaded_provider(vec![vec![
+        text_delta("first"),
+        done_event_with_response(StopReason::EndTurn, "resp_first"),
+    ]]);
     let mut first_ctx = LoopContext::new("system");
     let first = run_step_with_ctx(
         &first_provider,
@@ -249,13 +249,10 @@ async fn provider_threaded_second_step_uses_response_anchor() {
     .await;
     assert_completed(first);
 
-    let second_provider = MockProvider::with_capabilities(
-        vec![vec![
-            text_delta("second"),
-            done_event_with_response(StopReason::EndTurn, "resp_second"),
-        ]],
-        ProviderCapabilities::openai_responses(),
-    );
+    let second_provider = threaded_provider(vec![vec![
+        text_delta("second"),
+        done_event_with_response(StopReason::EndTurn, "resp_second"),
+    ]]);
     let mut second_ctx = LoopContext::new("system");
     let second = run_step_with_ctx(
         &second_provider,
@@ -306,19 +303,16 @@ async fn provider_threaded_tool_continuation_sends_only_tool_result() {
         conversation_state: ConversationStateMode::ProviderThreaded,
         ..AgentLoopConfig::default()
     };
-    let provider = MockProvider::with_capabilities(
+    let provider = threaded_provider(vec![
         vec![
-            vec![
-                tool_call_delta("call_read", Some("read"), r#"{"path":"a"}"#),
-                done_event_with_response(StopReason::ToolUse, "resp_tool"),
-            ],
-            vec![
-                text_delta("done"),
-                done_event_with_response(StopReason::EndTurn, "resp_done"),
-            ],
+            tool_call_delta("call_read", Some("read"), r#"{"path":"a"}"#),
+            done_event_with_response(StopReason::ToolUse, "resp_tool"),
         ],
-        ProviderCapabilities::openai_responses(),
-    );
+        vec![
+            text_delta("done"),
+            done_event_with_response(StopReason::EndTurn, "resp_done"),
+        ],
+    ]);
     let mut handlers: std::collections::HashMap<String, ToolHandler> =
         std::collections::HashMap::new();
     handlers.insert(
@@ -378,7 +372,14 @@ async fn provider_threaded_resume_replays_post_anchor_history() {
         conversation_state: ConversationStateMode::ProviderThreaded,
         ..AgentLoopConfig::default()
     };
+    let provider = threaded_provider(vec![vec![
+        text_delta("done"),
+        done_event_with_response(StopReason::EndTurn, "resp_done"),
+    ]]);
     let store = EventStore::new();
+    store
+        .validate_or_bind_provider_state_identity(provider.state_identity())
+        .unwrap();
     store
         .append(SessionEvent::UserMessage {
             base: EventBase::new(None),
@@ -415,13 +416,6 @@ async fn provider_threaded_resume_replays_post_anchor_history() {
         })
         .unwrap();
 
-    let provider = MockProvider::with_capabilities(
-        vec![vec![
-            text_delta("done"),
-            done_event_with_response(StopReason::EndTurn, "resp_done"),
-        ]],
-        ProviderCapabilities::openai_responses(),
-    );
     let executor = MockToolExecutor::empty();
     let mut loop_ctx = LoopContext::new("system");
 

@@ -7,6 +7,7 @@ use async_trait::async_trait;
 
 use super::AuthProvider;
 use crate::error::ProviderError;
+use crate::provider::CredentialIdentity;
 
 /// Mock auth provider for tests.
 ///
@@ -18,12 +19,17 @@ pub struct MockAuthProvider {
     on_unauthorized_seq: Mutex<Vec<Result<bool, ProviderError>>>,
     apply_count: AtomicUsize,
     refresh_count: AtomicUsize,
+    credential_identity: CredentialIdentity,
 }
 
 impl MockAuthProvider {
     /// Constructs a mock with bearer-token and unauthorized-result sequences.
     #[must_use]
     pub fn new(tokens: Vec<String>, on_unauthorized: Vec<Result<bool, ProviderError>>) -> Self {
+        let credential_identity = CredentialIdentity::derive(
+            "norn.mock-auth.v1",
+            tokens.first().map_or(b"mock-token", String::as_bytes),
+        );
         let mut tokens_reversed = tokens;
         tokens_reversed.reverse();
         let mut unauth_reversed = on_unauthorized;
@@ -33,6 +39,7 @@ impl MockAuthProvider {
             on_unauthorized_seq: Mutex::new(unauth_reversed),
             apply_count: AtomicUsize::new(0),
             refresh_count: AtomicUsize::new(0),
+            credential_identity,
         }
     }
 
@@ -87,6 +94,10 @@ impl std::fmt::Debug for MockAuthProvider {
 
 #[async_trait]
 impl AuthProvider for MockAuthProvider {
+    fn credential_identity(&self) -> Option<CredentialIdentity> {
+        Some(self.credential_identity)
+    }
+
     async fn apply_auth(
         &self,
         request: reqwest::RequestBuilder,

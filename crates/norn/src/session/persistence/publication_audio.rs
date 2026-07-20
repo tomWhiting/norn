@@ -54,12 +54,15 @@ pub(super) fn validate_source_generation(
             && entry.generation == source.generation
             && entry.rel_path == source.rel_path
     });
-    if current.is_some() {
+    let Some(current) = current else {
+        return Err(SessionPersistError::GenerationChanged {
+            id: source.id.clone(),
+        });
+    };
+    if current.provider_state_identity == source.provider_state_identity {
         Ok(())
     } else {
-        Err(SessionPersistError::GenerationChanged {
-            id: source.id.clone(),
-        })
+        Err(SessionPersistError::ProviderStateIdentityMismatch)
     }
 }
 

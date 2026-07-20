@@ -30,3 +30,7 @@ impl std::fmt::Debug for AccountIdentityFingerprint {
         formatter.write_str("AccountIdentityFingerprint([REDACTED])")
     }
 }
+
+#[cfg(test)]
+#[path = "account_identity_tests.rs"]
+mod tests;

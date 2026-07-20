@@ -27,6 +27,7 @@ pub use self::response_item::{
     ResponseNullable, ResponseReasoningItem, ResponseStreamProvenance, ResponseTranscriptItem,
     ResponseWebSearchCallItem,
 };
+pub use self::state_identity::{CredentialIdentity, ProviderStateIdentity};
 pub use self::surface::{
     ResolvedTool, ResolvedToolSurface, ToolPresentation, collect_function_definitions,
     hosted_surface_description, hosted_surface_usage, hosted_tools_prompt_section,
@@ -60,6 +61,7 @@ pub mod request;
 pub mod response_audio;
 pub mod response_item;
 pub(crate) mod startup_trace;
+mod state_identity;
 pub mod surface;
 pub mod tools;
 pub mod traits;

@@ -10,6 +10,7 @@ use futures_util::stream;
 
 use super::events::ProviderEvent;
 use super::request::ProviderRequest;
+use super::state_identity::ProviderStateIdentity;
 use super::tools::ProviderCapabilities;
 use super::traits::{Provider, ProviderStream};
 use crate::error::ProviderError;
@@ -24,6 +25,7 @@ pub struct MockProvider {
     requests: Mutex<Vec<ProviderRequest>>,
     call_count: AtomicUsize,
     capabilities: ProviderCapabilities,
+    state_identity: Option<ProviderStateIdentity>,
 }
 
 impl MockProvider {
@@ -37,6 +39,7 @@ impl MockProvider {
             requests: Mutex::new(Vec::new()),
             call_count: AtomicUsize::new(0),
             capabilities: ProviderCapabilities::default(),
+            state_identity: None,
         }
     }
 
@@ -50,7 +53,15 @@ impl MockProvider {
             requests: Mutex::new(Vec::new()),
             call_count: AtomicUsize::new(0),
             capabilities,
+            state_identity: None,
         }
+    }
+
+    /// Binds this mock to an explicit provider-state identity.
+    #[must_use]
+    pub fn with_state_identity(mut self, identity: ProviderStateIdentity) -> Self {
+        self.state_identity = Some(identity);
+        self
     }
 
     /// Returns the number of times `stream()` has been called.
@@ -71,6 +82,10 @@ impl MockProvider {
 }
 
 impl Provider for MockProvider {
+    fn state_identity(&self) -> Option<ProviderStateIdentity> {
+        self.state_identity
+    }
+
     fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         self.requests

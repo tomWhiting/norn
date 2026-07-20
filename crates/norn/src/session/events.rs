@@ -170,6 +170,10 @@ pub enum ProviderEpochBoundaryReason {
     /// The visible timeline was migrated from legacy storage, whose provider
     /// anchors cannot be proven to name the exact strict replay state.
     MigratedLegacy,
+    /// A session created before provider-state affinity was recorded has
+    /// adopted its first credential-and-authority identity. Earlier response
+    /// anchors cannot be attributed to that identity and must not be reused.
+    ProviderIdentityAdoption,
 }
 
 /// A single session event. Each variant embeds an [`EventBase`] via the

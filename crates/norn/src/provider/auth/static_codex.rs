@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use super::AuthProvider;
 use crate::error::ProviderError;
-use crate::provider::request::SecretString;
+use crate::provider::{CredentialIdentity, request::SecretString};
 
 /// Validated, non-refreshing `ChatGPT` credential for an embedded Codex
 /// provider.
@@ -91,17 +91,29 @@ fn static_credential_error(reason: &str) -> ProviderError {
 /// Internal request authenticator backed by a sealed static credential.
 pub(crate) struct StaticCodexAuthProvider {
     credential: StaticCodexCredential,
+    credential_identity: CredentialIdentity,
 }
 
 impl StaticCodexAuthProvider {
     /// Binds a sealed credential to the non-refreshing authenticator.
-    pub(crate) const fn new(credential: StaticCodexCredential) -> Self {
-        Self { credential }
+    pub(crate) fn new(credential: StaticCodexCredential) -> Self {
+        let credential_identity = CredentialIdentity::from_static_codex(
+            credential.access_token.expose(),
+            credential.account_id.as_ref().map(SecretString::expose),
+        );
+        Self {
+            credential,
+            credential_identity,
+        }
     }
 }
 
 #[async_trait]
 impl AuthProvider for StaticCodexAuthProvider {
+    fn credential_identity(&self) -> Option<CredentialIdentity> {
+        Some(self.credential_identity)
+    }
+
     async fn apply_auth(
         &self,
         request: reqwest::RequestBuilder,

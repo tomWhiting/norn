@@ -6,6 +6,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::provider::ProviderStateIdentity;
 use crate::session::events::SessionEvent;
 use crate::session::persistence::index::{
     open_registered_timeline_bound, read_index_with_deadline, reconcile_registered_timeline,
@@ -83,6 +84,7 @@ impl JsonlTarget {
     fn reopen_bound(
         &self,
         identity: PrivateFileIdentity,
+        provider_state_identity: Option<ProviderStateIdentity>,
         candidate_id: &str,
         candidate_line: &[u8],
         lock_deadline: Option<Duration>,
@@ -96,6 +98,7 @@ impl JsonlTarget {
                 data_dir,
                 entry,
                 identity,
+                provider_state_identity,
                 candidate_id,
                 candidate_line,
                 lock_deadline,
@@ -151,6 +154,7 @@ struct PendingWrite {
 pub struct JsonlSink {
     target: JsonlTarget,
     identity: PrivateFileIdentity,
+    provider_state_identity: Option<ProviderStateIdentity>,
     durability: DurabilityPolicy,
     events_since_sync: u64,
     index: Option<IndexRegistration>,
@@ -187,6 +191,7 @@ impl JsonlSink {
         Ok(Self {
             target,
             identity: PrivateFileIdentity::capture(&file)?,
+            provider_state_identity: None,
             durability,
             events_since_sync: 0,
             index: None,
@@ -221,6 +226,7 @@ impl JsonlSink {
         Ok(Self {
             target,
             identity: timeline_identity,
+            provider_state_identity: entry.provider_state_identity,
             durability,
             events_since_sync: 0,
             index: Some(IndexRegistration {
@@ -323,9 +329,13 @@ impl PersistenceSink for JsonlSink {
             .as_ref()
             .map_or(event_id, |index| index.entry.id.as_str())
             .to_owned();
-        let (mut file, inspection) =
-            self.target
-                .reopen_bound(self.identity, event_id, &line, lock_deadline)?;
+        let (mut file, inspection) = self.target.reopen_bound(
+            self.identity,
+            self.provider_state_identity,
+            event_id,
+            &line,
+            lock_deadline,
+        )?;
         match inspection.state {
             ExistingEventState::Absent => {
                 inspection
@@ -411,5 +421,9 @@ impl PersistenceSink for JsonlSink {
             registration.flush()?;
         }
         Ok(())
+    }
+
+    fn set_provider_state_identity(&mut self, identity: Option<ProviderStateIdentity>) {
+        self.provider_state_identity = identity;
     }
 }

@@ -3,7 +3,7 @@
 //! and the pending/seeded/inbound message flushes that precede the first
 //! provider call.
 
-use crate::error::{ConfigError, HookType, NornError};
+use crate::error::{ConfigError, HookType, NornError, ProviderError, SessionError};
 use crate::integration::hooks::HookOutcome;
 use crate::r#loop::compaction::{CompactionState, SharedTimeoutState};
 use crate::r#loop::conversation_state::ConversationRequestState;
@@ -22,6 +22,7 @@ use crate::provider::request::ToolDefinition;
 use crate::provider::turn::ProviderTurnContext;
 use crate::provider::usage::Usage;
 use crate::rules::types::RuleInjection;
+use crate::session::SessionPersistError;
 use crate::session::events::{EventBase, EventId, SessionEvent};
 
 use super::entry::AgentStepRunRequest;
@@ -55,6 +56,9 @@ impl<'a> StepMachine<'a> {
         let config = request.config;
         let event_tx = request.event_tx;
         let loop_context = request.loop_context;
+        let provider_state_identity = provider.state_identity();
+
+        validate_or_bind_store_identity(store, provider_state_identity)?;
 
         // The embedder-installed ToolOutputBudget governs the model-facing
         // inline size of every tool result this step persists; resolved once
@@ -116,6 +120,7 @@ impl<'a> StepMachine<'a> {
             initial_messages.prefix_len,
             initial_messages.response_thread_anchor,
         )?;
+        conversation_state.require_state_identity(provider_state_identity)?;
         // The managed dynamic-context Developer message is attached at the
         // tail by the first `build_request`, so the tracker starts absent.
         let dev_message = ManagedDevMessage::new();
@@ -203,6 +208,9 @@ impl<'a> StepMachine<'a> {
                 .map(|variables| variables.session_id().to_owned()),
             prompt_event_id.as_str().to_owned(),
         );
+        if let Some(identity) = provider_state_identity {
+            provider_turn_context.bind_state_identity(identity)?;
+        }
 
         Ok(StepMachine {
             provider,
@@ -237,5 +245,26 @@ impl<'a> StepMachine<'a> {
             compaction_state: CompactionState::new(),
             latest_failures: Vec::new(),
         })
+    }
+}
+
+fn validate_or_bind_store_identity(
+    store: &crate::session::EventStore,
+    requested: Option<crate::provider::ProviderStateIdentity>,
+) -> Result<(), NornError> {
+    let validate = || store.validate_or_bind_provider_state_identity(requested);
+    let result = match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(validate)
+        }
+        _ => validate(),
+    };
+    match result {
+        Ok(()) => Ok(()),
+        Err(
+            SessionPersistError::ProviderStateIdentityMismatch
+            | SessionPersistError::ProviderStateIdentityRequired,
+        ) => Err(ProviderError::ProviderStateIdentityMismatch.into()),
+        Err(error) => Err(SessionError::from(error).into()),
     }
 }

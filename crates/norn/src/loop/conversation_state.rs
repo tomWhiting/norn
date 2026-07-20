@@ -1,10 +1,14 @@
 //! Provider conversation-state request shaping.
 
+use std::collections::HashSet;
+
 use crate::error::ProviderError;
 use crate::r#loop::config::{AgentLoopConfig, ConversationStateMode};
+use crate::provider::ProviderStateIdentity;
 use crate::provider::request::{Message, ProviderContextManagement};
 use crate::provider::tools::ProviderCapabilities;
 use crate::session::events::SessionEvent;
+use crate::session::store::EventStore;
 
 /// Stored Responses API anchor visible in the local prompt view.
 #[derive(Debug, Clone)]
@@ -26,10 +30,47 @@ impl ResponseThreadAnchor {
 }
 
 /// Locate the newest assistant response in the prompt view.
+#[cfg(test)]
 pub(super) fn latest_response_anchor(
     events: &[SessionEvent],
     prefix_len: usize,
     include_compactions: bool,
+) -> Option<ResponseThreadAnchor> {
+    latest_response_anchor_in_epoch(events, prefix_len, include_compactions, None)
+}
+
+/// Locate the latest visible assistant anchor while respecting epoch
+/// boundaries that a context-edited prompt view structurally omits.
+pub(super) fn latest_response_anchor_for_prompt_view(
+    visible_events: &[SessionEvent],
+    store: &EventStore,
+    prefix_len: usize,
+    include_compactions: bool,
+) -> Option<ResponseThreadAnchor> {
+    let active_event_ids = store.with_events(|full_events| {
+        full_events
+            .iter()
+            .rposition(|event| matches!(event, SessionEvent::ProviderEpochBoundary { .. }))
+            .map(|boundary| {
+                full_events[boundary + 1..]
+                    .iter()
+                    .map(|event| event.base().id.clone())
+                    .collect::<HashSet<_>>()
+            })
+    });
+    latest_response_anchor_in_epoch(
+        visible_events,
+        prefix_len,
+        include_compactions,
+        active_event_ids.as_ref(),
+    )
+}
+
+fn latest_response_anchor_in_epoch(
+    events: &[SessionEvent],
+    prefix_len: usize,
+    include_compactions: bool,
+    active_event_ids: Option<&HashSet<crate::session::events::EventId>>,
 ) -> Option<ResponseThreadAnchor> {
     let mut message_index = prefix_len;
     let mut anchor = None;
@@ -39,7 +80,8 @@ pub(super) fn latest_response_anchor(
         }
         match event {
             SessionEvent::AssistantMessage { response_id, .. }
-                if response_id.as_ref().is_some_and(|id| !id.is_empty()) =>
+                if active_event_ids.is_none_or(|active| active.contains(&event.base().id))
+                    && response_id.as_ref().is_some_and(|id| !id.is_empty()) =>
             {
                 anchor = response_id
                     .as_ref()
@@ -142,6 +184,18 @@ impl ConversationRequestState {
     /// Whether response storage should be enabled for this request.
     pub(super) const fn store(&self) -> bool {
         self.threaded
+    }
+
+    /// Require an opaque credential-and-authority identity before provider
+    /// threading can create or reuse response state.
+    pub(super) fn require_state_identity(
+        &self,
+        state_identity: Option<ProviderStateIdentity>,
+    ) -> Result<(), ProviderError> {
+        if self.threaded && state_identity.is_none() {
+            return Err(ProviderError::ProviderStateIdentityRequired);
+        }
+        Ok(())
     }
 
     /// Number of leading messages always sent in full (the System prefix),
@@ -558,6 +612,30 @@ mod tests {
 
         assert_eq!(state.previous_response_id().as_deref(), Some("resp_old"));
         assert!(state.store());
+    }
+
+    #[test]
+    fn threaded_state_requires_an_opaque_provider_identity() -> Result<(), ProviderError> {
+        let state = ConversationRequestState::new(
+            &config(ConversationStateMode::ProviderThreaded),
+            ProviderCapabilities::openai_responses(),
+            1,
+            None,
+        )?;
+
+        assert!(matches!(
+            state.require_state_identity(None),
+            Err(ProviderError::ProviderStateIdentityRequired)
+        ));
+        assert!(
+            state
+                .require_state_identity(Some(ProviderStateIdentity::derive(
+                    "norn.conversation-state-test",
+                    b"threaded-provider-fixture",
+                )))
+                .is_ok()
+        );
+        Ok(())
     }
 
     #[test]

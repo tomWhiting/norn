@@ -34,6 +34,7 @@ mod admission;
 mod counters;
 mod event_reader;
 pub mod index;
+mod index_entry;
 pub mod io;
 mod lock;
 pub mod replay;
@@ -69,6 +70,7 @@ pub(crate) use index::{index_file_path, write_index_atomic};
 pub use index::{
     read_index, resolve_latest_session_in_working_dir, resolve_session, sum_usage_from_events,
 };
+pub use index_entry::{ResumeFidelity, SessionIndexEntry, SessionRecordOrigin, SessionStatus};
 #[cfg(test)]
 pub(crate) use io::append_events;
 #[cfg(test)]
@@ -78,7 +80,4 @@ pub use io::{RESERVED_SESSION_ID_STEMS, is_reserved_session_id, read_session_eve
 pub(crate) use io::{resolved_session_file_path, session_file_path};
 pub use replay::ReplayArtifacts;
 pub(crate) use timeline_lock::LockedTimelineFile;
-pub use types::{
-    ResumeFidelity, SESSION_FORMAT_VERSION, SessionFileHeader, SessionIndexEntry,
-    SessionPersistError, SessionRecordOrigin, SessionStatus,
-};
+pub use types::{SESSION_FORMAT_VERSION, SessionFileHeader, SessionPersistError};

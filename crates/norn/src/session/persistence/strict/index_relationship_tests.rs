@@ -25,6 +25,7 @@ fn entry(id: String, parent_id: Option<String>, rel_path: Option<String>) -> Ses
         parent_id,
         fidelity: ResumeFidelity::Canonical,
         origin: SessionRecordOrigin::Native,
+        provider_state_identity: None,
     }
 }
 

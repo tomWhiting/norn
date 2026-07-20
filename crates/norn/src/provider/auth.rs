@@ -16,6 +16,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use super::CredentialIdentity;
 use super::openai_oauth::{
     AuthCredentialsStoreMode, AuthManager, AuthManagerBuildError, LoginError,
     LoginStorageFailureKind, LogoutReport, NornAuthRoot, OAuthHttpOptions, RefreshTokenError,
@@ -85,6 +86,17 @@ impl Default for AuthSource {
 /// boxes the futures so methods can be invoked through a trait object.
 #[async_trait]
 pub trait AuthProvider: Send + Sync {
+    /// Stable opaque identity for this credential before provider authority
+    /// scope is applied.
+    ///
+    /// `None` means no usable identity is currently pinned. Stateful providers
+    /// must reject construction rather than dispatch unbound state. The
+    /// `OpenAI` provider combines this value with its resolved backend and
+    /// normalized endpoint before exposing session-facing state identity.
+    fn credential_identity(&self) -> Option<CredentialIdentity> {
+        None
+    }
+
     /// Applies authentication headers to the provided `RequestBuilder`.
     ///
     /// For OAuth this sets `Authorization: Bearer <access_token>` and,
@@ -176,6 +188,10 @@ impl OAuthAuthProvider {
 
 #[async_trait]
 impl AuthProvider for OAuthAuthProvider {
+    fn credential_identity(&self) -> Option<CredentialIdentity> {
+        self.manager.credential_identity()
+    }
+
     async fn apply_auth(
         &self,
         request: reqwest::RequestBuilder,
@@ -252,6 +268,7 @@ fn map_refresh_token_error(error: RefreshTokenError) -> ProviderError {
 /// API-key based providers.
 pub struct ApiKeyAuthProvider {
     key: SecretString,
+    credential_identity: CredentialIdentity,
 }
 
 impl std::fmt::Debug for ApiKeyAuthProvider {
@@ -263,13 +280,21 @@ impl std::fmt::Debug for ApiKeyAuthProvider {
 impl ApiKeyAuthProvider {
     /// Constructs a new API-key provider wrapping the given secret.
     #[must_use]
-    pub const fn new(key: SecretString) -> Self {
-        Self { key }
+    pub fn new(key: SecretString) -> Self {
+        let credential_identity = CredentialIdentity::from_api_key(key.expose());
+        Self {
+            key,
+            credential_identity,
+        }
     }
 }
 
 #[async_trait]
 impl AuthProvider for ApiKeyAuthProvider {
+    fn credential_identity(&self) -> Option<CredentialIdentity> {
+        Some(self.credential_identity)
+    }
+
     async fn apply_auth(
         &self,
         request: reqwest::RequestBuilder,
