@@ -26,6 +26,7 @@ audited, resumed, or exported later.
 - Reasoning: `high`
 - Service tier: `--fast`
 - Output: mode-specific structured value inside Norn's JSON envelope
+- Account: explicit Norn OAuth alias, pinned across creation and resume
 - Session: persistent, with an explicit ID published before launch
 - Working directory and built-in file-tool boundary: repository root
 
@@ -69,7 +70,7 @@ Each mode loads `instructions/<mode>/base.md` plus one specialist preset:
 
 ## Run Norn
 
-Fill in `MODE`, `TASK`, and `SCOPE`. Override `PRESET`, `EFFORT`, or
+Fill in `MODE`, `TASK`, `SCOPE`, and `ACCOUNT`. Override `PRESET`, `EFFORT`, or
 `SCHEMA_PATH` only when the task requires it.
 
 ```bash
@@ -79,6 +80,7 @@ umask 077
 MODE="<scout|research|review|dev>"
 TASK="<the concrete outcome Norn must produce>"
 SCOPE="<paths, commit range, requirements, symptoms, or constraints>"
+ACCOUNT="<Norn OAuth account alias or default>"
 EFFORT="${EFFORT:-high}"
 
 WORKSPACE="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -115,6 +117,11 @@ case "$EFFORT" in
     exit 2
     ;;
 esac
+
+if [[ -z "$ACCOUNT" ]]; then
+  printf 'a Norn OAuth account alias (or default) is required\n' >&2
+  exit 2
+fi
 
 PRESET="${PRESET:-$DEFAULT_PRESET}"
 SCHEMA_PATH="${SCHEMA_PATH:-$SKILL_DIR/schemas/$MODE.schema.json}"
@@ -153,6 +160,7 @@ write_delegation_status() {
     --arg status "$status" \
     --arg session_id "$SESSION_ID" \
     --arg session_name "$SESSION_NAME" \
+    --arg account_alias "$ACCOUNT" \
     --arg result_file "$RESULT_FILE" \
     --arg session_file "$SESSION_FILE" \
     --arg started_at "$STARTED_AT" \
@@ -164,6 +172,7 @@ write_delegation_status() {
       status: $status,
       session_id: $session_id,
       session_name: $session_name,
+      account_alias: $account_alias,
       result_file: $result_file,
       session_file: $session_file,
       started_at: $started_at,
@@ -192,7 +201,7 @@ evidence.
 PROMPT
 )"
 
-write_delegation_status "running" "" ""
+write_delegation_status "prepared" "" ""
 printf 'Norn session: %s\n' "$SESSION_ID" >&2
 printf 'Norn envelope: %s\n' "$RESULT_FILE" >&2
 printf 'Norn status: %s\n' "$STATUS_FILE" >&2
@@ -201,6 +210,7 @@ printf 'Norn timeline: %s\n' "$SESSION_FILE" >&2
 set +e
 norn --print \
   --model gpt-5.6-sol \
+  --account "$ACCOUNT" \
   --reasoning-effort "$EFFORT" \
   --fast \
   --working-dir "$WORKSPACE" \
@@ -216,7 +226,7 @@ norn --print \
 NORN_EXIT=$?
 set -e
 
-STOP_REASON="$(jq -er '.stop.reason' "$RESULT_FILE" 2>/dev/null || printf 'unavailable')"
+STOP_REASON="$(jq -er '.stop.reason' "$RESULT_FILE" 2>/dev/null || printf '')"
 if [[ "$NORN_EXIT" -eq 0 ]]; then
   FINAL_STATUS="finished"
 else
@@ -244,12 +254,13 @@ jq -e '
 ' "$RESULT_FILE"
 ```
 
-The runner prints `SESSION_ID`, `RESULT_FILE`, `STATUS_FILE`, and `SESSION_FILE`
-before Norn starts. Retain and report them; do not delete the envelope or status
-record automatically. Terminal JSON is written only when the run ends, so an
-empty `RESULT_FILE` does not mean the worker made no progress. Inspect the
-status record and durable session timeline, then resume the exact session when
-appropriate.
+The runner pins `ACCOUNT` for the session and records its non-secret alias in
+`STATUS_FILE`. It prints `SESSION_ID`, `RESULT_FILE`, `STATUS_FILE`, and
+`SESSION_FILE` before Norn starts. Retain and report them; do not delete the
+envelope or status record automatically. Terminal JSON is written only when the
+run ends, so an empty `RESULT_FILE` does not mean the worker made no progress.
+Inspect the status record and durable session timeline, then resume the exact
+session with the same account alias when appropriate.
 
 Do not wrap delegation in a broad `pkill`, caller-side hard timeout, or a
 pipeline that hides Norn's exit status. Use Norn's own explicit timeout when a
@@ -293,6 +304,7 @@ set -euo pipefail
 umask 077
 
 SESSION_ID="<persisted Norn session id>"
+ACCOUNT="<same Norn OAuth account alias or default>"
 FOLLOW_UP="<question, correction, or next bounded task>"
 MODE="<same mode>"
 PRESET="<same or new preset>"
@@ -303,6 +315,17 @@ NORN_STATE_HOME="${NORN_HOME:-$HOME/.norn}"
 SCHEMA_PATH="${SCHEMA_PATH:-$SKILL_DIR/schemas/$MODE.schema.json}"
 BASE_INSTRUCTIONS="$SKILL_DIR/instructions/$MODE/base.md"
 PRESET_INSTRUCTIONS="$SKILL_DIR/instructions/$MODE/$PRESET.md"
+
+if [[ -z "$ACCOUNT" ]]; then
+  printf 'the original Norn OAuth account alias (or default) is required\n' >&2
+  exit 2
+fi
+
+if [[ "$NORN_STATE_HOME" != /* ]]; then
+  printf 'NORN_HOME must be absolute for persistent delegation: %s\n' "$NORN_STATE_HOME" >&2
+  exit 2
+fi
+
 APPENDED_SYSTEM_PROMPT="$(cat "$BASE_INSTRUCTIONS" "$PRESET_INSTRUCTIONS")"
 ENVELOPE_DIR="$NORN_STATE_HOME/delegations"
 mkdir -p "$ENVELOPE_DIR"
@@ -320,6 +343,7 @@ write_delegation_status() {
   jq -n \
     --arg status "$status" \
     --arg session_id "$SESSION_ID" \
+    --arg account_alias "$ACCOUNT" \
     --arg result_file "$RESULT_FILE" \
     --arg session_file "$SESSION_FILE" \
     --arg started_at "$STARTED_AT" \
@@ -330,6 +354,7 @@ write_delegation_status() {
     '{
       status: $status,
       session_id: $session_id,
+      account_alias: $account_alias,
       result_file: $result_file,
       session_file: $session_file,
       started_at: $started_at,
@@ -348,7 +373,7 @@ case "$MODE" in
   *) exit 2 ;;
 esac
 
-write_delegation_status "running" "" ""
+write_delegation_status "prepared" "" ""
 printf 'Norn session: %s\n' "$SESSION_ID" >&2
 printf 'Norn envelope: %s\n' "$RESULT_FILE" >&2
 printf 'Norn status: %s\n' "$STATUS_FILE" >&2
@@ -357,6 +382,7 @@ printf 'Norn timeline: %s\n' "$SESSION_FILE" >&2
 set +e
 norn --print \
   --model gpt-5.6-sol \
+  --account "$ACCOUNT" \
   --reasoning-effort "$EFFORT" \
   --fast \
   --working-dir "$WORKSPACE" \
@@ -371,7 +397,7 @@ norn --print \
 NORN_EXIT=$?
 set -e
 
-STOP_REASON="$(jq -er '.stop.reason' "$RESULT_FILE" 2>/dev/null || printf 'unavailable')"
+STOP_REASON="$(jq -er '.stop.reason' "$RESULT_FILE" 2>/dev/null || printf '')"
 if [[ "$NORN_EXIT" -eq 0 ]]; then
   FINAL_STATUS="finished"
 else
