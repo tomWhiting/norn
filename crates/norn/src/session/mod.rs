@@ -82,6 +82,7 @@ pub use response_audio::{
     ResponseAudioArtifactRef, ResponseAudioArtifactState, ResponseAudioReferenceError,
     ResponseAudioStore, referenced_response_audio_artifacts, response_audio_artifact_links,
 };
+pub(crate) use resume_repair::is_interrupted_tool_result;
 pub use resume_repair::repair_dangling_tool_calls;
 pub use spool::{SpoolWriter, read_spooled_output, resolve_spool_ref};
 pub use store::{DurabilityPolicy, EventStore, JsonlSink, PersistenceSink};

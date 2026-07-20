@@ -14,12 +14,21 @@ use crate::provider::request::{ProviderConfig, SecretString};
 use crate::provider::response_item::{
     ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
 };
+use crate::session::events::ProviderEpochBoundaryReason;
 use crate::session::{ProviderStateProvenance, response_publication_fixture};
 
 const STORED_RESPONSE_ID: &str = "resp_legacy_stored";
 const LATER_STATELESS_ID: &str = "resp_later_stateless";
 
 type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+#[derive(Clone, Copy)]
+enum HistoricalCut {
+    Migration,
+    Adoption,
+    Compaction,
+    Suppression,
+}
 
 fn provider_for(server: &MockServer) -> Result<OpenAiProvider, ProviderError> {
     let config = ProviderConfig {
@@ -92,6 +101,35 @@ fn append_user(store: &EventStore, content: &str) -> Result<(), crate::error::Se
         base: EventBase::new(store.last_event_id()),
         content: content.to_owned(),
     })?;
+    Ok(())
+}
+
+fn append_historical_cut(store: &EventStore, cut: HistoricalCut) -> TestResult {
+    append_user(store, "history before cut")?;
+    let target_event_id = store
+        .last_event_id()
+        .ok_or_else(|| io::Error::other("historical cut requires a preceding event"))?;
+    let event = match cut {
+        HistoricalCut::Migration | HistoricalCut::Adoption => SessionEvent::ProviderEpochBoundary {
+            base: EventBase::new(Some(target_event_id)),
+            reason: if matches!(cut, HistoricalCut::Migration) {
+                ProviderEpochBoundaryReason::MigratedLegacy
+            } else {
+                ProviderEpochBoundaryReason::ProviderIdentityAdoption
+            },
+        },
+        HistoricalCut::Compaction => SessionEvent::Compaction {
+            base: EventBase::new(Some(target_event_id.clone())),
+            summary: "history before D3".to_owned(),
+            replaced_event_ids: vec![target_event_id],
+        },
+        HistoricalCut::Suppression => SessionEvent::ContextMark {
+            base: EventBase::new(Some(target_event_id.clone())),
+            mark: crate::session::events::ContextMarkKind::Suppress,
+            target_event_id,
+        },
+    };
+    store.append(event)?;
     Ok(())
 }
 
@@ -258,6 +296,37 @@ async fn legacy_bare_state_recovers_through_its_response_id() -> TestResult {
     assert!(!input.contains("stored prompt"));
     assert!(!input.contains("rs_legacy_stored"));
     assert_eq!(provenance_count(&store), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn pre_d3_bare_state_after_pre_d3_epoch_cut_recovers_through_response_id() -> TestResult {
+    for (cut, response_id) in [
+        (HistoricalCut::Migration, "resp_after_migration_cut"),
+        (HistoricalCut::Adoption, "resp_after_adoption_cut"),
+        (HistoricalCut::Compaction, "resp_after_compaction_cut"),
+        (HistoricalCut::Suppression, "resp_after_suppression_cut"),
+    ] {
+        let server = MockServer::start().await;
+        mount_completed_response(&server).await;
+        let provider = provider_for(&server)?;
+        let store = EventStore::new();
+        store.validate_or_bind_provider_state_identity(provider.state_identity())?;
+        append_historical_cut(&store, cut)?;
+        append_user(&store, "pre-D3 stored prompt")?;
+        append_bare_reasoning_assistant(&store, Some(response_id))?;
+
+        assert!(matches!(
+            run_with_prompt(&provider, &store).await?,
+            AgentStepResult::Completed { .. }
+        ));
+        let payload = recorded_payload(&server).await?;
+        assert_eq!(payload["previous_response_id"], response_id);
+        let input = serde_json::to_string(&payload["input"])?;
+        assert!(input.contains("new prompt"));
+        assert!(!input.contains("pre-D3 stored prompt"));
+        assert!(!input.contains("rs_legacy_stored"));
+    }
     Ok(())
 }
 

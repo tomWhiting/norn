@@ -10,10 +10,11 @@ use super::*;
 use crate::provider::auth::{AuthProvider, AuthSource, MockAuthProvider};
 use crate::provider::openai::OpenAiProvider;
 use crate::provider::reasoning::ReasoningItem;
-use crate::provider::request::{ProviderConfig, SecretString};
+use crate::provider::request::{ProviderConfig, SecretString, ToolCallCaller, ToolCallKind};
 use crate::provider::response_item::{
     ResponseItem, ResponseItemError, ResponseStreamProvenance, ResponseTranscriptItem,
 };
+use crate::session::events::ToolCallEvent;
 use crate::session::response_publication_fixture;
 
 const PRIOR_RESPONSE_ID: &str = "resp_d3_replay_prior";
@@ -155,6 +156,63 @@ fn seed_history(
         let assistant_base = EventBase::new(store.last_event_id());
         store.append(bare_reasoning_event(assistant_base, encoding, response_id)?)?;
     }
+    Ok(())
+}
+
+fn seed_repaired_d3_tool_call(store: &EventStore, bare_reasoning: bool) -> TestResult {
+    store.append(SessionEvent::UserMessage {
+        base: EventBase::new(store.last_event_id()),
+        content: "run the long task".to_owned(),
+    })?;
+    let fixture = response_publication_fixture(store.last_event_id(), true)?;
+    let mut response_items = if bare_reasoning {
+        let item = ResponseItem::from_value(serde_json::json!({
+            "type": "reasoning",
+            "id": "rs_interrupted_bare",
+            "summary": [],
+            "status": "completed"
+        }))?;
+        vec![ResponseTranscriptItem {
+            item,
+            provenance: ResponseStreamProvenance::default(),
+        }]
+    } else {
+        Vec::new()
+    };
+    let call_item = ResponseItem::from_value(serde_json::json!({
+        "type": "function_call",
+        "id": "fc_interrupted",
+        "call_id": "call_interrupted",
+        "name": "bash",
+        "arguments": "{\"command\":\"long-running\"}",
+        "status": "completed"
+    }))?;
+    response_items.push(ResponseTranscriptItem {
+        item: call_item,
+        provenance: ResponseStreamProvenance::default(),
+    });
+    let assistant = SessionEvent::AssistantMessage {
+        base: fixture.assistant_base,
+        response_items,
+        content: String::new(),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: vec![ToolCallEvent {
+            call_id: "call_interrupted".to_owned(),
+            name: "bash".to_owned(),
+            arguments: serde_json::json!({"command": "long-running"}),
+            kind: ToolCallKind::Function,
+            caller: ToolCallCaller::Absent,
+        }],
+        usage: EventUsage::default(),
+        stop_reason: "tool_use".to_owned(),
+        response_id: Some("resp_interrupted".to_owned()),
+    };
+    store.append_batch(&[fixture.boundary, fixture.provenance, assistant])?;
+    assert_eq!(
+        crate::session::repair_dangling_tool_calls(store)?,
+        ["call_interrupted"]
+    );
     Ok(())
 }
 
@@ -310,4 +368,57 @@ async fn anchored_canonical_bare_reasoning_stays_behind_response_id() -> TestRes
 #[tokio::test]
 async fn anchored_legacy_bare_reasoning_stays_behind_response_id() -> TestResult {
     assert_anchored_replay_succeeds(BareReasoningEncoding::Legacy).await
+}
+
+#[tokio::test]
+async fn repaired_replayable_thread_full_replays_without_stale_anchor() -> TestResult {
+    let server = MockServer::start().await;
+    mount_completed_response(&server).await;
+    let provider = provider_for(&server)?;
+    let store = EventStore::new();
+    store.validate_or_bind_provider_state_identity(provider.state_identity())?;
+    seed_repaired_d3_tool_call(&store, false)?;
+
+    assert!(matches!(
+        run_with_prompt(&provider, &store).await?,
+        AgentStepResult::Completed { .. }
+    ));
+    let requests = server
+        .received_requests()
+        .await
+        .ok_or_else(|| io::Error::other("wiremock request recording is unavailable"))?;
+    assert_eq!(requests.len(), 1);
+    let payload: Value = serde_json::from_slice(&requests[0].body)?;
+    assert!(payload.get("previous_response_id").is_none());
+    let input = serde_json::to_string(&payload["input"])?;
+    assert!(input.contains("run the long task"));
+    assert!(input.contains("call_interrupted"));
+    assert!(input.contains("output unavailable"));
+    assert!(input.contains("new prompt"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn repaired_unreplayable_thread_fails_before_prompt_or_wire() -> TestResult {
+    let server = MockServer::start().await;
+    mount_completed_response(&server).await;
+    let provider = provider_for(&server)?;
+    let store = EventStore::new();
+    store.validate_or_bind_provider_state_identity(provider.state_identity())?;
+    seed_repaired_d3_tool_call(&store, true)?;
+    let before = serde_json::to_vec(&store.events())?;
+
+    assert!(matches!(
+        run_with_prompt(&provider, &store).await,
+        Err(NornError::Provider(
+            ProviderError::ProviderStateReplayUnavailable
+        ))
+    ));
+    assert_eq!(serde_json::to_vec(&store.events())?, before);
+    let requests = server
+        .received_requests()
+        .await
+        .ok_or_else(|| io::Error::other("wiremock request recording is unavailable"))?;
+    assert!(requests.is_empty());
+    Ok(())
 }
