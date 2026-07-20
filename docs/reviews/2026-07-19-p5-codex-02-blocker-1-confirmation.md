@@ -44,7 +44,9 @@ from `b86924d` carry unchanged.
    provider-event channel, and an enabled on-disk `DebugDumper`, then asserts the
    captured context still holds the header secret while the emitted raw envelope,
    the full `ProviderEvent` debug output, and the debug JSONL contain no
-   sentinel (and carry `[REDACTED]`). It passes. **Mutation kill:** reverting the
+   sentinel. The raw envelope and debug JSONL carry `[REDACTED]`; the event's
+   redacted `Debug` implementation intentionally retains neither raw value. It
+   passes. **Mutation kill:** reverting the
    redactor to the reviewed shallow object-only lookup fails both this regression
    (its first raw-envelope secrecy assertion observes the sentinel) and the unit
    test; restoring the recursive walker restores both. The tests genuinely bind
