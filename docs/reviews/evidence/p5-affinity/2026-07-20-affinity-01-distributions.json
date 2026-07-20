@@ -6,11 +6,11 @@
     "id": "missing_oauth_credentials_keep_login_guidance_and_auth_exit",
     "observations": [
       {
-        "elapsed_seconds": 11.359,
+        "elapsed_seconds": 0.512,
         "exit_status": 0,
         "iteration": 1,
         "observed_tests": 1,
-        "output_sha256": "e8fb26102e811eca777f2301887716a4680af53547ca876bf8a8b30e41df3f0a",
+        "output_sha256": "730d1f177bce552d807c8af160495a9a1b1da9bdc234bd1404be91a7fd9928a5",
         "result": "pass"
       }
     ],
@@ -24,11 +24,28 @@
       "id": "interrupted_adoption_leaves_boundary_before_any_identity_binding",
       "observations": [
         {
-          "elapsed_seconds": 0.52,
+          "elapsed_seconds": 0.512,
           "exit_status": 0,
           "iteration": 1,
           "observed_tests": 1,
-          "output_sha256": "8dee4608ca01826f2b63978ca15eb51fe55982bcaed2ffef07ec7e18f96ead77",
+          "output_sha256": "620cf7685c432a15b1ab4f7a99ffd2b19019a2bdcc4c0cb21d5363e2e9f61f94",
+          "result": "pass"
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib provider::auth::tests::stateful_oauth_provider_rejects_a_userless_credential -- --exact",
+      "failed": 0,
+      "id": "stateful_oauth_provider_rejects_a_userless_credential",
+      "observations": [
+        {
+          "elapsed_seconds": 0.433,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_tests": 1,
+          "output_sha256": "2c8bc34517056dde1e9e5f6fdce77b89bff76fb9781e28b7fb1c3c7b395142bc",
           "result": "pass"
         }
       ],
@@ -41,11 +58,11 @@
       "id": "context_edited_prompt_respects_provider_epoch_boundaries",
       "observations": [
         {
-          "elapsed_seconds": 0.431,
+          "elapsed_seconds": 0.397,
           "exit_status": 0,
           "iteration": 1,
           "observed_tests": 1,
-          "output_sha256": "b3c2988d4d4cecf3f4e7b15c8423b888a517bd6057fc4edc09a07ea7f9f32e6a",
+          "output_sha256": "44e7da4120cc3ec72c1c15bc2eb78d8bd5375bb1c571b60d9d93af32fd4d0c16",
           "result": "pass"
         }
       ],
@@ -58,11 +75,11 @@
       "id": "first_sinkless_identity_adoption_cuts_the_existing_response_anchor",
       "observations": [
         {
-          "elapsed_seconds": 1.402,
+          "elapsed_seconds": 1.415,
           "exit_status": 0,
           "iteration": 1,
           "observed_tests": 1,
-          "output_sha256": "38f61f4828434338af48eefe2ef19ee862bbfd19d2dab63b32db3b23ac0af8a4",
+          "output_sha256": "19e97d73bb5cb95b4f5fa1bbcfe9dd27deb5f6975ad947b05c0fce4bde741b2e",
           "result": "pass"
         }
       ],
@@ -75,11 +92,11 @@
       "id": "failed_sink_adoption_leaves_identity_and_history_unchanged",
       "observations": [
         {
-          "elapsed_seconds": 0.405,
+          "elapsed_seconds": 0.416,
           "exit_status": 0,
           "iteration": 1,
           "observed_tests": 1,
-          "output_sha256": "b2b9a55c9b0437310647fbd3d873c943174d3380aa0ba42962bc4d2b3c3235b0",
+          "output_sha256": "e13d4198e64e629880beb4b02e0715769b28b4d3e3286d7a41d23a041704bd03",
           "result": "pass"
         }
       ],
@@ -92,11 +109,11 @@
       "id": "ambiguous_sink_adoption_retries_the_exact_boundary",
       "observations": [
         {
-          "elapsed_seconds": 0.534,
+          "elapsed_seconds": 0.393,
           "exit_status": 0,
           "iteration": 1,
           "observed_tests": 1,
-          "output_sha256": "8b73280af5cdab008aa22f9b4d0ef57977257816a36e18670af85bf19d491d35",
+          "output_sha256": "8d6786c4b4d25eae9cdeec61d631b3bc002524e4e9c6d17641386d6afa34919d",
           "result": "pass"
         }
       ],
@@ -109,11 +126,11 @@
       "id": "stale_managed_sink_cannot_append_after_another_handle_adopts",
       "observations": [
         {
-          "elapsed_seconds": 0.58,
+          "elapsed_seconds": 0.464,
           "exit_status": 0,
           "iteration": 1,
           "observed_tests": 1,
-          "output_sha256": "b7beacfeeead75e4f67a70639835a49ad0e8c816d0e59544c68ce01f5c3352f8",
+          "output_sha256": "19a0d0957e2202ab20e04ef343fd836cda978fdd78a8943e921cfcc898d1a658",
           "result": "pass"
         }
       ],
@@ -126,11 +143,11 @@
       "id": "persistent_child_inherits_identity_and_stale_parent_cannot_publish",
       "observations": [
         {
-          "elapsed_seconds": 0.713,
+          "elapsed_seconds": 0.601,
           "exit_status": 0,
           "iteration": 1,
           "observed_tests": 1,
-          "output_sha256": "caca5593df66feac36a50d6b2da1d19115f76a112081a08c85fff117c707cbbd",
+          "output_sha256": "cf2f4ac69657e9de19ce18cef877a89c005f83d288ef7be4cbf85064d52547af",
           "result": "pass"
         }
       ],
@@ -143,11 +160,11 @@
       "id": "affinity_fork_of_empty_source_rejects_without_binding_or_publication",
       "observations": [
         {
-          "elapsed_seconds": 0.77,
+          "elapsed_seconds": 0.489,
           "exit_status": 0,
           "iteration": 1,
           "observed_tests": 1,
-          "output_sha256": "284294aae40ab9ff1fa0ffc73a5fce5c9f350cd64c2d0d844f7560b154df8965",
+          "output_sha256": "cb8b7566771048d1be6d518e6cde88ca972bca831586334646ecf648129bb630",
           "result": "pass"
         }
       ],
@@ -162,163 +179,163 @@
       "id": "sinkless_concurrent_first_bind_has_one_immutable_winner",
       "observations": [
         {
-          "elapsed_seconds": 21.978,
+          "elapsed_seconds": 1.1,
           "exit_status": 0,
           "iteration": 1,
           "observed_tests": 1,
-          "output_sha256": "a28caf6e3f43090974d20fb4acbdb76b0d16ff7970e18832e8602ba48bd192ad",
-          "result": "pass"
-        },
-        {
-          "elapsed_seconds": 0.79,
-          "exit_status": 0,
-          "iteration": 2,
-          "observed_tests": 1,
-          "output_sha256": "0b92d9f72c32fa5110ff542585c3fafbd32b799f287fced954394135ea47ed42",
-          "result": "pass"
-        },
-        {
-          "elapsed_seconds": 0.399,
-          "exit_status": 0,
-          "iteration": 3,
-          "observed_tests": 1,
-          "output_sha256": "22090456598f66faddd01a577858724cafdb4dcab30ed927bfddbf25d43da891",
-          "result": "pass"
-        },
-        {
-          "elapsed_seconds": 0.395,
-          "exit_status": 0,
-          "iteration": 4,
-          "observed_tests": 1,
-          "output_sha256": "22090456598f66faddd01a577858724cafdb4dcab30ed927bfddbf25d43da891",
-          "result": "pass"
-        },
-        {
-          "elapsed_seconds": 0.406,
-          "exit_status": 0,
-          "iteration": 5,
-          "observed_tests": 1,
-          "output_sha256": "b9398d0a510b80c5ccaa9fc191fc6a6749f930e0995fd043202bd9e5b8f995ff",
-          "result": "pass"
-        },
-        {
-          "elapsed_seconds": 0.413,
-          "exit_status": 0,
-          "iteration": 6,
-          "observed_tests": 1,
-          "output_sha256": "2537a3ad753b98970d3a174ea79421fe83747416adb081d5a8079470e0d437ad",
-          "result": "pass"
-        },
-        {
-          "elapsed_seconds": 0.409,
-          "exit_status": 0,
-          "iteration": 7,
-          "observed_tests": 1,
-          "output_sha256": "b9398d0a510b80c5ccaa9fc191fc6a6749f930e0995fd043202bd9e5b8f995ff",
-          "result": "pass"
-        },
-        {
-          "elapsed_seconds": 0.401,
-          "exit_status": 0,
-          "iteration": 8,
-          "observed_tests": 1,
-          "output_sha256": "22090456598f66faddd01a577858724cafdb4dcab30ed927bfddbf25d43da891",
-          "result": "pass"
-        },
-        {
-          "elapsed_seconds": 0.411,
-          "exit_status": 0,
-          "iteration": 9,
-          "observed_tests": 1,
-          "output_sha256": "b9398d0a510b80c5ccaa9fc191fc6a6749f930e0995fd043202bd9e5b8f995ff",
+          "output_sha256": "da6d2febf20febedbf30ecbbf195c1f871030aedbdbe874ffa3e7cb547cf7151",
           "result": "pass"
         },
         {
           "elapsed_seconds": 0.438,
           "exit_status": 0,
-          "iteration": 10,
+          "iteration": 2,
           "observed_tests": 1,
-          "output_sha256": "045458effa70da65eb0011a797d1a6b8670f346d583c28c9cded73e6d4045f6b",
+          "output_sha256": "219f499bce4c1918e8d89b166600d2a4760e0f76de1b281e8271f0c489057926",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.425,
+          "elapsed_seconds": 0.419,
           "exit_status": 0,
-          "iteration": 11,
+          "iteration": 3,
           "observed_tests": 1,
-          "output_sha256": "2537a3ad753b98970d3a174ea79421fe83747416adb081d5a8079470e0d437ad",
+          "output_sha256": "136d23fdbc1654d066534b1c5bf2a729f308960de3f1ae9f082e3f4c7f7c31b3",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.414,
+          "exit_status": 0,
+          "iteration": 4,
+          "observed_tests": 1,
+          "output_sha256": "9541bb045c4815ac604e5ff4a92600cafb78e1f613daf1c6d5794868d880b896",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.428,
+          "exit_status": 0,
+          "iteration": 5,
+          "observed_tests": 1,
+          "output_sha256": "219f499bce4c1918e8d89b166600d2a4760e0f76de1b281e8271f0c489057926",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.415,
+          "exit_status": 0,
+          "iteration": 6,
+          "observed_tests": 1,
+          "output_sha256": "9541bb045c4815ac604e5ff4a92600cafb78e1f613daf1c6d5794868d880b896",
           "result": "pass"
         },
         {
           "elapsed_seconds": 0.416,
           "exit_status": 0,
-          "iteration": 12,
+          "iteration": 7,
           "observed_tests": 1,
-          "output_sha256": "2537a3ad753b98970d3a174ea79421fe83747416adb081d5a8079470e0d437ad",
+          "output_sha256": "9541bb045c4815ac604e5ff4a92600cafb78e1f613daf1c6d5794868d880b896",
           "result": "pass"
         },
         {
           "elapsed_seconds": 0.411,
           "exit_status": 0,
-          "iteration": 13,
+          "iteration": 8,
           "observed_tests": 1,
-          "output_sha256": "b9398d0a510b80c5ccaa9fc191fc6a6749f930e0995fd043202bd9e5b8f995ff",
+          "output_sha256": "9541bb045c4815ac604e5ff4a92600cafb78e1f613daf1c6d5794868d880b896",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.4,
+          "elapsed_seconds": 0.417,
+          "exit_status": 0,
+          "iteration": 9,
+          "observed_tests": 1,
+          "output_sha256": "136d23fdbc1654d066534b1c5bf2a729f308960de3f1ae9f082e3f4c7f7c31b3",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.419,
+          "exit_status": 0,
+          "iteration": 10,
+          "observed_tests": 1,
+          "output_sha256": "9541bb045c4815ac604e5ff4a92600cafb78e1f613daf1c6d5794868d880b896",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.416,
+          "exit_status": 0,
+          "iteration": 11,
+          "observed_tests": 1,
+          "output_sha256": "9541bb045c4815ac604e5ff4a92600cafb78e1f613daf1c6d5794868d880b896",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.432,
+          "exit_status": 0,
+          "iteration": 12,
+          "observed_tests": 1,
+          "output_sha256": "219f499bce4c1918e8d89b166600d2a4760e0f76de1b281e8271f0c489057926",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.41,
+          "exit_status": 0,
+          "iteration": 13,
+          "observed_tests": 1,
+          "output_sha256": "9541bb045c4815ac604e5ff4a92600cafb78e1f613daf1c6d5794868d880b896",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.414,
           "exit_status": 0,
           "iteration": 14,
           "observed_tests": 1,
-          "output_sha256": "b9398d0a510b80c5ccaa9fc191fc6a6749f930e0995fd043202bd9e5b8f995ff",
+          "output_sha256": "9541bb045c4815ac604e5ff4a92600cafb78e1f613daf1c6d5794868d880b896",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.395,
+          "elapsed_seconds": 0.416,
           "exit_status": 0,
           "iteration": 15,
           "observed_tests": 1,
-          "output_sha256": "22090456598f66faddd01a577858724cafdb4dcab30ed927bfddbf25d43da891",
+          "output_sha256": "9541bb045c4815ac604e5ff4a92600cafb78e1f613daf1c6d5794868d880b896",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.399,
+          "elapsed_seconds": 0.416,
           "exit_status": 0,
           "iteration": 16,
           "observed_tests": 1,
-          "output_sha256": "22090456598f66faddd01a577858724cafdb4dcab30ed927bfddbf25d43da891",
+          "output_sha256": "9541bb045c4815ac604e5ff4a92600cafb78e1f613daf1c6d5794868d880b896",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.403,
+          "elapsed_seconds": 0.409,
           "exit_status": 0,
           "iteration": 17,
           "observed_tests": 1,
-          "output_sha256": "22090456598f66faddd01a577858724cafdb4dcab30ed927bfddbf25d43da891",
+          "output_sha256": "9541bb045c4815ac604e5ff4a92600cafb78e1f613daf1c6d5794868d880b896",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.403,
+          "elapsed_seconds": 0.411,
           "exit_status": 0,
           "iteration": 18,
           "observed_tests": 1,
-          "output_sha256": "b9398d0a510b80c5ccaa9fc191fc6a6749f930e0995fd043202bd9e5b8f995ff",
+          "output_sha256": "9541bb045c4815ac604e5ff4a92600cafb78e1f613daf1c6d5794868d880b896",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.412,
+          "elapsed_seconds": 0.426,
           "exit_status": 0,
           "iteration": 19,
           "observed_tests": 1,
-          "output_sha256": "b9398d0a510b80c5ccaa9fc191fc6a6749f930e0995fd043202bd9e5b8f995ff",
+          "output_sha256": "136d23fdbc1654d066534b1c5bf2a729f308960de3f1ae9f082e3f4c7f7c31b3",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.406,
+          "elapsed_seconds": 0.409,
           "exit_status": 0,
           "iteration": 20,
           "observed_tests": 1,
-          "output_sha256": "b9398d0a510b80c5ccaa9fc191fc6a6749f930e0995fd043202bd9e5b8f995ff",
+          "output_sha256": "9541bb045c4815ac604e5ff4a92600cafb78e1f613daf1c6d5794868d880b896",
           "result": "pass"
         }
       ],
@@ -331,163 +348,501 @@
       "id": "concurrent_legacy_adoption_converges_on_one_identity",
       "observations": [
         {
-          "elapsed_seconds": 0.497,
+          "elapsed_seconds": 0.507,
           "exit_status": 0,
           "iteration": 1,
           "observed_tests": 1,
-          "output_sha256": "e970ff2d53b51deddf6d3c802099e23c928bed07e97a8a0b51fbedbf1cc3ea5f",
+          "output_sha256": "31279993d8cc92924e307895c1636c8f999d96cbffb36e7873e052b6ed0f85cc",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.504,
+          "elapsed_seconds": 0.529,
           "exit_status": 0,
           "iteration": 2,
           "observed_tests": 1,
-          "output_sha256": "67903a3083a182af3e231631b29417ccaa1baa8db085e7c0cf77f1c752fbd90f",
+          "output_sha256": "6d782f713d0766cbc0f745ade68d77254d2516c15b1ba42deda33ebca32a0efc",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.507,
+          "elapsed_seconds": 0.529,
           "exit_status": 0,
           "iteration": 3,
           "observed_tests": 1,
-          "output_sha256": "67903a3083a182af3e231631b29417ccaa1baa8db085e7c0cf77f1c752fbd90f",
+          "output_sha256": "6d782f713d0766cbc0f745ade68d77254d2516c15b1ba42deda33ebca32a0efc",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.503,
+          "elapsed_seconds": 0.531,
           "exit_status": 0,
           "iteration": 4,
           "observed_tests": 1,
-          "output_sha256": "67903a3083a182af3e231631b29417ccaa1baa8db085e7c0cf77f1c752fbd90f",
+          "output_sha256": "6d782f713d0766cbc0f745ade68d77254d2516c15b1ba42deda33ebca32a0efc",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.51,
+          "elapsed_seconds": 0.555,
           "exit_status": 0,
           "iteration": 5,
           "observed_tests": 1,
-          "output_sha256": "59583fa7daac8216127d4532387afb0162187e1150e3bcb3139face09d189e8f",
+          "output_sha256": "c3cb62ea3cf974d459a1a9ed928778e0a1e9fcca125d9350ef79ff7fb2a9ba15",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.512,
+          "elapsed_seconds": 0.544,
           "exit_status": 0,
           "iteration": 6,
           "observed_tests": 1,
-          "output_sha256": "59583fa7daac8216127d4532387afb0162187e1150e3bcb3139face09d189e8f",
+          "output_sha256": "b72132b02910f2149dee0ebb832d8e2c00ba102288a9bbc932a061f061822b61",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.518,
+          "elapsed_seconds": 0.529,
           "exit_status": 0,
           "iteration": 7,
           "observed_tests": 1,
-          "output_sha256": "59583fa7daac8216127d4532387afb0162187e1150e3bcb3139face09d189e8f",
-          "result": "pass"
-        },
-        {
-          "elapsed_seconds": 0.51,
-          "exit_status": 0,
-          "iteration": 8,
-          "observed_tests": 1,
-          "output_sha256": "59583fa7daac8216127d4532387afb0162187e1150e3bcb3139face09d189e8f",
+          "output_sha256": "6d782f713d0766cbc0f745ade68d77254d2516c15b1ba42deda33ebca32a0efc",
           "result": "pass"
         },
         {
           "elapsed_seconds": 0.524,
           "exit_status": 0,
+          "iteration": 8,
+          "observed_tests": 1,
+          "output_sha256": "c9548d694ba5724c9284c78a3c77277008d55ab7e06b01723674934e21a131f0",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.53,
+          "exit_status": 0,
           "iteration": 9,
           "observed_tests": 1,
-          "output_sha256": "7f232a2e7daaa95b6912dd0e42dbe4071e17496b4fc57b691dc1c50ae2fb54fd",
+          "output_sha256": "6d782f713d0766cbc0f745ade68d77254d2516c15b1ba42deda33ebca32a0efc",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.527,
+          "exit_status": 0,
+          "iteration": 10,
+          "observed_tests": 1,
+          "output_sha256": "c9548d694ba5724c9284c78a3c77277008d55ab7e06b01723674934e21a131f0",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.552,
+          "exit_status": 0,
+          "iteration": 11,
+          "observed_tests": 1,
+          "output_sha256": "c3cb62ea3cf974d459a1a9ed928778e0a1e9fcca125d9350ef79ff7fb2a9ba15",
           "result": "pass"
         },
         {
           "elapsed_seconds": 0.525,
           "exit_status": 0,
-          "iteration": 10,
+          "iteration": 12,
           "observed_tests": 1,
-          "output_sha256": "59583fa7daac8216127d4532387afb0162187e1150e3bcb3139face09d189e8f",
+          "output_sha256": "c9548d694ba5724c9284c78a3c77277008d55ab7e06b01723674934e21a131f0",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.533,
+          "exit_status": 0,
+          "iteration": 13,
+          "observed_tests": 1,
+          "output_sha256": "652806646474adffaca5969545e46d1a3600a06d1a3bbfb8af9eb9c2092b8e30",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.527,
+          "exit_status": 0,
+          "iteration": 14,
+          "observed_tests": 1,
+          "output_sha256": "c9548d694ba5724c9284c78a3c77277008d55ab7e06b01723674934e21a131f0",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.525,
+          "exit_status": 0,
+          "iteration": 15,
+          "observed_tests": 1,
+          "output_sha256": "c9548d694ba5724c9284c78a3c77277008d55ab7e06b01723674934e21a131f0",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.531,
+          "exit_status": 0,
+          "iteration": 16,
+          "observed_tests": 1,
+          "output_sha256": "6d782f713d0766cbc0f745ade68d77254d2516c15b1ba42deda33ebca32a0efc",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.547,
+          "exit_status": 0,
+          "iteration": 17,
+          "observed_tests": 1,
+          "output_sha256": "a642dfb8e4e846789cdfc398d50bf536dd14b7788d3676a3e5b38270ffe5e1b9",
           "result": "pass"
         },
         {
           "elapsed_seconds": 0.526,
           "exit_status": 0,
-          "iteration": 11,
+          "iteration": 18,
           "observed_tests": 1,
-          "output_sha256": "59583fa7daac8216127d4532387afb0162187e1150e3bcb3139face09d189e8f",
+          "output_sha256": "c9548d694ba5724c9284c78a3c77277008d55ab7e06b01723674934e21a131f0",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.522,
+          "elapsed_seconds": 0.528,
+          "exit_status": 0,
+          "iteration": 19,
+          "observed_tests": 1,
+          "output_sha256": "c9548d694ba5724c9284c78a3c77277008d55ab7e06b01723674934e21a131f0",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.539,
+          "exit_status": 0,
+          "iteration": 20,
+          "observed_tests": 1,
+          "output_sha256": "a7ba4be63b7f9cbd4e527b2a65062aa6a16bce16dd2886d9632d3cd6331d51b0",
+          "result": "pass"
+        }
+      ],
+      "passed": 20,
+      "runs": 20
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::provider_affinity_stale_tests::stale_same_identity_validation_reuses_the_winners_single_adoption_cut -- --exact",
+      "failed": 0,
+      "id": "stale_same_identity_validation_reuses_the_winners_single_adoption_cut",
+      "observations": [
+        {
+          "elapsed_seconds": 0.547,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_tests": 1,
+          "output_sha256": "febbc8a101e61c5a2a4026bf9dc456e709f1f067d7858770925f4cc1fc783913",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.541,
+          "exit_status": 0,
+          "iteration": 2,
+          "observed_tests": 1,
+          "output_sha256": "febbc8a101e61c5a2a4026bf9dc456e709f1f067d7858770925f4cc1fc783913",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.571,
+          "exit_status": 0,
+          "iteration": 3,
+          "observed_tests": 1,
+          "output_sha256": "9eecd3100b0a0a3ddec9bf1e364a9ce59cb8973b5b2555a83021ed9013f875d8",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.556,
+          "exit_status": 0,
+          "iteration": 4,
+          "observed_tests": 1,
+          "output_sha256": "c876320e20b6d5af838c0629b3f044174946f32ee1e2844cdc8b57b9f34552f1",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.607,
+          "exit_status": 0,
+          "iteration": 5,
+          "observed_tests": 1,
+          "output_sha256": "a904be952ebe41e65e5cc23c8d1f789d4456561cbbc93b169d47477394333680",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.61,
+          "exit_status": 0,
+          "iteration": 6,
+          "observed_tests": 1,
+          "output_sha256": "07a8e2f9ca3dff83b31cd83e180652c4518a1692ff5f89a2992d65cc839f49dd",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.601,
+          "exit_status": 0,
+          "iteration": 7,
+          "observed_tests": 1,
+          "output_sha256": "0c18f5d31d5a5d303c8098fea773fdfb82db668528479fcb657c6ef7ba448111",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.598,
+          "exit_status": 0,
+          "iteration": 8,
+          "observed_tests": 1,
+          "output_sha256": "0c18f5d31d5a5d303c8098fea773fdfb82db668528479fcb657c6ef7ba448111",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.544,
+          "exit_status": 0,
+          "iteration": 9,
+          "observed_tests": 1,
+          "output_sha256": "febbc8a101e61c5a2a4026bf9dc456e709f1f067d7858770925f4cc1fc783913",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.547,
+          "exit_status": 0,
+          "iteration": 10,
+          "observed_tests": 1,
+          "output_sha256": "57d43bb444619921c735d42ebcc6d0728feec4dff728f032d95722251c3f352f",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.552,
+          "exit_status": 0,
+          "iteration": 11,
+          "observed_tests": 1,
+          "output_sha256": "f904379d2ad87e1c432efc32ba570100d9009310ddaf064a13acedc838eb47ea",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.54,
           "exit_status": 0,
           "iteration": 12,
           "observed_tests": 1,
-          "output_sha256": "7f232a2e7daaa95b6912dd0e42dbe4071e17496b4fc57b691dc1c50ae2fb54fd",
+          "output_sha256": "5613b3bcfd1207ffbbe2470132e85fe886051358fae39fa2796875bcc2e412ae",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.522,
+          "elapsed_seconds": 0.562,
           "exit_status": 0,
           "iteration": 13,
           "observed_tests": 1,
-          "output_sha256": "59583fa7daac8216127d4532387afb0162187e1150e3bcb3139face09d189e8f",
+          "output_sha256": "bc3f28433bc39212097f03372c8919206cba4bffbc89242f04a08d0a78b5b2bb",
           "result": "pass"
         },
         {
-          "elapsed_seconds": 0.567,
+          "elapsed_seconds": 0.536,
           "exit_status": 0,
           "iteration": 14,
           "observed_tests": 1,
-          "output_sha256": "ebc7b080ab7ff50e0ecfb538913b727f98827ffd37637281d1da0bb279fcef08",
+          "output_sha256": "5613b3bcfd1207ffbbe2470132e85fe886051358fae39fa2796875bcc2e412ae",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.543,
+          "exit_status": 0,
+          "iteration": 15,
+          "observed_tests": 1,
+          "output_sha256": "57d43bb444619921c735d42ebcc6d0728feec4dff728f032d95722251c3f352f",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.543,
+          "exit_status": 0,
+          "iteration": 16,
+          "observed_tests": 1,
+          "output_sha256": "f904379d2ad87e1c432efc32ba570100d9009310ddaf064a13acedc838eb47ea",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.544,
+          "exit_status": 0,
+          "iteration": 17,
+          "observed_tests": 1,
+          "output_sha256": "5613b3bcfd1207ffbbe2470132e85fe886051358fae39fa2796875bcc2e412ae",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.553,
+          "exit_status": 0,
+          "iteration": 18,
+          "observed_tests": 1,
+          "output_sha256": "57d43bb444619921c735d42ebcc6d0728feec4dff728f032d95722251c3f352f",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.577,
+          "exit_status": 0,
+          "iteration": 19,
+          "observed_tests": 1,
+          "output_sha256": "a8a574c701521d8475202864070e39206461f160fd8e735172163a6e67eff5d9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.539,
+          "exit_status": 0,
+          "iteration": 20,
+          "observed_tests": 1,
+          "output_sha256": "febbc8a101e61c5a2a4026bf9dc456e709f1f067d7858770925f4cc1fc783913",
+          "result": "pass"
+        }
+      ],
+      "passed": 20,
+      "runs": 20
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::provider_affinity_stale_tests::stale_loaded_store_must_reopen_after_peer_adopts_the_same_identity -- --exact",
+      "failed": 0,
+      "id": "stale_loaded_store_must_reopen_after_peer_adopts_the_same_identity",
+      "observations": [
+        {
+          "elapsed_seconds": 0.553,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_tests": 1,
+          "output_sha256": "79fc59411dffe02cabe522fd4fe0c608c98ab2efd54e36cae3288517521f69c9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.573,
+          "exit_status": 0,
+          "iteration": 2,
+          "observed_tests": 1,
+          "output_sha256": "b6773adc78722b5c1a4803e95f0129ba2bb7e6e5c8d46582206e2b2754e5906c",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.564,
+          "exit_status": 0,
+          "iteration": 3,
+          "observed_tests": 1,
+          "output_sha256": "79fc59411dffe02cabe522fd4fe0c608c98ab2efd54e36cae3288517521f69c9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.574,
+          "exit_status": 0,
+          "iteration": 4,
+          "observed_tests": 1,
+          "output_sha256": "cdbfde1a96478b24e6e35fe79721be844d41e29e79e36c6fbad6cc5248903d16",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.552,
+          "exit_status": 0,
+          "iteration": 5,
+          "observed_tests": 1,
+          "output_sha256": "dcaf294d0a87d261cd3eafc7214ca5740eb34d4ed012d55b8c2ae57b5acb254e",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.545,
+          "exit_status": 0,
+          "iteration": 6,
+          "observed_tests": 1,
+          "output_sha256": "34042e3bde205b4624fdc0950d6b23712ef06e467e122fe2c75357addb37891f",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.565,
+          "exit_status": 0,
+          "iteration": 7,
+          "observed_tests": 1,
+          "output_sha256": "79fc59411dffe02cabe522fd4fe0c608c98ab2efd54e36cae3288517521f69c9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.551,
+          "exit_status": 0,
+          "iteration": 8,
+          "observed_tests": 1,
+          "output_sha256": "dcaf294d0a87d261cd3eafc7214ca5740eb34d4ed012d55b8c2ae57b5acb254e",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.573,
+          "exit_status": 0,
+          "iteration": 9,
+          "observed_tests": 1,
+          "output_sha256": "79fc59411dffe02cabe522fd4fe0c608c98ab2efd54e36cae3288517521f69c9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.548,
+          "exit_status": 0,
+          "iteration": 10,
+          "observed_tests": 1,
+          "output_sha256": "dcaf294d0a87d261cd3eafc7214ca5740eb34d4ed012d55b8c2ae57b5acb254e",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.561,
+          "exit_status": 0,
+          "iteration": 11,
+          "observed_tests": 1,
+          "output_sha256": "79fc59411dffe02cabe522fd4fe0c608c98ab2efd54e36cae3288517521f69c9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.548,
+          "exit_status": 0,
+          "iteration": 12,
+          "observed_tests": 1,
+          "output_sha256": "dcaf294d0a87d261cd3eafc7214ca5740eb34d4ed012d55b8c2ae57b5acb254e",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.552,
+          "exit_status": 0,
+          "iteration": 13,
+          "observed_tests": 1,
+          "output_sha256": "dcaf294d0a87d261cd3eafc7214ca5740eb34d4ed012d55b8c2ae57b5acb254e",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.551,
+          "exit_status": 0,
+          "iteration": 14,
+          "observed_tests": 1,
+          "output_sha256": "34042e3bde205b4624fdc0950d6b23712ef06e467e122fe2c75357addb37891f",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.564,
+          "exit_status": 0,
+          "iteration": 15,
+          "observed_tests": 1,
+          "output_sha256": "31cb968c594cf733bbef3639c39de619fcc00743e22947aee848973d6dfc8ebb",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.562,
+          "exit_status": 0,
+          "iteration": 16,
+          "observed_tests": 1,
+          "output_sha256": "79fc59411dffe02cabe522fd4fe0c608c98ab2efd54e36cae3288517521f69c9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.576,
+          "exit_status": 0,
+          "iteration": 17,
+          "observed_tests": 1,
+          "output_sha256": "cdbfde1a96478b24e6e35fe79721be844d41e29e79e36c6fbad6cc5248903d16",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.569,
+          "exit_status": 0,
+          "iteration": 18,
+          "observed_tests": 1,
+          "output_sha256": "856df3743cad2476010c9727340a320ece779904ee158c21b64cd34ac07426ad",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.598,
+          "exit_status": 0,
+          "iteration": 19,
+          "observed_tests": 1,
+          "output_sha256": "0df43dad06454044dde88e013510cb3f9372454091edfdfbeee08be070814dbd",
           "result": "pass"
         },
         {
           "elapsed_seconds": 0.532,
           "exit_status": 0,
-          "iteration": 15,
-          "observed_tests": 1,
-          "output_sha256": "aadd8f767311de25c8cc06bf19b7ca27bb2f38ef3fd3963bb428c9ea798044aa",
-          "result": "pass"
-        },
-        {
-          "elapsed_seconds": 0.515,
-          "exit_status": 0,
-          "iteration": 16,
-          "observed_tests": 1,
-          "output_sha256": "59583fa7daac8216127d4532387afb0162187e1150e3bcb3139face09d189e8f",
-          "result": "pass"
-        },
-        {
-          "elapsed_seconds": 0.508,
-          "exit_status": 0,
-          "iteration": 17,
-          "observed_tests": 1,
-          "output_sha256": "59583fa7daac8216127d4532387afb0162187e1150e3bcb3139face09d189e8f",
-          "result": "pass"
-        },
-        {
-          "elapsed_seconds": 0.51,
-          "exit_status": 0,
-          "iteration": 18,
-          "observed_tests": 1,
-          "output_sha256": "67903a3083a182af3e231631b29417ccaa1baa8db085e7c0cf77f1c752fbd90f",
-          "result": "pass"
-        },
-        {
-          "elapsed_seconds": 0.507,
-          "exit_status": 0,
-          "iteration": 19,
-          "observed_tests": 1,
-          "output_sha256": "67903a3083a182af3e231631b29417ccaa1baa8db085e7c0cf77f1c752fbd90f",
-          "result": "pass"
-        },
-        {
-          "elapsed_seconds": 0.522,
-          "exit_status": 0,
           "iteration": 20,
           "observed_tests": 1,
-          "output_sha256": "aadd8f767311de25c8cc06bf19b7ca27bb2f38ef3fd3963bb428c9ea798044aa",
+          "output_sha256": "7c8c73154598a15cf7bfd67ae059a859fb66e92cb9a294d94eea6a152a9e3a08",
           "result": "pass"
         }
       ],
@@ -499,7 +854,7 @@
     "cargo_target_directory": "<repo>/target",
     "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)"
   },
-  "generated_at": "2026-07-20T05:11:47.909119+00:00",
+  "generated_at": "2026-07-20T07:27:14.844680+00:00",
   "kind": "p5_affinity_01_distributions",
   "observer_case": {
     "command": "cargo +1.94.0 --locked test -p norn-cli --test session_output_redaction -- --exact list_and_export_json_omit_durable_provider_identity",
@@ -507,11 +862,11 @@
     "id": "list_and_export_json_omit_durable_provider_identity",
     "observations": [
       {
-        "elapsed_seconds": 6.297,
+        "elapsed_seconds": 9.033,
         "exit_status": 0,
         "iteration": 1,
         "observed_tests": 1,
-        "output_sha256": "aa6810b91b48730a9fd21be4899eb3cb480af2e8ca50e0cf17d5c10f4e758aea",
+        "output_sha256": "0f0dc2d1e6e2005cda9984570c647dfd169e9ebb08966db0d85bd6563fe28f12",
         "result": "pass"
       }
     ],
@@ -522,18 +877,18 @@
     "base": "5e04281542b546c8d831907831b7cdab92edb4f4",
     "branch": "codex/p5-credential-affinity",
     "dirty_rust_paths": [],
-    "source": "58df83975c0d6ebac6f8b8602453429212f60d73",
-    "source_tree": "217349035a71534204cb2baaa499469ef515485f"
+    "source": "693d5b1e159166385dbed3d51a203b5c9d5dbf75",
+    "source_tree": "1b4a7c0c8ab49b556033a112556bacd10aab070a"
   },
   "result": "pass",
   "runner": {
     "path": "docs/reviews/evidence/p5-affinity/run_affinity_01_distributions.py",
-    "sha256": "2333d42ef2fd36dba78a2edc5e143af7fb4e4eb5332b4bb8ead8f9eda62b77a4"
+    "sha256": "8707a4f9bc1ba9d6f5ccfbd19ab4db69cd86a25e6a1bbc9734ba911447f144b4"
   },
   "schema_version": 1,
   "totals": {
     "failed": 0,
-    "passed": 50,
-    "runs": 50
+    "passed": 91,
+    "runs": 91
   }
 }

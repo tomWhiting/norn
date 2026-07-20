@@ -24,9 +24,12 @@ EVIDENCE_DIRECTORY: Final = Path("docs/reviews/evidence/p5-affinity")
 REPEATED_TESTS: Final = (
     "session::provider_affinity_tests::sinkless_concurrent_first_bind_has_one_immutable_winner",
     "session::provider_affinity_tests::concurrent_legacy_adoption_converges_on_one_identity",
+    "session::provider_affinity_stale_tests::stale_same_identity_validation_reuses_the_winners_single_adoption_cut",
+    "session::provider_affinity_stale_tests::stale_loaded_store_must_reopen_after_peer_adopts_the_same_identity",
 )
 SINGLE_TESTS: Final = (
     "session::provider_affinity_tests::interrupted_adoption_leaves_boundary_before_any_identity_binding",
+    "provider::auth::tests::stateful_oauth_provider_rejects_a_userless_credential",
     "r#loop::helpers::tests::context_edited_prompt_respects_provider_epoch_boundaries",
     "r#loop::runner::turn_context_tests::first_sinkless_identity_adoption_cuts_the_existing_response_anchor",
     "session::provider_affinity_embedder_tests::failed_sink_adoption_leaves_identity_and_history_unchanged",
