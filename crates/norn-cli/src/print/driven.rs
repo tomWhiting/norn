@@ -8,12 +8,13 @@ use uuid::Uuid;
 
 use tokio_util::sync::CancellationToken;
 
+use super::error::{PrintError, preserve_primary_failure};
 use super::intervene::NornInterventionHandler;
 use super::jsonrpc::{
     self, DrivenRun, EventEmitterError, InterventionHandler, PreRunOutcome, RunDriver,
     SharedRunDriver, TransportError, UnavailableInterventionHandler,
 };
-use super::orchestrator::{PrintError, assemble_print_agent, orchestrate, parse_output_schema};
+use super::orchestrator::{assemble_print_agent, orchestrate, parse_output_schema};
 use crate::cli::{Cli, ExitCode};
 
 /// Driven-mode entry: own the stdin+stdout JSON-RPC 2.0 duplex.
@@ -35,8 +36,10 @@ pub(super) async fn execute_driven(cli: &Cli) -> Result<ExitCode, PrintError> {
             // to answer, but any frames already queued (e.g. parse-error
             // responses) still get flushed before the process exits.
             drop(writer);
-            finish_writer(writer_task).await?;
-            return Err(PrintError::Io(err.to_string()));
+            return preserve_primary_failure(
+                Err(PrintError::Io(err.to_string())),
+                finish_writer(writer_task).await,
+            );
         }
     };
 
@@ -55,24 +58,31 @@ pub(super) async fn execute_driven(cli: &Cli) -> Result<ExitCode, PrintError> {
 
     // EVERY failure after the run/execute request is accepted — schema
     // parse, runtime assembly, provider auth, the run itself — funnels
-    // through run_accepted's Result and is answered as the id-matched
-    // error response below, so the peer is never left with EOF in place
-    // of a Response.
+    // through run_accepted's Result and, while stdout remains writable,
+    // is answered as the id-matched error response below. A torn sink is
+    // instead retained as a nonzero transport diagnostic.
     let result = run_accepted(cli, prompt, reader, &driver).await;
 
-    if let Err(ref err) = result
-        && let Err(send_err) = driver.finish_with_error(err.to_string())
-    {
-        tracing::warn!("failed to send run/execute error response: {send_err}");
-    }
+    let result = match result {
+        Ok(exit) => Ok(exit),
+        Err(error) => {
+            let rendered = error.to_string();
+            preserve_primary_failure(
+                Err(error),
+                driver.finish_with_error(rendered).map_err(|send_error| {
+                    PrintError::Io(format!(
+                        "run/execute error response could not be queued: {send_error}"
+                    ))
+                }),
+            )
+        }
+    };
 
     // Drop every writer handle so the single serializing writer task drains
     // its queue and exits; then join it so all frames are flushed to stdout
     // before the process exits (terminal-response shutdown handshake).
     drop(driver);
-    finish_writer(writer_task).await?;
-
-    result
+    preserve_primary_failure(result, finish_writer(writer_task).await)
 }
 
 /// Join the sole stdout writer and preserve both sink and task failures.

@@ -65,6 +65,56 @@ impl PrintError {
             Self::Session(_) => Some("session"),
         }
     }
+
+    /// Retain this failure's classification while appending a related failure.
+    ///
+    /// Compound driven-mode failures use the first causal run failure as the
+    /// authority for exit classification. Transport teardown must remain
+    /// visible, but must not turn an authentication failure into a generic
+    /// agent error.
+    pub(crate) fn with_related_failure(self, related: impl std::fmt::Display) -> Self {
+        let related = related.to_string();
+        let append = |message: String| format!("{message}; additionally, {related}");
+        match self {
+            Self::Argument(message) => Self::Argument(append(message)),
+            Self::Auth(message) => Self::Auth(append(message)),
+            Self::Agent(message) => Self::Agent(append(message)),
+            Self::Io(message) => Self::Io(append(message)),
+            Self::Session(message) => Self::Session(append(message)),
+            Self::StreamTorn(message) => Self::StreamTorn(append(message)),
+        }
+    }
+}
+
+/// Preserve an existing failure and its exit class while retaining a later
+/// transport failure. If the primary operation succeeded, the transport error
+/// remains authoritative.
+pub(crate) fn preserve_primary_failure<T>(
+    primary: Result<T, PrintError>,
+    related: Result<(), PrintError>,
+) -> Result<T, PrintError> {
+    match (primary, related) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Ok(_), Err(error)) | (Err(error), Ok(())) => Err(error),
+        (Err(primary), Err(related)) => Err(primary.with_related_failure(related)),
+    }
+}
+
+/// Preserve an already-failed provider/run result as the exit-code authority
+/// while retaining a background failure discovered during shutdown.
+pub(crate) fn preserve_run_failure<T, E>(
+    result: Result<T, E>,
+    background: Option<PrintError>,
+) -> Result<T, PrintError>
+where
+    E: Into<PrintError>,
+{
+    match (result, background) {
+        (Ok(value), None) => Ok(value),
+        (Ok(_), Some(error)) => Err(error),
+        (Err(error), None) => Err(error.into()),
+        (Err(error), Some(background)) => Err(error.into().with_related_failure(background)),
+    }
 }
 
 impl From<BuildError> for PrintError {
@@ -96,5 +146,55 @@ impl From<NornError> for PrintError {
             return Self::Auth(err.to_string());
         }
         Self::Agent(err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_failure_preserves_auth_class_and_background_diagnostics() {
+        let background = PrintError::Io(
+            "intervention channel torn; additionally, event emitter lost 7 events".to_owned(),
+        );
+        let outcome = preserve_run_failure::<(), _>(
+            Err(PrintError::Auth("credential expired".to_owned())),
+            Some(background),
+        );
+        let Err(error) = outcome else { return };
+        assert!(matches!(&error, PrintError::Auth(_)), "error: {error:?}");
+        let rendered = error.to_string();
+        for expected in [
+            "credential expired",
+            "intervention channel torn",
+            "event emitter lost 7 events",
+        ] {
+            assert!(rendered.contains(expected), "error: {rendered}");
+        }
+        assert_eq!(error.exit_code(), ExitCode::AuthError);
+    }
+
+    #[test]
+    fn writer_failure_preserves_primary_class_and_all_diagnostics() {
+        let primary = PrintError::Auth("credential expired".to_owned())
+            .with_related_failure("event emitter lost 7 events");
+        let outcome = preserve_primary_failure::<()>(
+            Err(primary),
+            Err(PrintError::Io(
+                "stdout writer failed: broken pipe".to_owned(),
+            )),
+        );
+        let Err(error) = outcome else { return };
+        assert!(matches!(&error, PrintError::Auth(_)), "error: {error:?}");
+        let rendered = error.to_string();
+        for expected in [
+            "credential expired",
+            "event emitter lost 7 events",
+            "broken pipe",
+        ] {
+            assert!(rendered.contains(expected), "error: {rendered}");
+        }
+        assert_eq!(error.exit_code(), ExitCode::AuthError);
     }
 }
