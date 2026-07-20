@@ -102,9 +102,29 @@ fn raw_get(port: u16, path: &str) -> Result<String, std::io::Error> {
     socket.write_all(
         format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").as_bytes(),
     )?;
-    let mut response = String::new();
-    socket.read_to_string(&mut response)?;
-    Ok(response)
+    read_http_response(&mut socket)
+}
+
+fn read_http_response(socket: &mut TcpStream) -> Result<String, std::io::Error> {
+    let mut response = Vec::new();
+    while !response.ends_with(b"\r\n\r\n") {
+        let mut byte = [0_u8; 1];
+        socket.read_exact(&mut byte)?;
+        response.push(byte[0]);
+    }
+    let headers = std::str::from_utf8(&response)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let content_length = headers
+        .lines()
+        .find_map(|line| line.strip_prefix("Content-Length: "))
+        .ok_or_else(|| std::io::Error::other("HTTP response omitted Content-Length"))?
+        .parse::<usize>()
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let body_start = response.len();
+    response.resize(body_start.saturating_add(content_length), 0);
+    socket.read_exact(&mut response[body_start..])?;
+    String::from_utf8(response)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
 }
 
 fn test_server() -> Result<
@@ -298,8 +318,7 @@ fn accepted_connection_waits_for_delayed_request_bytes() -> Result<(), Box<dyn s
     socket.write_all(
         b"GET /auth/callback?error=callback-secret-must-not-escape&state=expected-state HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
     )?;
-    let mut response = String::new();
-    socket.read_to_string(&mut response)?;
+    let response = read_http_response(&mut socket)?;
 
     assert!(
         response.starts_with("HTTP/1.1 400"),
@@ -378,8 +397,7 @@ fn cancellation_with_partial_callback_request_returns_failure_page()
         .map_err(|error| std::io::Error::other(format!("reader thread panicked: {error:?}")))?;
     assert!(matches!(result, Err(LoginError::Canceled)));
 
-    let mut response = String::new();
-    browser.read_to_string(&mut response)?;
+    let response = read_http_response(&mut browser)?;
     assert!(response.starts_with("HTTP/1.1 400"), "response: {response}");
     assert!(response.contains("Login failed. Return to norn for details."));
     assert!(!response.contains("Login complete"));
@@ -399,8 +417,7 @@ fn cancellation_between_classification_and_claim_returns_failure_page()
     assert!(matches!(result, Err(LoginError::Canceled)));
     drop(accepted);
 
-    let mut response = String::new();
-    browser.read_to_string(&mut response)?;
+    let response = read_http_response(&mut browser)?;
     assert!(response.starts_with("HTTP/1.1 400"), "response: {response}");
     assert!(response.contains("Login failed. Return to norn for details."));
     assert!(!response.contains("Login complete"));
