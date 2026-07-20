@@ -71,7 +71,7 @@ use crate::agent_loop::config::{AgentLoopConfig, ToolExecutor};
 use crate::agent_loop::event_schemas::EventSchemaSet;
 use crate::agent_loop::inbound::{InboundChannel, InboundSender};
 use crate::agent_loop::retry::RetryPolicy;
-use crate::error::{ConfigError, NornError, ProviderError};
+use crate::error::{ConfigError, NornError};
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
 use crate::integration::variables::{SessionVariable, VariableSource, VariableStore};
@@ -301,11 +301,8 @@ impl AgentBuilder {
             ));
         }
         let profile_name = (!profile.name.is_empty()).then(|| profile.name.clone());
-        let provider_capabilities = self.provider.capabilities();
-        let provider_state_identity = self.provider.state_identity();
-        if provider_capabilities.response_threading && provider_state_identity.is_none() {
-            return Err(ProviderError::ProviderStateIdentityRequired.into());
-        }
+        let (provider_capabilities, provider_state_identity) =
+            crate::agent::session_open::provider_authority(self.provider.as_ref())?;
 
         // Open the managed persisted session now that the model and
         // working directory are resolved (see `session_open` for the full

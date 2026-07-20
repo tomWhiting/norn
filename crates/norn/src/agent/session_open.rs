@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::agent::session_spec::SessionRequest;
 use crate::error::{NornError, ProviderError, SessionError};
-use crate::provider::ProviderStateIdentity;
+use crate::provider::{Provider, ProviderCapabilities, ProviderStateIdentity};
 use crate::session::manager::ReplaySummary;
 use crate::session::store::EventStore;
 use crate::session::{SessionArtifactStore, SessionBinding, SessionBrancher, SessionIndexEntry};
@@ -34,6 +34,17 @@ pub(super) struct OpenedRootSession {
     pub(super) binding: Arc<SessionBinding>,
     /// Private artifact authority shared by this root and its descendants.
     pub(super) artifacts: Arc<SessionArtifactStore>,
+}
+
+pub(super) fn provider_authority(
+    provider: &dyn Provider,
+) -> Result<(ProviderCapabilities, Option<ProviderStateIdentity>), ProviderError> {
+    let capabilities = provider.capabilities();
+    let identity = provider.state_identity();
+    if capabilities.response_threading && identity.is_none() {
+        return Err(ProviderError::ProviderStateIdentityRequired);
+    }
+    Ok((capabilities, identity))
 }
 
 /// Open the managed persisted session once the model and working

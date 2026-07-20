@@ -377,9 +377,12 @@ async fn provider_threaded_resume_replays_post_anchor_history() {
         done_event_with_response(StopReason::EndTurn, "resp_done"),
     ]]);
     let store = EventStore::new();
-    store
-        .validate_or_bind_provider_state_identity(provider.state_identity())
-        .unwrap();
+    assert!(
+        store
+            .validate_or_bind_provider_state_identity(provider.state_identity())
+            .is_ok(),
+        "fixture provider identity must bind",
+    );
     store
         .append(SessionEvent::UserMessage {
             base: EventBase::new(None),
