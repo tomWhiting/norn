@@ -18,8 +18,10 @@ the JSON-RPC envelope framing, NOT this contract; consumers gate on
 
 - The Norn process's **stdin+stdout** form a single bidirectional JSON-RPC
   2.0 channel. stderr stays human logs (tracing) and never carries frames.
-- Frames are **newline-delimited JSON**: one complete JSON object per line,
-  written atomically. Blank lines between frames are ignored on read.
+- Frames are **newline-delimited JSON**: one complete JSON object per line.
+  The single writer prevents interleaving; a sink failure may truncate the
+  final frame and is surfaced as a nonzero transport failure. Blank lines
+  between frames are ignored on read.
 - Exactly ONE task owns stdout (the single serializing writer); every
   outbound frame — `event/*` notifications, `intervene/*` acks, and the
   terminal `run/execute` response — funnels through it, so two producers can
@@ -281,3 +283,10 @@ supersedes the earlier `stop: {reason, retryable}` proposal in
   has already been delivered in the failure cases).
 - Mid-run EOF on stdin only stops the intervene reader; the run continues
   to its own terminal result, which is still written to stdout.
+- A mid-run intervention read/transport failure does not abort the provider
+  task asynchronously, but it is retained: after the task ends, the accepted
+  run receives an error response and the process exits nonzero rather than
+  reporting a clean success over a torn control channel.
+- Event shutdown drains the unread prefix present at the shutdown cut. A live
+  child or retained sender may publish later events, but cannot extend process
+  shutdown without bound or write after the terminal response.

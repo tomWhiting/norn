@@ -19,7 +19,7 @@ pub mod stdin;
 pub mod writer;
 
 pub use capabilities::{DRIVEN_PROTOCOL_VERSION, initialize_capabilities};
-pub use emitter::{EventEmitterHandle, spawn_event_emitter};
+pub use emitter::{EventEmitterError, EventEmitterHandle, spawn_event_emitter};
 pub use frames::{
     JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, TransportError,
 };

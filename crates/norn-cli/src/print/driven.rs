@@ -10,8 +10,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::intervene::NornInterventionHandler;
 use super::jsonrpc::{
-    self, DrivenRun, InterventionHandler, PreRunOutcome, RunDriver, SharedRunDriver,
-    TransportError, UnavailableInterventionHandler,
+    self, DrivenRun, EventEmitterError, InterventionHandler, PreRunOutcome, RunDriver,
+    SharedRunDriver, TransportError, UnavailableInterventionHandler,
 };
 use super::orchestrator::{PrintError, assemble_print_agent, orchestrate, parse_output_schema};
 use crate::cli::{Cli, ExitCode};
@@ -35,9 +35,7 @@ pub(super) async fn execute_driven(cli: &Cli) -> Result<ExitCode, PrintError> {
             // to answer, but any frames already queued (e.g. parse-error
             // responses) still get flushed before the process exits.
             drop(writer);
-            if let Err(join_err) = writer_task.await {
-                tracing::warn!("jsonrpc writer task did not exit cleanly: {join_err}");
-            }
+            finish_writer(writer_task).await?;
             return Err(PrintError::Io(err.to_string()));
         }
     };
@@ -48,9 +46,7 @@ pub(super) async fn execute_driven(cli: &Cli) -> Result<ExitCode, PrintError> {
             // The peer disconnected before requesting a run. Shut the
             // writer down cleanly and exit success — nothing to do.
             drop(writer);
-            if let Err(join_err) = writer_task.await {
-                tracing::warn!("jsonrpc writer task did not exit cleanly: {join_err}");
-            }
+            finish_writer(writer_task).await?;
             return Ok(ExitCode::Success);
         }
     };
@@ -74,11 +70,27 @@ pub(super) async fn execute_driven(cli: &Cli) -> Result<ExitCode, PrintError> {
     // its queue and exits; then join it so all frames are flushed to stdout
     // before the process exits (terminal-response shutdown handshake).
     drop(driver);
-    if let Err(join_err) = writer_task.await {
-        tracing::warn!("jsonrpc writer task did not exit cleanly: {join_err}");
-    }
+    finish_writer(writer_task).await?;
 
     result
+}
+
+/// Join the sole stdout writer and preserve both sink and task failures.
+/// A failed writer means the JSON-RPC response stream is incomplete, so it
+/// overrides an otherwise clean run result and maps to the existing I/O
+/// failure exit class.
+async fn finish_writer(
+    task: tokio::task::JoinHandle<Result<(), TransportError>>,
+) -> Result<(), PrintError> {
+    match task.await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(PrintError::Io(format!(
+            "jsonrpc stdout writer failed: {error}"
+        ))),
+        Err(error) => Err(PrintError::Io(format!(
+            "jsonrpc stdout writer task failed: {error}"
+        ))),
+    }
 }
 
 /// Everything that happens after a `run/execute` request has been accepted:
@@ -107,6 +119,17 @@ async fn run_accepted(
 
 /// The join handle + stop signal for the mid-run intervene reader task.
 pub(super) type InterveneTask = tokio::task::JoinHandle<Result<(), TransportError>>;
+
+/// The accepted run's intervention channel ended without a clean join.
+#[derive(Debug, thiserror::Error)]
+pub(super) enum InterveneLoopError {
+    /// Stdin framing, reading, or response transport failed.
+    #[error("driven-mode intervention transport failed: {0}")]
+    Transport(#[from] TransportError),
+    /// The reader task panicked or was cancelled.
+    #[error("driven-mode intervention reader task failed: {0}")]
+    Task(#[source] tokio::task::JoinError),
+}
 
 /// Spawn the driven-mode `intervene/*` reader loop for the duration of the
 /// run.
@@ -181,42 +204,95 @@ fn resolve_router(
 }
 
 /// Wind down the intervene reader after the run: signal `stop` and join the
-/// task, logging (never swallowing) a join panic or a transport error it
-/// surfaced. A `None` task (non-driven mode) is a no-op.
+/// task. A `None` task (non-driven mode) is a no-op.
+///
+/// # Errors
+///
+/// Returns a typed failure when stdin or an intervention response tears, or
+/// when the reader task panics or is cancelled. An accepted `run/execute`
+/// must not report success after its concurrent control channel failed.
 pub(super) async fn finish_intervene_loop(
     task: Option<InterveneTask>,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
-) {
+) -> Result<(), InterveneLoopError> {
     if let Some(stop) = stop {
         // A failed send means the reader already returned (EOF or an applied
         // cancel) — not an error; the join below still completes.
         let _ = stop.send(());
     }
-    let Some(task) = task else { return };
+    let Some(task) = task else { return Ok(()) };
     match task.await {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => {
-            tracing::warn!("driven-mode intervene reader ended with a transport error: {err}");
-        }
-        Err(join_err) => {
-            tracing::warn!("driven-mode intervene reader task did not exit cleanly: {join_err}");
-        }
+        Ok(result) => result.map_err(InterveneLoopError::Transport),
+        Err(error) => Err(InterveneLoopError::Task(error)),
     }
 }
 
-/// Map a driven-mode event-emitter [`tokio::task::JoinError`] onto the
-/// agent-error path: a panicked/cancelled emitter means the live `event/*`
-/// transcript is torn, so the run must surface the failure rather than send
-/// a clean terminal result over an incomplete stream.
-pub(super) fn emitter_failure(err: &tokio::task::JoinError) -> PrintError {
-    PrintError::Agent(format!(
-        "jsonrpc event emitter task failed ({kind}): {err}; the live event stream is incomplete",
-        kind = if err.is_panic() { "panic" } else { "cancelled" },
-    ))
+/// Map intervention-channel failure onto the same nonzero classes used by
+/// the other driven transport tasks.
+pub(super) fn intervene_failure(error: &InterveneLoopError) -> PrintError {
+    match error {
+        InterveneLoopError::Transport(_) => PrintError::Io(format!(
+            "{error}; the accepted run's intervention channel is incomplete"
+        )),
+        InterveneLoopError::Task(_) => PrintError::Agent(format!(
+            "{error}; the accepted run's intervention channel is incomplete"
+        )),
+    }
+}
+
+/// Select one terminal failure after both driven background tasks have been
+/// joined. When both channels fail, preserve the intervention failure's class
+/// while retaining the emitter failure in the rendered diagnostic.
+pub(super) fn driven_background_failure(
+    intervene: Option<&InterveneLoopError>,
+    emitter: Option<&EventEmitterError>,
+) -> Option<PrintError> {
+    match (intervene, emitter) {
+        (Some(intervene @ InterveneLoopError::Transport(_)), Some(emitter)) => {
+            Some(PrintError::Io(format!(
+                "{intervene}; the accepted run's intervention channel is incomplete; \
+                 additionally, {}",
+                emitter_failure(emitter)
+            )))
+        }
+        (Some(intervene @ InterveneLoopError::Task(_)), Some(emitter)) => {
+            Some(PrintError::Agent(format!(
+                "{intervene}; the accepted run's intervention channel is incomplete; \
+                 additionally, {}",
+                emitter_failure(emitter)
+            )))
+        }
+        (Some(intervene), None) => Some(intervene_failure(intervene)),
+        (None, Some(emitter)) => Some(emitter_failure(emitter)),
+        (None, None) => None,
+    }
+}
+
+/// Map a driven-mode event-emitter failure onto the existing print error
+/// classes. Transport failures remain I/O errors; lag and task failure are
+/// agent errors. Every variant exits nonzero because the live transcript is
+/// incomplete and must never be followed by a clean terminal result.
+pub(super) fn emitter_failure(error: &EventEmitterError) -> PrintError {
+    match error {
+        EventEmitterError::Transport(error) => {
+            PrintError::Io(format!("{error}; the live event stream is incomplete"))
+        }
+        EventEmitterError::EventsLost { .. } => {
+            PrintError::Agent(format!("{error}; the live event stream is incomplete"))
+        }
+        EventEmitterError::Task(join_error) => PrintError::Agent(format!(
+            "jsonrpc event emitter task failed ({kind}): {join_error}; \
+             the live event stream is incomplete",
+            kind = if join_error.is_panic() {
+                "panic"
+            } else {
+                "cancelled"
+            },
+        )),
+    }
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use serde_json::{Value, json};
@@ -227,7 +303,8 @@ mod tests {
     /// answering each advertised intervention with -32603 — instead of
     /// being skipped while the peer's requests sit unread forever.
     #[tokio::test]
-    async fn intervene_loop_runs_degraded_when_router_unresolvable() {
+    async fn intervene_loop_runs_degraded_when_router_unresolvable()
+    -> Result<(), Box<dyn std::error::Error>> {
         let (writer, mut out_rx) = super::super::jsonrpc::writer::OutboundWriter::test_channel();
         let driver: SharedRunDriver = Arc::new(RunDriver::new(writer, json!("run-1")));
         let registry = Arc::new(norn::tool::registry::ToolRegistry::new());
@@ -250,16 +327,20 @@ mod tests {
         // biased toward the stop signal, so signalling first would race the
         // reads this test exists to prove.
         for expected_id in [51, 52] {
-            let frame = out_rx.recv().await.expect("an answer per request");
-            let parsed: Value = serde_json::from_str(&frame).unwrap();
+            let frame = out_rx
+                .recv()
+                .await
+                .ok_or_else(|| std::io::Error::other("missing intervention response"))?;
+            let parsed: Value = serde_json::from_str(&frame)?;
             assert_eq!(parsed["id"], json!(expected_id));
             assert_eq!(parsed["error"]["code"], json!(-32603));
         }
 
         // EOF has ended the loop; the wind-down path joins it cleanly.
-        finish_intervene_loop(task, stop).await;
+        finish_intervene_loop(task, stop).await?;
         drop(driver);
         assert!(out_rx.recv().await.is_none(), "no further frames");
+        Ok(())
     }
 
     /// Non-driven mode spawns nothing: no token, no task, no stop.
@@ -278,22 +359,118 @@ mod tests {
         assert!(stop.is_none());
     }
 
-    /// An emitter `JoinError` (panic) must degrade to the agent-error exit
-    /// path with the tear named — never a clean exit 0.
+    /// A cancelled emitter must degrade to the agent-error exit path with
+    /// the tear named — never a clean exit 0.
     #[tokio::test]
-    async fn emitter_panic_maps_to_agent_error_exit() {
-        let task = tokio::spawn(async {
-            panic!("emitter blew up");
-        });
-        let join_err = task.await.expect_err("task must panic");
-        let err = emitter_failure(&join_err);
-        match &err {
-            PrintError::Agent(message) => {
-                assert!(message.contains("panic"), "message: {message}");
-                assert!(message.contains("incomplete"), "message: {message}");
-            }
-            other => panic!("expected Agent, got {other:?}"),
+    async fn emitter_cancellation_maps_to_agent_error_exit() {
+        let task = tokio::spawn(std::future::pending::<()>());
+        task.abort();
+        let join_result = task.await;
+        assert!(
+            join_result.is_err(),
+            "aborted task must not complete cleanly"
+        );
+        let Err(join_error) = join_result else {
+            return;
+        };
+        let failure = EventEmitterError::Task(join_error);
+        let err = emitter_failure(&failure);
+        assert!(matches!(&err, PrintError::Agent(_)), "error: {err:?}");
+        if let PrintError::Agent(message) = &err {
+            assert!(message.contains("cancelled"), "message: {message}");
+            assert!(message.contains("incomplete"), "message: {message}");
         }
         assert_eq!(err.exit_code(), ExitCode::AgentError);
+    }
+
+    #[tokio::test]
+    async fn writer_transport_failure_maps_to_io_error_exit() {
+        let task =
+            tokio::spawn(async { Err(TransportError::Io(std::io::ErrorKind::BrokenPipe.into())) });
+        let outcome = finish_writer(task).await;
+        assert!(outcome.is_err(), "broken stdout must fail driven execution");
+        let Err(error) = outcome else { return };
+        assert!(matches!(&error, PrintError::Io(_)));
+        assert_eq!(error.exit_code(), ExitCode::AgentError);
+    }
+
+    #[tokio::test]
+    async fn writer_task_cancellation_maps_to_io_error_exit() {
+        let task = tokio::spawn(std::future::pending::<Result<(), TransportError>>());
+        task.abort();
+        let outcome = finish_writer(task).await;
+        assert!(
+            outcome.is_err(),
+            "cancelled stdout writer must fail driven execution"
+        );
+        let Err(error) = outcome else { return };
+        assert!(matches!(&error, PrintError::Io(_)));
+        assert!(error.to_string().contains("writer task failed"));
+        assert_eq!(error.exit_code(), ExitCode::AgentError);
+    }
+
+    #[test]
+    fn emitter_transport_failure_maps_to_io_error_exit() {
+        let failure =
+            EventEmitterError::Transport(TransportError::Io(std::io::ErrorKind::BrokenPipe.into()));
+        let error = emitter_failure(&failure);
+        assert!(matches!(&error, PrintError::Io(_)));
+        assert_eq!(error.exit_code(), ExitCode::AgentError);
+    }
+
+    #[test]
+    fn emitter_event_loss_maps_to_agent_error_exit() {
+        let failure = EventEmitterError::EventsLost { missed: 3 };
+        let error = emitter_failure(&failure);
+        assert!(matches!(&error, PrintError::Agent(_)));
+        assert!(error.to_string().contains("lost 3 events"));
+        assert_eq!(error.exit_code(), ExitCode::AgentError);
+    }
+
+    #[tokio::test]
+    async fn intervention_transport_failure_is_not_swallowed() {
+        let task =
+            tokio::spawn(async { Err(TransportError::Io(std::io::ErrorKind::BrokenPipe.into())) });
+        let outcome = finish_intervene_loop(Some(task), None).await;
+        assert!(
+            matches!(outcome, Err(InterveneLoopError::Transport(_))),
+            "outcome: {outcome:?}"
+        );
+        let Err(error) = outcome else { return };
+        let mapped = intervene_failure(&error);
+        assert!(matches!(&mapped, PrintError::Io(_)));
+        assert!(mapped.to_string().contains("incomplete"));
+        assert_eq!(mapped.exit_code(), ExitCode::AgentError);
+    }
+
+    #[tokio::test]
+    async fn intervention_task_cancellation_is_not_swallowed() {
+        let task = tokio::spawn(std::future::pending::<Result<(), TransportError>>());
+        task.abort();
+        let outcome = finish_intervene_loop(Some(task), None).await;
+        assert!(
+            matches!(outcome, Err(InterveneLoopError::Task(_))),
+            "outcome: {outcome:?}"
+        );
+        let Err(error) = outcome else { return };
+        let mapped = intervene_failure(&error);
+        assert!(matches!(&mapped, PrintError::Agent(_)));
+        assert!(mapped.to_string().contains("incomplete"));
+        assert_eq!(mapped.exit_code(), ExitCode::AgentError);
+    }
+
+    #[test]
+    fn dual_background_failure_preserves_both_diagnostics() {
+        let intervene = InterveneLoopError::Transport(TransportError::Io(std::io::Error::other(
+            "stdin control torn",
+        )));
+        let emitter = EventEmitterError::EventsLost { missed: 7 };
+        let selected = driven_background_failure(Some(&intervene), Some(&emitter));
+        assert!(matches!(&selected, Some(PrintError::Io(_))));
+        let Some(error) = selected else { return };
+        let rendered = error.to_string();
+        assert!(rendered.contains("stdin control torn"), "error: {rendered}");
+        assert!(rendered.contains("lost 7 events"), "error: {rendered}");
+        assert_eq!(error.exit_code(), ExitCode::AgentError);
     }
 }

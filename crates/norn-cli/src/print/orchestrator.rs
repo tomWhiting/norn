@@ -46,7 +46,9 @@ use norn::session::store::EventStore;
 use norn::system_prompt::ExecutionMode;
 use serde_json::Value;
 
-use super::driven::{execute_driven, finish_intervene_loop, spawn_intervene_loop};
+use super::driven::{
+    driven_background_failure, execute_driven, finish_intervene_loop, spawn_intervene_loop,
+};
 use super::jsonrpc::{DrivenRun, SharedRunDriver};
 use super::output::{StopInfo, drain_diagnostics, extract_output_and_usage};
 use super::provider::build_provider;
@@ -577,7 +579,9 @@ async fn orchestrate_run(
         // the run and every ack it emitted is accounted for before the
         // terminal result is sent. A reader already stopped (EOF or a cancel
         // it applied) makes the stop-send a no-op; join still completes.
-        finish_intervene_loop(intervene_task, intervene_stop).await;
+        let intervene_error = finish_intervene_loop(intervene_task, intervene_stop)
+            .await
+            .err();
 
         drop(tx);
         // REVIEW C1: the registry's shared ToolContext still holds the
@@ -599,10 +603,15 @@ async fn orchestrate_run(
         // ahead of the terminal result. A panic/cancellation means the live
         // transcript is torn — surfaced on the agent-error path, never a
         // clean result.
-        if let Some(handle) = event_emitter
-            && let Err(err) = handle.finish().await
+        let emitter_error = if let Some(handle) = event_emitter {
+            handle.finish().await.err()
+        } else {
+            None
+        };
+        if let Some(error) =
+            driven_background_failure(intervene_error.as_ref(), emitter_error.as_ref())
         {
-            return Err(super::driven::emitter_failure(&err));
+            return Err(error);
         }
 
         let result = match result {

@@ -8,7 +8,7 @@
 //! `mpsc` channel and written by that task, one complete line at a time.
 //! The [`OutboundWriter`] handle is cloneable and is the only way to emit.
 
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
 use super::frames::{JsonRpcNotification, JsonRpcResponse, TransportError};
@@ -58,39 +58,154 @@ impl OutboundWriter {
 /// [`OutboundWriter`] is dropped (the channel closes) or stdout breaks. The
 /// returned [`OutboundWriter`] is the sole way to emit a frame.
 #[must_use]
-pub fn spawn_writer() -> (OutboundWriter, tokio::task::JoinHandle<()>) {
+pub fn spawn_writer() -> (
+    OutboundWriter,
+    tokio::task::JoinHandle<Result<(), TransportError>>,
+) {
+    spawn_writer_to(tokio::io::stdout())
+}
+
+fn spawn_writer_to<W>(
+    mut output: W,
+) -> (
+    OutboundWriter,
+    tokio::task::JoinHandle<Result<(), TransportError>>,
+)
+where
+    W: AsyncWrite + Unpin + Send + 'static,
+{
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
     let task = tokio::spawn(async move {
-        let mut stdout = tokio::io::stdout();
         while let Some(line) = rx.recv().await {
-            if stdout.write_all(line.as_bytes()).await.is_err()
-                || stdout.write_all(b"\n").await.is_err()
-                || stdout.flush().await.is_err()
-            {
-                // stdout is gone; nothing more can be delivered. Drain and
-                // exit so senders observe the closed channel promptly.
-                rx.close();
-                return;
-            }
+            output.write_all(line.as_bytes()).await?;
+            output.write_all(b"\n").await?;
+            output.flush().await?;
         }
+        Ok(())
     });
     (OutboundWriter { tx }, task)
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+    use std::io::ErrorKind;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::task::{Context, Poll};
+
     use super::*;
 
-    #[tokio::test]
-    async fn writer_task_frames_each_message_as_one_line() {
-        // The real stdout-owning writer: verify it exits cleanly when every
-        // handle is dropped (the terminal-response shutdown handshake).
-        let (writer, writer_task) = spawn_writer();
+    struct RecordingSink {
+        bytes: Arc<parking_lot::Mutex<Vec<u8>>>,
+        flushes: Arc<AtomicUsize>,
+    }
+
+    impl AsyncWrite for RecordingSink {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buffer: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            self.bytes.lock().extend_from_slice(buffer);
+            Poll::Ready(Ok(buffer.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            self.flushes.fetch_add(1, Ordering::SeqCst);
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    struct BrokenSink {
+        fail_flush: bool,
+    }
+
+    impl AsyncWrite for BrokenSink {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            if self.fail_flush {
+                Poll::Ready(Ok(buf.len()))
+            } else {
+                Poll::Ready(Err(ErrorKind::BrokenPipe.into()))
+            }
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            if self.fail_flush {
+                Poll::Ready(Err(ErrorKind::BrokenPipe.into()))
+            } else {
+                Poll::Ready(Ok(()))
+            }
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    async fn broken_sink_result(
+        fail_flush: bool,
+    ) -> Result<Result<(), TransportError>, tokio::task::JoinError> {
+        let (writer, task) = spawn_writer_to(BrokenSink { fail_flush });
+        let response = JsonRpcResponse::ok(serde_json::json!(1), serde_json::Value::Null);
+        assert!(writer.send_response(&response).is_ok());
         drop(writer);
-        tokio::time::timeout(std::time::Duration::from_secs(5), writer_task)
-            .await
-            .expect("writer task must exit when all handles drop")
-            .expect("writer task must not panic");
+        task.await
+    }
+
+    #[tokio::test]
+    async fn writer_task_frames_and_flushes_each_message() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let bytes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let flushes = Arc::new(AtomicUsize::new(0));
+        let (writer, writer_task) = spawn_writer_to(RecordingSink {
+            bytes: Arc::clone(&bytes),
+            flushes: Arc::clone(&flushes),
+        });
+        let response = JsonRpcResponse::ok(serde_json::json!(7), serde_json::json!({"ok": true}));
+        let notification = JsonRpcNotification {
+            jsonrpc: "2.0",
+            method: "event/test",
+            params: serde_json::json!({"n": 2}),
+        };
+        writer.send_response(&response)?;
+        writer.send_notification(&notification)?;
+        drop(writer);
+        writer_task.await??;
+
+        let expected = format!(
+            "{}\n{}\n",
+            serde_json::to_string(&response)?,
+            serde_json::to_string(&notification)?,
+        );
+        assert_eq!(bytes.lock().as_slice(), expected.as_bytes());
+        assert_eq!(flushes.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn writer_task_surfaces_write_failure() {
+        let outcome = broken_sink_result(false).await;
+        assert!(
+            matches!(outcome, Ok(Err(TransportError::Io(ref error))) if error.kind() == ErrorKind::BrokenPipe),
+            "outcome: {outcome:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn writer_task_surfaces_flush_failure() {
+        let outcome = broken_sink_result(true).await;
+        assert!(
+            matches!(outcome, Ok(Err(TransportError::Io(ref error))) if error.kind() == ErrorKind::BrokenPipe),
+            "outcome: {outcome:?}"
+        );
     }
 }
