@@ -38,6 +38,7 @@ pub use self::tools::{
     WebSearchUserLocationType,
 };
 pub use self::traits::{Provider, ProviderStream};
+pub use self::turn::ProviderTurnContext;
 pub use self::usage::Usage;
 pub use crate::error::ProviderError;
 
@@ -62,6 +63,7 @@ pub(crate) mod startup_trace;
 pub mod surface;
 pub mod tools;
 pub mod traits;
+pub mod turn;
 pub mod usage;
 
 #[cfg(test)]

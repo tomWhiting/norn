@@ -30,6 +30,7 @@ use crate::r#loop::loop_context::LoopContext;
 use crate::provider::agent_event::AgentEventSender;
 use crate::provider::request::{Message, ProviderRequest, ToolDefinition};
 use crate::provider::traits::Provider;
+use crate::provider::turn::ProviderTurnContext;
 use crate::provider::usage::Usage;
 use crate::rules::types::RuleInjection;
 use crate::session::events::EventId;
@@ -107,6 +108,8 @@ pub(super) struct StepMachine<'a> {
     pub(super) new_input_len: usize,
     /// Event ID of the persisted prompt (or last injected wake message).
     pub(super) prompt_event_id: EventId,
+    /// Non-persisted transport state shared by provider calls in this step.
+    pub(super) provider_turn_context: ProviderTurnContext,
 
     // -- Per-step accumulators --
     pub(super) total_usage: Usage,

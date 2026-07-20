@@ -7,6 +7,7 @@ use futures_util::Stream;
 use super::events::ProviderEvent;
 use super::request::ProviderRequest;
 use super::tools::ProviderCapabilities;
+use super::turn::ProviderTurnContext;
 use crate::error::ProviderError;
 
 /// A stream of provider events.
@@ -31,6 +32,20 @@ pub trait Provider: Send + Sync {
     /// The returned stream yields `ProviderEvent` values as they arrive
     /// from the provider, ending with a `Done` event on success.
     fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError>;
+
+    /// Sends a request within one live logical user turn.
+    ///
+    /// Providers without turn-scoped transport semantics use the ordinary
+    /// [`Self::stream`] path. The Responses provider overrides this to retain
+    /// private Codex sticky-routing state without putting it in the request or
+    /// persisted transcript.
+    fn stream_with_context(
+        &self,
+        request: ProviderRequest,
+        _context: ProviderTurnContext,
+    ) -> Result<ProviderStream, ProviderError> {
+        self.stream(request)
+    }
 }
 
 #[cfg(test)]

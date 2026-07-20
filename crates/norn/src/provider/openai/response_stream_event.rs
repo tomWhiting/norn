@@ -78,7 +78,10 @@ impl ResponseStreamEventManifest {
     }
 }
 
-/// A validated stream event retaining the provider object exactly.
+/// A validated stream event retaining its admitted JSON object exactly.
+///
+/// Transport adapters may redact reusable credentials before constructing the
+/// envelope; all remaining provider fields are retained without normalization.
 #[derive(Clone, PartialEq)]
 pub struct ResponseStreamEvent {
     raw: Value,
@@ -188,13 +191,13 @@ impl ResponseStreamEvent {
         self.manifest.stage()
     }
 
-    /// Return the exact provider JSON, including unknown fields.
+    /// Return the exact admitted JSON, including unknown fields.
     #[must_use]
     pub const fn raw(&self) -> &Value {
         &self.raw
     }
 
-    /// Consume the envelope and return the exact provider JSON.
+    /// Consume the envelope and return the exact admitted JSON.
     #[must_use]
     pub fn into_raw(self) -> Value {
         self.raw

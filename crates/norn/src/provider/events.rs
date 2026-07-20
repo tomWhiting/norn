@@ -31,14 +31,16 @@ pub enum StopReason {
 /// Each variant carries only delta data, not accumulated state.
 #[derive(Clone, Debug)]
 pub enum ProviderEvent {
-    /// One lossless `OpenAI` Responses stream envelope.
+    /// One validated `OpenAI` Responses stream envelope.
     ///
     /// This is the observability lane for the complete public/Codex event
     /// taxonomy. It never becomes replayable conversation state by itself;
     /// authoritative completed items arrive separately through
-    /// [`ResponseItemDone`](Self::ResponseItemDone).
+    /// [`ResponseItemDone`](Self::ResponseItemDone). Provider JSON is retained
+    /// exactly except that reusable transport credentials such as
+    /// `x-codex-turn-state` are redacted before disclosure.
     ResponseStreamEvent {
-        /// Validated envelope retaining the exact provider JSON.
+        /// Validated envelope retaining non-credential provider JSON exactly.
         event: Box<ResponseStreamEvent>,
     },
 

@@ -186,7 +186,16 @@ async fn successful_call_seals_and_returns_readable_audio_reference() -> TestRes
     events.push(Ok(done(Some("resp_audio_success"))));
     let provider = ScriptedProvider::new([ScriptedAttempt::Complete(events)]);
 
-    let response = call_provider(&provider, empty_request(), None, None, Some(store), 1).await?;
+    let response = call_provider(
+        &provider,
+        empty_request(),
+        crate::provider::ProviderTurnContext::default(),
+        None,
+        None,
+        Some(store),
+        1,
+    )
+    .await?;
     let reference = required(response.response_audio, "response omitted audio reference")?;
     let artifact = store.read(reference)?;
 
@@ -237,9 +246,16 @@ async fn retry_keeps_failed_attempt_unsealed_and_success_distinct_and_sealed() -
         ..RetryPolicy::default()
     };
 
-    let response =
-        call_provider_with_retry(&policy, &provider, empty_request(), None, None, Some(store))
-            .await?;
+    let response = call_provider_with_retry(
+        &policy,
+        &provider,
+        empty_request(),
+        &crate::provider::ProviderTurnContext::default(),
+        None,
+        None,
+        Some(store),
+    )
+    .await?;
     let sealed_reference = required(
         response.response_audio,
         "successful retry omitted audio reference",
@@ -301,6 +317,7 @@ async fn local_sidecar_failure_is_terminal_and_never_provider_retried() -> TestR
         &policy,
         &provider,
         empty_request(),
+        &crate::provider::ProviderTurnContext::default(),
         None,
         None,
         Some(&stale),
@@ -360,6 +377,7 @@ async fn dropped_pending_call_keeps_unsealed_reference_in_timeout_state() -> Tes
         let call = call_provider(
             &provider,
             empty_request(),
+            crate::provider::ProviderTurnContext::default(),
             None,
             Some(&timeout_state),
             Some(store),

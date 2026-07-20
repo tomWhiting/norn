@@ -15,6 +15,7 @@ use crate::provider::agent_event::{AgentEventSender, AgentStreamRetry};
 use crate::provider::events::{ProviderEvent, StopReason};
 use crate::provider::request::ProviderRequest;
 use crate::provider::traits::Provider;
+use crate::provider::turn::ProviderTurnContext;
 use crate::session::ResponseAudioStore;
 use crate::session::events::{EventBase, SessionEvent};
 use crate::session::store::EventStore;
@@ -239,6 +240,7 @@ pub(super) fn classify_response(
 pub(super) async fn call_provider(
     provider: &dyn Provider,
     request: ProviderRequest,
+    turn_context: ProviderTurnContext,
     event_tx: Option<&AgentEventSender>,
     partial_capture: Option<&SharedTimeoutState>,
     audio_store: Option<&ResponseAudioStore>,
@@ -249,7 +251,7 @@ pub(super) async fn call_provider(
         // durable analogue of the live `StreamRetry` reset marker.
         state.lock().in_flight_partial = Some(InFlightPartial::default());
     }
-    let mut stream = provider.stream(request)?;
+    let mut stream = provider.stream_with_context(request, turn_context)?;
     let mut events: Vec<ProviderEvent> = Vec::new();
     let mut audio = ResponseAudioCapture::new(audio_store, attempt);
 
@@ -354,6 +356,7 @@ pub(super) async fn call_provider_with_retry(
     policy: &crate::r#loop::retry::RetryPolicy,
     provider: &dyn Provider,
     request: ProviderRequest,
+    turn_context: &ProviderTurnContext,
     event_tx: Option<&AgentEventSender>,
     partial_capture: Option<&SharedTimeoutState>,
     audio_store: Option<&ResponseAudioStore>,
@@ -361,6 +364,7 @@ pub(super) async fn call_provider_with_retry(
     let attempts = std::sync::atomic::AtomicU32::new(0);
     crate::r#loop::retry::retry_with_backoff(policy, || {
         let req = request.clone();
+        let turn_context = turn_context.clone();
         let attempt = attempts
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             .saturating_add(1);
@@ -373,6 +377,7 @@ pub(super) async fn call_provider_with_retry(
             call_provider(
                 provider,
                 req,
+                turn_context,
                 event_tx,
                 partial_capture,
                 audio_store,
@@ -662,9 +667,17 @@ mod tests {
             },
         ]]);
 
-        let err = call_provider(&provider, empty_request(), None, None, None, 1)
-            .await
-            .expect_err("in-band Error event must fail the call");
+        let err = call_provider(
+            &provider,
+            empty_request(),
+            ProviderTurnContext::default(),
+            None,
+            None,
+            None,
+            1,
+        )
+        .await
+        .expect_err("in-band Error event must fail the call");
         match err {
             NornError::Provider(ProviderError::QuotaExceeded) => {}
             other => panic!("expected the typed in-band provider error, got {other:?}"),
@@ -704,6 +717,7 @@ mod tests {
             &policy,
             &provider,
             empty_request(),
+            &ProviderTurnContext::default(),
             Some(&sender),
             None,
             None,
@@ -763,6 +777,7 @@ mod tests {
             &policy,
             &provider,
             empty_request(),
+            &ProviderTurnContext::default(),
             Some(&sender),
             None,
             None,

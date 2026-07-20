@@ -19,6 +19,7 @@ use crate::r#loop::inbound::{ChannelMessage, InboundChannel};
 use crate::r#loop::iteration::IterationMonitorState;
 use crate::r#loop::schema::{build_schema_tool, check_reserved_envelope_keys};
 use crate::provider::request::ToolDefinition;
+use crate::provider::turn::ProviderTurnContext;
 use crate::provider::usage::Usage;
 use crate::rules::types::RuleInjection;
 use crate::session::events::{EventBase, EventId, SessionEvent};
@@ -195,6 +196,14 @@ impl<'a> StepMachine<'a> {
         )
         .await?;
 
+        let provider_turn_context = ProviderTurnContext::new(
+            loop_context
+                .variables
+                .as_ref()
+                .map(|variables| variables.session_id().to_owned()),
+            prompt_event_id.as_str().to_owned(),
+        );
+
         Ok(StepMachine {
             provider,
             executor,
@@ -218,6 +227,7 @@ impl<'a> StepMachine<'a> {
             dev_message,
             new_input_len,
             prompt_event_id,
+            provider_turn_context,
             total_usage: Usage::default(),
             iteration_state: IterationMonitorState::default(),
             budget_consumed: 0,

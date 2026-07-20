@@ -4,9 +4,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::backend::OpenAiBackend;
+use super::codex_turn;
 use super::execute::SenderProvider;
 use super::rate_limiter::RateLimiter;
 use crate::error::ProviderError;
+use crate::provider::ProviderTurnContext;
 use crate::provider::auth::{
     AuthProvider, AuthSource, StaticCodexAuthProvider, StaticCodexCredential,
     build_from_auth_source,
@@ -176,6 +178,42 @@ impl OpenAiProvider {
     fn catalog_backend(&self) -> &'static str {
         self.backend.catalog_backend()
     }
+
+    fn stream_inner(
+        &self,
+        mut request: ProviderRequest,
+        turn_context: Option<ProviderTurnContext>,
+    ) -> ProviderStream {
+        if request.config.is_none() {
+            request.config = self.config.provider_options.clone().map(ProviderOptions);
+        }
+        let turn_context = turn_context.filter(|_| self.backend.is_codex_subscription());
+        let sender = SenderProvider {
+            executor: StreamExecutor {
+                client: self.client.clone(),
+                endpoint: self.endpoint(),
+                timeout: self.config.timeout,
+                max_retries: self.config.max_retries,
+                retry_backoff: self.config.retry_backoff.unwrap_or(DEFAULT_RETRY_BACKOFF),
+                retry_after_ceiling: self.config.retry_after_ceiling,
+                rate_limiter: Arc::clone(&self.rate_limiter),
+                auth_provider: Arc::clone(&self.auth_provider),
+                request_headers: codex_turn::request_headers(turn_context.as_ref()),
+                debug_dump_file: self.config.debug_dump_file.clone(),
+                backend_label: "responses",
+            },
+            catalog_backend: self.catalog_backend(),
+            turn_context,
+        };
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<ProviderEvent, ProviderError>>(64);
+        let producer = tokio::spawn(async move {
+            if let Err(error) = sender.execute(request, tx.clone()).await {
+                let _ = tx.send(Err(error)).await;
+            }
+        });
+        task_owned_provider_stream(rx, producer)
+    }
 }
 
 /// Builds the shared HTTP client.
@@ -206,35 +244,16 @@ impl Provider for OpenAiProvider {
         crate::provider::tools::ProviderCapabilities::openai_responses()
     }
 
-    fn stream(&self, mut request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
-        if request.config.is_none() {
-            request.config = self.config.provider_options.clone().map(ProviderOptions);
-        }
-        let sender = SenderProvider {
-            executor: StreamExecutor {
-                client: self.client.clone(),
-                endpoint: self.endpoint(),
-                timeout: self.config.timeout,
-                max_retries: self.config.max_retries,
-                retry_backoff: self.config.retry_backoff.unwrap_or(DEFAULT_RETRY_BACKOFF),
-                retry_after_ceiling: self.config.retry_after_ceiling,
-                rate_limiter: Arc::clone(&self.rate_limiter),
-                auth_provider: Arc::clone(&self.auth_provider),
-                debug_dump_file: self.config.debug_dump_file.clone(),
-                backend_label: "responses",
-            },
-            catalog_backend: self.catalog_backend(),
-        };
+    fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+        Ok(self.stream_inner(request, None))
+    }
 
-        let (tx, rx) = tokio::sync::mpsc::channel::<Result<ProviderEvent, ProviderError>>(64);
-
-        let producer = tokio::spawn(async move {
-            if let Err(e) = sender.execute(request, tx.clone()).await {
-                let _ = tx.send(Err(e)).await;
-            }
-        });
-
-        Ok(task_owned_provider_stream(rx, producer))
+    fn stream_with_context(
+        &self,
+        request: ProviderRequest,
+        context: ProviderTurnContext,
+    ) -> Result<ProviderStream, ProviderError> {
+        Ok(self.stream_inner(request, Some(context)))
     }
 }
 

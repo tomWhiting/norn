@@ -80,6 +80,7 @@ fn executor(endpoint: String) -> Result<StreamExecutor, Box<dyn std::error::Erro
         retry_after_ceiling: None,
         rate_limiter: Arc::new(RateLimiter::new(1, Duration::from_secs(1))),
         auth_provider,
+        request_headers: reqwest::header::HeaderMap::new(),
         debug_dump_file: None,
         backend_label: "responses",
     };
