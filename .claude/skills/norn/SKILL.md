@@ -26,7 +26,7 @@ audited, resumed, or exported later.
 - Reasoning: `high`
 - Service tier: `--fast`
 - Output: mode-specific structured value inside Norn's JSON envelope
-- Session: persistent, with a discoverable `claude-<mode>-...` name
+- Session: persistent, with an explicit ID published before launch
 - Working directory and built-in file-tool boundary: repository root
 
 Use Sol only at `medium`, `high`, `xhigh`, or `max`. Default to `high`.
@@ -136,8 +136,44 @@ fi
 ENVELOPE_DIR="$NORN_STATE_HOME/delegations"
 mkdir -p "$ENVELOPE_DIR"
 RESULT_FILE="$(mktemp "$ENVELOPE_DIR/claude-$MODE.XXXXXX")"
+SESSION_ID="$(basename "$RESULT_FILE")"
+STATUS_FILE="$RESULT_FILE.status.json"
+SESSION_FILE="$NORN_STATE_HOME/session-store/$SESSION_ID.jsonl"
 SESSION_NAME="claude-$MODE-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 APPENDED_SYSTEM_PROMPT="$(cat "$BASE_INSTRUCTIONS" "$PRESET_INSTRUCTIONS")"
+STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+write_delegation_status() {
+  local status="$1"
+  local exit_code="$2"
+  local stop_reason="$3"
+  local updated_at
+  updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  jq -n \
+    --arg status "$status" \
+    --arg session_id "$SESSION_ID" \
+    --arg session_name "$SESSION_NAME" \
+    --arg result_file "$RESULT_FILE" \
+    --arg session_file "$SESSION_FILE" \
+    --arg started_at "$STARTED_AT" \
+    --arg updated_at "$updated_at" \
+    --arg wrapper_pid "$$" \
+    --arg exit_code "$exit_code" \
+    --arg stop_reason "$stop_reason" \
+    '{
+      status: $status,
+      session_id: $session_id,
+      session_name: $session_name,
+      result_file: $result_file,
+      session_file: $session_file,
+      started_at: $started_at,
+      updated_at: $updated_at,
+      wrapper_pid: ($wrapper_pid | tonumber),
+      exit_code: (if $exit_code == "" then null else ($exit_code | tonumber) end),
+      stop_reason: (if $stop_reason == "" then null else $stop_reason end)
+    }' >"$STATUS_FILE.tmp"
+  mv "$STATUS_FILE.tmp" "$STATUS_FILE"
+}
 
 PROMPT="$(cat <<PROMPT
 Delegation mode: $MODE
@@ -156,6 +192,13 @@ evidence.
 PROMPT
 )"
 
+write_delegation_status "running" "" ""
+printf 'Norn session: %s\n' "$SESSION_ID" >&2
+printf 'Norn envelope: %s\n' "$RESULT_FILE" >&2
+printf 'Norn status: %s\n' "$STATUS_FILE" >&2
+printf 'Norn timeline: %s\n' "$SESSION_FILE" >&2
+
+set +e
 norn --print \
   --model gpt-5.6-sol \
   --reasoning-effort "$EFFORT" \
@@ -164,15 +207,33 @@ norn --print \
   --workspace-root "$WORKSPACE" \
   --allowed-tools "$ALLOWED_TOOLS" \
   --append-system-prompt "$APPENDED_SYSTEM_PROMPT" \
+  --session-id "$SESSION_ID" \
   --session-name "$SESSION_NAME" \
   --quiet \
   --output-schema "$SCHEMA_PATH" \
   --output-format json \
   >"$RESULT_FILE" <<<"$PROMPT"
+NORN_EXIT=$?
+set -e
 
-SESSION_ID="$(jq -er '.session_id' "$RESULT_FILE")"
-printf 'Norn session: %s\n' "$SESSION_ID" >&2
-printf 'Norn envelope: %s\n' "$RESULT_FILE" >&2
+STOP_REASON="$(jq -er '.stop.reason' "$RESULT_FILE" 2>/dev/null || printf 'unavailable')"
+if [[ "$NORN_EXIT" -eq 0 ]]; then
+  FINAL_STATUS="finished"
+else
+  FINAL_STATUS="exited"
+fi
+write_delegation_status "$FINAL_STATUS" "$NORN_EXIT" "$STOP_REASON"
+
+if [[ "$NORN_EXIT" -ne 0 ]]; then
+  printf 'Norn exited with status %s; inspect the status and durable timeline above.\n' "$NORN_EXIT" >&2
+  exit "$NORN_EXIT"
+fi
+
+ENVELOPE_SESSION_ID="$(jq -er '.session_id' "$RESULT_FILE")"
+if [[ "$ENVELOPE_SESSION_ID" != "$SESSION_ID" ]]; then
+  printf 'Norn envelope session mismatch: expected %s, got %s\n' "$SESSION_ID" "$ENVELOPE_SESSION_ID" >&2
+  exit 1
+fi
 
 jq -e '
   if .stop.reason == "completed" then
@@ -183,9 +244,17 @@ jq -e '
 ' "$RESULT_FILE"
 ```
 
-The caller must retain and report both `SESSION_ID` and `RESULT_FILE`. Do not
-delete the envelope automatically. Norn's own persisted session is the durable
-record; the envelope is the convenient machine-readable handoff.
+The runner prints `SESSION_ID`, `RESULT_FILE`, `STATUS_FILE`, and `SESSION_FILE`
+before Norn starts. Retain and report them; do not delete the envelope or status
+record automatically. Terminal JSON is written only when the run ends, so an
+empty `RESULT_FILE` does not mean the worker made no progress. Inspect the
+status record and durable session timeline, then resume the exact session when
+appropriate.
+
+Do not wrap delegation in a broad `pkill`, caller-side hard timeout, or a
+pipeline that hides Norn's exit status. Use Norn's own explicit timeout when a
+bounded run is required, or driven-mode cancellation when graceful in-band
+cancellation is required.
 
 `--workspace-root` confines Norn's built-in file tools. It does not sandbox
 `bash`. Scout, research, and review instructions prohibit repository mutation,
@@ -238,6 +307,39 @@ APPENDED_SYSTEM_PROMPT="$(cat "$BASE_INSTRUCTIONS" "$PRESET_INSTRUCTIONS")"
 ENVELOPE_DIR="$NORN_STATE_HOME/delegations"
 mkdir -p "$ENVELOPE_DIR"
 RESULT_FILE="$(mktemp "$ENVELOPE_DIR/claude-$MODE-follow-up.XXXXXX")"
+STATUS_FILE="$RESULT_FILE.status.json"
+SESSION_FILE="$NORN_STATE_HOME/session-store/$SESSION_ID.jsonl"
+STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+write_delegation_status() {
+  local status="$1"
+  local exit_code="$2"
+  local stop_reason="$3"
+  local updated_at
+  updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  jq -n \
+    --arg status "$status" \
+    --arg session_id "$SESSION_ID" \
+    --arg result_file "$RESULT_FILE" \
+    --arg session_file "$SESSION_FILE" \
+    --arg started_at "$STARTED_AT" \
+    --arg updated_at "$updated_at" \
+    --arg wrapper_pid "$$" \
+    --arg exit_code "$exit_code" \
+    --arg stop_reason "$stop_reason" \
+    '{
+      status: $status,
+      session_id: $session_id,
+      result_file: $result_file,
+      session_file: $session_file,
+      started_at: $started_at,
+      updated_at: $updated_at,
+      wrapper_pid: ($wrapper_pid | tonumber),
+      exit_code: (if $exit_code == "" then null else ($exit_code | tonumber) end),
+      stop_reason: (if $stop_reason == "" then null else $stop_reason end)
+    }' >"$STATUS_FILE.tmp"
+  mv "$STATUS_FILE.tmp" "$STATUS_FILE"
+}
 
 case "$MODE" in
   scout|review) ALLOWED_TOOLS="read,search,lsp,bash" ;;
@@ -246,6 +348,13 @@ case "$MODE" in
   *) exit 2 ;;
 esac
 
+write_delegation_status "running" "" ""
+printf 'Norn session: %s\n' "$SESSION_ID" >&2
+printf 'Norn envelope: %s\n' "$RESULT_FILE" >&2
+printf 'Norn status: %s\n' "$STATUS_FILE" >&2
+printf 'Norn timeline: %s\n' "$SESSION_FILE" >&2
+
+set +e
 norn --print \
   --model gpt-5.6-sol \
   --reasoning-effort "$EFFORT" \
@@ -259,9 +368,22 @@ norn --print \
   --output-schema "$SCHEMA_PATH" \
   --output-format json \
   >"$RESULT_FILE" <<<"$FOLLOW_UP"
+NORN_EXIT=$?
+set -e
 
-printf 'Norn session: %s\n' "$SESSION_ID" >&2
-printf 'Norn envelope: %s\n' "$RESULT_FILE" >&2
+STOP_REASON="$(jq -er '.stop.reason' "$RESULT_FILE" 2>/dev/null || printf 'unavailable')"
+if [[ "$NORN_EXIT" -eq 0 ]]; then
+  FINAL_STATUS="finished"
+else
+  FINAL_STATUS="exited"
+fi
+write_delegation_status "$FINAL_STATUS" "$NORN_EXIT" "$STOP_REASON"
+
+if [[ "$NORN_EXIT" -ne 0 ]]; then
+  printf 'Norn follow-up exited with status %s; inspect the status and durable timeline above.\n' "$NORN_EXIT" >&2
+  exit "$NORN_EXIT"
+fi
+
 jq -e 'if .stop.reason == "completed" then .output else error("follow-up did not complete") end' "$RESULT_FILE"
 ```
 
