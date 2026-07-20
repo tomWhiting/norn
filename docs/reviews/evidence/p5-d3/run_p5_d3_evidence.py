@@ -151,7 +151,16 @@ def verify_source(
         "--",
     )
     inventory = nul_paths(inventory_raw)
-    rust_manifest_raw = git(repo, "ls-tree", "-r", "-z", source, "--", "*.rs")
+    source_tree_raw = git(repo, "ls-tree", "-r", "-z", source)
+    rust_records = []
+    for record in nul_records(source_tree_raw):
+        try:
+            _, path = record.split(b"\t", maxsplit=1)
+        except ValueError as error:
+            raise RuntimeError("git ls-tree emitted a malformed record") from error
+        if path.endswith(b".rs"):
+            rust_records.append(record)
+    rust_manifest_raw = b"\0".join(rust_records) + (b"\0" if rust_records else b"")
 
     runner = Path(__file__).resolve()
     runner_path = str(runner.relative_to(repo))
