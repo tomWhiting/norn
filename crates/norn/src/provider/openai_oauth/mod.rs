@@ -51,6 +51,7 @@ pub use endpoints::CLIENT_ID;
 pub use login_server::{
     LoginError, LoginServer, LoginStorageFailureKind, ServerOptions, run_login_server,
 };
+pub(crate) use manager::OAuthCredentialIdentity;
 pub use manager::{AuthManager, AuthManagerBuildError, RefreshTokenError};
 pub use options::OAuthHttpOptions;
 pub use revoke::{

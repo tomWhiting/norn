@@ -54,8 +54,9 @@ pub(crate) use timeline::{
     AffinityBindingCheckpoint, validate_or_bind_provider_state_identity_with_hook,
 };
 pub(crate) use timeline::{
-    open_registered_timeline_bound, reconcile_registered_timeline, registered_timeline_identity,
-    validate_or_bind_provider_state_identity, with_registered_timeline,
+    ProviderAffinityTransition, open_registered_timeline_bound, reconcile_registered_timeline,
+    registered_timeline_identity, validate_or_bind_provider_state_identity,
+    with_registered_timeline,
 };
 
 /// Read the complete active format-2 index after converging any durable

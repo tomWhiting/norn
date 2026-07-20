@@ -325,6 +325,14 @@ pub enum SessionPersistError {
     /// A bound session was opened by a provider that could not prove identity.
     #[error("session requires a provider-state identity")]
     ProviderStateIdentityRequired,
+
+    /// A stale loaded store observed that another handle completed the same
+    /// provider-identity adoption. Its in-memory timeline does not contain the
+    /// peer's durable adoption cut and must not continue from the old anchor.
+    #[error(
+        "session provider identity was adopted by another handle; reopen the session before continuing"
+    )]
+    ProviderStateIdentityReopenRequired,
 }
 
 impl From<std::io::Error> for SessionPersistError {

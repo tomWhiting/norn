@@ -32,23 +32,16 @@ impl CredentialIdentity {
         ))
     }
 
-    pub(crate) fn from_oauth_principal(account_id: &str, user_id: Option<&str>) -> Self {
-        let digest = match user_id {
-            Some(user_id) => domain_separated_digest(
-                OAUTH_PRINCIPAL_DOMAIN,
-                &[
-                    b"account",
-                    account_id.as_bytes(),
-                    b"user",
-                    user_id.as_bytes(),
-                ],
-            ),
-            None => domain_separated_digest(
-                OAUTH_PRINCIPAL_DOMAIN,
-                &[b"account", account_id.as_bytes(), b"user-absent"],
-            ),
-        };
-        Self(digest)
+    pub(crate) fn from_oauth_principal(account_id: &str, user_id: &str) -> Self {
+        Self(domain_separated_digest(
+            OAUTH_PRINCIPAL_DOMAIN,
+            &[
+                b"account",
+                account_id.as_bytes(),
+                b"user",
+                user_id.as_bytes(),
+            ],
+        ))
     }
 
     pub(crate) fn from_api_key(api_key: &str) -> Self {

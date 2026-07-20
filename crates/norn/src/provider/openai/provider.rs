@@ -143,15 +143,17 @@ impl OpenAiProvider {
         backend: OpenAiBackend,
         auth_provider: Arc<dyn AuthProvider>,
     ) -> Result<Self, ProviderError> {
-        let auth_identity = auth_provider.credential_identity().ok_or_else(|| {
-            if matches!(&config.auth_source, AuthSource::OAuth { .. }) {
-                ProviderError::AuthenticationFailed {
-                    reason: "no OAuth token found; run `norn auth login`".to_owned(),
+        let auth_identity = auth_provider
+            .resolve_credential_identity()?
+            .ok_or_else(|| {
+                if matches!(&config.auth_source, AuthSource::OAuth { .. }) {
+                    ProviderError::AuthenticationFailed {
+                        reason: "no OAuth token found; run `norn auth login`".to_owned(),
+                    }
+                } else {
+                    ProviderError::ProviderStateIdentityRequired
                 }
-            } else {
-                ProviderError::ProviderStateIdentityRequired
-            }
-        })?;
+            })?;
         let normalized_endpoint = format!("{}/responses", backend.base_url());
         let state_identity =
             auth_identity.scoped_to_openai_backend(backend.label(), &normalized_endpoint);

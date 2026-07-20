@@ -3,17 +3,15 @@ use super::*;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[test]
-fn oauth_principal_identity_includes_optional_user() {
-    let first = CredentialIdentity::from_oauth_principal("account-a", Some("user-a"));
-    let same = CredentialIdentity::from_oauth_principal("account-a", Some("user-a"));
-    let other_user = CredentialIdentity::from_oauth_principal("account-a", Some("user-b"));
-    let absent_user = CredentialIdentity::from_oauth_principal("account-a", None);
-    let empty_user = CredentialIdentity::from_oauth_principal("account-a", Some(""));
+fn oauth_principal_identity_includes_account_and_user() {
+    let first = CredentialIdentity::from_oauth_principal("account-a", "user-a");
+    let same = CredentialIdentity::from_oauth_principal("account-a", "user-a");
+    let other_user = CredentialIdentity::from_oauth_principal("account-a", "user-b");
+    let other_account = CredentialIdentity::from_oauth_principal("account-b", "user-a");
 
     assert_eq!(first, same);
     assert_ne!(first, other_user);
-    assert_ne!(first, absent_user);
-    assert_ne!(absent_user, empty_user);
+    assert_ne!(first, other_account);
 }
 
 #[test]

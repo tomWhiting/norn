@@ -23,9 +23,13 @@ use super::super::types::{SessionIndexEntry, SessionPersistError};
 /// Result of validating or durably adopting a provider-state identity.
 pub(crate) struct ProviderAffinityBinding {
     pub(crate) entry: SessionIndexEntry,
-    /// The durable adoption boundary a previously loaded store must mirror in
-    /// memory before it can construct another provider request.
-    pub(crate) adoption_boundary: Option<SessionEvent>,
+    pub(crate) transition: ProviderAffinityTransition,
+}
+
+pub(crate) enum ProviderAffinityTransition {
+    Validated,
+    Adopted(Box<SessionEvent>),
+    AlreadyBoundByPeer,
 }
 
 #[cfg(test)]
@@ -151,19 +155,22 @@ fn validate_or_bind_provider_state_identity_inner(
 
     match (current, requested) {
         (Some(bound), Some(candidate)) if bound == candidate => {
-            if registered.provider_state_identity.is_some() {
-                return Ok(ProviderAffinityBinding {
-                    entry: entries[position].clone(),
-                    adoption_boundary: None,
-                });
-            }
+            let transition = if registered.provider_state_identity.is_some() {
+                ProviderAffinityTransition::Validated
+            } else {
+                ProviderAffinityTransition::AlreadyBoundByPeer
+            };
+            return Ok(ProviderAffinityBinding {
+                entry: entries[position].clone(),
+                transition,
+            });
         }
         (Some(_), Some(_)) => return Err(SessionPersistError::ProviderStateIdentityMismatch),
         (Some(_), None) => return Err(SessionPersistError::ProviderStateIdentityRequired),
         (None, None) => {
             return Ok(ProviderAffinityBinding {
                 entry: entries[position].clone(),
-                adoption_boundary: None,
+                transition: ProviderAffinityTransition::Validated,
             });
         }
         (None, Some(_)) => {}
@@ -206,7 +213,7 @@ fn validate_or_bind_provider_state_identity_inner(
     super::codec::write_index_atomic_in(index_lock.root(), &entries)?;
     Ok(ProviderAffinityBinding {
         entry,
-        adoption_boundary: Some(boundary),
+        transition: ProviderAffinityTransition::Adopted(Box::new(boundary)),
     })
 }
 

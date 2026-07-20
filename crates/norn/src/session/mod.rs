@@ -77,6 +77,8 @@ mod canonical_transcript_tests;
 #[cfg(test)]
 mod provider_affinity_embedder_tests;
 #[cfg(test)]
+mod provider_affinity_stale_tests;
+#[cfg(test)]
 mod provider_affinity_tests;
 #[cfg(test)]
 mod provider_epoch_tests;

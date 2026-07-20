@@ -29,7 +29,7 @@ fn publish_named_oauth_fixture(
     let credential = serde_json::to_vec(&serde_json::json!({
         "auth_mode": "chatgpt",
         "tokens": {
-            "id_token": "e30.e30.",
+            "id_token": "e30.eyJjaGF0Z3B0X3VzZXJfaWQiOiJmaXh0dXJlLXVzZXIifQ.",
             "access_token": format!("access-{alias}"),
             "refresh_token": "",
             "account_id": alias

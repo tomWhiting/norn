@@ -17,6 +17,17 @@ fn oauth_manager_identity(
     user_id: Option<&str>,
     access_token: &str,
 ) -> Result<CredentialIdentity, Box<dyn std::error::Error>> {
+    let provider = oauth_auth_provider(account_id, user_id, access_token)?;
+    provider
+        .resolve_credential_identity()?
+        .ok_or_else(|| std::io::Error::other("OAuth principal identity was absent").into())
+}
+
+fn oauth_auth_provider(
+    account_id: &str,
+    user_id: Option<&str>,
+    access_token: &str,
+) -> Result<OAuthAuthProvider, Box<dyn std::error::Error>> {
     let mut id_token = super::super::openai_oauth::IdTokenInfo::create_for_testing(account_id);
     id_token.chatgpt_user_id = user_id.map(str::to_owned);
     let auth = super::super::openai_oauth::CodexAuth::ChatGpt(Box::new(
@@ -34,9 +45,22 @@ fn oauth_manager_identity(
         auth,
         OAuthHttpOptions::default(),
     )?;
-    OAuthAuthProvider::from_manager(manager)
-        .credential_identity()
-        .ok_or_else(|| std::io::Error::other("OAuth principal identity was absent").into())
+    Ok(OAuthAuthProvider::from_manager(manager))
+}
+
+fn stateful_oauth_config() -> super::super::request::ProviderConfig {
+    super::super::request::ProviderConfig {
+        auth_source: AuthSource::OAuth { auth_root: None },
+        base_url: None,
+        timeout: std::time::Duration::from_secs(1),
+        max_retries: 0,
+        provider_options: None,
+        debug_dump_file: None,
+        rate_limit: None,
+        rate_limit_interval: None,
+        retry_backoff: None,
+        retry_after_ceiling: None,
+    }
 }
 
 #[test]
@@ -288,17 +312,49 @@ fn oauth_manager_identity_tracks_the_full_pinned_principal() -> TestResult {
     let first = oauth_manager_identity("account-a", Some("user-a"), "access-a")?;
     let refreshed = oauth_manager_identity("account-a", Some("user-a"), "access-b")?;
     let other_user = oauth_manager_identity("account-a", Some("user-b"), "access-a")?;
-    let missing_user = oauth_manager_identity("account-a", None, "access-a")?;
 
     assert_eq!(
         first, refreshed,
         "access-token rotation is not a principal change"
     );
     assert_ne!(first, other_user, "user identity is part of the principal");
-    assert_ne!(
-        first, missing_user,
-        "user presence is part of the principal"
+    Ok(())
+}
+
+#[test]
+fn stateful_oauth_provider_rejects_a_userless_credential() -> TestResult {
+    let auth = oauth_auth_provider("shared-account-sentinel", None, "access-token-sentinel")?;
+    let result = super::super::openai::OpenAiProvider::with_auth_provider(
+        stateful_oauth_config(),
+        Arc::new(auth),
     );
+    let Err(ProviderError::AuthenticationFailed { reason }) = result else {
+        return Err(std::io::Error::other(
+            "userless OAuth credential did not fail stateful provider construction",
+        )
+        .into());
+    };
+    assert!(reason.contains("stable user identity"));
+    assert!(!reason.contains("shared-account-sentinel"));
+    assert!(!reason.contains("access-token-sentinel"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn stateful_oauth_provider_preserves_missing_credential_guidance() -> TestResult {
+    let auth_root = tempfile::tempdir()?;
+    let auth = OAuthAuthProvider::new(Some(auth_root.path().to_path_buf())).await?;
+    let result = super::super::openai::OpenAiProvider::with_auth_provider(
+        stateful_oauth_config(),
+        Arc::new(auth),
+    );
+    let Err(ProviderError::AuthenticationFailed { reason }) = result else {
+        return Err(std::io::Error::other(
+            "missing OAuth credential did not retain the authentication failure",
+        )
+        .into());
+    };
+    assert_eq!(reason, "no OAuth token found; run `norn auth login`");
     Ok(())
 }
 

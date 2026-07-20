@@ -9,7 +9,9 @@ use parking_lot::Mutex;
 use crate::provider::ProviderStateIdentity;
 
 use super::events::{EventBase, EventId, ProviderEpochBoundaryReason, SessionEvent};
-use super::persistence::index::validate_or_bind_provider_state_identity;
+use super::persistence::index::{
+    ProviderAffinityTransition, validate_or_bind_provider_state_identity,
+};
 use super::{SessionIndexEntry, SessionPersistError};
 
 #[derive(Clone, Debug)]
@@ -42,10 +44,14 @@ impl ManagedProviderAffinity {
             requested,
             self.lock_deadline,
         )?;
-        Ok((
-            binding.entry.provider_state_identity,
-            binding.adoption_boundary,
-        ))
+        let boundary = match binding.transition {
+            ProviderAffinityTransition::Validated => None,
+            ProviderAffinityTransition::Adopted(boundary) => Some(*boundary),
+            ProviderAffinityTransition::AlreadyBoundByPeer => {
+                return Err(SessionPersistError::ProviderStateIdentityReopenRequired);
+            }
+        };
+        Ok((binding.entry.provider_state_identity, boundary))
     }
 }
 

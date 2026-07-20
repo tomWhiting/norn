@@ -19,8 +19,8 @@ use std::sync::Arc;
 use super::CredentialIdentity;
 use super::openai_oauth::{
     AuthCredentialsStoreMode, AuthManager, AuthManagerBuildError, LoginError,
-    LoginStorageFailureKind, LogoutReport, NornAuthRoot, OAuthHttpOptions, RefreshTokenError,
-    resolve_norn_auth_root,
+    LoginStorageFailureKind, LogoutReport, NornAuthRoot, OAuthCredentialIdentity, OAuthHttpOptions,
+    RefreshTokenError, resolve_norn_auth_root,
 };
 use super::startup_trace;
 use async_trait::async_trait;
@@ -95,6 +95,16 @@ pub trait AuthProvider: Send + Sync {
     /// normalized endpoint before exposing session-facing state identity.
     fn credential_identity(&self) -> Option<CredentialIdentity> {
         None
+    }
+
+    /// Resolves credential identity while preserving a typed failure when
+    /// credentials exist but cannot safely identify their principal.
+    ///
+    /// The default keeps existing embedder implementations source-compatible;
+    /// authentication providers with a distinct indeterminate state override
+    /// this method.
+    fn resolve_credential_identity(&self) -> Result<Option<CredentialIdentity>, ProviderError> {
+        Ok(self.credential_identity())
     }
 
     /// Applies authentication headers to the provided `RequestBuilder`.
@@ -189,7 +199,24 @@ impl OAuthAuthProvider {
 #[async_trait]
 impl AuthProvider for OAuthAuthProvider {
     fn credential_identity(&self) -> Option<CredentialIdentity> {
-        self.manager.credential_identity()
+        match self.manager.credential_identity() {
+            OAuthCredentialIdentity::Present(identity) => Some(identity),
+            OAuthCredentialIdentity::MissingCredentials
+            | OAuthCredentialIdentity::MissingUserIdentity => None,
+        }
+    }
+
+    fn resolve_credential_identity(&self) -> Result<Option<CredentialIdentity>, ProviderError> {
+        match self.manager.credential_identity() {
+            OAuthCredentialIdentity::MissingCredentials => Ok(None),
+            OAuthCredentialIdentity::MissingUserIdentity => {
+                Err(ProviderError::AuthenticationFailed {
+                    reason: "OAuth credential lacks the stable user identity required for stateful sessions"
+                        .to_owned(),
+                })
+            }
+            OAuthCredentialIdentity::Present(identity) => Ok(Some(identity)),
+        }
     }
 
     async fn apply_auth(

@@ -55,6 +55,12 @@ struct AccountIdentity {
     user_id: Option<String>,
 }
 
+pub(crate) enum OAuthCredentialIdentity {
+    MissingCredentials,
+    MissingUserIdentity,
+    Present(CredentialIdentity),
+}
+
 impl AccountIdentity {
     fn from_auth(auth: &AuthDotJson) -> Option<Self> {
         let tokens = auth.tokens.as_ref()?;
@@ -220,14 +226,23 @@ fn map_transaction_build_error(
 }
 
 impl AuthManager {
-    /// Stable opaque identity of the account pinned when this manager opened.
-    pub(crate) fn credential_identity(&self) -> Option<CredentialIdentity> {
-        self.account_identity.as_ref().map(|identity| {
-            CredentialIdentity::from_oauth_principal(
-                &identity.account_id,
-                identity.user_id.as_deref(),
-            )
-        })
+    /// Stable opaque identity of the account and user pinned when this manager
+    /// opened.
+    pub(crate) fn credential_identity(&self) -> OAuthCredentialIdentity {
+        let Some(identity) = self.account_identity.as_ref() else {
+            return OAuthCredentialIdentity::MissingCredentials;
+        };
+        let Some(user_id) = identity
+            .user_id
+            .as_deref()
+            .filter(|user_id| !user_id.is_empty())
+        else {
+            return OAuthCredentialIdentity::MissingUserIdentity;
+        };
+        OAuthCredentialIdentity::Present(CredentialIdentity::from_oauth_principal(
+            &identity.account_id,
+            user_id,
+        ))
     }
 
     /// Creates a shared manager and loads cached credentials from disk.
@@ -425,56 +440,8 @@ impl AuthManager {
 }
 
 #[cfg(test)]
-mod security_tests {
-    use super::*;
-
-    #[test]
-    fn manager_debug_redacts_cached_credentials() -> Result<(), AuthManagerBuildError> {
-        let manager = AuthManager::from_static_auth(
-            CodexAuth::from_api_key("manager-api-key-secret"),
-            OAuthHttpOptions::default(),
-        )?;
-
-        let rendered = format!("{manager:?}");
-        assert!(!rendered.contains("manager-api-key-secret"));
-        assert!(rendered.contains("[REDACTED]"));
-        Ok(())
-    }
-
-    #[test]
-    fn malformed_credential_display_retains_the_typed_reason() {
-        let error = AuthManagerBuildError::MalformedCredential {
-            reason: MalformedCredentialReason::UnsupportedAuthMode,
-        };
-        let rendered = error.to_string();
-
-        assert!(rendered.contains("unsupported authentication mode"));
-        assert!(!rendered.contains("malformed JSON"));
-    }
-
-    #[tokio::test]
-    async fn malformed_credential_storage_fails_manager_construction()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let home = tempfile::tempdir()?;
-        std::fs::write(home.path().join("auth.json"), b"{malformed")?;
-        let auth_root = NornAuthRoot::try_from(home.path())?;
-
-        let result = AuthManager::shared_for_tests(
-            auth_root,
-            AuthCredentialsStoreMode::File,
-            "http://127.0.0.1:9".to_owned(),
-        )
-        .await;
-
-        assert!(matches!(
-            result,
-            Err(AuthManagerBuildError::MalformedCredential {
-                reason: MalformedCredentialReason::InvalidJson,
-            })
-        ));
-        Ok(())
-    }
-}
+#[path = "manager_security_tests.rs"]
+mod security_tests;
 
 #[cfg(test)]
 #[path = "manager_tests.rs"]
