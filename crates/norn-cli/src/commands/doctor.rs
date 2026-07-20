@@ -193,7 +193,7 @@ fn check_connectivity(provider: ProviderKind) -> bool {
         }
     };
 
-    match rt.block_on(client.head(DEFAULT_PROBE_URL).send()) {
+    match send_connectivity_probe(&rt, &client, DEFAULT_PROBE_URL) {
         Ok(_resp) => {
             eprintln!("[PASS] Provider reachable at {DEFAULT_PROBE_URL}");
             true
@@ -205,6 +205,16 @@ fn check_connectivity(provider: ProviderKind) -> bool {
             false
         }
     }
+}
+
+fn send_connectivity_probe(
+    runtime: &tokio::runtime::Runtime,
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<reqwest::Response, reqwest::Error> {
+    // RequestBuilder::send creates Tokio timeout state, so construct it only
+    // after block_on has entered the runtime.
+    runtime.block_on(async { client.head(url).send().await })
 }
 
 // ---------------------------------------------------------------------------

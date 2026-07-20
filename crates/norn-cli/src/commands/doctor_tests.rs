@@ -31,6 +31,25 @@ fn connectivity_for_local_provider_passes_without_network() {
     assert!(ok);
 }
 
+#[test]
+fn connectivity_probe_constructs_timed_request_inside_runtime()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert!(tokio::runtime::Handle::try_current().is_err());
+    let runtime = tokio::runtime::Runtime::new()?;
+    let client = reqwest::Client::builder()
+        .timeout(PROBE_TIMEOUT)
+        .pool_max_idle_per_host(0)
+        .build()?;
+
+    let result = send_connectivity_probe(&runtime, &client, "http://127.0.0.1:0");
+
+    assert!(
+        result.is_err(),
+        "reserved destination port must fail without panicking"
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn path_probe_flags_non_executable_file() -> Result<(), Box<dyn std::error::Error>> {
