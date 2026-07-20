@@ -59,6 +59,7 @@ pub mod notifications;
 mod numeric;
 mod programmatic_calling;
 mod response_audio_capture;
+mod response_publication;
 
 pub mod retry;
 mod rule_wiring;

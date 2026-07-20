@@ -12,13 +12,19 @@ use crate::session::conversion::events_to_messages;
 use crate::session::events::SessionEvent;
 
 pub(super) fn spawn_non_audio_items(id_suffix: &str, text: &str) -> Vec<Value> {
-    crate::provider::openai::output_item_test_fixtures::spawn_shape_matrix_items(id_suffix, text)
+    crate::provider::openai::output_item_test_fixtures::with_replayable_reasoning_state(
+        crate::provider::openai::output_item_test_fixtures::spawn_shape_matrix_items(
+            id_suffix, text,
+        ),
+    )
 }
 
 pub(super) fn historical_non_audio_items(id_suffix: &str, text: &str) -> Vec<Value> {
     let mut items =
-        crate::provider::openai::output_item_test_fixtures::historical_shape_matrix_items(
-            id_suffix, text,
+        crate::provider::openai::output_item_test_fixtures::with_replayable_reasoning_state(
+            crate::provider::openai::output_item_test_fixtures::historical_shape_matrix_items(
+                id_suffix, text,
+            ),
         );
     items.push(serde_json::json!({
         "type": "future_historical_item",

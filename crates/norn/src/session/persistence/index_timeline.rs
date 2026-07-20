@@ -13,7 +13,7 @@ use crate::util::PrivateFileIdentity;
 
 #[cfg(test)]
 use super::super::io::{ensure_session_id_not_reserved, serialize_events};
-use super::super::io::{retry_prefix_from_file, session_file_relative};
+use super::super::io::{retry_prefix_from_file, session_file_relative, strict_events_from_file};
 use super::super::timeline_file::{
     ExistingEventInspection, open_existing_for_append, open_session_append_bound_under,
 };
@@ -181,6 +181,8 @@ fn validate_or_bind_provider_state_identity_inner(
     let timeline_lock = TimelineLockGuard::acquire_under(index_lock.root(), &relative)?;
     let mut file = open_existing_for_append(index_lock.root(), &relative)?;
     let display_path = index_lock.root().display_path(&relative);
+    let events = strict_events_from_file(&mut file, &display_path)?;
+    crate::session::validate_provider_state_provenance(&events)?;
     let facts = retry_prefix_from_file(&mut file, &display_path, &[])?;
     let (boundary, exact) = match facts.tail {
         Some(event) if is_provider_identity_adoption(&event) => (event, facts.counters),

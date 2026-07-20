@@ -199,9 +199,24 @@ impl ResponseItem {
     /// # Errors
     ///
     /// Returns an error when the value is not an object, has no discriminator,
-    /// or a known variant omits a required field.
+    /// or a known variant omits or invalidates a required field.
     pub fn from_value(raw: Value) -> Result<Self, ResponseItemError> {
         parse::response_item(raw)
+    }
+
+    /// Reconstruct the malformed shape accepted before the nonempty parser guard.
+    #[cfg(test)]
+    pub(crate) fn malformed_empty_compaction_for_replay_test() -> Self {
+        Self::Compaction(ResponseCompactionItem {
+            raw: serde_json::json!({
+                "type": "compaction",
+                "id": "cmp_empty_replay_fixture",
+                "encrypted_content": ""
+            }),
+            item_type: "compaction".to_owned(),
+            id: "cmp_empty_replay_fixture".to_owned(),
+            encrypted_content: String::new(),
+        })
     }
 
     /// Return the provider discriminator.

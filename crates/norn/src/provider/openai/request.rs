@@ -11,8 +11,10 @@ use crate::provider::request::{
 use crate::provider::tools::{HostedToolDefinition, ProviderToolDefinition};
 
 mod caller_projection;
+mod replay;
 
 use caller_projection::ToolCallerProjection;
+pub(super) use replay::validate_replayable_reasoning;
 
 /// Catalog provider identifier every `OpenAI` Responses connection
 /// resolves against.
@@ -105,12 +107,16 @@ pub(crate) enum ContextManagementItem {
 /// synthesising an empty string would silently corrupt the conversation. A
 /// missing `tool_call_id` is always an upstream bug; surfacing it here lets
 /// the caller fail the turn rather than dispatch an unmoored tool result.
+/// Returns [`ProviderError::ProviderStateReplayUnavailable`] when an outgoing
+/// full replay contains reasoning or provider compaction without nonempty
+/// encrypted provider state.
 /// Returns [`ProviderError::InvalidRequest`] when the requested service tier
 /// is not supported for the model on `catalog_backend`.
 pub(crate) fn build_payload(
     request: &ProviderRequest,
     catalog_backend: &str,
 ) -> Result<serde_json::Value, ProviderError> {
+    validate_replayable_reasoning(&request.messages)?;
     let mut instructions = String::new();
     let mut input = Vec::new();
     let mut callers = ToolCallerProjection::default();
@@ -351,10 +357,10 @@ fn serialize_user_message(msg: &Message) -> serde_json::Value {
 /// reference behaviour for stateless threading
 /// (`response_threading: false`): without the echo the ChatGPT/codex
 /// backend drops the model's reasoning between tool-call iterations. Items
-/// without `encrypted_content` are never echoed (the server cannot
-/// reconstruct reasoning state from them and rejects bare reasoning items),
-/// and the server-internal `rs_*` item id is deliberately omitted from the
-/// echo (`protocol-models.rs:757-761`).
+/// without nonempty `encrypted_content` make a full replay impossible and are
+/// rejected before serialization; silently omitting them would change the
+/// conversation. The server-internal `rs_*` item id is deliberately omitted
+/// from replay (`protocol-models.rs:757-761`).
 ///
 /// Each `AssistantToolCall` is replayed with the wire envelope its `kind`
 /// requires:
@@ -1358,10 +1364,10 @@ mod tests {
     }
 
     #[test]
-    fn reasoning_without_encrypted_content_is_not_replayed() {
-        // Items captured on store: true responses carry no
-        // encrypted_content; the stateless backend cannot reconstruct
-        // reasoning state from them, so they are never echoed.
+    fn reasoning_without_encrypted_content_fails_closed() {
+        // Items captured on store:true responses carry no encrypted state. A
+        // full replay cannot silently discard them without changing the model
+        // state, so request construction must fail before dispatch.
         let req = assistant_request_with_reasoning(vec![ReasoningItem {
             id: "rs_plain".to_owned(),
             summary: vec![ReasoningSummaryPart::SummaryText {
@@ -1370,14 +1376,12 @@ mod tests {
             content: None,
             encrypted_content: None,
         }]);
-        let payload =
-            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
-        let input = payload["input"].as_array().unwrap();
-        assert_eq!(input.len(), 2, "message + function_call only");
-        assert!(
-            input.iter().all(|item| item["type"] != "reasoning"),
-            "no reasoning item may be echoed without encrypted_content: {input:?}"
-        );
+        let error = build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION)
+            .expect_err("bare reasoning must not be silently dropped");
+        assert!(matches!(
+            error,
+            ProviderError::ProviderStateReplayUnavailable
+        ));
     }
 
     #[test]

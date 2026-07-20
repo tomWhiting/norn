@@ -33,6 +33,7 @@
 
 use serde_json::{Map, Value};
 use termina::escape::csi::{Csi, Sgr};
+
 use termina::style::{ColorSpec, Intensity, RgbColor};
 
 use norn::session::events::{ProviderEpochBoundaryReason, SessionEvent};
@@ -99,6 +100,10 @@ pub fn render_event(
                 ProviderEpochBoundaryReason::ProviderIdentityAdoption => {
                     "provider identity adoption"
                 }
+                ProviderEpochBoundaryReason::ResponseStatePublication => {
+                    "response state publication"
+                }
+                ProviderEpochBoundaryReason::FilteredFork => "filtered fork context",
             };
             render_dim_status_line(&format!("provider epoch boundary: {reason}"))
         }

@@ -59,3 +59,7 @@ pub use session_spec::SessionSpec;
 mod credential_affinity_tests;
 #[cfg(test)]
 mod fork_canonical_resolution_tests;
+#[cfg(test)]
+mod fork_d3_projection_tests;
+#[cfg(test)]
+mod fork_provider_compaction_tests;

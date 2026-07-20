@@ -174,6 +174,11 @@ pub enum ProviderEpochBoundaryReason {
     /// adopted its first credential-and-authority identity. Earlier response
     /// anchors cannot be attributed to that identity and must not be reused.
     ProviderIdentityAdoption,
+    /// The following provenance record and assistant response form one
+    /// provider-state publication group.
+    ResponseStatePublication,
+    /// A non-identity fork changed the provider-facing history.
+    FilteredFork,
 }
 
 /// A single session event. Each variant embeds an [`EventBase`] via the
@@ -233,7 +238,10 @@ pub enum SessionEvent {
         /// persisted before this field was added.
         #[serde(default)]
         stop_reason: String,
-        /// Server-assigned response ID for conversation chaining.
+        /// Server-assigned response ID returned by the provider. It is usable
+        /// for conversation chaining only when a preceding
+        /// [`crate::session::ProviderStateProvenance`] custom event targets it
+        /// and records `stored: true`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         response_id: Option<String>,
     },

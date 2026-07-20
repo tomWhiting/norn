@@ -1,5 +1,9 @@
 use serde_json::{Value, json};
 
+mod replay;
+
+pub(crate) use replay::with_replayable_reasoning_state;
+
 pub(crate) use self::minimal::minimal_output_item_inventory;
 pub(crate) use self::tools::public_tool_definitions;
 use crate::provider::response_item::{
@@ -427,7 +431,11 @@ pub(crate) fn spawn_shape_matrix_items(id_suffix: &str, text: &str) -> Vec<Value
     items
 }
 
-/// Populated and all-optional-absent items safe for historical replay.
+/// Populated and all-optional-absent items accepted as historical output.
+///
+/// Use [`with_replayable_reasoning_state`] before sending this corpus on a
+/// fresh request because the optional-absent reasoning shape has no opaque
+/// provider state.
 pub(crate) fn historical_shape_matrix_items(id_suffix: &str, text: &str) -> Vec<Value> {
     let mut items = historical_replay_items(id_suffix, text);
     items.extend(

@@ -1,14 +1,16 @@
 //! Managed dynamic-context Developer message tracking.
 //!
-//! The agent loop maintains at most one Developer-role message that carries
-//! the current dynamic context (environment section, collaboration mode,
-//! rule-injected sections, prompt-command output). Its content changes every
-//! iteration — most reliably the `# Environment` `Time:` field, at second
-//! resolution — so it is re-synced fresh on every provider call.
+//! On stateless providers, the agent loop maintains at most one Developer-role
+//! message carrying the current dynamic context (environment section,
+//! collaboration mode, rule-injected sections, prompt-command output). Its
+//! content changes every iteration, so it is re-synced before every provider
+//! call. Provider-threaded Responses requests instead place the same content
+//! in top-level `instructions`, whose documented replacement semantics prevent
+//! stale dynamic context from accumulating in provider-owned history.
 //!
 //! # Placement: the tail, not the prefix
 //!
-//! The message is placed at the **tail** of the live conversation — after the
+//! On stateless requests, the message is placed at the **tail** of the live conversation — after the
 //! System message, after all persisted history, after the new user input, and
 //! after any prior-iteration tool results — so it is the last message before
 //! the model responds. Placing it ahead of history (its former home at
@@ -20,7 +22,7 @@
 //!
 //! # Lifecycle: detach before preflight, attach after
 //!
-//! [`ManagedDevMessage`] is consulted twice per iteration in
+//! For stateless requests, [`ManagedDevMessage`] is consulted twice per iteration in
 //! [`build_request`](crate::r#loop::runner::prompt):
 //!
 //! 1. [`Self::detach`] runs *before* the context preflight. It removes the

@@ -3,7 +3,9 @@ use std::io;
 use serde_json::{Value, json};
 
 use super::{CATALOG_BACKEND_CODEX_SUBSCRIPTION, build_payload};
-use crate::provider::openai::output_item_test_fixtures::historical_shape_matrix_items;
+use crate::provider::openai::output_item_test_fixtures::{
+    historical_shape_matrix_items, with_replayable_reasoning_state,
+};
 use crate::provider::request::ProviderRequest;
 use crate::provider::response_item::{
     ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
@@ -23,7 +25,10 @@ fn options(model: &str) -> CreateSessionOptions {
 }
 
 fn opaque_history(id_suffix: &str) -> Vec<Value> {
-    let mut history = historical_shape_matrix_items(id_suffix, "opaque lifecycle");
+    let mut history = with_replayable_reasoning_state(historical_shape_matrix_items(
+        id_suffix,
+        "opaque lifecycle",
+    ));
     assert_eq!(history.len(), 52);
     history.push(json!({
         "type": "future_hosted_call",

@@ -53,31 +53,18 @@ use crate::session::store::EventStore;
 const INTERRUPTED_OUTPUT: &str =
     "interrupted — output unavailable; re-run the call if still needed";
 
-/// Whether `event` is a synthetic result appended by resume repair.
-///
-/// This durable distinction is also the response-thread safety boundary: the
-/// result exists only in the local transcript, not in the provider state
-/// addressed by the preceding response ID, so the first resumed request must
-/// replay the healed transcript instead of sending it as a threaded delta.
-pub(crate) fn is_interrupted_tool_result(event: &SessionEvent) -> bool {
-    matches!(
-        event,
-        SessionEvent::ToolResult { output, .. }
-            if output.get("error").and_then(serde_json::Value::as_str)
-                == Some(INTERRUPTED_OUTPUT)
-    )
-}
-
 /// Append a synthetic [`SessionEvent::ToolResult`] for every tool call in
 /// `store` that has no recorded output, healing a transcript killed
 /// mid-turn so a resumed session assembles a well-formed provider request.
 ///
-/// A tool call is *dangling* when no later family-compatible canonical output
-/// and no later legacy `ToolResult` consumes it — exactly the condition the
-/// Responses API rejects with "no tool output found for function call". Every dangling
-/// call receives one synthetic result carrying [`INTERRUPTED_OUTPUT`],
-/// appended in the calls' original order after all existing events (so each
-/// synthetic output still follows its originating call on the wire).
+/// A tool call is *dangling* when it remains in the effective durable prompt
+/// view and no later family-compatible canonical output or legacy
+/// `ToolResult` consumes it — exactly the condition the Responses API rejects
+/// with "no tool output found for function call". Compacted or suppressed
+/// calls are not repaired back into visibility. Every effective dangling call
+/// receives one synthetic result carrying [`INTERRUPTED_OUTPUT`], appended in
+/// the calls' original order after all existing events (so each synthetic
+/// output still follows its originating call on the wire).
 ///
 /// Returns the `call_id`s repaired, in append order — empty when the log
 /// was already well-formed. The caller logs the single honest summary line
@@ -92,7 +79,7 @@ pub(crate) fn is_interrupted_tool_result(event: &SessionEvent) -> bool {
 pub fn repair_dangling_tool_calls(store: &EventStore) -> Result<Vec<String>, SessionError> {
     let events = store.events();
 
-    let dangling = crate::session::unresolved_local_tool_calls(&events);
+    let dangling = crate::session::unresolved_effective_local_tool_calls(&events);
 
     let mut repaired = Vec::with_capacity(dangling.len());
     for call in dangling {
@@ -447,3 +434,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod effective_view_tests;

@@ -55,6 +55,7 @@ use crate::rules::types::{
     DeliveryMode as RuleDelivery, Rule, RuleId, TriggerCondition, TriggerTiming,
 };
 use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
+use crate::session::response_publication_fixture;
 use crate::session::store::EventStore;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
@@ -278,9 +279,9 @@ async fn provider_threaded_second_step_uses_response_anchor() {
             .map(|management| management.compact_threshold_tokens),
         Some(200_000),
     );
-    // Tail placement (PROMPT-CACHE fix): the managed dynamic-context
-    // Developer message is now LAST, after the new user input, so the
-    // System message + history form a stable cacheable prefix.
+    // Threaded state sends the current managed context as the final System
+    // message. The Responses serializer lifts it into replaceable top-level
+    // instructions instead of persisting it as provider-thread input.
     assert_eq!(request.messages.len(), 3);
     assert_eq!(
         request.messages[0].role,
@@ -293,7 +294,13 @@ async fn provider_threaded_second_step_uses_response_anchor() {
     assert_eq!(request.messages[1].content.as_deref(), Some("test prompt"));
     assert_eq!(
         request.messages[2].role,
-        crate::provider::request::MessageRole::Developer
+        crate::provider::request::MessageRole::System
+    );
+    assert!(
+        request.messages[2]
+            .content
+            .as_deref()
+            .is_some_and(|content| !content.is_empty())
     );
 }
 
@@ -344,9 +351,8 @@ async fn provider_threaded_tool_continuation_sends_only_tool_result() {
         Some("resp_tool")
     );
     assert!(requests[1].store);
-    // Tail placement (PROMPT-CACHE fix): the threaded delta is the tool
-    // result followed by the managed dynamic-context Developer message,
-    // which is LAST.
+    // The threaded delta is the tool result plus the current managed context,
+    // represented as a final System message for top-level instruction lifting.
     assert_eq!(requests[1].messages.len(), 3);
     assert_eq!(
         requests[1].messages[0].role,
@@ -362,12 +368,19 @@ async fn provider_threaded_tool_continuation_sends_only_tool_result() {
     );
     assert_eq!(
         requests[1].messages[2].role,
-        crate::provider::request::MessageRole::Developer,
+        crate::provider::request::MessageRole::System,
+    );
+    assert!(
+        requests[1].messages[2]
+            .content
+            .as_deref()
+            .is_some_and(|content| !content.is_empty())
     );
 }
 
 #[tokio::test]
-async fn provider_threaded_resume_replays_post_anchor_history() {
+async fn provider_threaded_resume_replays_post_anchor_history()
+-> Result<(), Box<dyn std::error::Error>> {
     let config = AgentLoopConfig {
         conversation_state: ConversationStateMode::ProviderThreaded,
         ..AgentLoopConfig::default()
@@ -389,24 +402,26 @@ async fn provider_threaded_resume_replays_post_anchor_history() {
             content: "old prompt".to_string(),
         })
         .unwrap();
+    let fixture = response_publication_fixture(store.last_event_id(), true)?;
+    let assistant = SessionEvent::AssistantMessage {
+        response_items: Vec::new(),
+        base: fixture.assistant_base,
+        content: String::new(),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: vec![ToolCallEvent {
+            call_id: "call_read".to_string(),
+            name: "read".to_string(),
+            arguments: serde_json::json!({"path": "a"}),
+            kind: crate::provider::request::ToolCallKind::Function,
+            caller: crate::provider::request::ToolCallCaller::Absent,
+        }],
+        usage: EventUsage::default(),
+        stop_reason: "tool_use".to_string(),
+        response_id: Some("resp_tool".to_string()),
+    };
     store
-        .append(SessionEvent::AssistantMessage {
-            response_items: Vec::new(),
-            base: EventBase::new(store.last_event_id()),
-            content: String::new(),
-            thinking: String::new(),
-            reasoning: Vec::new(),
-            tool_calls: vec![ToolCallEvent {
-                call_id: "call_read".to_string(),
-                name: "read".to_string(),
-                arguments: serde_json::json!({"path": "a"}),
-                kind: crate::provider::request::ToolCallKind::Function,
-                caller: crate::provider::request::ToolCallCaller::Absent,
-            }],
-            usage: EventUsage::default(),
-            stop_reason: "tool_use".to_string(),
-            response_id: Some("resp_tool".to_string()),
-        })
+        .append_batch(&[fixture.boundary, fixture.provenance, assistant])
         .unwrap();
     store
         .append(SessionEvent::ToolResult {
@@ -445,16 +460,15 @@ async fn provider_threaded_resume_replays_post_anchor_history() {
         .iter()
         .map(|message| message.role.clone())
         .collect();
-    // Tail placement (PROMPT-CACHE fix): the post-anchor history (tool
-    // result, then the new user prompt) is replayed, and the managed
-    // dynamic-context Developer message is LAST.
+    // The post-anchor history (tool result, then new user prompt) is replayed,
+    // followed by the current System-form managed instructions.
     assert_eq!(
         request_roles,
         vec![
             crate::provider::request::MessageRole::System,
             crate::provider::request::MessageRole::ToolResult,
             crate::provider::request::MessageRole::User,
-            crate::provider::request::MessageRole::Developer,
+            crate::provider::request::MessageRole::System,
         ],
     );
     assert_eq!(
@@ -465,6 +479,7 @@ async fn provider_threaded_resume_replays_post_anchor_history() {
         requests[0].messages[2].content.as_deref(),
         Some("test prompt"),
     );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

@@ -62,3 +62,4 @@ include!("tests/open_id.rs");
 include!("tests/admin.rs");
 include!("tests/resume_policy.rs");
 include!("tests/fork_audio.rs");
+include!("tests/provider_state_validation.rs");

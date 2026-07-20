@@ -264,6 +264,13 @@ impl Provider for OpenAiProvider {
         crate::provider::tools::ProviderCapabilities::openai_responses()
     }
 
+    fn validate_replay(
+        &self,
+        messages: &[crate::provider::request::Message],
+    ) -> Result<(), ProviderError> {
+        super::request::validate_replayable_reasoning(messages)
+    }
+
     fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         Ok(self.stream_inner(request, None))
     }

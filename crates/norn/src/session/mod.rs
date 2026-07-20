@@ -22,6 +22,11 @@ pub mod migration;
 pub mod mutation_ledger;
 pub mod persistence;
 mod provider_affinity;
+mod provider_filtered_fork_boundary;
+mod provider_state_provenance;
+#[cfg(test)]
+mod provider_state_test_support;
+mod provider_state_validation;
 pub mod response_audio;
 pub mod resume_repair;
 pub mod spool;
@@ -36,7 +41,8 @@ pub use branch::{
     SessionBrancher, child_path_slug, slugify_name_stem,
 };
 pub(crate) use event_projection::{
-    apply_local_tool_event, unresolved_local_tool_calls, without_orphan_local_tool_outputs,
+    apply_local_tool_event, atomic_local_tool_projection, unresolved_effective_local_tool_calls,
+    unresolved_local_tool_calls,
 };
 pub use manager::{CreateSessionOptions, OpenSession, ReplaySummary, ResumePolicy, SessionManager};
 pub use migration::{
@@ -58,12 +64,24 @@ pub use persistence::{
     is_reserved_session_id, read_index, read_session_events_for_entry,
     resolve_latest_session_in_working_dir, resolve_session, sum_usage_from_events,
 };
+pub use provider_filtered_fork_boundary::ProviderFilteredForkBoundary;
+pub use provider_state_provenance::{
+    PROVIDER_STATE_PROVENANCE_EVENT_TYPE, ProviderStateProvenance, ProviderStateProvenanceError,
+};
+#[cfg(test)]
+pub(crate) use provider_state_test_support::{
+    ResponsePublicationFixture, response_publication_fixture,
+};
+pub use provider_state_validation::ProviderStateValidationError;
+pub(crate) use provider_state_validation::{
+    ActiveResponseProvenance, ResponseStateDisposition, discover_active_response_provenance,
+    event_cuts_response_anchor, response_publication_group_len, validate_provider_state_provenance,
+};
 pub use response_audio::{
     RESPONSE_AUDIO_ARTIFACT_EVENT_TYPE, ResponseAudioArtifact, ResponseAudioArtifactLink,
     ResponseAudioArtifactRef, ResponseAudioArtifactState, ResponseAudioReferenceError,
     ResponseAudioStore, referenced_response_audio_artifacts, response_audio_artifact_links,
 };
-pub(crate) use resume_repair::is_interrupted_tool_result;
 pub use resume_repair::repair_dangling_tool_calls;
 pub use spool::{SpoolWriter, read_spooled_output, resolve_spool_ref};
 pub use store::{DurabilityPolicy, EventStore, JsonlSink, PersistenceSink};
@@ -84,3 +102,5 @@ mod provider_affinity_tests;
 mod provider_epoch_tests;
 #[cfg(test)]
 mod response_audio_lifecycle_tests;
+#[cfg(test)]
+mod response_publication_batch_tests;

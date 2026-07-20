@@ -1,7 +1,5 @@
 //! Provider conversation-state request shaping.
 
-use std::collections::HashSet;
-
 use crate::error::ProviderError;
 use crate::r#loop::config::{AgentLoopConfig, ConversationStateMode};
 use crate::provider::ProviderStateIdentity;
@@ -9,12 +7,39 @@ use crate::provider::request::{Message, ProviderContextManagement};
 use crate::provider::tools::ProviderCapabilities;
 use crate::session::events::SessionEvent;
 use crate::session::store::EventStore;
+use crate::session::{
+    ActiveResponseProvenance, ResponseStateDisposition, discover_active_response_provenance,
+    event_cuts_response_anchor,
+};
+
+/// Validate every reserved provider-state record without deriving a request.
+pub(super) fn validate_response_state_provenance(
+    events: &[SessionEvent],
+) -> Result<(), ProviderError> {
+    discover_active_response_provenance(events)
+        .map_err(|_error| ProviderError::ProviderStateProvenanceInvalid)?;
+    Ok(())
+}
 
 /// Stored Responses API anchor visible in the local prompt view.
 #[derive(Debug, Clone)]
 pub(super) struct ResponseThreadAnchor {
     response_id: String,
     input_start: usize,
+}
+
+impl ResponseThreadAnchor {
+    pub(super) fn witness_message<'a>(&self, messages: &'a [Message]) -> Option<&'a Message> {
+        self.input_start
+            .checked_sub(1)
+            .and_then(|index| messages.get(index))
+    }
+}
+
+/// Proven current anchor plus unmarked pre-D3 candidates, newest first.
+pub(super) struct ResponseThreadAnchors {
+    pub(super) proven: Option<ResponseThreadAnchor>,
+    pub(super) legacy_candidates: Vec<ResponseThreadAnchor>,
 }
 
 #[cfg(test)]
@@ -35,72 +60,99 @@ pub(super) fn latest_response_anchor(
     events: &[SessionEvent],
     prefix_len: usize,
     include_compactions: bool,
-) -> Option<ResponseThreadAnchor> {
-    latest_response_anchor_in_epoch(events, prefix_len, include_compactions, None)
+) -> Result<Option<ResponseThreadAnchor>, ProviderError> {
+    let provenance = discover_active_response_provenance(events)
+        .map_err(|_error| ProviderError::ProviderStateProvenanceInvalid)?;
+    Ok(
+        response_thread_anchors_in_epoch(events, prefix_len, include_compactions, &provenance)
+            .proven,
+    )
 }
 
-/// Locate the latest visible assistant anchor while respecting epoch
-/// boundaries that a context-edited prompt view structurally omits.
+/// Locate the latest visible anchor while respecting omitted epoch cuts.
+#[cfg(test)]
 pub(super) fn latest_response_anchor_for_prompt_view(
     visible_events: &[SessionEvent],
     store: &EventStore,
     prefix_len: usize,
     include_compactions: bool,
-) -> Option<ResponseThreadAnchor> {
-    let active_event_ids = store.with_events(|full_events| {
-        full_events
-            .iter()
-            .rposition(|event| matches!(event, SessionEvent::ProviderEpochBoundary { .. }))
-            .map(|boundary| {
-                full_events[boundary + 1..]
-                    .iter()
-                    .map(|event| event.base().id.clone())
-                    .collect::<HashSet<_>>()
-            })
-    });
-    latest_response_anchor_in_epoch(
+) -> Result<Option<ResponseThreadAnchor>, ProviderError> {
+    Ok(response_thread_anchors_for_prompt_view(
+        visible_events,
+        store,
+        prefix_len,
+        include_compactions,
+    )?
+    .proven)
+}
+
+/// Locate proven and pre-provenance anchors in the active prompt view.
+pub(super) fn response_thread_anchors_for_prompt_view(
+    visible_events: &[SessionEvent],
+    store: &EventStore,
+    prefix_len: usize,
+    include_compactions: bool,
+) -> Result<ResponseThreadAnchors, ProviderError> {
+    let provenance = store
+        .with_events(discover_active_response_provenance)
+        .map_err(|_error| ProviderError::ProviderStateProvenanceInvalid)?;
+    Ok(response_thread_anchors_in_epoch(
         visible_events,
         prefix_len,
         include_compactions,
-        active_event_ids.as_ref(),
-    )
+        &provenance,
+    ))
 }
 
-fn latest_response_anchor_in_epoch(
+fn response_thread_anchors_in_epoch(
     events: &[SessionEvent],
     prefix_len: usize,
     include_compactions: bool,
-    active_event_ids: Option<&HashSet<crate::session::events::EventId>>,
-) -> Option<ResponseThreadAnchor> {
+    provenance: &ActiveResponseProvenance,
+) -> ResponseThreadAnchors {
     let mut message_index = prefix_len;
-    let mut anchor = None;
+    let mut proven = None;
+    let mut legacy_candidates = Vec::new();
     for event in events {
         if event_produces_prompt_message(event, include_compactions) {
             message_index = message_index.saturating_add(1);
         }
         match event {
             SessionEvent::AssistantMessage { response_id, .. }
-                if active_event_ids.is_none_or(|active| active.contains(&event.base().id))
-                    && response_id.as_ref().is_some_and(|id| !id.is_empty()) =>
+                if response_id.as_ref().is_some_and(|id| !id.is_empty()) =>
             {
-                anchor = response_id
-                    .as_ref()
-                    .map(|response_id| ResponseThreadAnchor {
-                        response_id: response_id.clone(),
-                        input_start: message_index,
-                    });
+                let Some(response_id) = response_id.as_ref() else {
+                    continue;
+                };
+                let candidate = ResponseThreadAnchor {
+                    response_id: response_id.clone(),
+                    input_start: message_index,
+                };
+                match provenance.disposition(&event.base().id) {
+                    Some(ResponseStateDisposition::Stored) => {
+                        proven = Some(candidate);
+                        legacy_candidates.clear();
+                    }
+                    Some(ResponseStateDisposition::Legacy) => legacy_candidates.push(candidate),
+                    Some(
+                        ResponseStateDisposition::NotStored
+                        | ResponseStateDisposition::UnmarkedAfterProvenance,
+                    )
+                    | None => {}
+                }
             }
-            SessionEvent::ProviderEpochBoundary { .. } => anchor = None,
-            _ if crate::session::is_interrupted_tool_result(event) => {
-                // Resume repair appends this result locally after a hard kill.
-                // It is absent from the provider state named by the preceding
-                // response ID, so full replay must establish a fresh anchor.
-                anchor = None;
+            _ if event_cuts_response_anchor(event) => {
+                proven = None;
+                legacy_candidates.clear();
             }
             _ => {}
         }
     }
-    anchor
+    legacy_candidates.reverse();
+    ResponseThreadAnchors {
+        proven,
+        legacy_candidates,
+    }
 }
 
 /// Whether `event` renders to a provider message in the prompt view.
@@ -148,6 +200,7 @@ pub(super) fn event_produces_prompt_message(
 #[derive(Debug)]
 pub(super) struct ConversationRequestState {
     threaded: bool,
+    server_compaction: bool,
     previous_response_id: Option<String>,
     prefix_len: usize,
     input_start: usize,
@@ -175,6 +228,7 @@ impl ConversationRequestState {
         };
         Ok(Self {
             threaded,
+            server_compaction: threaded && capabilities.server_compaction,
             previous_response_id,
             prefix_len,
             input_start,
@@ -214,16 +268,23 @@ impl ConversationRequestState {
 
     /// Provider-side context management for this request.
     pub(super) fn context_management(
+        &self,
         config: &AgentLoopConfig,
     ) -> Option<ProviderContextManagement> {
-        if config.conversation_state == ConversationStateMode::ManualReplay {
+        if !self.server_compaction {
             return None;
         }
-        config
-            .server_compaction_threshold_tokens
-            .map(|compact_threshold_tokens| ProviderContextManagement {
-                compact_threshold_tokens,
-            })
+
+        let compact_threshold_tokens = config.server_compaction_threshold_tokens.or_else(|| {
+            config
+                .context_window_limit
+                .zip(config.auto_compact_reserve_tokens)
+                .and_then(|(limit, reserve)| limit.checked_sub(reserve))
+                .filter(|threshold| *threshold > 0)
+        })?;
+        Some(ProviderContextManagement {
+            compact_threshold_tokens,
+        })
     }
 
     /// Build the message slice for this provider request.
@@ -238,26 +299,62 @@ impl ConversationRequestState {
         request_messages
     }
 
-    /// Drop the provider-side response anchor so the next request replays
-    /// the full local conversation instead of a delta.
-    ///
-    /// A `previous_response_id` thread is reconstructed server-side from
-    /// the referenced response, so a client-side compaction cannot shrink
-    /// it — the provider would keep the full uncompacted history and the
-    /// compaction record would claim an elision that never reached the
-    /// wire (fix campaign Track L, finding 2). Dropping the anchor forces
-    /// the next request to send the genuinely compacted conversation;
-    /// threading then resumes from that response via
-    /// [`Self::observe_response`].
-    pub(super) fn reset_thread_anchor(&mut self) {
-        if self.previous_response_id.is_some() || self.input_start != 0 {
-            tracing::debug!(
-                "dropping provider response-thread anchor so the compacted \
-                 conversation is replayed in full on the next request",
-            );
+    /// Build the delta a candidate pre-provenance anchor would authorize.
+    pub(super) fn request_messages_for_legacy_anchor(
+        &self,
+        messages: &[Message],
+        anchor: &ResponseThreadAnchor,
+    ) -> Vec<Message> {
+        if !self.threaded || anchor.input_start == 0 {
+            return messages.to_vec();
         }
-        self.previous_response_id = None;
-        self.input_start = 0;
+        let mut request_messages = Vec::new();
+        request_messages.extend(messages.iter().take(self.prefix_len).cloned());
+        request_messages.extend(messages.iter().skip(anchor.input_start).cloned());
+        request_messages
+    }
+
+    /// Adopt a validated pre-provenance anchor for this request state.
+    pub(super) fn adopt_legacy_anchor(&mut self, anchor: ResponseThreadAnchor) -> bool {
+        if !self.threaded {
+            return false;
+        }
+        self.previous_response_id = Some(anchor.response_id);
+        self.input_start = anchor.input_start;
+        true
+    }
+
+    /// Build a request whose current managed context uses the Responses
+    /// `instructions` replacement surface.
+    ///
+    /// A trailing System message is extracted into top-level `instructions`
+    /// by the Responses serializer. Unlike ordinary input items, prior
+    /// instructions are not inherited through `previous_response_id`, so the
+    /// current dynamic context replaces rather than accumulates. The live
+    /// message list remains event-aligned and unmodified.
+    pub(super) fn request_messages_with_managed_instructions(
+        &self,
+        messages: &[Message],
+        managed_context: Option<String>,
+    ) -> Vec<Message> {
+        let mut request_messages = self.request_messages(messages);
+        if self.threaded
+            && let Some(content) = managed_context
+        {
+            request_messages.push(Message {
+                response_items: Vec::new(),
+                role: crate::provider::request::MessageRole::System,
+                content: Some(content),
+                thinking: String::new(),
+                reasoning: Vec::new(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_call_kind: None,
+                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
+            });
+        }
+        request_messages
     }
 
     /// Update the anchor after a provider response.
@@ -352,415 +449,14 @@ mod backend_security_tests {
 
         assert!(!state.store());
         assert!(state.previous_response_id().is_none());
-        assert!(ConversationRequestState::context_management(&loop_config).is_none());
+        assert!(state.context_management(&loop_config).is_none());
         Ok(())
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-mod tests {
-    use super::*;
-    use crate::provider::request::MessageRole;
-    use crate::provider::request::ToolCallKind;
-    use crate::rules::types::{DeliveryMode, TriggerTiming};
-    use crate::session::events::{
-        EventBase, EventUsage, ProviderEpochBoundaryReason, ToolCallEvent,
-    };
-    use crate::session::store::EventStore;
-
-    /// `event_produces_prompt_message` must agree exactly with the message
-    /// projection in `session::conversion` for every delivery mode: a
-    /// `RuleInjection` that `conversion` renders to a live message must be
-    /// counted, and one it drops must not be. Divergence silently breaks
-    /// in-flight compaction and the Responses-API thread anchor, which
-    /// count messages through this predicate while the message list is
-    /// built by `conversion`.
-    #[test]
-    fn rule_injection_prompt_message_predicate_mirrors_conversion() {
-        for delivery in [
-            DeliveryMode::SystemContextAppend,
-            DeliveryMode::ContextInjection,
-            DeliveryMode::MessageDelivery,
-        ] {
-            let label = format!("{delivery:?}");
-            let event = SessionEvent::RuleInjection {
-                base: EventBase::new(None),
-                rule_id: "rust-conventions".to_owned(),
-                delivery,
-                timing: TriggerTiming::After,
-                content: "Follow conventions.".to_owned(),
-            };
-            let rendered =
-                !crate::session::conversion::events_to_messages(std::slice::from_ref(&event))
-                    .is_empty();
-            assert_eq!(
-                event_produces_prompt_message(&event, true),
-                rendered,
-                "predicate diverges from conversion for delivery {label}",
-            );
-        }
-    }
-
-    fn message(role: MessageRole, content: &str) -> Message {
-        Message {
-            response_items: Vec::new(),
-            role,
-            content: Some(content.to_string()),
-            thinking: String::new(),
-            reasoning: Vec::new(),
-            tool_calls: Vec::new(),
-            tool_call_id: None,
-            tool_name: None,
-            tool_call_kind: None,
-            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
-        }
-    }
-
-    fn config(mode: ConversationStateMode) -> AgentLoopConfig {
-        AgentLoopConfig {
-            conversation_state: mode,
-            ..AgentLoopConfig::default()
-        }
-    }
-
-    #[test]
-    fn threaded_request_keeps_instructions_and_only_new_input() {
-        let store = EventStore::new();
-        store
-            .append(SessionEvent::AssistantMessage {
-                response_items: Vec::new(),
-                base: EventBase::new(None),
-                content: "old answer".to_string(),
-                thinking: String::new(),
-                reasoning: Vec::new(),
-                tool_calls: Vec::new(),
-                usage: EventUsage::default(),
-                stop_reason: "end_turn".to_string(),
-                response_id: Some("resp_old".to_string()),
-            })
-            .unwrap();
-
-        let state = ConversationRequestState::new(
-            &config(ConversationStateMode::ProviderThreaded),
-            ProviderCapabilities::openai_responses(),
-            1,
-            latest_response_anchor(&store.events(), 1, false),
-        )
-        .unwrap();
-        // Post-cache-fix layout: the prefix is exactly [System]; the managed
-        // dynamic-context Developer message rides the tail, after new input.
-        let messages = vec![
-            message(MessageRole::System, "system"),
-            message(MessageRole::Assistant, "old answer"),
-            message(MessageRole::User, "new"),
-            message(MessageRole::Developer, "dynamic"),
-        ];
-
-        let request_messages = state.request_messages(&messages);
-
-        assert_eq!(state.previous_response_id().as_deref(), Some("resp_old"));
-        assert_eq!(request_messages.len(), 3);
-        assert_eq!(request_messages[0].role, MessageRole::System);
-        assert_eq!(request_messages[1].content.as_deref(), Some("new"));
-        assert_eq!(
-            request_messages[2].role,
-            MessageRole::Developer,
-            "the tail managed message must ride the threaded delta",
-        );
-    }
-
-    #[test]
-    fn provider_epoch_boundary_clears_old_anchor_and_allows_new_anchor()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let store = EventStore::new();
-        store.append(SessionEvent::AssistantMessage {
-            response_items: Vec::new(),
-            base: EventBase::new(None),
-            content: "legacy answer".to_owned(),
-            thinking: String::new(),
-            reasoning: Vec::new(),
-            tool_calls: Vec::new(),
-            usage: EventUsage::default(),
-            stop_reason: "end_turn".to_owned(),
-            response_id: Some("resp_legacy".to_owned()),
-        })?;
-        let boundary = SessionEvent::ProviderEpochBoundary {
-            base: EventBase::new(None),
-            reason: ProviderEpochBoundaryReason::MigratedLegacy,
-        };
-        store.append(boundary.clone())?;
-
-        assert!(!event_produces_prompt_message(&boundary, true));
-        assert!(crate::session::conversion::events_to_messages(&[boundary]).is_empty());
-        assert!(latest_response_anchor(&store.events(), 1, false).is_none());
-
-        store.append(SessionEvent::AssistantMessage {
-            response_items: Vec::new(),
-            base: EventBase::new(None),
-            content: "native answer".to_owned(),
-            thinking: String::new(),
-            reasoning: Vec::new(),
-            tool_calls: Vec::new(),
-            usage: EventUsage::default(),
-            stop_reason: "end_turn".to_owned(),
-            response_id: Some("resp_native".to_owned()),
-        })?;
-        let Some(anchor) = latest_response_anchor(&store.events(), 1, false) else {
-            return Err(
-                std::io::Error::other("native response did not establish an anchor").into(),
-            );
-        };
-        assert_eq!(anchor.response_id, "resp_native");
-        assert_eq!(anchor.input_start, 3);
-        Ok(())
-    }
-
-    #[test]
-    fn threaded_request_excludes_replay_only_developer_history() {
-        let store = EventStore::new();
-        store
-            .append(SessionEvent::Compaction {
-                base: EventBase::new(None),
-                summary: "older history".to_string(),
-                replaced_event_ids: Vec::new(),
-            })
-            .unwrap();
-        store
-            .append(SessionEvent::UserMessage {
-                base: EventBase::new(None),
-                content: "old".to_string(),
-            })
-            .unwrap();
-        store
-            .append(SessionEvent::AssistantMessage {
-                response_items: Vec::new(),
-                base: EventBase::new(None),
-                content: "old answer".to_string(),
-                thinking: String::new(),
-                reasoning: Vec::new(),
-                tool_calls: Vec::new(),
-                usage: EventUsage::default(),
-                stop_reason: "end_turn".to_string(),
-                response_id: Some("resp_old".to_string()),
-            })
-            .unwrap();
-
-        let state = ConversationRequestState::new(
-            &config(ConversationStateMode::ProviderThreaded),
-            ProviderCapabilities::openai_responses(),
-            1,
-            latest_response_anchor(&store.events(), 1, true),
-        )
-        .unwrap();
-        let messages = vec![
-            message(MessageRole::System, "system"),
-            message(MessageRole::Developer, "old compaction summary"),
-            message(MessageRole::User, "old"),
-            message(MessageRole::Assistant, "old answer"),
-            message(MessageRole::User, "new"),
-        ];
-
-        let request_messages = state.request_messages(&messages);
-
-        assert_eq!(request_messages.len(), 2);
-        assert_eq!(request_messages[0].content.as_deref(), Some("system"));
-        assert_eq!(request_messages[1].content.as_deref(), Some("new"));
-    }
-
-    #[test]
-    fn unsupported_threading_is_rejected() {
-        let err = ConversationRequestState::new(
-            &config(ConversationStateMode::ProviderThreaded),
-            ProviderCapabilities::default(),
-            1,
-            None,
-        )
-        .unwrap_err();
-        assert!(matches!(err, ProviderError::UnsupportedFeature { .. }));
-    }
-
-    #[test]
-    fn auto_mode_falls_back_when_provider_cannot_thread() {
-        let state = ConversationRequestState::new(
-            &config(ConversationStateMode::Auto),
-            ProviderCapabilities::default(),
-            1,
-            Some(ResponseThreadAnchor {
-                response_id: "resp_old".to_string(),
-                input_start: 1,
-            }),
-        )
-        .unwrap();
-
-        assert_eq!(state.previous_response_id(), None);
-        assert!(!state.store());
-    }
-
-    #[test]
-    fn auto_mode_threads_when_provider_supports_it() {
-        let state = ConversationRequestState::new(
-            &config(ConversationStateMode::Auto),
-            ProviderCapabilities::openai_responses(),
-            1,
-            Some(ResponseThreadAnchor {
-                response_id: "resp_old".to_string(),
-                input_start: 1,
-            }),
-        )
-        .unwrap();
-
-        assert_eq!(state.previous_response_id().as_deref(), Some("resp_old"));
-        assert!(state.store());
-    }
-
-    #[test]
-    fn threaded_state_requires_an_opaque_provider_identity() -> Result<(), ProviderError> {
-        let state = ConversationRequestState::new(
-            &config(ConversationStateMode::ProviderThreaded),
-            ProviderCapabilities::openai_responses(),
-            1,
-            None,
-        )?;
-
-        assert!(matches!(
-            state.require_state_identity(None),
-            Err(ProviderError::ProviderStateIdentityRequired)
-        ));
-        assert!(
-            state
-                .require_state_identity(Some(ProviderStateIdentity::derive(
-                    "norn.conversation-state-test",
-                    b"threaded-provider-fixture",
-                )))
-                .is_ok()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn threaded_anchor_starts_after_latest_visible_response() {
-        let store = EventStore::new();
-        store
-            .append(SessionEvent::AssistantMessage {
-                response_items: Vec::new(),
-                base: EventBase::new(None),
-                content: "old answer".to_string(),
-                thinking: String::new(),
-                reasoning: Vec::new(),
-                tool_calls: Vec::new(),
-                usage: EventUsage::default(),
-                stop_reason: "end_turn".to_string(),
-                response_id: Some("resp_old".to_string()),
-            })
-            .unwrap();
-        store
-            .append(SessionEvent::ToolResult {
-                base: EventBase::new(None),
-                tool_call_id: "call_old".to_string(),
-                tool_name: "read".to_string(),
-                output: serde_json::json!({"ok": true}),
-                spool_ref: None,
-                duration_ms: 1,
-            })
-            .unwrap();
-        store
-            .append(SessionEvent::UserMessage {
-                base: EventBase::new(None),
-                content: "queued user".to_string(),
-            })
-            .unwrap();
-
-        let state = ConversationRequestState::new(
-            &config(ConversationStateMode::ProviderThreaded),
-            ProviderCapabilities::openai_responses(),
-            1,
-            latest_response_anchor(&store.events(), 1, false),
-        )
-        .unwrap();
-        let messages = vec![
-            message(MessageRole::System, "system"),
-            message(MessageRole::Assistant, "old answer"),
-            message(MessageRole::ToolResult, "tool result"),
-            message(MessageRole::User, "queued user"),
-            message(MessageRole::User, "new user"),
-        ];
-
-        let request_messages = state.request_messages(&messages);
-
-        assert_eq!(state.previous_response_id().as_deref(), Some("resp_old"));
-        assert_eq!(request_messages.len(), 4);
-        assert_eq!(request_messages[0].content.as_deref(), Some("system"));
-        assert_eq!(request_messages[1].content.as_deref(), Some("tool result"));
-        assert_eq!(request_messages[2].content.as_deref(), Some("queued user"));
-        assert_eq!(request_messages[3].content.as_deref(), Some("new user"));
-    }
-
-    #[test]
-    fn resume_repair_drops_stale_anchor_for_first_healed_request()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let store = EventStore::new();
-        store.append(SessionEvent::UserMessage {
-            base: EventBase::new(None),
-            content: "run it".to_string(),
-        })?;
-        store.append(SessionEvent::AssistantMessage {
-            response_items: Vec::new(),
-            base: EventBase::new(None),
-            content: String::new(),
-            thinking: String::new(),
-            reasoning: Vec::new(),
-            tool_calls: vec![ToolCallEvent {
-                call_id: "call_killed".to_string(),
-                name: "bash".to_string(),
-                arguments: serde_json::json!({"command": "long-running"}),
-                kind: ToolCallKind::Function,
-                caller: crate::provider::request::ToolCallCaller::Absent,
-            }],
-            usage: EventUsage::default(),
-            stop_reason: "tool_use".to_string(),
-            response_id: Some("resp_killed".to_string()),
-        })?;
-        crate::session::repair_dangling_tool_calls(&store)?;
-
-        let state = ConversationRequestState::new(
-            &config(ConversationStateMode::ProviderThreaded),
-            ProviderCapabilities::openai_responses(),
-            1,
-            latest_response_anchor(&store.events(), 1, false),
-        )?;
-        let mut messages = vec![message(MessageRole::System, "system")];
-        messages.extend(crate::session::conversion::events_to_messages(
-            &store.events(),
-        ));
-        messages.push(message(MessageRole::User, "resume"));
-
-        assert!(state.previous_response_id().is_none());
-        let request_messages = state.request_messages(&messages);
-        assert_eq!(request_messages.len(), messages.len());
-        assert_eq!(request_messages[1].content.as_deref(), Some("run it"));
-        assert_eq!(request_messages[2].tool_calls[0].call_id, "call_killed");
-        assert_eq!(
-            request_messages[3].tool_call_id.as_deref(),
-            Some("call_killed"),
-        );
-        assert_eq!(request_messages[4].content.as_deref(), Some("resume"));
-        Ok(())
-    }
-
-    #[test]
-    fn server_compaction_requires_threaded_state() {
-        let err = ConversationRequestState::new(
-            &AgentLoopConfig {
-                conversation_state: ConversationStateMode::ManualReplay,
-                server_compaction_threshold_tokens: Some(100),
-                ..AgentLoopConfig::default()
-            },
-            ProviderCapabilities::openai_responses(),
-            1,
-            None,
-        )
-        .unwrap_err();
-        assert!(matches!(err, ProviderError::UnsupportedFeature { .. }));
-    }
-}
+mod projection_tests;
+#[cfg(test)]
+mod request_state_tests;
+#[cfg(test)]
+mod test_support;

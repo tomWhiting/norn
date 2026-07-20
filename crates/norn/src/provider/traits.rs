@@ -5,7 +5,7 @@ use std::pin::Pin;
 use futures_util::Stream;
 
 use super::events::ProviderEvent;
-use super::request::ProviderRequest;
+use super::request::{Message, ProviderRequest};
 use super::state_identity::ProviderStateIdentity;
 use super::tools::ProviderCapabilities;
 use super::turn::ProviderTurnContext;
@@ -36,6 +36,21 @@ pub trait Provider: Send + Sync {
     /// Returns provider capabilities that affect request construction.
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities::default()
+    }
+
+    /// Validate provider-specific replay requirements before the caller makes
+    /// durable mutations for a new turn.
+    ///
+    /// The default accepts every provider-neutral message shape. Providers
+    /// whose opaque state must be replayed exactly override this method; the
+    /// request serializer remains a second defensive validation boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed provider error when the supplied request view cannot be
+    /// replayed without losing provider-owned state.
+    fn validate_replay(&self, _messages: &[Message]) -> Result<(), ProviderError> {
+        Ok(())
     }
 
     /// Sends a request to the provider and returns a stream of events.
