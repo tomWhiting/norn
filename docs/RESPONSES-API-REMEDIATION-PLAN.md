@@ -484,7 +484,7 @@ artifacts to the same clean head with zero errors.
 | P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; D14 records base `6669b9d`; retained Gate C, live A/B/A, and independent acceptance remain open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
 | P3. Canonical ordered transcript | [x] Accepted by whole-phase Gate D review `06be7c7` on 2026-07-18. Frozen combined source `7f47218` contains the exact 28-item union, canonical model/replay/persistence, caller ownership, strict format-2 store, offline migration, explicit resume classifications, and response-scoped private audio artifacts. The reviewer independently reproduced the final source-bound gate, zero-violation policy audit, 60/60 distributions, redaction report, and attestation | Responses items survive stream, persistence, resume, and replay in order; explicit context edits change only the provider-facing view, not the audit timeline. |
 | P4. Streaming and replay conformance | [x] Accepted on 2026-07-19 by corrected Gate D review `0095f5c`. Product correction `ab26632` closes the orphan-core-preview authority defect; evidence binds to source `180759f`, and the independently reproduced five-artifact bundle is retained at `8faf1f4`. P3 remains accepted and D15's D7/P9 live-wire boundary is unchanged | Supported events/items are complete, reconciled against terminal authority, and fail closed without promoting preview-only content. |
-| P5. Conversation and Codex turn semantics | [ ] The `TRANS-01` retained 200/200 candidate is externally checked; `CODEX-01` is accepted as an isolated implementation candidate by `2f55b15`; and `CODEX-02` is accepted as an isolated implementation candidate by correction confirmation `efdf913`. D3/D8, credential affinity, and the remaining P5 work are open | Local/provider history and turn-scoped state have explicit lifetimes. |
+| P5. Conversation and Codex turn semantics | [ ] The `TRANS-01` retained 200/200 candidate is externally checked; `CODEX-01` and `CODEX-02` are accepted as isolated implementation candidates. `AFFINITY-01` source `58df839` and its source-bound evidence are packaged for Gate D review; D3/D8 and the remaining P5 work stay open | Local/provider history and turn-scoped state have explicit lifetimes. |
 | P6. Transport, retry, and usage | [ ] | Retries terminate once; observed and unknown attempt usage remain explicit. |
 | P7. Request, schema, and model controls | [ ] | Advertised capabilities match validated payload and tool behavior. |
 | P8. Prompt-cache measurement and policy | [ ] | Cache policy is observable, backend-specific, and empirically justified. |
@@ -1357,9 +1357,11 @@ owner sink. Named accounts can be logged in, listed, explicitly selected,
 inspected, and removed without
 overwriting another named account or touching the Codex CLI's foreign
 credential. The selected identity is pinned when a provider
-starts; selection changes affect new providers only. Until P5 persists account
-affinity, resume requires an explicit trusted account choice and never consumes
-the active-account default. Browser success means the
+starts; selection changes affect new providers only. Resume requires an explicit
+trusted account choice and never consumes the active-account default. The P5
+`AFFINITY-01` candidate now persists an opaque provider-state binding and
+validates that selected provider against it; the digest does not infer an alias
+or select an account. Browser success means the
 credential and its directory entry are durable, and logout always removes the
 local credential while reporting remote revoke separately. P2 makes no
 automatic-rotation claim.
@@ -1424,9 +1426,10 @@ automatic-rotation claim.
   an ownership declaration, not an import or path-discovery surface.
 - [x] D9 does not approve import in P2, so no path makes the foreign Codex file
   a shared writable store or silently duplicates a rotating refresh token.
-- [x] Pin the selected identity for a provider/run. Before P5 adds persisted
-  affinity, every resume requires explicit trusted account selection and rejects
-  the Norn active-account default; it never silently chooses a replacement.
+- [x] Pin the selected identity for a provider/run. Every OAuth resume requires
+  explicit trusted account selection and rejects the Norn active-account
+  default; it never silently chooses a replacement. The P5 `AFFINITY-01`
+  candidate validates that selected provider against its durable opaque binding.
 - [x] Make account selection trusted-only: explicit CLI, Norn-owned active
   selection, or trusted user configuration. Project/local settings, model
   aliases/profiles, prompts, and tools cannot select or rotate accounts.
@@ -1954,8 +1957,9 @@ external check are present. The `CODEX-01` `end_turn` implementation candidate
 is accepted by review `2f55b15` and merged at `c1aa862`. The `CODEX-02`
 turn-state/client-metadata implementation candidate received a `NOT READY`
 review at `b86924d`; BLOCKER-1 correction `de92211` and same-reviewer
-confirmation `efdf913` close the finding and return candidate `READY`. D3/D8,
-credential affinity, and the remaining source work are open;
+confirmation `efdf913` close the finding and return candidate `READY`.
+`AFFINITY-01` source `58df839` and retained candidate evidence are complete;
+independent review, D3/D8, and the remaining source work are open;
 **findings owned:** `STATE-02`,
 `STATE-03`, `ROLE-01`, `CODEX-01`, `CODEX-02`, `TRANS-01`; **dependencies:**
 P2-P4 and D3/D8/D9.
@@ -1968,8 +1972,10 @@ instruction resend and compaction-anchor invalidation are only partial.
 Producer ownership is externally checked, and `CODEX-01` is externally accepted
 as an implementation candidate. The `CODEX-02` source candidate for turn-scoped
 capture/replay and the approved Norn `client_metadata` projection is accepted as
-an implementation candidate by correction confirmation `efdf913`. Account-bound
-anchors, D8 role authority, and whole-phase evidence remain open.
+an implementation candidate by correction confirmation `efdf913`.
+`AFFINITY-01` source `58df839` implements account-bound anchors and turn state
+with retained source-bound evidence; independent review, D3, D8 role authority,
+and whole-phase evidence remain open.
 
 ### What this phase fixes
 
@@ -1981,9 +1987,9 @@ backend's sticky-routing token. A stored thread does not return replayable
 encrypted reasoning, so resetting its anchor after local compaction can silently
 lose reasoning continuity. Repository `NORN.md`, rules, and profile bodies also
 receive inconsistent System/Developer authority based on discovery path.
-Account identity is not yet represented in turn affinity, so later account
-routing cannot prove that provider anchors and Codex turn state stay with their
-owning credential.
+Before the `AFFINITY-01` candidate, account identity was not represented in turn
+affinity, so later account routing could not prove that provider anchors and
+Codex turn state stayed with their owning credential.
 
 ### Difference after the phase
 
@@ -2033,7 +2039,7 @@ credential identity and cannot cross an account switch.
   session, thread, and prompt-event turn identities plus ASCII nested turn
   metadata. Public/custom backends omit it, and unavailable Codex identities
   are omitted rather than invented.
-- [ ] Bind response anchors and Codex turn state to the opaque P2 credential
+- [x] Bind response anchors and Codex turn state to the opaque P2 credential
   identity. A mismatch fails before request construction rather than carrying
   account-scoped state into another account.
 - [x] Make the returned stream/turn session own the HTTP producer and cancel all
@@ -2202,6 +2208,72 @@ isolation, compaction-anchor semantics, or D8 role authority. See the original
 [`BLOCKER-1` correction handoff](reviews/2026-07-19-p5-codex-02-blocker-1-correction-handoff.md),
 and [`correction confirmation`](reviews/2026-07-19-p5-codex-02-blocker-1-confirmation.md).
 
+### Fourth reviewable implementation slice: `AFFINITY-01`
+
+**Status:** [ ] Implementation candidate `58df839` from exact base `5e04281`,
+tree `217349035a71534204cb2baaa499469ef515485f`; Gate D review is pending.
+
+This slice binds provider-owned state to one opaque credential-and-authority
+identity without persisting an account alias, storage path, account ID, API
+key, access token, or other raw credential material. The durable index stores
+only a fixed-width equality digest; the CLI list/export projections omit it,
+and Debug/errors remain presence-only or fully redacted. The identity commits
+to the pinned credential plus the resolved Responses backend and normalized
+endpoint, so a canonical managed provider response anchor cannot cross either
+an account/key change or an authority boundary. OAuth includes the manager's
+full pinned `(account_id, user_id?)` principal; API-key providers bind the key,
+while dispatch-scoped Codex conservatively binds both the optional account ID
+and access token because that surface has no stable user ID.
+
+The durable binding belongs to the session index, not individual assistant
+events. Fresh managed sessions record it at creation. An active format-2 row
+written before this slice may adopt one trusted provider identity exactly once.
+That transition holds the recovered index lock and generation check, fsyncs a
+dedicated provider-epoch boundary to the timeline first, then atomically
+publishes the bound index row. A crash can therefore leave an unbound row or an
+extra harmless boundary, never a bound row that can reuse an unattributed old
+response anchor. Resume, open-or-resume, and fork validate the source before
+returning a store or publishing a child, and a fork inherits the same binding.
+Provider-independent persistence APIs remain available, but `AgentBuilder`'s
+managed-session path supplies and validates the selected provider identity
+before loop construction.
+
+An `EventStore` carries the resolved affinity authority on the canonical
+managed `AgentBuilder`/run-step path. Sink-less and custom-sink stores publish a
+provider-epoch boundary before their first identity becomes visible; an
+ambiguous sink failure retains and retries the exact same boundary event rather
+than minting a replacement. Manager-owned stores additionally compare the
+sink's expected identity with the current index row under the same retained
+index lock as every timeline append, so a stale handle cannot append across
+another handle's adoption. The store binding runs before the user prompt is
+persisted. The fresh `ProviderTurnContext` binds after the prompt event ID
+exists but before `ProviderRequest` construction or dispatch, and the `OpenAI`
+provider defensively rechecks it before building headers or spawning the
+request producer. A mismatch is a typed, payload-free terminal error and
+performs no network dispatch or prompt mutation.
+
+Fresh/create/resume/latest/open-or-resume/fork, retry/continuation, distinct
+OAuth principals, API-key and endpoint changes, concurrent and interrupted
+legacy adoption, stale-handle append, persistent-child inheritance, empty-fork
+non-publication, and observer redaction are covered by the source-bound
+[`50/50` record](reviews/evidence/p5-affinity/2026-07-20-affinity-01-distributions.json).
+Both concurrency cases pass `20/20`. The adjacent
+[`policy report`](reviews/evidence/p5-affinity/2026-07-20-affinity-01-policy.json)
+records 73 changed Rust files, 28 test-only files, a 499-line maximum production
+prefix, and zero added forbidden calls/attributes/markers, over-limit files,
+thin entrypoints, or module-shape violations. Strict workspace Clippy with
+`-D warnings`, rustfmt, diff checks, the complete workspace suite, and doctests
+pass using the ordinary repository `target/` directory.
+
+Raw low-level `Provider::stream` and provider-independent
+`EventStore::append` remain trusted embedder primitives rather than pretending
+to carry a session authority they do not receive. Existing unbound sessions
+adopt once; already-bound sessions are account-sticky. A future account change
+requires an explicit durable provider-epoch transaction, not implicit
+active-account selection. These boundaries and the lack of a review verdict
+are recorded in the
+[`AFFINITY-01` Gate D handoff](reviews/2026-07-20-p5-affinity-01-gate-d-handoff.md).
+
 ### Phase-specific evidence
 
 - [ ] A two-turn threaded test proves the second request cannot see the first
@@ -2218,8 +2290,10 @@ and [`correction confirmation`](reviews/2026-07-19-p5-codex-02-blocker-1-confirm
   a fresh turn identity with no captured state.
 - [ ] Concurrent-agent and resume tests prove turn state never crosses agent,
   session-resume, cancellation, terminal-error, or process boundaries.
-- [ ] Account-affinity tests prove anchors and turn state never cross credential
-  identities, including explicit account selection and resumed sessions.
+- [x] Managed create/resume/latest/open-or-resume/fork and live turn-context
+  tests prove anchors and turn state reject a different credential identity.
+  OAuth token rotation for one principal remains stable; same-account/different-
+  user and different-account/same-user resumes fail before mutation.
 - [x] A conflicting second turn-state value follows a documented tested rule
   rather than silently replacing or leaking the first value.
 - [x] Codex request fixtures prove the exact approved Norn `client_metadata`
@@ -2597,7 +2671,7 @@ evidence.
 | P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and the bounded source fixture matrices are present | D14 establishes retrospective base `6669b9d`. Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks; retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle | Run the live A/B/A validity experiment after explicit credential-use approval, execute and retain the complete candidate gates, then obtain P2 acceptance |
 | P3 | Accepted source `7f47218` over D12 base `a90b730`; tree `b8b042f61b8d921b4cb27496d5a72b8d56b8bb0c`; accepted D2 source `e9755fe`, lifecycle fixtures `f252cbb`, M-1/F-2 correction `df47e9e`, and finite D11 source `56fd4dd` are included | D2 remains unconditionally `READY`; review `dad0291` closes M-1/F-2; review `5af7308` accepts D11's 28/274/659 inventory and seven-by-ten matrix. The final gate passes strict fmt/Clippy, Norn 4,035/4,035, CLI 551/551, TUI 700/700, workspace 5,364/5,364, doctests 8/8, redaction sentinels 23/23, exact diff, and policy. The policy reports 298 changed Rust files, 78 test-only, and zero LOC/module/added-line violations. Three repeated cases pass 60/60; the 213-record redaction report has zero findings; the single-process attestation has zero errors. Whole-phase review `06be7c7` independently reproduces the evidence and returns `READY` | None; accepted 2026-07-18. `STATE-01` and `EVT-01..07` remain P4-owned |
 | P4 | Accepted product correction `ab26632` over common source `7f47218`; corrected source-bound evidence head `180759f`; public/Codex manifests, 53 event contracts, 28 item validators, reconciliation, terminal parsing, raw CLI events, refusal, hosted-search replay, response-audio persistence, and successful-terminal core-delta authority are implemented | The correction bundle at `8faf1f4` passes strict fmt/Clippy, Norn 4,042, CLI 551, TUI 700, workspace 5,371, doctests 8, 60/60 distributions, 25 redaction sentinels, zero policy violations, 219-record zero-finding redaction, and zero-error attestation. Same-reviewer confirmation `0095f5c` reproduces the evidence and returns corrected P4 Gate D `READY`. P3 remains accepted at `06be7c7`; D15's D7/P9 live-wire gate is unchanged | None; accepted 2026-07-19. P6 separately owns usage-presence projection and retry-attempt UI cleanup |
-| P5 | Codex `store:false` and public threaded request shapes are distinct; stateless encrypted-reasoning replay exists; `TRANS-01` owns provider producers; accepted `CODEX-01` scopes and projects `end_turn` with durable intermediate replay; accepted `CODEX-02` candidate `c3a7aa1` plus BLOCKER-1 correction `de92211` carry first-wins private turn state across retry/continuation, emit the approved trusted-only metadata projection, and recursively redact reusable state before observer/debug sinks. Instruction resend and compaction-anchor invalidation remain partial; credential-bound state and D8 role authority remain missing | `TRANS-01` retains 200/200 exact process-isolated observations and a bounded external check. `CODEX-01` review `b87d410` plus correction confirmation `2f55b15` return unconditional candidate `READY`; merge `c1aa862` is the CODEX-02 base. CODEX-02 review `b86924d` returned `NOT READY`; correction `de92211` passes strict workspace Clippy, rustfmt/diff, 5,406 workspace tests, 8/8 doctests, and 5/5 focused transport tests; same-reviewer confirmation `efdf913` closes BLOCKER-1 and returns unconditional candidate `READY`. The owner accepts the candidate on 2026-07-20 | Implement D3 state/account binding and D8 provenance/role authority before whole-phase gates |
+| P5 | Codex `store:false` and public threaded request shapes are distinct; stateless encrypted-reasoning replay exists; `TRANS-01` owns provider producers; accepted `CODEX-01` scopes and projects `end_turn` with durable intermediate replay; accepted `CODEX-02` carries first-wins private turn state across retry/continuation with recursive observer/debug redaction. `AFFINITY-01` source `58df839` binds anchors and turn state to opaque credential/backend/endpoint identity across managed create, resume, adoption, append, and fork. Instruction resend and compaction-anchor invalidation remain partial; D8 role authority remains missing | `TRANS-01` retains 200/200 exact process-isolated observations and a bounded external check. `CODEX-01` correction confirmation `2f55b15` and CODEX-02 correction confirmation `efdf913` return unconditional candidate `READY`; both are owner-accepted. AFFINITY-01 retains 50/50 source-bound observations, including two 20/20 concurrency distributions, plus a 73-file zero-violation policy report with a 499-line maximum production prefix; Gate D remains pending | Obtain AFFINITY-01 Gate D review, then implement D3 compaction/anchor alignment and D8 provenance/role authority before whole-phase gates |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|
