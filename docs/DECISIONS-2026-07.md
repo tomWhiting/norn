@@ -1516,8 +1516,11 @@ and [server-side compaction](https://developers.openai.com/api/docs/guides/compa
   or normalizing it.
 - Public Responses threading uses `store:true`, `previous_response_id`, and
   provider server compaction. While an anchor is active, a request sends only
-  the new turn input plus stable top-level instructions. Norn does not also run
-  its local summarizer over that provider-owned thread.
+  the new turn input plus current top-level instructions: the stable base
+  instruction combined with the current replaceable dynamic context. The API
+  does not carry prior top-level instructions across `previous_response_id`, so
+  an older dynamic version does not accumulate in provider history. Norn does
+  not also run its local summarizer over that provider-owned thread.
 - An explicit server-compaction threshold wins. Otherwise, when the existing
   context-window limit and auto-compaction reserve define a valid threshold,
   their existing difference is used. D3 introduces no new fallback number.
@@ -1540,6 +1543,56 @@ and [server-side compaction](https://developers.openai.com/api/docs/guides/compa
   live connection. Connection-local chaining and reconnect recovery remain a
   later transport decision.
 
-This ruling closes D3's policy decision only. P5 acceptance still requires the
-implementation, source-bound tests for both wire strategies and every epoch
-transition, retained interruption/resume evidence, and independent review.
+### D3 implementation-candidate reconciliation (2026-07-20)
+
+Exact D3 source `ef3b9c7b0fd12946d5b993457106dda0b34f0edd` implements
+the ruling with these explicit format and failure boundaries:
+
+- A provider-stored response is a framed three- or four-row group:
+  `ProviderEpochBoundary(ResponseStatePublication)`, reserved provenance,
+  optional response-audio link, then assistant. Only provenance immediately
+  inside that first-class frame has provider-state meaning.
+- A non-identity history filter ends with the first-class
+  `ProviderEpochBoundary(FilteredFork)`. Its retained content remains ordinary
+  audit-visible history and is replayed only when every required provider item
+  has replay material; inherited provider anchors are cut. Identity forks
+  preserve complete events and their durable context marks.
+- Response groups are published non-interleaved under one retained
+  index-and-timeline lock. A filesystem interruption may leave the exact durable
+  prefix. The exact group may complete that prefix on retry; a different
+  continuation is rejected, and ordinary
+  reopen of an incomplete semantic prefix fails closed. In-memory publication
+  occurs only after the sink operation succeeds.
+- Managed open, resume, and fork validate the complete provider-state
+  provenance timeline before affinity adoption, prompt mutation, dispatch, or
+  child publication. Response-audio association validation remains a separate
+  later integrity check after affinity binding and before prompt mutation,
+  dispatch, or child publication. Persistent fork seeding recognizes a complete
+  framed group and copies it with the same batch operation rather than appending
+  its rows independently.
+- Compatibility is directional and explicit. Current readers leave unframed
+  discriminator collisions as ordinary application custom events, including
+  when they occur after a valid framed publication. Pre-D3 assistant histories
+  remain eligible only through the separately validated legacy-anchor path. A
+  post-cut unframed response remains eligible after an ordinary historical cut
+  only before the timeline has entered framed D3 provenance; pre-cut candidates
+  remain excluded and `FilteredFork` closes legacy eligibility. Resume repair
+  clears a stored anchor before sending its synthetic local tool result:
+  replayable history full-replays, while unavailable replay material fails typed
+  before mutation or dispatch. Older binaries reject the new enum reasons during
+  deserialization rather than silently accepting weaker semantics. Unframed D3
+  data produced only by earlier unpublished iterations of this development
+  branch is not a historical format and receives no migration promise.
+
+Exact candidate source `ef3b9c7b0fd12946d5b993457106dda0b34f0edd`,
+tree `975d6fd66aaeab3964c50e19d416207425680012`, now retains 42/42
+source-bound contention/durability observations. Post-source packaging commit
+`2ef1427` has a green strict workspace battery after a test-only HTTP-framing
+fixture correction; no D3 production path differs. The runner records the
+exact-prefix interruption boundary rather than claiming atomic publication.
+
+This reconciliation records an implementation candidate, not D3 or P5
+acceptance. D8, the broad volatile-context and concurrent-agent matrices,
+independent review, and whole-P5 acceptance remain open. The authenticated
+public/Codex real-wire fixture remains mandatory under D7/P9 before integrated
+Responses acceptance.
