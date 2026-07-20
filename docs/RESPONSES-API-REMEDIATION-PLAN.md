@@ -521,7 +521,7 @@ blocks phase acceptance and cannot be represented as implemented evidence.
 | D1E | Structural descriptor closure after the owner rejected residual Norn-owned `EMFILE` risk. | P0 | [x] Decided, implemented, and independently accepted at `7ce29d7`. Idle session/history/process retention and eager spool-root probing are removed; cancellation-safe adoption owns process groups until spool attachment commits; and the process-wide fail-fast authority covers active/scalable process, spool, session, diagnostic, persistent stdio, LSP, HTTP, OAuth callback/browser, read/search, Rhai, debug, ordinary one-shot configuration, discovery, task, and write/edit/patch families. The former arbitrary transient headroom is replaced by exact observer reserve and typed filesystem/subprocess/HTTP permits. The final distribution and Gate D review cover selected descriptor-retention/admission, cancellation, live-transport release, and OAuth launcher permit lifecycles. This item does not claim that Norn can prevent unrelated embedder or operating-system-wide exhaustion. |
 | D1D | Complete `NornSettings.mcp_servers` as the layered MCP client surface: user, shared project, private project-local, per-agent, CLI, and live-session scopes with remembered shared-project approval and dynamic tool-catalogue refresh. | P0 | [x] Owner decision confirmed by Tom on 2026-07-13 and attributed in `DECISIONS-2026-07.md` section 10; implementation and its complete startup/live-control fixture matrix were independently accepted at `7ce29d7`. Precedence is `session > CLI > local > project > user`; same-name entries replace wholesale. Only shared checked-in project definitions require definition-bound remembered approval; user-owned private, CLI, and live-session input is direct operator configuration. Root, variant, and spawned agents select views from the connected pool without treating MCP roots as confinement. Startup consumption, live add/remove/enable/disable/reload, contextual roots, and provider-visible tool refresh are implemented. |
 | D2 | Existing session policy: isolated strict runtime storage plus an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [x] Owner ruling recorded 2026-07-17 and implemented in accepted range `2c0350d..e9755fe`; exact-correction D2 Gate C is retained at 10/10 gates and 280/280 distributions, with 145 changed Rust files/33 test-only and zero policy violations. The strict runtime namespace is the versionless `~/.norn/session-store/`; `~/.norn/sessions/` remains an untouched legacy source, an immutable digest-addressed private backup is published separately, and no `sessions-v2` path exists. `norn session migrate` performs an explicit offline, no-replace, staged publication that is idempotent and interruption-recoverable; normal startup does not decode legacy history. It checks only legacy-path metadata and, when legacy data exists, a bounded fixed-size cutover receipt, exact ownership marker, and required regular-file presence inside the active store. `norn session legacy verify` is the separate history-proportional audit over the strict store, immutable backup, manifest evidence, and live legacy tree. Canonically complete legacy sessions require a recorded fresh provider epoch; flattened but coherent sessions require explicit degraded/fresh-epoch approval with fidelity loss retained; corrupt or ambiguous sessions are inspect/export-only. `SessionManager::standard()` and the shared checked resolver apply this boundary to CLI and library embedders, while `SessionManager::new` remains an explicit custom-store authority. No class fabricates provider items, hidden reasoning, ordering, phase, or provider-side continuity. Gate D at `59dc244` returned `READY` contingent on F1; the populated backup-stage fsync was fixed and freshly evidenced at `e9755fe`, then independently closed at `26b4e28`. Corrected D2 now holds unconditional Gate D `READY`. This checkbox records D2 acceptance, not P3/P4 acceptance. |
-| D3 | Threaded-state policy: decide replaceable Developer context and whether/how local compaction may reset an anchor without losing stored reasoning. Select a genuinely replaceable surface, lossless replay contract, fresh-thread transition, or disable threading/local replay. | P5 | [ ] Open |
+| D3 | Threaded-state policy: decide replaceable Developer context and whether/how local compaction may reset an anchor without losing stored reasoning. Select a genuinely replaceable surface, lossless replay contract, fresh-thread transition, or disable threading/local replay. | P5 | [x] Decided 2026-07-20 in `DECISIONS-2026-07.md` section 23. The compiled Codex-subscription backend remains `store:false` with exact local replay and local Norn compaction. Public Responses threading uses `store:true`, `previous_response_id`, and provider server compaction; it does not also run the local summarizer. Compaction, suppression, and non-identity filtered views start a fresh provider epoch; injection does not. Any required full replay of reasoning without nonempty `encrypted_content`, and any unavailable stored anchor, fails typed before mutation or dispatch rather than silently dropping reasoning or retrying without the anchor. This records the contract, not implementation or P5 acceptance. |
 | D4 | Single retry owner and existing configured attempt/budget semantics for HTTP and in-stream failures. | P6 | [ ] Open |
 | D5 | Native `text.format` versus synthetic tool policy by API shape, catalog-selected apply-patch/search envelopes, and local-dispatch versus user-request semantics for tool-backed slash commands. | P7 | [ ] Open |
 | D6 | Pre-register the cache experiment: ratify or replace the proposed 20-iteration design; approve public/private backends, models, spending, warm-up, key isolation/reuse, an approximately 15 requests/minute per-key ceiling rechecked against current guidance, concurrency, retention/cooldown, service tier, output/effort controls, randomization, primary measures, and statistical treatment. | P8 | [ ] Open |
@@ -1966,8 +1966,10 @@ review at `b86924d`; BLOCKER-1 correction `de92211` and same-reviewer
 confirmation `efdf913` close the finding and return candidate `READY`.
 `AFFINITY-01` review `0b25d82` returned `NOT READY` with `AFFINITY-1` and
 `AFFINITY-2`; corrected source `693d5b1` and same-reviewer confirmation
-`79c8366` close both findings and return unconditional candidate `READY`. D3/D8
-and the remaining source work are open;
+`79c8366` close both findings and return unconditional candidate `READY`. The
+D3 contract is decided in section 23 of `DECISIONS-2026-07.md`; its source,
+evidence, and review remain in progress. D8 and the remaining source work are
+open;
 **findings owned:** `STATE-02`,
 `STATE-03`, `ROLE-01`, `CODEX-01`, `CODEX-02`, `TRANS-01`; **dependencies:**
 P2-P4 and D3/D8/D9.
@@ -1984,7 +1986,8 @@ an implementation candidate by correction confirmation `efdf913`.
 `AFFINITY-01` corrected source `693d5b1` implements user-and-account-bound OAuth
 anchors and turn state with retained source-bound evidence. Same-reviewer
 confirmation `79c8366` returns candidate `READY`, and the owner accepts the
-isolated candidate. D3, D8 role authority, and whole-phase evidence remain open.
+isolated candidate. D3 is contract-complete but implementation-open; D8 role
+authority and whole-phase evidence remain open.
 
 ### What this phase fixes
 
@@ -2019,6 +2022,11 @@ provider construction rather than degrading to account-only affinity.
 
 - [ ] Implement D3 consistently across loop state, provider capabilities,
   compaction, persistence, resume, and request construction.
+- [x] Decide the D3 state strategy: compiled Codex subscription uses
+  `store:false` exact local replay and Norn compaction; public Responses
+  threading uses `store:true`, `previous_response_id`, and provider server
+  compaction without a second local summarizer. This checkbox records only the
+  owner contract in decision 23, not implementation evidence.
 - [ ] Keep local compaction's two views explicit: superseded canonical
   `ResponseTranscriptItem` rows remain verbatim in append-only audit history,
   while the provider-facing prompt substitutes only the durable compaction

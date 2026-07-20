@@ -1501,3 +1501,45 @@ reviewed handoff head `84949b2`.
 P3 remains accepted unchanged at `06be7c7`. This accepts only P4; P2 and P9
 remain open. D15 is unchanged: authenticated real-wire conformance remains
 mandatory under D7/P9 before overall integrated Responses acceptance.
+
+## 23. P5 D3 conversation state and compaction strategy (2026-07-20)
+
+**Owner ruling:** Use an explicit backend strategy rather than mixing local
+replay with provider-owned state. This follows the current OpenAI contracts for
+[conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
+and [server-side compaction](https://developers.openai.com/api/docs/guides/compaction#server-side-compaction).
+
+- The compiled Codex-subscription backend remains stateless from the provider's
+  perspective: `store:false`, no durable `previous_response_id`, exact local
+  replay, and local Norn compaction. Replay preserves every applicable provider
+  output item, including nonempty encrypted reasoning, rather than reconstructing
+  or normalizing it.
+- Public Responses threading uses `store:true`, `previous_response_id`, and
+  provider server compaction. While an anchor is active, a request sends only
+  the new turn input plus stable top-level instructions. Norn does not also run
+  its local summarizer over that provider-owned thread.
+- An explicit server-compaction threshold wins. Otherwise, when the existing
+  context-window limit and auto-compaction reserve define a valid threshold,
+  their existing difference is used. D3 introduces no new fallback number.
+- A local compaction, suppression mark, or non-identity filtered prompt view
+  starts a fresh provider epoch and clears inherited provider anchors. An
+  injection mark does not cut the epoch. Durable resume reconstructs those cuts
+  from the full event store before building the provider-facing view, so a
+  compacted or suppressed anchor cannot reappear after restart.
+- The immutable transcript remains the audit authority. Local compaction changes
+  only the provider-facing view; provider `ResponseItem::Compaction` remains an
+  opaque canonical item and is persisted verbatim.
+- If a request must fully replay a reasoning item that lacks nonempty
+  `encrypted_content`, request construction fails with a typed, payload-free
+  error before appending a user event or dispatching a provider call. It never
+  strips the item or silently retries with a weaker history.
+- If a stored public response anchor is missing or expired, the turn fails typed
+  after that one request. Norn does not automatically retry without the anchor,
+  because the missing provider state may contain non-replayable reasoning.
+- WebSocket response IDs are not durable anchors merely because they work on one
+  live connection. Connection-local chaining and reconnect recovery remain a
+  later transport decision.
+
+This ruling closes D3's policy decision only. P5 acceptance still requires the
+implementation, source-bound tests for both wire strategies and every epoch
+transition, retained interruption/resume evidence, and independent review.
