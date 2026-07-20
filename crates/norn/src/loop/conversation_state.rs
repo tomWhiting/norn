@@ -141,7 +141,9 @@ fn response_thread_anchors_in_epoch(
                     | None => {}
                 }
             }
-            _ if event_cuts_response_anchor(event) => {
+            _ if crate::session::is_interrupted_tool_result(event)
+                || event_cuts_response_anchor(event) =>
+            {
                 proven = None;
                 legacy_candidates.clear();
             }

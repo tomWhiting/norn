@@ -69,10 +69,25 @@ pub(crate) fn discover_active_response_provenance(
     if active_start == 0 {
         return Ok(global);
     }
+    // An ordinary historical cut starts the active slice, but does not prove
+    // that this pre-D3 timeline had begun publishing provenance records.
+    let legacy_closed_before_epoch = events[..active_start].windows(2).any(|pair| {
+        is_response_state_publication_boundary(&pair[0]) && is_provenance_family(&pair[1])
+    }) || matches!(
+        events.get(active_start.saturating_sub(1)),
+        Some(SessionEvent::ProviderEpochBoundary {
+            reason: ProviderEpochBoundaryReason::FilteredFork,
+            ..
+        })
+    );
     let starts_after_publication = events
         .get(active_start.saturating_sub(1))
         .is_some_and(is_response_state_publication_boundary);
-    discover_epoch(&events[active_start..], true, starts_after_publication)
+    discover_epoch(
+        &events[active_start..],
+        legacy_closed_before_epoch,
+        starts_after_publication,
+    )
 }
 
 pub(crate) fn event_cuts_response_anchor(event: &SessionEvent) -> bool {

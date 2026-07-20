@@ -157,7 +157,7 @@ fn threaded_anchor_starts_after_latest_visible_response() -> Result<(), Box<dyn 
 }
 
 #[test]
-fn resume_repair_keeps_stored_anchor_for_first_healed_request()
+fn resume_repair_drops_stored_anchor_for_first_healed_request()
 -> Result<(), Box<dyn std::error::Error>> {
     let store = EventStore::new();
     store.append(SessionEvent::UserMessage {
@@ -197,15 +197,17 @@ fn resume_repair_keeps_stored_anchor_for_first_healed_request()
     ));
     messages.push(message(MessageRole::User, "resume"));
 
-    assert_eq!(state.previous_response_id().as_deref(), Some("resp_killed"));
+    assert!(state.previous_response_id().is_none());
     let request_messages = state.request_messages(&messages);
-    assert_eq!(request_messages.len(), 3);
+    assert_eq!(request_messages.len(), messages.len());
     assert_eq!(request_messages[0].content.as_deref(), Some("system"));
+    assert_eq!(request_messages[1].content.as_deref(), Some("run it"));
+    assert_eq!(request_messages[2].tool_calls[0].call_id, "call_killed");
     assert_eq!(
-        request_messages[1].tool_call_id.as_deref(),
+        request_messages[3].tool_call_id.as_deref(),
         Some("call_killed"),
     );
-    assert_eq!(request_messages[2].content.as_deref(), Some("resume"));
+    assert_eq!(request_messages[4].content.as_deref(), Some("resume"));
     Ok(())
 }
 
