@@ -28,6 +28,7 @@ mod provider_state_provenance;
 mod provider_state_test_support;
 mod provider_state_validation;
 pub mod response_audio;
+mod response_publication_commitment;
 pub mod resume_repair;
 pub mod spool;
 pub mod store;
@@ -70,18 +71,20 @@ pub use provider_state_provenance::{
 };
 #[cfg(test)]
 pub(crate) use provider_state_test_support::{
-    ResponsePublicationFixture, response_publication_fixture,
+    ResponsePublicationFixture, committed_response_publication, response_publication_fixture,
 };
 pub use provider_state_validation::ProviderStateValidationError;
 pub(crate) use provider_state_validation::{
     ActiveResponseProvenance, ResponseStateDisposition, discover_active_response_provenance,
-    event_cuts_response_anchor, response_publication_group_len, validate_provider_state_provenance,
+    event_cuts_response_anchor, response_publication_group_len, seal_response_publication_group,
+    validate_new_response_publication_batches, validate_provider_state_provenance,
 };
 pub use response_audio::{
     RESPONSE_AUDIO_ARTIFACT_EVENT_TYPE, ResponseAudioArtifact, ResponseAudioArtifactLink,
     ResponseAudioArtifactRef, ResponseAudioArtifactState, ResponseAudioReferenceError,
     ResponseAudioStore, referenced_response_audio_artifacts, response_audio_artifact_links,
 };
+pub use response_publication_commitment::ResponsePublicationCommitment;
 pub(crate) use resume_repair::is_interrupted_tool_result;
 pub use resume_repair::repair_dangling_tool_calls;
 pub use spool::{SpoolWriter, read_spooled_output, resolve_spool_ref};
@@ -105,3 +108,5 @@ mod provider_epoch_tests;
 mod response_audio_lifecycle_tests;
 #[cfg(test)]
 mod response_publication_batch_tests;
+#[cfg(test)]
+mod response_publication_commitment_tests;

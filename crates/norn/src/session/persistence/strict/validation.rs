@@ -57,6 +57,12 @@ pub fn validate_staged_store(root: &Path) -> Result<ValidatedStrictStore, Strict
         let file = PrivateRoot::open_read_observational(root, &relative)
             .map_err(|error| StrictStoreError::io(&display_path, error))?;
         let timeline = read_strict_event_file(BufReader::new(file), &display_path)?;
+        crate::session::validate_provider_state_provenance(&timeline.events).map_err(|source| {
+            StrictStoreError::InvalidProviderState {
+                path: display_path.clone(),
+                source,
+            }
+        })?;
         validate_counts(entry, &timeline, &display_path)?;
         sessions.push(ValidatedStrictSession {
             index_entry: entry.clone(),

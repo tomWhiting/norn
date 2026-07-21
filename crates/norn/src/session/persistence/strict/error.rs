@@ -165,6 +165,18 @@ pub enum StrictStoreError {
         /// Repeated physical line.
         line: usize,
     },
+    /// A timeline's reserved provider-state records are internally inconsistent.
+    #[error(
+        "strict session file {} has invalid provider-state semantics: {source}",
+        path.display()
+    )]
+    InvalidProviderState {
+        /// Timeline containing the invalid reserved records.
+        path: PathBuf,
+        /// Payload-free semantic classification.
+        #[source]
+        source: crate::session::ProviderStateValidationError,
+    },
     /// Exact format-2 timeline counters cannot be represented by the index schema.
     #[error(
         "strict session file {} overflows index counter '{field}'",

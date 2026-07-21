@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use crate::session::events::{ContextMarkKind, EventId, ProviderEpochBoundaryReason, SessionEvent};
 
+use super::response_publication_commitment::{calculate, verify};
 use super::{
     PROVIDER_STATE_PROVENANCE_EVENT_TYPE, ProviderStateProvenance, ResponseAudioArtifactLink,
 };
@@ -47,9 +48,15 @@ impl ActiveResponseProvenance {
 }
 
 /// A reserved provider-state record is malformed or internally inconsistent.
-#[derive(Clone, Copy, Debug, Error)]
-#[error("provider state provenance is invalid")]
-pub struct ProviderStateValidationError;
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum ProviderStateValidationError {
+    /// A reserved provider-state frame is malformed or internally inconsistent.
+    #[error("provider state provenance is invalid")]
+    Provenance,
+    /// A V1 response group is uncommitted or does not match its durable commitment.
+    #[error("provider state publication commitment is invalid")]
+    PublicationCommitment,
+}
 
 #[derive(Clone, Copy)]
 struct ProvenanceRecord {
@@ -117,7 +124,8 @@ pub(crate) fn is_response_state_publication_boundary(event: &SessionEvent) -> bo
     matches!(
         event,
         SessionEvent::ProviderEpochBoundary {
-            reason: ProviderEpochBoundaryReason::ResponseStatePublication,
+            reason: ProviderEpochBoundaryReason::ResponseStatePublication
+                | ProviderEpochBoundaryReason::ResponseStatePublicationV1(_),
             ..
         }
     )
@@ -139,6 +147,23 @@ pub(crate) fn response_publication_group_len(
     events: &[SessionEvent],
     boundary_index: usize,
 ) -> Result<Option<usize>, ProviderStateValidationError> {
+    let Some(group_len) = response_publication_group_shape_len(events, boundary_index)? else {
+        return Ok(None);
+    };
+    let group_end = boundary_index
+        .checked_add(group_len)
+        .ok_or(ProviderStateValidationError::Provenance)?;
+    let group = events
+        .get(boundary_index..group_end)
+        .ok_or(ProviderStateValidationError::Provenance)?;
+    validate_response_publication_commitment(group)?;
+    Ok(Some(group_len))
+}
+
+fn response_publication_group_shape_len(
+    events: &[SessionEvent],
+    boundary_index: usize,
+) -> Result<Option<usize>, ProviderStateValidationError> {
     let Some(boundary) = events.get(boundary_index) else {
         return Ok(None);
     };
@@ -148,15 +173,15 @@ pub(crate) fn response_publication_group_len(
     let provenance_index = boundary_index.saturating_add(1);
     let provenance_event = events
         .get(provenance_index)
-        .ok_or(ProviderStateValidationError)?;
+        .ok_or(ProviderStateValidationError::Provenance)?;
     if !is_provenance_family(provenance_event)
         || provenance_event.base().parent_id.as_ref() != Some(&boundary.base().id)
     {
-        return Err(ProviderStateValidationError);
+        return Err(ProviderStateValidationError::Provenance);
     }
     let provenance = ProviderStateProvenance::from_event(provenance_event)
-        .map_err(|_error| ProviderStateValidationError)?
-        .ok_or(ProviderStateValidationError)?;
+        .map_err(|_error| ProviderStateValidationError::Provenance)?
+        .ok_or(ProviderStateValidationError::Provenance)?;
     let direct_target = boundary_index.saturating_add(2);
     if let Some(target_event) = events.get(direct_target)
         && valid_target_shape(
@@ -172,7 +197,7 @@ pub(crate) fn response_publication_group_len(
     let audio_target = boundary_index.saturating_add(3);
     let target_event = events
         .get(audio_target)
-        .ok_or(ProviderStateValidationError)?;
+        .ok_or(ProviderStateValidationError::Provenance)?;
     if valid_target_shape(
         events,
         provenance_index,
@@ -182,7 +207,70 @@ pub(crate) fn response_publication_group_len(
     )? {
         return Ok(Some(4));
     }
-    Err(ProviderStateValidationError)
+    Err(ProviderStateValidationError::Provenance)
+}
+
+fn validate_response_publication_commitment(
+    group: &[SessionEvent],
+) -> Result<(), ProviderStateValidationError> {
+    let SessionEvent::ProviderEpochBoundary { base, reason } = &group[0] else {
+        return Err(ProviderStateValidationError::Provenance);
+    };
+    match reason {
+        ProviderEpochBoundaryReason::ResponseStatePublication => Ok(()),
+        ProviderEpochBoundaryReason::ResponseStatePublicationV1(commitment) => {
+            verify(commitment, base, &group[1..])
+                .map_err(|_error| ProviderStateValidationError::PublicationCommitment)
+        }
+        _ => Err(ProviderStateValidationError::Provenance),
+    }
+}
+
+/// Seal one complete response-publication group with its V1 durable commitment.
+pub(crate) fn seal_response_publication_group(
+    group: &mut [SessionEvent],
+) -> Result<(), ProviderStateValidationError> {
+    let group_len = response_publication_group_shape_len(group, 0)?
+        .ok_or(ProviderStateValidationError::Provenance)?;
+    if group_len != group.len() {
+        return Err(ProviderStateValidationError::Provenance);
+    }
+    let boundary_base = group[0].base().clone();
+    let commitment = calculate(&boundary_base, &group[1..])
+        .map_err(|_error| ProviderStateValidationError::PublicationCommitment)?;
+    let SessionEvent::ProviderEpochBoundary { reason, .. } = &mut group[0] else {
+        return Err(ProviderStateValidationError::Provenance);
+    };
+    *reason = ProviderEpochBoundaryReason::ResponseStatePublicationV1(commitment);
+    Ok(())
+}
+
+/// Reject newly appended legacy response frames and validate every V1 group.
+pub(crate) fn validate_new_response_publication_batches(
+    events: &[SessionEvent],
+) -> Result<(), ProviderStateValidationError> {
+    let mut index = 0;
+    while index < events.len() {
+        if !is_response_state_publication_boundary(&events[index]) {
+            index = index.saturating_add(1);
+            continue;
+        }
+        if matches!(
+            events[index],
+            SessionEvent::ProviderEpochBoundary {
+                reason: ProviderEpochBoundaryReason::ResponseStatePublication,
+                ..
+            }
+        ) {
+            return Err(ProviderStateValidationError::PublicationCommitment);
+        }
+        let group_len = response_publication_group_len(events, index)?
+            .ok_or(ProviderStateValidationError::Provenance)?;
+        index = index
+            .checked_add(group_len)
+            .ok_or(ProviderStateValidationError::Provenance)?;
+    }
+    Ok(())
 }
 
 fn discover_epoch(
@@ -203,7 +291,7 @@ fn discover_epoch(
             continue;
         }
         let provenance = ProviderStateProvenance::from_event(event)
-            .map_err(|_error| ProviderStateValidationError)?;
+            .map_err(|_error| ProviderStateValidationError::Provenance)?;
         let Some(provenance) = provenance else {
             continue;
         };
@@ -216,7 +304,7 @@ fn discover_epoch(
             .insert(provenance.assistant_event_id().clone(), record)
             .is_some()
         {
-            return Err(ProviderStateValidationError);
+            return Err(ProviderStateValidationError::Provenance);
         }
     }
 
@@ -252,7 +340,7 @@ fn discover_epoch(
             },
         );
         if dispositions.insert(base.id.clone(), disposition).is_some() {
-            return Err(ProviderStateValidationError);
+            return Err(ProviderStateValidationError::Provenance);
         }
     }
 
@@ -279,12 +367,12 @@ fn validate_targets(
             .is_some()
             && records.contains_key(&event_id)
         {
-            return Err(ProviderStateValidationError);
+            return Err(ProviderStateValidationError::Provenance);
         }
     }
     for (target, record) in records {
         let Some((target_index, target_event)) = events_by_id.get(target) else {
-            return Err(ProviderStateValidationError);
+            return Err(ProviderStateValidationError::Provenance);
         };
         if !valid_target_shape(
             events,
@@ -293,7 +381,7 @@ fn validate_targets(
             target_event,
             target,
         )? {
-            return Err(ProviderStateValidationError);
+            return Err(ProviderStateValidationError::Provenance);
         }
     }
     Ok(())
@@ -331,7 +419,7 @@ fn valid_target_shape(
 
     let link_event = &events[record_index.saturating_add(1)];
     let Some(link) = ResponseAudioArtifactLink::from_event(link_event)
-        .map_err(|_error| ProviderStateValidationError)?
+        .map_err(|_error| ProviderStateValidationError::Provenance)?
     else {
         return Ok(false);
     };

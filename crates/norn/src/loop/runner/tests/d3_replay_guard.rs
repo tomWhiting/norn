@@ -151,7 +151,12 @@ fn seed_history(
     if response_id.is_some_and(|id| !id.is_empty()) {
         let fixture = response_publication_fixture(store.last_event_id(), true)?;
         let assistant = bare_reasoning_event(fixture.assistant_base, encoding, response_id)?;
-        store.append_batch(&[fixture.boundary, fixture.provenance, assistant])?;
+        let publication = crate::session::committed_response_publication(
+            fixture.boundary,
+            fixture.provenance,
+            assistant,
+        )?;
+        store.append_batch(&publication)?;
     } else {
         let assistant_base = EventBase::new(store.last_event_id());
         store.append(bare_reasoning_event(assistant_base, encoding, response_id)?)?;
@@ -208,7 +213,12 @@ fn seed_repaired_d3_tool_call(store: &EventStore, bare_reasoning: bool) -> TestR
         stop_reason: "tool_use".to_owned(),
         response_id: Some("resp_interrupted".to_owned()),
     };
-    store.append_batch(&[fixture.boundary, fixture.provenance, assistant])?;
+    let publication = crate::session::committed_response_publication(
+        fixture.boundary,
+        fixture.provenance,
+        assistant,
+    )?;
+    store.append_batch(&publication)?;
     assert_eq!(
         crate::session::repair_dangling_tool_calls(store)?,
         ["call_interrupted"]

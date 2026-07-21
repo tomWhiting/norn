@@ -9,8 +9,8 @@ use crate::provider::tools::ProviderCapabilities;
 use crate::session::context_edit::ContextEdits;
 use crate::session::events::{EventUsage, ProviderEpochBoundaryReason};
 use crate::session::persistence::SessionPersistError;
-use crate::session::response_publication_fixture;
 use crate::session::store::PersistenceSink;
+use crate::session::{committed_response_publication, response_publication_fixture};
 
 fn user_event(content: &str) -> SessionEvent {
     SessionEvent::UserMessage {
@@ -39,7 +39,9 @@ fn append_stored_assistant(
         stop_reason: "end_turn".to_owned(),
         response_id: Some(response_id.to_owned()),
     };
-    store.append_batch(&[fixture.boundary, fixture.provenance, assistant])?;
+    let publication =
+        committed_response_publication(fixture.boundary, fixture.provenance, assistant)?;
+    store.append_batch(&publication)?;
     Ok(())
 }
 

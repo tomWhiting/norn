@@ -194,7 +194,12 @@ fn append_provenance_bare_reasoning_assistant(
         stop_reason: "end_turn".to_owned(),
         response_id: Some(response_id.to_owned()),
     };
-    store.append_batch(&[fixture.boundary, fixture.provenance, assistant])?;
+    let publication = crate::session::committed_response_publication(
+        fixture.boundary,
+        fixture.provenance,
+        assistant,
+    )?;
+    store.append_batch(&publication)?;
     Ok(())
 }
 

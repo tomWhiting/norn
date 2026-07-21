@@ -19,7 +19,10 @@ use crate::agent::fork::OrphanToolCall;
 use crate::error::{NornError, SessionError};
 use crate::session::events::{EventBase, SessionEvent};
 use crate::session::store::EventStore;
-use crate::session::{response_publication_group_len, validate_provider_state_provenance};
+use crate::session::{
+    response_publication_group_len, seal_response_publication_group,
+    validate_provider_state_provenance,
+};
 
 /// Truncate a parent-history snapshot at the branch anchor the
 /// reservation recorded: everything AFTER the anchor — the reservation
@@ -123,10 +126,21 @@ pub(super) fn seed_fork_events(
                 })
             })?
         {
+            let group_end = index.checked_add(group_len).ok_or_else(|| {
+                NornError::Session(SessionError::EventAppendFailed {
+                    reason: "fork seed response-group length overflowed".to_owned(),
+                })
+            })?;
+            let mut group = events[index..group_end].to_vec();
+            seal_response_publication_group(&mut group).map_err(|_error| {
+                NornError::Session(SessionError::EventAppendFailed {
+                    reason: "fork seed response-group commitment is invalid".to_owned(),
+                })
+            })?;
             child_store
-                .append_batch(&events[index..index.saturating_add(group_len)])
+                .append_batch(&group)
                 .map_err(|error| map_seed_append_error(&error))?;
-            index = index.saturating_add(group_len);
+            index = group_end;
         } else {
             child_store
                 .append(events[index].clone())
@@ -316,7 +330,9 @@ mod tests {
             stop_reason: "end_turn".to_owned(),
             response_id: Some("resp_fork-seed".to_owned()),
         };
-        parent.append_batch(&[boundary, provenance, assistant])?;
+        let publication =
+            crate::session::committed_response_publication(boundary, provenance, assistant)?;
+        parent.append_batch(&publication)?;
 
         let binding = SessionBinding::persistent_root(
             Arc::new(SessionBrancher::new(
@@ -348,13 +364,82 @@ mod tests {
             events,
             [
                 SessionEvent::ProviderEpochBoundary {
-                    reason: ProviderEpochBoundaryReason::ResponseStatePublication,
+                    reason: ProviderEpochBoundaryReason::ResponseStatePublicationV1(_),
                     ..
                 },
                 SessionEvent::Custom { .. },
                 SessionEvent::AssistantMessage { .. },
             ]
         )));
+        Ok(())
+    }
+
+    /// Compatibility rule: copying a complete legacy response group deliberately
+    /// enriches only its boundary with the V1 commitment. Event identities,
+    /// timestamps, and every suffix value remain exact.
+    #[test]
+    fn legacy_response_group_fork_deliberately_enriches_only_boundary_metadata() -> TestResult {
+        use crate::session::ProviderStateProvenance;
+        use crate::session::events::{EventUsage, ProviderEpochBoundaryReason};
+
+        let boundary = SessionEvent::ProviderEpochBoundary {
+            base: EventBase::new(None),
+            reason: ProviderEpochBoundaryReason::ResponseStatePublication,
+        };
+        let assistant_id = crate::session::events::EventId::new();
+        let provenance = ProviderStateProvenance::new(assistant_id.clone(), true)
+            .into_custom_event(EventBase::new(Some(boundary.base().id.clone())))?;
+        let mut assistant_base = EventBase::new(Some(provenance.base().id.clone()));
+        assistant_base.id = assistant_id;
+        let assistant = SessionEvent::AssistantMessage {
+            base: assistant_base,
+            response_items: Vec::new(),
+            content: "legacy answer".to_owned(),
+            thinking: "legacy thinking".to_owned(),
+            reasoning: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: EventUsage::default(),
+            stop_reason: "end_turn".to_owned(),
+            response_id: Some("resp_legacy-fork-seed".to_owned()),
+        };
+        let legacy_group = vec![boundary, provenance, assistant];
+        validate_provider_state_provenance(&legacy_group)?;
+
+        let source_bases = legacy_group
+            .iter()
+            .map(|event| serde_json::to_value(event.base()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let source_suffix = serde_json::to_value(&legacy_group[1..])?;
+
+        let child = EventStore::new();
+        seed_fork_events(&child, &legacy_group, None, Uuid::new_v4())?;
+        let child_events = child.events();
+        validate_provider_state_provenance(&child_events)?;
+
+        assert!(matches!(
+            legacy_group[0],
+            SessionEvent::ProviderEpochBoundary {
+                reason: ProviderEpochBoundaryReason::ResponseStatePublication,
+                ..
+            }
+        ));
+        let SessionEvent::ProviderEpochBoundary {
+            reason: ProviderEpochBoundaryReason::ResponseStatePublicationV1(commitment),
+            ..
+        } = &child_events[0]
+        else {
+            return Err(
+                std::io::Error::other("forked legacy response group has no V1 commitment").into(),
+            );
+        };
+        assert_eq!(commitment.event_count(), u64::try_from(legacy_group.len())?);
+
+        let child_bases = child_events
+            .iter()
+            .map(|event| serde_json::to_value(event.base()))
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(child_bases, source_bases);
+        assert_eq!(serde_json::to_value(&child_events[1..])?, source_suffix);
         Ok(())
     }
 

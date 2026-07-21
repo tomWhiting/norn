@@ -12,19 +12,30 @@ fn append_orphan_provenance(
     path: &std::path::Path,
     parent_id: Option<crate::session::events::EventId>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let boundary = SessionEvent::ProviderEpochBoundary {
-        base: EventBase::new(parent_id),
-        reason: crate::session::events::ProviderEpochBoundaryReason::ResponseStatePublication,
+    let fixture = crate::session::response_publication_fixture(parent_id, true)?;
+    let assistant = SessionEvent::AssistantMessage {
+        response_items: Vec::new(),
+        base: fixture.assistant_base,
+        content: "orphaned response".to_owned(),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: crate::session::events::EventUsage::default(),
+        stop_reason: "end_turn".to_owned(),
+        response_id: Some("resp_orphaned".to_owned()),
     };
-    let event = crate::session::ProviderStateProvenance::new(
-        crate::session::events::EventId::new(),
-        true,
-    )
-    .into_custom_event(EventBase::new(Some(boundary.base().id.clone())))?;
+    let publication = crate::session::committed_response_publication(
+        fixture.boundary,
+        fixture.provenance,
+        assistant,
+    )?;
+    let [boundary, provenance, ..] = publication.as_slice() else {
+        return Err(std::io::Error::other("committed fixture omitted required rows").into());
+    };
     let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
     serde_json::to_writer(&mut file, &boundary)?;
     file.write_all(b"\n")?;
-    serde_json::to_writer(&mut file, &event)?;
+    serde_json::to_writer(&mut file, &provenance)?;
     file.write_all(b"\n")?;
     file.sync_all()?;
     Ok(())

@@ -5,8 +5,11 @@ use chrono::Utc;
 use serde::Serialize;
 use tempfile::TempDir;
 
-use crate::session::events::{EventBase, SessionEvent};
+use crate::session::events::{EventBase, EventUsage, SessionEvent};
 use crate::session::persistence::SessionStatus;
+use crate::session::{
+    ProviderStateValidationError, committed_response_publication, response_publication_fixture,
+};
 
 use super::{
     ResumeFidelity, SessionIndexEntry, SessionRecordOrigin, StrictFormatHeader, StrictStoreError,
@@ -102,6 +105,54 @@ fn rejects_index_event_count_drift() -> TestResult {
             ..
         })
     ));
+    Ok(())
+}
+
+#[test]
+fn rejects_a_canonical_timeline_with_a_tampered_publication_commitment() -> TestResult {
+    const TAMPERED_CONTENT: &str = "SENTINEL-TAMPERED-PROVIDER-CONTENT";
+
+    let directory = TempDir::new()?;
+    let fixture = response_publication_fixture(None, true)?;
+    let assistant = SessionEvent::AssistantMessage {
+        base: fixture.assistant_base,
+        response_items: Vec::new(),
+        content: "original response".to_owned(),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: EventUsage::default(),
+        stop_reason: "end_turn".to_owned(),
+        response_id: Some("resp_strict_validation".to_owned()),
+    };
+    let mut group =
+        committed_response_publication(fixture.boundary, fixture.provenance, assistant)?;
+    let row = entry("session-a", u64::try_from(group.len())?);
+    write_file(
+        &directory.path().join("index.jsonl"),
+        std::slice::from_ref(&row),
+    )?;
+    let timeline_path = directory.path().join("session-a.jsonl");
+    write_file(&timeline_path, &group)?;
+    validate_staged_store(directory.path())?;
+
+    let Some(SessionEvent::AssistantMessage { content, .. }) = group.last_mut() else {
+        return Err(std::io::Error::other("committed fixture omitted its assistant").into());
+    };
+    *content = TAMPERED_CONTENT.to_owned();
+    write_file(&timeline_path, &group)?;
+
+    let error = validate_staged_store(directory.path())
+        .err()
+        .ok_or_else(|| std::io::Error::other("tampered committed timeline validated"))?;
+    assert!(matches!(
+        &error,
+        StrictStoreError::InvalidProviderState {
+            source: ProviderStateValidationError::PublicationCommitment,
+            ..
+        }
+    ));
+    assert!(!error.to_string().contains(TAMPERED_CONTENT));
     Ok(())
 }
 

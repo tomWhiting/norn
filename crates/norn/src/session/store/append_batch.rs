@@ -28,6 +28,11 @@ impl EventStore {
         &self,
         events: &[SessionEvent],
     ) -> Result<Vec<EventId>, SessionError> {
+        crate::session::validate_new_response_publication_batches(events).map_err(|_error| {
+            SessionError::EventAppendFailed {
+                reason: "response publication commitment is invalid".to_owned(),
+            }
+        })?;
         let ids = event_ids(events);
         if let Some(sink) = &self.sink {
             let mut sink = sink.lock();

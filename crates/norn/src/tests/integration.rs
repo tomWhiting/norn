@@ -420,9 +420,12 @@ async fn provider_threaded_resume_replays_post_anchor_history()
         stop_reason: "tool_use".to_string(),
         response_id: Some("resp_tool".to_string()),
     };
-    store
-        .append_batch(&[fixture.boundary, fixture.provenance, assistant])
-        .unwrap();
+    let publication = crate::session::committed_response_publication(
+        fixture.boundary,
+        fixture.provenance,
+        assistant,
+    )?;
+    store.append_batch(&publication)?;
     store
         .append(SessionEvent::ToolResult {
             base: EventBase::new(store.last_event_id()),

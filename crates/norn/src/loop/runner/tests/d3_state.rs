@@ -31,7 +31,12 @@ async fn threaded_state_uses_provider_compaction_without_local_summarization() -
             stop_reason: "end_turn".to_owned(),
             response_id: Some(format!("resp_seed_{i}")),
         };
-        store.append_batch(&[fixture.boundary, fixture.provenance, assistant])?;
+        let publication = crate::session::committed_response_publication(
+            fixture.boundary,
+            fixture.provenance,
+            assistant,
+        )?;
+        store.append_batch(&publication)?;
     }
 
     let provider = MockProvider::with_capabilities(

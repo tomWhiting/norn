@@ -1,5 +1,5 @@
 use super::ProviderFilteredForkBoundary;
-use super::events::{EventBase, ProviderEpochBoundaryReason, SessionEvent};
+use super::events::{EventBase, EventUsage, ProviderEpochBoundaryReason, SessionEvent};
 
 #[derive(serde::Deserialize)]
 #[serde(tag = "type")]
@@ -75,7 +75,7 @@ fn filtered_fork_boundary_has_a_distinct_first_class_reason() -> Result<(), serd
 }
 
 #[test]
-fn pre_d3_reader_fails_closed_on_new_boundary_reasons() -> Result<(), serde_json::Error> {
+fn pre_d3_reader_fails_closed_on_new_boundary_reasons() -> Result<(), Box<dyn std::error::Error>> {
     let legacy = serde_json::to_value(SessionEvent::ProviderEpochBoundary {
         base: EventBase::new(None),
         reason: ProviderEpochBoundaryReason::MigratedLegacy,
@@ -96,5 +96,29 @@ fn pre_d3_reader_fails_closed_on_new_boundary_reasons() -> Result<(), serde_json
         let encoded = serde_json::to_value(event)?;
         assert!(serde_json::from_value::<FrozenPreD3SessionEvent>(encoded).is_err());
     }
+
+    let fixture = super::response_publication_fixture(None, true)?;
+    let assistant = SessionEvent::AssistantMessage {
+        response_items: Vec::new(),
+        base: fixture.assistant_base,
+        content: "committed response".to_owned(),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: EventUsage::default(),
+        stop_reason: "end_turn".to_owned(),
+        response_id: Some("resp_committed".to_owned()),
+    };
+    let committed =
+        super::committed_response_publication(fixture.boundary, fixture.provenance, assistant)?;
+    let committed_boundary = committed
+        .first()
+        .ok_or_else(|| std::io::Error::other("committed fixture omitted its boundary"))?;
+    assert!(
+        serde_json::from_value::<FrozenPreD3SessionEvent>(serde_json::to_value(
+            committed_boundary,
+        )?)
+        .is_err()
+    );
     Ok(())
 }

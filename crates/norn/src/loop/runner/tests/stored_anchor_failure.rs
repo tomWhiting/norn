@@ -65,7 +65,12 @@ async fn anchored_client_rejection_never_retries_without_the_anchor() -> TestRes
         stop_reason: "end_turn".to_owned(),
         response_id: Some(STORED_ANCHOR.to_owned()),
     };
-    store.append_batch(&[fixture.boundary, fixture.provenance, assistant])?;
+    let publication = crate::session::committed_response_publication(
+        fixture.boundary,
+        fixture.provenance,
+        assistant,
+    )?;
+    store.append_batch(&publication)?;
 
     let executor = MockToolExecutor::empty();
     let config = AgentLoopConfig::default();

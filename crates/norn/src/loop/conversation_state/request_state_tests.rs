@@ -182,7 +182,12 @@ fn resume_repair_drops_stored_anchor_for_first_healed_request()
         stop_reason: "tool_use".to_string(),
         response_id: Some("resp_killed".to_string()),
     };
-    store.append_batch(&[fixture.boundary, fixture.provenance, assistant])?;
+    let publication = crate::session::committed_response_publication(
+        fixture.boundary,
+        fixture.provenance,
+        assistant,
+    )?;
+    store.append_batch(&publication)?;
     crate::session::repair_dangling_tool_calls(&store)?;
 
     let state = ConversationRequestState::new(

@@ -100,7 +100,8 @@ pub fn render_event(
                 ProviderEpochBoundaryReason::ProviderIdentityAdoption => {
                     "provider identity adoption"
                 }
-                ProviderEpochBoundaryReason::ResponseStatePublication => {
+                ProviderEpochBoundaryReason::ResponseStatePublication
+                | ProviderEpochBoundaryReason::ResponseStatePublicationV1(_) => {
                     "response state publication"
                 }
                 ProviderEpochBoundaryReason::FilteredFork => "filtered fork context",

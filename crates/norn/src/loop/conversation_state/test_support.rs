@@ -2,7 +2,9 @@ use super::*;
 use crate::provider::request::MessageRole;
 use crate::session::events::{EventBase, EventId, EventUsage};
 use crate::session::store::EventStore;
-use crate::session::{ResponsePublicationFixture, response_publication_fixture};
+use crate::session::{
+    ResponsePublicationFixture, committed_response_publication, response_publication_fixture,
+};
 
 pub(super) fn message(role: MessageRole, content: &str) -> Message {
     Message {
@@ -24,11 +26,11 @@ pub(super) fn stored_assistant_events(
     response_id: &str,
 ) -> Result<Vec<SessionEvent>, crate::error::SessionError> {
     let fixture = publication_fixture(None)?;
-    Ok(vec![
+    committed_response_publication(
         fixture.boundary,
         fixture.provenance,
         assistant_event(fixture.assistant_base, content, response_id),
-    ])
+    )
 }
 
 pub(super) fn append_stored_assistant(
@@ -38,11 +40,12 @@ pub(super) fn append_stored_assistant(
 ) -> Result<EventId, crate::error::SessionError> {
     let fixture = publication_fixture(store.last_event_id())?;
     let assistant_id = fixture.assistant_base.id.clone();
-    store.append_batch(&[
+    let publication = committed_response_publication(
         fixture.boundary,
         fixture.provenance,
         assistant_event(fixture.assistant_base, content, response_id),
-    ])?;
+    )?;
+    store.append_batch(&publication)?;
     Ok(assistant_id)
 }
 

@@ -1,7 +1,9 @@
 //! Test fixtures for framed provider-state response publications.
 
-use super::ProviderStateProvenance;
+use crate::error::SessionError;
+
 use super::events::{EventBase, EventId, ProviderEpochBoundaryReason, SessionEvent};
+use super::{ProviderStateProvenance, seal_response_publication_group};
 
 pub(crate) struct ResponsePublicationFixture {
     pub(crate) boundary: SessionEvent,
@@ -27,4 +29,16 @@ pub(crate) fn response_publication_fixture(
         provenance,
         assistant_base,
     })
+}
+
+pub(crate) fn committed_response_publication(
+    boundary: SessionEvent,
+    provenance: SessionEvent,
+    assistant: SessionEvent,
+) -> Result<Vec<SessionEvent>, SessionError> {
+    let mut group = vec![boundary, provenance, assistant];
+    seal_response_publication_group(&mut group).map_err(|_error| SessionError::StorageError {
+        reason: "failed to commit the provider-state publication fixture".to_owned(),
+    })?;
+    Ok(group)
 }

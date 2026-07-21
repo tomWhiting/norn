@@ -20,7 +20,9 @@ use crate::provider::request::{AssistantToolCall, Message, MessageRole, Provider
 use crate::session::events::{
     EventBase, EventUsage, ProviderEpochBoundaryReason, SessionEvent, ToolCallEvent,
 };
-use crate::session::{ProviderStateProvenance, ResponseAudioArtifactLink};
+use crate::session::{
+    ProviderStateProvenance, ResponseAudioArtifactLink, seal_response_publication_group,
+};
 
 use super::machine::{StepFlow, StepMachine, StepState};
 
@@ -195,6 +197,7 @@ impl StepMachine<'_> {
         };
 
         let mut publication = Vec::with_capacity(4);
+        let has_publication_boundary = publication_boundary_base.is_some();
 
         if let Some(base) = publication_boundary_base {
             publication.push(SessionEvent::ProviderEpochBoundary {
@@ -251,6 +254,14 @@ impl StepMachine<'_> {
             .to_string(),
             response_id: response.response_id.clone(),
         });
+
+        if has_publication_boundary {
+            seal_response_publication_group(&mut publication).map_err(|_error| {
+                SessionError::StorageError {
+                    reason: "failed to commit the provider response publication".to_owned(),
+                }
+            })?;
+        }
 
         // No supported in-process observer may insert provider input inside
         // this group. Hooks see each event only after all rows are present.

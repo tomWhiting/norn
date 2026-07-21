@@ -7,6 +7,8 @@ use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use super::response_publication_commitment::ResponsePublicationCommitment;
+
 /// Unique identifier for a session event.
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EventId(String);
@@ -164,7 +166,7 @@ pub enum ContextMarkKind {
 }
 
 /// Why provider-owned conversation state must begin a new epoch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderEpochBoundaryReason {
     /// The visible timeline was migrated from legacy storage, whose provider
@@ -174,9 +176,12 @@ pub enum ProviderEpochBoundaryReason {
     /// adopted its first credential-and-authority identity. Earlier response
     /// anchors cannot be attributed to that identity and must not be reused.
     ProviderIdentityAdoption,
-    /// The following provenance record and assistant response form one
-    /// provider-state publication group.
+    /// The following records form a legacy, uncommitted provider-state
+    /// publication group.
     ResponseStatePublication,
+    /// The following provider-state publication group is committed by its
+    /// ordered length and canonical digest.
+    ResponseStatePublicationV1(ResponsePublicationCommitment),
     /// A non-identity fork changed the provider-facing history.
     FilteredFork,
 }

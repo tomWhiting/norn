@@ -5,7 +5,8 @@ use crate::r#loop::helpers::build_initial_messages;
 use crate::provider::request::ProviderRequest;
 use crate::session::context_edit::ContextEdits;
 use crate::session::{
-    ProviderFilteredForkBoundary, ProviderStateProvenance, response_publication_fixture,
+    ProviderFilteredForkBoundary, ProviderStateProvenance, committed_response_publication,
+    response_publication_fixture,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -33,13 +34,13 @@ fn assistant(base: EventBase, content: &str, response_id: &str) -> SessionEvent 
 fn stored_assistant_events(
     content: &str,
     response_id: &str,
-) -> Result<Vec<SessionEvent>, serde_json::Error> {
+) -> Result<Vec<SessionEvent>, Box<dyn std::error::Error>> {
     let fixture = response_publication_fixture(None, true)?;
-    Ok(vec![
+    Ok(committed_response_publication(
         fixture.boundary,
         fixture.provenance,
         assistant(fixture.assistant_base, content, response_id),
-    ])
+    )?)
 }
 
 fn append_stored_assistant(
@@ -49,11 +50,12 @@ fn append_stored_assistant(
 ) -> Result<crate::session::events::EventId, Box<dyn std::error::Error>> {
     let fixture = response_publication_fixture(store.last_event_id(), true)?;
     let assistant_id = fixture.assistant_base.id.clone();
-    store.append_batch(&[
+    let publication = committed_response_publication(
         fixture.boundary,
         fixture.provenance,
         assistant(fixture.assistant_base, content, response_id),
-    ])?;
+    )?;
+    store.append_batch(&publication)?;
     Ok(assistant_id)
 }
 

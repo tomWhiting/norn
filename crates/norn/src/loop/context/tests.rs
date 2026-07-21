@@ -92,10 +92,27 @@ fn context_mark_events_are_invisible_to_the_prompt_view() -> TestResult {
 #[test]
 fn incomplete_provider_frame_does_not_hide_application_custom_data() -> TestResult {
     let store = EventStore::new();
-    let boundary = SessionEvent::ProviderEpochBoundary {
-        base: EventBase::new(None),
-        reason: crate::session::events::ProviderEpochBoundaryReason::ResponseStatePublication,
+    let fixture = crate::session::response_publication_fixture(None, true)?;
+    let assistant = SessionEvent::AssistantMessage {
+        response_items: Vec::new(),
+        base: fixture.assistant_base,
+        content: "unfinished response".to_owned(),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: EventUsage::default(),
+        stop_reason: "end_turn".to_owned(),
+        response_id: Some("resp_incomplete".to_owned()),
     };
+    let mut publication = crate::session::committed_response_publication(
+        fixture.boundary,
+        fixture.provenance,
+        assistant,
+    )?
+    .into_iter();
+    let boundary = publication
+        .next()
+        .ok_or_else(|| std::io::Error::other("committed fixture omitted its boundary"))?;
     let boundary_id = boundary.base().id.clone();
     store.append(boundary)?;
     let custom = SessionEvent::Custom {

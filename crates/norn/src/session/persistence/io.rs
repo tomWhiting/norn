@@ -216,6 +216,7 @@ struct RetryPlanner {
 
 impl RetryPlanner {
     fn new(requested: &[SessionEvent]) -> Result<Self, SessionPersistError> {
+        crate::session::validate_new_response_publication_batches(requested)?;
         let mut requested_ids = HashSet::new();
         let mut requested_values = Vec::with_capacity(requested.len());
         for event in requested {

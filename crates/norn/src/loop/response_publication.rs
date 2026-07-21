@@ -4,12 +4,18 @@ use crate::error::SessionError;
 use crate::integration::hooks::HookRegistry;
 use crate::session::events::SessionEvent;
 use crate::session::store::EventStore;
+use crate::session::validate_new_response_publication_batches;
 
 /// Publish the full provider-response group before any observer hook runs.
 pub(super) fn append_response_publication(
     store: &EventStore,
     events: &[SessionEvent],
 ) -> Result<(), SessionError> {
+    validate_new_response_publication_batches(events).map_err(|_error| {
+        SessionError::StorageError {
+            reason: "provider response publication commitment is invalid".to_owned(),
+        }
+    })?;
     match tokio::runtime::Handle::try_current() {
         Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
             tokio::task::block_in_place(|| store.append_batch(events))?;

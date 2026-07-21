@@ -7,10 +7,11 @@ use crate::session::events::{EventBase, EventUsage, SessionEvent};
 use crate::session::persistence::io::read_session_events;
 use crate::session::{
     CreateSessionOptions, DurabilityPolicy, EventStore, JsonlSink, ProviderStateProvenance,
-    SessionManager, validate_provider_state_provenance,
+    SessionManager, seal_response_publication_group, validate_provider_state_provenance,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+type GroupResult = Result<Vec<SessionEvent>, Box<dyn std::error::Error>>;
 
 const PROCESS_CHILD_ENV: &str = "NORN_D3_BATCH_PROCESS_CHILD";
 const PROCESS_ROOT_ENV: &str = "NORN_D3_BATCH_PROCESS_ROOT";
@@ -29,7 +30,7 @@ fn options() -> CreateSessionOptions {
     }
 }
 
-fn response_group(label: &str) -> Result<Vec<SessionEvent>, serde_json::Error> {
+fn response_group(label: &str) -> GroupResult {
     let assistant_id = crate::session::events::EventId::new();
     let boundary = SessionEvent::ProviderEpochBoundary {
         base: EventBase::new(None),
@@ -51,7 +52,9 @@ fn response_group(label: &str) -> Result<Vec<SessionEvent>, serde_json::Error> {
         stop_reason: "end_turn".to_owned(),
         response_id: Some(format!("response-{label}")),
     };
-    Ok(vec![boundary, provenance, assistant])
+    let mut group = vec![boundary, provenance, assistant];
+    seal_response_publication_group(&mut group)?;
+    Ok(group)
 }
 
 fn join_error(payload: &(dyn Any + Send)) -> io::Error {
@@ -76,7 +79,9 @@ fn assert_contiguous_response_groups(
             group[0],
             SessionEvent::ProviderEpochBoundary {
                 reason:
-                    crate::session::events::ProviderEpochBoundaryReason::ResponseStatePublication,
+                    crate::session::events::ProviderEpochBoundaryReason::ResponseStatePublicationV1(
+                        _
+                    ),
                 ..
             }
         ) && ProviderStateProvenance::from_event(&group[1]).is_ok_and(|record| record.is_some())

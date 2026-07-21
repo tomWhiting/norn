@@ -154,7 +154,7 @@ mod tests {
         let error = map_session_open_error(
             "open_session failed",
             crate::session::SessionPersistError::InvalidProviderStateProvenance(
-                crate::session::ProviderStateValidationError,
+                crate::session::ProviderStateValidationError::Provenance,
             ),
         );
         assert!(matches!(

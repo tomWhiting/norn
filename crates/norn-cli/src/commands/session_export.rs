@@ -133,7 +133,8 @@ fn export_markdown(entry: &SessionIndexEntry, events: &[SessionEvent]) -> ExitCo
                     ProviderEpochBoundaryReason::ProviderIdentityAdoption => {
                         "provider identity adoption"
                     }
-                    ProviderEpochBoundaryReason::ResponseStatePublication => {
+                    ProviderEpochBoundaryReason::ResponseStatePublication
+                    | ProviderEpochBoundaryReason::ResponseStatePublicationV1(_) => {
                         "response state publication"
                     }
                     ProviderEpochBoundaryReason::FilteredFork => "filtered fork context",
