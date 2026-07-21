@@ -1,6 +1,8 @@
 //! Append-only event storage with optional write-through persistence.
 
 mod append_batch;
+#[cfg(test)]
+mod test_support;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -317,7 +319,8 @@ impl EventStore {
     /// # Errors
     ///
     /// * [`SessionError::EventAppendFailed`] if the event ID already
-    ///   exists in the store.
+    ///   exists in the store or the event would violate response-publication
+    ///   framing.
     /// * [`SessionError::StorageError`] if the sink fails to persist the
     ///   event. The event is **not** in the in-memory store in that
     ///   case. Retry safety is a sink invariant: partial rows cannot be
@@ -331,15 +334,25 @@ impl EventStore {
             // keeps file order identical to memory order without holding
             // the state lock during I/O.
             let mut sink_guard = sink.lock();
-            if self.inner.read().index.contains_key(&id) {
+            let inner = self.inner.read();
+            append_batch::validate_response_publication_transition(
+                &inner,
+                std::slice::from_ref(&event),
+            )?;
+            if inner.index.contains_key(&id) {
                 return Err(SessionError::EventAppendFailed {
                     reason: format!("duplicate event ID: {id}"),
                 });
             }
+            drop(inner);
             sink_guard.persist(&event).map_err(SessionError::from)?;
             self.inner.write().push(id.clone(), event);
         } else {
             let mut inner = self.inner.write();
+            append_batch::validate_response_publication_transition(
+                &inner,
+                std::slice::from_ref(&event),
+            )?;
             if inner.index.contains_key(&id) {
                 return Err(SessionError::EventAppendFailed {
                     reason: format!("duplicate event ID: {id}"),

@@ -127,14 +127,7 @@ fn hash_number(
     value: &Number,
 ) -> Result<(), ResponsePublicationCommitmentError> {
     hasher.update([2]);
-    if Number::from_f64(0.0)
-        .as_ref()
-        .is_some_and(|positive_zero| value == positive_zero)
-    {
-        hash_bytes(hasher, b"0.0")
-    } else {
-        hash_bytes(hasher, value.to_string().as_bytes())
-    }
+    hash_bytes(hasher, value.to_string().as_bytes())
 }
 
 fn hash_bytes(hasher: &mut Sha256, bytes: &[u8]) -> Result<(), ResponsePublicationCommitmentError> {

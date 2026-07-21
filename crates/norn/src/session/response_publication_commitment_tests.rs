@@ -206,18 +206,25 @@ fn fixed_direct_group_has_a_stable_canonical_commitment() -> TestResult {
 }
 
 #[test]
-fn canonical_commitment_sorts_nested_objects_and_normalizes_signed_zero() -> TestResult {
+fn canonical_commitment_sorts_nested_objects_and_distinguishes_signed_zero() -> TestResult {
     let mut left = legacy_direct_group()?;
     let mut right = left.clone();
+    let mut positive = left.clone();
 
     let mut left_arguments = serde_json::Map::new();
     left_arguments.insert("z".to_owned(), json!(-0.0));
     left_arguments.insert("a".to_owned(), json!({"second": 2, "first": 1}));
     let mut right_arguments = serde_json::Map::new();
     right_arguments.insert("a".to_owned(), json!({"first": 1, "second": 2}));
-    right_arguments.insert("z".to_owned(), json!(0.0));
+    right_arguments.insert("z".to_owned(), json!(-0.0));
+    let mut positive_arguments = right_arguments.clone();
+    positive_arguments.insert("z".to_owned(), json!(0.0));
 
-    for (group, arguments) in [(&mut left, left_arguments), (&mut right, right_arguments)] {
+    for (group, arguments) in [
+        (&mut left, left_arguments),
+        (&mut right, right_arguments),
+        (&mut positive, positive_arguments),
+    ] {
         let Some(SessionEvent::AssistantMessage { tool_calls, .. }) = group.last_mut() else {
             return Err(std::io::Error::other("response group has no assistant tail").into());
         };
@@ -235,6 +242,23 @@ fn canonical_commitment_sorts_nested_objects_and_normalizes_signed_zero() -> Tes
         commitment(&left)?.group_sha256(),
         commitment(&right)?.group_sha256(),
     );
+    assert_ne!(
+        commitment(&left)?.group_sha256(),
+        commitment(&positive)?.group_sha256(),
+    );
+
+    let Some(SessionEvent::AssistantMessage { tool_calls, .. }) = left.last_mut() else {
+        return Err(std::io::Error::other("response group has no assistant tail").into());
+    };
+    let Some(arguments) = tool_calls
+        .first_mut()
+        .and_then(|tool_call| tool_call.arguments.as_object_mut())
+    else {
+        return Err(std::io::Error::other("response tool call has no object arguments").into());
+    };
+    arguments.insert("z".to_owned(), json!(0.0));
+    assert_commitment_error(validate_new_response_publication_batches(&left));
+    assert_commitment_error(validate_provider_state_provenance(&left));
     Ok(())
 }
 

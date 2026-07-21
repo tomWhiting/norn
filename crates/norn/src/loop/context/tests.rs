@@ -114,14 +114,14 @@ fn incomplete_provider_frame_does_not_hide_application_custom_data() -> TestResu
         .next()
         .ok_or_else(|| std::io::Error::other("committed fixture omitted its boundary"))?;
     let boundary_id = boundary.base().id.clone();
-    store.append(boundary)?;
+    store.append_unvalidated_for_test(boundary)?;
     let custom = SessionEvent::Custom {
         base: EventBase::new(Some(boundary_id)),
         event_type: crate::session::PROVIDER_STATE_PROVENANCE_EVENT_TYPE.to_owned(),
         data: serde_json::json!({"application": "not a complete provider frame"}),
     };
     let custom_id = custom.base().id.clone();
-    store.append(custom)?;
+    store.append_unvalidated_for_test(custom)?;
 
     let view = construct_prompt(&store, &ContextEdits::new());
     assert_eq!(view.events.len(), 1);

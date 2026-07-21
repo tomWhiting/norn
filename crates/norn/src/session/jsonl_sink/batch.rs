@@ -7,7 +7,9 @@ use crate::session::persistence::io::{
     retry_prefix_from_file, serialize_events, session_file_relative, strict_events_from_file,
 };
 use crate::session::persistence::{IndexCounters, SessionPersistError};
-use crate::session::validate_provider_state_provenance;
+use crate::session::{
+    validate_no_incomplete_legacy_response_publications, validate_provider_state_provenance,
+};
 
 use super::{DurabilityPolicy, JsonlSink, JsonlTarget, PersistenceSink};
 
@@ -41,6 +43,7 @@ impl JsonlSink {
             lock_deadline,
         )?;
         let existing = strict_events_from_file(&mut file, &display_path)?;
+        validate_no_incomplete_legacy_response_publications(&existing)?;
         let facts = retry_prefix_from_file(&mut file, &display_path, events)?;
         let pending = &events[facts.retry_prefix..];
         preflight_timeline_counters(facts.counters, pending, self.counter_session_id(first_id))?;

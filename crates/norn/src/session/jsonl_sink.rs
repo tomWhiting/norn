@@ -18,7 +18,9 @@ use crate::session::persistence::io::{
 #[cfg(test)]
 use crate::session::persistence::io::{open_session_append, open_session_append_bound};
 use crate::session::persistence::{IndexCounters, LockedTimelineFile, SessionPersistError};
-use crate::session::validate_provider_state_provenance;
+use crate::session::{
+    validate_no_incomplete_legacy_response_publications, validate_provider_state_provenance,
+};
 use crate::util::PrivateFileIdentity;
 
 use super::store::PersistenceSink;
@@ -345,6 +347,7 @@ impl PersistenceSink for JsonlSink {
             ExistingEventState::Absent => {
                 let display_path = self.target.display_path()?;
                 let mut candidate = strict_events_from_file(&mut file, &display_path)?;
+                validate_no_incomplete_legacy_response_publications(&candidate)?;
                 candidate.push(event.clone());
                 validate_provider_state_provenance(&candidate)?;
                 inspection

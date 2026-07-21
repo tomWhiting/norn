@@ -40,25 +40,25 @@ fn append_provenance(
     stored: bool,
 ) -> TestResult<crate::session::events::EventId> {
     let boundary_id = boundary_base.id.clone();
-    store.append(SessionEvent::ProviderEpochBoundary {
+    store.append_unvalidated_for_test(SessionEvent::ProviderEpochBoundary {
         base: boundary_base,
         reason: crate::session::events::ProviderEpochBoundaryReason::ResponseStatePublication,
     })?;
     let provenance_base = EventBase::new(Some(boundary_id));
     let provenance_id = provenance_base.id.clone();
     let event = ProviderStateProvenance::new(target, stored).into_custom_event(provenance_base)?;
-    store.append(event)?;
+    store.append_unvalidated_for_test(event)?;
     Ok(provenance_id)
 }
 
 fn append_malformed_framed_provenance(store: &EventStore) -> TestResult {
     let boundary = EventBase::new(store.last_event_id());
     let boundary_id = boundary.id.clone();
-    store.append(SessionEvent::ProviderEpochBoundary {
+    store.append_unvalidated_for_test(SessionEvent::ProviderEpochBoundary {
         base: boundary,
         reason: crate::session::events::ProviderEpochBoundaryReason::ResponseStatePublication,
     })?;
-    store.append(SessionEvent::Custom {
+    store.append_unvalidated_for_test(SessionEvent::Custom {
         base: EventBase::new(Some(boundary_id)),
         event_type: PROVIDER_STATE_PROVENANCE_EVENT_TYPE.to_owned(),
         data: serde_json::json!({
@@ -74,7 +74,7 @@ fn append_suppression_cut(store: &EventStore) -> TestResult {
     let target_event_id = store
         .last_event_id()
         .ok_or_else(|| io::Error::other("suppression cut requires a preceding event"))?;
-    store.append(SessionEvent::ContextMark {
+    store.append_unvalidated_for_test(SessionEvent::ContextMark {
         base: EventBase::new(Some(target_event_id.clone())),
         mark: crate::session::events::ContextMarkKind::Suppress,
         target_event_id,
@@ -109,7 +109,7 @@ fn append_duplicate_target_records(
     let tail_id = append_provenance(store, tail, target.id.clone(), dispositions.1)?;
     let mut target = target;
     target.parent_id = Some(tail_id);
-    store.append(assistant_event(target, response_id))?;
+    store.append_unvalidated_for_test(assistant_event(target, response_id))?;
     Ok(target_id)
 }
 
@@ -232,7 +232,7 @@ fn unframed_legacy_discriminators_remain_application_data_after_a_publication() 
         true,
     )?;
     assistant_base.parent_id = Some(provenance_id);
-    store.append(assistant_event(assistant_base, "resp_valid-publication"))?;
+    store.append_unvalidated_for_test(assistant_event(assistant_base, "resp_valid-publication"))?;
     for event_type in [
         PROVIDER_STATE_PROVENANCE_EVENT_TYPE,
         "provider.epoch.filtered_fork",
@@ -311,12 +311,12 @@ async fn cut_between_provenance_and_target_fails_before_effects() -> TestResult 
     let provenance_id = append_provenance(&store, boundary_base, target.clone(), true)?;
     let cut_base = EventBase::new(Some(provenance_id.clone()));
     assistant_base.parent_id = Some(cut_base.id.clone());
-    store.append(SessionEvent::ContextMark {
+    store.append_unvalidated_for_test(SessionEvent::ContextMark {
         base: cut_base,
         mark: crate::session::events::ContextMarkKind::Suppress,
         target_event_id: user_id,
     })?;
-    store.append(assistant_event(
+    store.append_unvalidated_for_test(assistant_event(
         assistant_base,
         "resp_cut-between-provenance-and-target",
     ))?;
@@ -332,13 +332,13 @@ async fn input_interleaved_between_provenance_and_target_fails_before_effects() 
     let assistant_base = EventBase::new(None);
     let target = assistant_base.id.clone();
     let provenance_id = append_provenance(&store, boundary_base, target.clone(), true)?;
-    store.append(SessionEvent::UserMessage {
+    store.append_unvalidated_for_test(SessionEvent::UserMessage {
         base: EventBase::new(store.last_event_id()),
         content: MALFORMED_PAYLOAD_SENTINEL.to_owned(),
     })?;
     let mut assistant_base = assistant_base;
     assistant_base.parent_id = Some(provenance_id);
-    store.append(assistant_event(
+    store.append_unvalidated_for_test(assistant_event(
         assistant_base,
         "resp_interleaved-provider-state",
     ))?;

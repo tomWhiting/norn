@@ -77,7 +77,8 @@ pub use provider_state_validation::ProviderStateValidationError;
 pub(crate) use provider_state_validation::{
     ActiveResponseProvenance, ResponseStateDisposition, discover_active_response_provenance,
     event_cuts_response_anchor, response_publication_group_len, seal_response_publication_group,
-    validate_new_response_publication_batches, validate_provider_state_provenance,
+    validate_new_response_publication_batches, validate_no_incomplete_legacy_response_publications,
+    validate_provider_state_provenance, validate_response_publication_append,
 };
 pub use response_audio::{
     RESPONSE_AUDIO_ARTIFACT_EVENT_TYPE, ResponseAudioArtifact, ResponseAudioArtifactLink,
@@ -110,3 +111,5 @@ mod response_audio_lifecycle_tests;
 mod response_publication_batch_tests;
 #[cfg(test)]
 mod response_publication_commitment_tests;
+#[cfg(test)]
+mod response_publication_transition_tests;

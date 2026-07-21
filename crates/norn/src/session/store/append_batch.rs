@@ -22,21 +22,20 @@ impl EventStore {
     /// # Errors
     ///
     /// Returns [`SessionError::EventAppendFailed`] before publication when an
-    /// ID duplicates the store or another member of the group. Persistence
-    /// failures retain the same prefix semantics as [`Self::append`].
+    /// ID duplicates the store or another member of the group, or when the
+    /// group would violate response-publication framing. Persistence failures
+    /// retain the same prefix semantics as [`Self::append`].
     pub(crate) fn append_batch(
         &self,
         events: &[SessionEvent],
     ) -> Result<Vec<EventId>, SessionError> {
-        crate::session::validate_new_response_publication_batches(events).map_err(|_error| {
-            SessionError::EventAppendFailed {
-                reason: "response publication commitment is invalid".to_owned(),
-            }
-        })?;
         let ids = event_ids(events);
         if let Some(sink) = &self.sink {
             let mut sink = sink.lock();
-            validate_ids(&self.inner.read(), &ids)?;
+            let inner = self.inner.read();
+            validate_response_publication_transition(&inner, events)?;
+            validate_ids(&inner, &ids)?;
+            drop(inner);
             sink.persist_batch(events).map_err(SessionError::from)?;
             let mut inner = self.inner.write();
             for (event, id) in events.iter().zip(&ids) {
@@ -44,6 +43,7 @@ impl EventStore {
             }
         } else {
             let mut inner = self.inner.write();
+            validate_response_publication_transition(&inner, events)?;
             validate_ids(&inner, &ids)?;
             for (event, id) in events.iter().zip(&ids) {
                 inner.push(id.clone(), event.clone());
@@ -51,6 +51,17 @@ impl EventStore {
         }
         Ok(ids)
     }
+}
+
+pub(super) fn validate_response_publication_transition(
+    inner: &StoreInner,
+    events: &[SessionEvent],
+) -> Result<(), SessionError> {
+    crate::session::validate_response_publication_append(&inner.events, events).map_err(|_error| {
+        SessionError::EventAppendFailed {
+            reason: "response publication commitment is invalid".to_owned(),
+        }
+    })
 }
 
 fn event_ids(events: &[SessionEvent]) -> Vec<EventId> {

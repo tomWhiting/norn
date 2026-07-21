@@ -64,6 +64,8 @@ struct ProvenanceRecord {
     stored: bool,
 }
 
+const RESPONSE_PUBLICATION_MAX_GROUP_LEN: usize = 4;
+
 /// Validate every reserved provider-state record in a complete timeline.
 pub(crate) fn validate_provider_state_provenance(
     events: &[SessionEvent],
@@ -269,6 +271,65 @@ pub(crate) fn validate_new_response_publication_batches(
         index = index
             .checked_add(group_len)
             .ok_or(ProviderStateValidationError::Provenance)?;
+    }
+    Ok(())
+}
+
+/// Validate one store transition without allowing row-wise response framing.
+pub(crate) fn validate_response_publication_append(
+    existing: &[SessionEvent],
+    requested: &[SessionEvent],
+) -> Result<(), ProviderStateValidationError> {
+    validate_new_response_publication_batches(requested)?;
+    let trailing_start = existing
+        .len()
+        .saturating_sub(RESPONSE_PUBLICATION_MAX_GROUP_LEN.saturating_sub(1));
+    let Some(relative_boundary_index) = existing[trailing_start..]
+        .iter()
+        .rposition(is_response_state_publication_boundary)
+    else {
+        return Ok(());
+    };
+    let boundary_index = trailing_start.saturating_add(relative_boundary_index);
+    if matches!(
+        response_publication_group_len(existing, boundary_index),
+        Ok(Some(_))
+    ) {
+        return Ok(());
+    }
+    if matches!(
+        existing[boundary_index],
+        SessionEvent::ProviderEpochBoundary {
+            reason: ProviderEpochBoundaryReason::ResponseStatePublication,
+            ..
+        }
+    ) {
+        return Err(ProviderStateValidationError::PublicationCommitment);
+    }
+
+    let mut candidate = existing[boundary_index..].to_vec();
+    let remaining = RESPONSE_PUBLICATION_MAX_GROUP_LEN.saturating_sub(candidate.len());
+    candidate.extend(requested.iter().take(remaining).cloned());
+    response_publication_group_len(&candidate, 0)?
+        .ok_or(ProviderStateValidationError::Provenance)?;
+    Ok(())
+}
+
+/// Reject a durable legacy response boundary whose complete group is absent.
+pub(crate) fn validate_no_incomplete_legacy_response_publications(
+    events: &[SessionEvent],
+) -> Result<(), ProviderStateValidationError> {
+    for (index, event) in events.iter().enumerate() {
+        if matches!(
+            event,
+            SessionEvent::ProviderEpochBoundary {
+                reason: ProviderEpochBoundaryReason::ResponseStatePublication,
+                ..
+            }
+        ) && !matches!(response_publication_group_len(events, index), Ok(Some(_)))
+        {
+            return Err(ProviderStateValidationError::PublicationCommitment);
+        }
     }
     Ok(())
 }
