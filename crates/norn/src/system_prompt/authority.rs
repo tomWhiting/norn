@@ -55,8 +55,10 @@ pub enum PromptSource {
     ProjectContextFile,
     /// Generated catalog describing available skills.
     SkillCatalog,
-    /// Runtime-generated child, fork, or tool harness instructions.
-    GeneratedHarness,
+    /// Compiled child and fork policy owned by the Norn runtime.
+    ChildAgentPolicy,
+    /// Request-local runtime guidance such as tool and environment context.
+    ManagedRuntimeContext,
     /// Human-authored task, steering, or delegation request.
     UserRequest,
     /// Rule content loaded from a trusted user-level source.
@@ -70,12 +72,12 @@ impl PromptSource {
     #[must_use]
     pub const fn authority(self) -> PromptAuthority {
         match self {
-            Self::ProductPolicy => PromptAuthority::System,
+            Self::ProductPolicy | Self::ChildAgentPolicy => PromptAuthority::System,
             Self::OperatorProfile
             | Self::OperatorOverride
             | Self::UserContextFile
             | Self::SkillCatalog
-            | Self::GeneratedHarness
+            | Self::ManagedRuntimeContext
             | Self::OperatorRule => PromptAuthority::Developer,
             Self::WorkspaceProfile
             | Self::ProjectContextFile
@@ -95,7 +97,8 @@ impl PromptSource {
             Self::UserContextFile => "user_context_file",
             Self::ProjectContextFile => "project_context_file",
             Self::SkillCatalog => "skill_catalog",
-            Self::GeneratedHarness => "generated_harness",
+            Self::ChildAgentPolicy => "child_agent_policy",
+            Self::ManagedRuntimeContext => "managed_runtime_context",
             Self::UserRequest => "user_request",
             Self::OperatorRule => "operator_rule",
             Self::WorkspaceRule => "workspace_rule",
@@ -105,6 +108,7 @@ impl PromptSource {
     pub(crate) const fn stable_order(self) -> u8 {
         match self {
             Self::ProductPolicy => 0,
+            Self::ChildAgentPolicy => 1,
             Self::OperatorProfile => 10,
             Self::WorkspaceProfile => 11,
             Self::OperatorOverride => 20,
@@ -113,7 +117,7 @@ impl PromptSource {
             Self::SkillCatalog => 50,
             Self::OperatorRule => 60,
             Self::WorkspaceRule => 61,
-            Self::GeneratedHarness => 70,
+            Self::ManagedRuntimeContext => 70,
             Self::UserRequest => 80,
         }
     }
@@ -127,13 +131,17 @@ mod tests {
     fn source_exhaustively_derives_authority() {
         let cases = [
             (PromptSource::ProductPolicy, PromptAuthority::System),
+            (PromptSource::ChildAgentPolicy, PromptAuthority::System),
             (PromptSource::OperatorProfile, PromptAuthority::Developer),
             (PromptSource::WorkspaceProfile, PromptAuthority::User),
             (PromptSource::OperatorOverride, PromptAuthority::Developer),
             (PromptSource::UserContextFile, PromptAuthority::Developer),
             (PromptSource::ProjectContextFile, PromptAuthority::User),
             (PromptSource::SkillCatalog, PromptAuthority::Developer),
-            (PromptSource::GeneratedHarness, PromptAuthority::Developer),
+            (
+                PromptSource::ManagedRuntimeContext,
+                PromptAuthority::Developer,
+            ),
             (PromptSource::UserRequest, PromptAuthority::User),
             (PromptSource::OperatorRule, PromptAuthority::Developer),
             (PromptSource::WorkspaceRule, PromptAuthority::User),
