@@ -2,8 +2,9 @@
 //! configuration triple (NC-004 R2 / R8).
 //!
 //! Order of application matters: profile loaders (R1) construct the base
-//! [`Profile`]; this module mutates that profile in place from the user's
-//! CLI flags; then [`apply_loop_config_overrides`] folds CLI-derived
+//! [`Profile`]; this module mutates non-prompt profile fields and retains
+//! prompt flags as operator-owned side channels; then
+//! [`apply_loop_config_overrides`] folds CLI-derived
 //! values onto an [`AgentLoopConfig`]. The orchestrator (R8) then layers
 //! the `-c key=value` [`ConfigOverrides`] on top.
 //!
@@ -19,7 +20,7 @@ use std::time::Duration;
 use norn::agent_loop::config::{AgentLoopConfig, ConversationStateMode};
 use norn::agent_loop::retry::RetryPolicy;
 use norn::config::{NornSettings, ProviderProfileSettings, ProviderSettings};
-use norn::profile::Profile;
+use norn::profile::{Profile, ProfileOrigin};
 use norn::provider::request::{ReasoningEffort, ReasoningSummary, ServiceTier};
 
 use crate::cli::BuildError;
@@ -48,6 +49,12 @@ pub struct AppliedOverrides {
     /// (a partial typo like `--allowed-tools read,serch`) without
     /// mis-flagging profile-declared lists.
     pub allowed_tools: Vec<String>,
+    /// Explicit operator replacement for profile instructions.
+    pub system_prompt: Option<String>,
+    /// Explicit operator fragment appended after resolved profile instructions.
+    pub append_system_prompt: Option<String>,
+    /// Filesystem origin retained for source-derived profile authority.
+    pub profile_origin: Option<ProfileOrigin>,
 }
 
 /// Characters that signal a glob / pattern rather than an exact tool
@@ -78,9 +85,10 @@ fn reject_pattern_tool_names(flag: &str, names: &[String]) -> Result<(), BuildEr
 
 /// Apply every `--*` CLI flag in NC3 that targets the [`Profile`].
 ///
-/// `profile` is mutated in place. The return value collects the override
-/// side-channels — the `--disallowed-tools` list and the flag-sourced
-/// `--allowed-tools` list — that have no home on the [`Profile`] type.
+/// `profile` is mutated in place for model, tool, and reasoning selections.
+/// Prompt flags stay on the returned side channel so they do not destroy the
+/// resolved profile's filesystem provenance before prompt authority is
+/// derived.
 ///
 /// # Errors
 ///
@@ -95,14 +103,6 @@ pub fn apply_cli_profile_overrides(
 ) -> Result<AppliedOverrides, BuildError> {
     if let Some(model) = cli.model.as_deref() {
         model.clone_into(&mut profile.model);
-    }
-
-    if let Some(prompt) = cli.system_prompt.as_deref() {
-        profile.system_instructions = vec![prompt.to_owned()];
-    }
-
-    if let Some(appended) = cli.append_system_prompt.as_deref() {
-        profile.system_instructions.push(appended.to_owned());
     }
 
     let allowed_tools = cli
@@ -135,6 +135,9 @@ pub fn apply_cli_profile_overrides(
     Ok(AppliedOverrides {
         disallowed_tools,
         allowed_tools,
+        system_prompt: cli.system_prompt.clone(),
+        append_system_prompt: cli.append_system_prompt.clone(),
+        profile_origin: None,
     })
 }
 
@@ -665,32 +668,38 @@ mod tests {
     }
 
     #[test]
-    fn system_prompt_replaces_existing_instructions() {
+    fn system_prompt_is_preserved_as_an_operator_override() {
         let cli = cli_from(&["norn", "-S", "Be concise"]);
         let mut profile = Profile {
             system_instructions: vec!["old".to_owned(), "more old".to_owned()],
             ..Profile::default()
         };
-        apply_cli_profile_overrides(&cli, &mut profile).unwrap();
-        assert_eq!(profile.system_instructions, vec!["Be concise"]);
+        let applied = apply_cli_profile_overrides(&cli, &mut profile).unwrap();
+        assert_eq!(
+            profile.system_instructions,
+            vec!["old".to_owned(), "more old".to_owned()],
+            "profile provenance must not be destroyed by an operator override",
+        );
+        assert_eq!(applied.system_prompt.as_deref(), Some("Be concise"));
     }
 
     #[test]
-    fn append_system_prompt_adds_to_existing() {
+    fn append_system_prompt_is_preserved_as_an_operator_fragment() {
         let cli = cli_from(&["norn", "--append-system-prompt", "Also be clear"]);
         let mut profile = Profile {
             system_instructions: vec!["Be concise".to_owned()],
             ..Profile::default()
         };
-        apply_cli_profile_overrides(&cli, &mut profile).unwrap();
+        let applied = apply_cli_profile_overrides(&cli, &mut profile).unwrap();
+        assert_eq!(profile.system_instructions, vec!["Be concise"]);
         assert_eq!(
-            profile.system_instructions,
-            vec!["Be concise", "Also be clear"],
+            applied.append_system_prompt.as_deref(),
+            Some("Also be clear")
         );
     }
 
     #[test]
-    fn system_prompt_and_append_combine_in_order() {
+    fn system_prompt_and_append_remain_distinct_operator_fragments() {
         let cli = cli_from(&[
             "norn",
             "-S",
@@ -699,10 +708,12 @@ mod tests {
             "Also be clear",
         ]);
         let mut profile = Profile::default();
-        apply_cli_profile_overrides(&cli, &mut profile).unwrap();
+        let applied = apply_cli_profile_overrides(&cli, &mut profile).unwrap();
+        assert!(profile.system_instructions.is_empty());
+        assert_eq!(applied.system_prompt.as_deref(), Some("Be concise"));
         assert_eq!(
-            profile.system_instructions,
-            vec!["Be concise", "Also be clear"],
+            applied.append_system_prompt.as_deref(),
+            Some("Also be clear")
         );
     }
 

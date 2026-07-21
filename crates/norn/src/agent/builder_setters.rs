@@ -27,7 +27,7 @@ use crate::agent_loop::retry::RetryPolicy;
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
 use crate::integration::variables::VariableStore;
-use crate::profile::{Capability, Profile};
+use crate::profile::{Capability, Profile, ProfileOrigin};
 use crate::provider::request::{ReasoningEffort, ServiceTier};
 use crate::rules::engine::RuleEngine;
 use crate::session::SessionManager;
@@ -60,6 +60,20 @@ impl AgentBuilder {
     #[must_use]
     pub fn profile(mut self, profile: Profile) -> Self {
         self.profile = Some(profile);
+        self.profile_origin = None;
+        self
+    }
+
+    /// Use an already-loaded profile while retaining its filesystem origin.
+    ///
+    /// A working-directory profile is repository-controlled and therefore
+    /// becomes User authority. A user-level profile becomes Developer
+    /// authority. Prefer [`Self::profile`] for an explicit programmatic
+    /// profile, which is operator-owned and therefore Developer authority.
+    #[must_use]
+    pub fn profile_with_origin(mut self, profile: Profile, origin: ProfileOrigin) -> Self {
+        self.profile = Some(profile);
+        self.profile_origin = Some(origin);
         self
     }
 

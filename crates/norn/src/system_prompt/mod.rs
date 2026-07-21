@@ -3,7 +3,9 @@
 //! Assembles the Norn base system prompt from identity, harness
 //! capabilities, tool guidance (dynamic from the registry), safety rules,
 //! agent coordination patterns, and communication style (mode-dependent).
-//! Profile instructions layer on top after the base prompt.
+//! Root assembly keeps each stable instruction source in a typed
+//! [`PromptPlan`], so product policy, operator guidance, and repository
+//! context reach the provider with distinct authority.
 //!
 //! ## Assembly order
 //!
@@ -25,17 +27,21 @@
 //! - **Environment** — cwd, platform, time, git branch, session ID.
 //! - **Collaboration Mode** — autonomous, plan, or default mode guidance.
 //!
-//! Profile `system_instructions` and dynamic sections (prompt commands,
-//! rule injections, environment) are appended by the caller after the
-//! base prompt.
+//! Profile instructions and always-on context are assembled as stable typed
+//! fragments. Dynamic sections (prompt commands, rule injections,
+//! environment) remain a per-request managed Developer tail.
 
+pub mod authority;
 pub mod builder;
 pub mod child;
 pub mod environment;
+pub mod plan;
 pub mod sections;
 
+pub use authority::{PromptAuthority, PromptSource};
 pub use builder::{
     CollaborationMode, ExecutionMode, SystemPromptInputs, ToolPromptEntry, build_system_prompt,
 };
 pub use child::build_child_system_prompt;
 pub use environment::{EnvironmentConfig, format_environment_section};
+pub use plan::{PromptFragment, PromptPlan};

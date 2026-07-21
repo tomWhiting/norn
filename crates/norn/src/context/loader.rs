@@ -307,6 +307,20 @@ impl ContextLoader {
             (None, None) => String::new(),
         }
     }
+
+    /// Exact user-level `NORN.md` content, preserving its provenance.
+    #[must_use]
+    pub fn user_content(&self) -> Option<&str> {
+        self.user.as_ref().map(|context| context.content.as_str())
+    }
+
+    /// Exact project-root `NORN.md` content, preserving its provenance.
+    #[must_use]
+    pub fn project_content(&self) -> Option<&str> {
+        self.project
+            .as_ref()
+            .map(|context| context.content.as_str())
+    }
 }
 
 /// Resolve the user-level `NORN.md` path: `{norn_dir()}/NORN.md`.
@@ -588,6 +602,26 @@ mod tests {
 
         let loader = ContextLoader::load(cwd.path());
         assert_eq!(loader.formatted_context(), "USER\n\nPROJECT");
+    }
+
+    #[test]
+    fn layer_accessors_preserve_user_and_project_provenance() {
+        let loader = ContextLoader {
+            user: Some(ContextFile {
+                path: PathBuf::from("/user/NORN.md"),
+                content: "USER".to_owned(),
+                mtime: None,
+            }),
+            project: Some(ContextFile {
+                path: PathBuf::from("/workspace/NORN.md"),
+                content: "PROJECT".to_owned(),
+                mtime: None,
+            }),
+            cwd: PathBuf::from("/workspace"),
+        };
+
+        assert_eq!(loader.user_content(), Some("USER"));
+        assert_eq!(loader.project_content(), Some("PROJECT"));
     }
 
     // ── path-resolution boundaries ────────────────────────────────────

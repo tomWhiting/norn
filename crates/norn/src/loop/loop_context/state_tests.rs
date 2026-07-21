@@ -135,6 +135,73 @@ fn rebuild_base_section_pushes_when_sections_empty() {
 }
 
 #[test]
+fn typed_base_rebuild_preserves_norn_layer_authorities() {
+    use crate::context::{ContextFile, ContextLoader};
+    use crate::provider::request::MessageRole;
+    use crate::system_prompt::{PromptPlan, PromptSource};
+
+    let mut ctx = LoopContext::new("legacy");
+    ctx.context_loader = Some(ContextLoader {
+        user: Some(ContextFile {
+            path: std::path::PathBuf::from("/user/NORN.md"),
+            content: "user instructions".to_owned(),
+            mtime: None,
+        }),
+        project: Some(ContextFile {
+            path: std::path::PathBuf::from("/repo/NORN.md"),
+            content: "project instructions".to_owned(),
+            mtime: None,
+        }),
+        cwd: std::path::PathBuf::from("/repo"),
+    });
+    let mut plan = PromptPlan::new();
+    plan.set(PromptSource::ProductPolicy, "product");
+    ctx.install_stable_prompt_plan(plan);
+
+    let messages = ctx.stable_prompt_messages();
+    let roles = messages
+        .iter()
+        .map(|message| message.role.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        roles,
+        [
+            MessageRole::System,
+            MessageRole::Developer,
+            MessageRole::User
+        ]
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter_map(|message| message.content.as_deref())
+            .collect::<Vec<_>>(),
+        ["product", "user instructions", "project instructions"]
+    );
+}
+
+#[test]
+fn typed_plan_without_a_loader_preserves_explicit_context_fragments() {
+    use crate::system_prompt::{PromptPlan, PromptSource};
+
+    let mut plan = PromptPlan::new();
+    plan.set(PromptSource::ProductPolicy, "product");
+    plan.set(PromptSource::UserContextFile, "explicit user context");
+    plan.set(PromptSource::ProjectContextFile, "explicit project context");
+    let mut ctx = LoopContext::new("legacy");
+    ctx.install_stable_prompt_plan(plan);
+
+    assert_eq!(
+        ctx.stable_prompt_plan()
+            .map(|plan| (plan.fragments().len(), plan.flattened_content())),
+        Some((
+            3,
+            "product\n\nexplicit user context\n\nexplicit project context".to_owned()
+        ))
+    );
+}
+
+#[test]
 fn refresh_context_if_stale_returns_false_without_loader() {
     let mut ctx = LoopContext::new("base");
     assert!(ctx.context_loader.is_none());

@@ -21,6 +21,7 @@ use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
 use crate::system_prompt::builder::CollaborationMode;
 use crate::system_prompt::environment::EnvironmentConfig;
+use crate::system_prompt::plan::PromptPlan;
 
 use crate::integration::variables::VariableStore;
 use crate::r#loop::commands::SlashCommandRegistry;
@@ -64,7 +65,8 @@ pub struct PromptCommandCacheEntry {
 /// Optional bundle of loop-wide components plus a composable system
 /// instruction.
 ///
-/// The base system instruction is the first entry in [`Self::system_sections`].
+/// The flattened stable prompt is the first entry in
+/// [`Self::system_sections`].
 /// Dynamic sections appended via [`Self::append_system_section`] are joined
 /// onto the base instruction every iteration via [`Self::system_instruction`].
 /// Calling [`Self::clear_dynamic_sections`] truncates everything past the
@@ -91,10 +93,9 @@ pub struct LoopContext {
     /// sub-agent dispatch sites (notably `tools/agent/spawn.rs`) that do
     /// not hold a [`LoopContext`] reference.
     pub hooks: Option<Arc<HookRegistry>>,
-    /// Composable system instruction sections. Index 0 is the base
-    /// instruction supplied at construction time; later entries are dynamic
-    /// sections appended by rule injections and cleared at the start of
-    /// each iteration.
+    /// Composable compatibility prompt sections. Index 0 is the flattened
+    /// stable prompt; later entries are dynamic sections appended by rule
+    /// injections and cleared at the start of each iteration.
     pub system_sections: Vec<String>,
     /// Optional per-event output schemas. When present, the loop validates
     /// the corresponding event types before recording them.
@@ -250,6 +251,14 @@ pub struct LoopContext {
     /// runner calls when staleness is observed.
     pub context_loader: Option<ContextLoader>,
 
+    /// Source-aware stable prompt plan installed by root assembly.
+    ///
+    /// `None` preserves the legacy public [`Self::new`] contract: the first
+    /// `system_sections` entry is emitted as one System message. Root assembly
+    /// installs a plan so product, operator, and repository fragments retain
+    /// their distinct authorities without changing that compatibility view.
+    pub stable_prompt_plan: Option<PromptPlan>,
+
     /// Static prefix layered into `system_sections[0]` ahead of the
     /// always-on `NORN.md` content.
     ///
@@ -372,6 +381,7 @@ impl LoopContext {
             schedule_executor: None,
             process_manager: None,
             context_loader: None,
+            stable_prompt_plan: None,
             base_prefix: String::new(),
             base_suffix: String::new(),
             environment: None,

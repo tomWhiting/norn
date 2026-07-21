@@ -4,7 +4,10 @@ use tokio::process::Command;
 
 use crate::context::loader::ContextLoader;
 use crate::provider::request::ReasoningEffort;
+use crate::provider::request::{Message, MessageRole, ToolCallCaller};
+use crate::system_prompt::authority::PromptSource;
 use crate::system_prompt::environment::format_environment_section;
+use crate::system_prompt::plan::PromptPlan;
 
 use super::{DEFAULT_PROMPT_COMMAND_TIMEOUT, LoopContext, PromptCommandCacheEntry};
 
@@ -24,6 +27,11 @@ impl LoopContext {
     /// can invoke this on a freshly-defaulted [`LoopContext`] without a
     /// separate seeding step.
     pub fn rebuild_base_section(&mut self) {
+        if self.stable_prompt_plan.is_some() {
+            self.rebuild_typed_base_section();
+            return;
+        }
+
         let context_body = self
             .context_loader
             .as_ref()
@@ -44,6 +52,69 @@ impl LoopContext {
             *slot = assembled;
         } else {
             self.system_sections.push(assembled);
+        }
+    }
+
+    fn rebuild_typed_base_section(&mut self) {
+        let context_layers = self.context_loader.as_ref().map(|loader| {
+            (
+                loader.user_content().unwrap_or_default().to_owned(),
+                loader.project_content().unwrap_or_default().to_owned(),
+            )
+        });
+        let Some(plan) = self.stable_prompt_plan.as_mut() else {
+            return;
+        };
+        if let Some((user_context, project_context)) = context_layers {
+            plan.set(PromptSource::UserContextFile, user_context);
+            plan.set(PromptSource::ProjectContextFile, project_context);
+        }
+        let assembled = plan.flattened_content();
+        if let Some(slot) = self.system_sections.first_mut() {
+            *slot = assembled;
+        } else {
+            self.system_sections.push(assembled);
+        }
+    }
+
+    /// Install the authoritative stable prompt plan for root request assembly.
+    ///
+    /// The legacy flattened view in `system_sections[0]` is rebuilt at the
+    /// same time so existing introspection and child-inheritance surfaces keep
+    /// seeing the complete text while provider messages retain typed roles.
+    pub fn install_stable_prompt_plan(&mut self, plan: PromptPlan) {
+        self.stable_prompt_plan = Some(plan);
+        self.rebuild_base_section();
+    }
+
+    /// Return the source-aware stable prompt plan when root assembly installed
+    /// one. Legacy [`LoopContext::new`](Self::new) callers return [`None`].
+    #[must_use]
+    pub const fn stable_prompt_plan(&self) -> Option<&PromptPlan> {
+        self.stable_prompt_plan.as_ref()
+    }
+
+    /// Materialize the leading stable provider messages.
+    ///
+    /// Typed root plans preserve each fragment's source-derived authority.
+    /// Legacy callers retain the historical single System message containing
+    /// [`Self::base_system_instruction`].
+    #[must_use]
+    pub fn stable_prompt_messages(&self) -> Vec<Message> {
+        match self.stable_prompt_plan.as_ref() {
+            Some(plan) => plan.materialize_messages(),
+            None => vec![Message {
+                response_items: Vec::new(),
+                role: MessageRole::System,
+                content: Some(self.base_system_instruction()),
+                thinking: String::new(),
+                reasoning: Vec::new(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_call_kind: None,
+                tool_call_caller: ToolCallCaller::Absent,
+            }],
         }
     }
 
@@ -77,10 +148,12 @@ impl LoopContext {
         self.system_sections.join("\n\n")
     }
 
-    /// Return only the base system instruction (index 0), without any
-    /// dynamic sections. The base prompt is byte-stable between iterations,
-    /// enabling automatic prefix caching on the provider's instructions
-    /// field.
+    /// Return the flattened stable prompt compatibility view (index 0),
+    /// without dynamic sections.
+    ///
+    /// Root provider assembly must use [`Self::stable_prompt_messages`] to
+    /// retain authority boundaries; this method remains for introspection and
+    /// legacy child-inheritance callers while their typed plans are assembled.
     #[must_use]
     pub fn base_system_instruction(&self) -> String {
         self.system_sections.first().cloned().unwrap_or_default()

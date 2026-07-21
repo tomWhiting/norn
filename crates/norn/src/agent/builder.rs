@@ -75,7 +75,7 @@ use crate::error::{ConfigError, NornError};
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
 use crate::integration::variables::{SessionVariable, VariableSource, VariableStore};
-use crate::profile::{Capability, Profile, from_profile};
+use crate::profile::{Capability, Profile, ProfileOrigin, from_profile};
 use crate::provider::request::{ReasoningEffort, ServiceTier};
 use crate::provider::traits::Provider;
 use crate::provider::{AgentEvent, AgentEventSender, SharedAgentEventChannel};
@@ -97,6 +97,7 @@ use crate::tools::lsp::{LspBackend, LspWorkspace};
 pub struct AgentBuilder {
     pub(super) provider: Arc<dyn Provider>,
     pub(super) profile: Option<Profile>,
+    pub(super) profile_origin: Option<ProfileOrigin>,
     pub(super) profile_name: Option<String>,
     pub(super) model: Option<String>,
     pub(super) system_prompt: Option<String>,
@@ -151,6 +152,7 @@ impl AgentBuilder {
         Self {
             provider,
             profile: None,
+            profile_origin: None,
             profile_name: None,
             model: None,
             system_prompt: None,
@@ -249,11 +251,14 @@ impl AgentBuilder {
         let workspace_root = validate_workspace_root(self.workspace_root.take())?;
         let shared_wd = SharedWorkingDir::new(working_dir.clone());
 
-        let mut profile = resolve_base_profile(
+        let resolved_profile = resolve_base_profile(
             self.profile.take(),
+            self.profile_origin,
             self.profile_name.as_deref(),
             &working_dir,
         )?;
+        let profile_prompt_source = resolved_profile.prompt_source;
+        let mut profile = resolved_profile.profile;
         if let Some(model) = self.model {
             profile.model = model;
         }
@@ -539,6 +544,7 @@ impl AgentBuilder {
                 has_output_schema: config_override.output_schema.is_some(),
                 system_prompt_override: self.system_prompt,
                 append_system_prompt: self.append_system_prompt,
+                profile_source: profile_prompt_source,
                 has_auto_compact,
                 capabilities: provider_capabilities,
             },
@@ -763,6 +769,7 @@ mod tests {
     use crate::provider::usage::Usage;
     use crate::session::SessionManager;
     use crate::session::store::DurabilityPolicy;
+    use crate::system_prompt::{PromptAuthority, PromptSource};
     use crate::tool::context::ToolContext;
     use crate::tools::diagnostics::build_diagnostic_infra;
 
@@ -1206,6 +1213,41 @@ mod tests {
         assert!(base.contains("Base instruction."));
         assert!(base.contains("Capability instruction."));
         assert!(base.contains("Appended instruction."));
+    }
+
+    #[test]
+    fn build_preserves_workspace_profile_and_operator_append_authority() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .profile_with_origin(
+                Profile {
+                    model: "test-model".to_owned(),
+                    system_instructions: vec!["Workspace instruction.".to_owned()],
+                    ..Profile::default()
+                },
+                ProfileOrigin::WorkingDirectory,
+            )
+            .working_dir(temp.path())
+            .context_window_limit(TEST_CONTEXT_WINDOW)
+            .append_system_prompt("Operator instruction.")
+            .build()
+            .expect("build succeeds");
+
+        let plan = agent
+            .loop_context
+            .stable_prompt_plan()
+            .expect("root build installs a typed prompt plan");
+        let fragments = plan.fragments();
+        assert!(fragments.iter().any(|fragment| {
+            fragment.source() == PromptSource::WorkspaceProfile
+                && fragment.authority() == PromptAuthority::User
+                && fragment.content() == "Workspace instruction."
+        }));
+        assert!(fragments.iter().any(|fragment| {
+            fragment.source() == PromptSource::OperatorOverride
+                && fragment.authority() == PromptAuthority::Developer
+                && fragment.content() == "Operator instruction."
+        }));
     }
 
     #[test]

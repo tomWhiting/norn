@@ -29,7 +29,7 @@ use crate::r#loop::config::AgentLoopConfig;
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::retry::RetryPolicy;
 use crate::profile::Profile;
-use crate::profile::loader::resolve_workspace_profile_at_launch_root;
+use crate::profile::loader::{ProfileOrigin, resolve_workspace_profile_at_launch_root};
 use crate::provider::request::ToolDefinition;
 use crate::provider::surface::collect_function_definitions;
 use crate::provider::traits::Provider;
@@ -39,6 +39,7 @@ use crate::session::action_log::ActionLog;
 use crate::session::action_log_tree::ActionLogTree;
 use crate::session::store::EventStore;
 use crate::skill::SkillCatalog;
+use crate::system_prompt::PromptSource;
 use crate::system_prompt::environment::EnvironmentConfig;
 use crate::tool::catalog::{SharedToolCatalog, ToolCatalogEntry, ToolCatalogExtras};
 use crate::tool::context::{SessionId, SharedWorkingDir, ToolContext};
@@ -133,19 +134,47 @@ pub fn validate_workspace_root(root: Option<PathBuf>) -> Result<Option<PathBuf>,
     Ok(Some(canonical))
 }
 
+/// Resolved profile plus the provenance of its instruction text.
+pub(crate) struct ResolvedBaseProfile {
+    /// Parsed profile used by runtime assembly.
+    pub(crate) profile: Profile,
+    /// Source from which prompt authority is derived.
+    pub(crate) prompt_source: PromptSource,
+}
+
 /// Resolve the base profile: the explicit profile wins, then a named profile
 /// resolved through the standard scan dirs, then the default profile.
 pub(crate) fn resolve_base_profile(
     profile: Option<Profile>,
+    explicit_origin: Option<ProfileOrigin>,
     profile_name: Option<&str>,
     working_dir: &Path,
-) -> Result<Profile, NornError> {
+) -> Result<ResolvedBaseProfile, NornError> {
     match profile {
-        Some(profile) => Ok(profile),
+        Some(profile) => Ok(ResolvedBaseProfile {
+            profile,
+            prompt_source: profile_prompt_source(explicit_origin),
+        }),
         None => match profile_name {
-            Some(name) => Ok(resolve_workspace_profile_at_launch_root(name, working_dir)?.profile),
-            None => Ok(Profile::default()),
+            Some(name) => {
+                let resolved = resolve_workspace_profile_at_launch_root(name, working_dir)?;
+                Ok(ResolvedBaseProfile {
+                    profile: resolved.profile,
+                    prompt_source: profile_prompt_source(Some(resolved.origin)),
+                })
+            }
+            None => Ok(ResolvedBaseProfile {
+                profile: Profile::default(),
+                prompt_source: PromptSource::OperatorProfile,
+            }),
         },
+    }
+}
+
+const fn profile_prompt_source(origin: Option<ProfileOrigin>) -> PromptSource {
+    match origin {
+        Some(ProfileOrigin::WorkingDirectory) => PromptSource::WorkspaceProfile,
+        Some(ProfileOrigin::User) | None => PromptSource::OperatorProfile,
     }
 }
 
@@ -875,6 +904,19 @@ mod tests {
     use crate::r#loop::config::ConversationStateMode;
     use crate::r#loop::linger::LingerPolicy;
     use crate::provider::mock::MockProvider;
+
+    #[test]
+    fn profile_origin_derives_prompt_source_without_an_independent_role() {
+        assert_eq!(profile_prompt_source(None), PromptSource::OperatorProfile);
+        assert_eq!(
+            profile_prompt_source(Some(ProfileOrigin::User)),
+            PromptSource::OperatorProfile
+        );
+        assert_eq!(
+            profile_prompt_source(Some(ProfileOrigin::WorkingDirectory)),
+            PromptSource::WorkspaceProfile
+        );
+    }
 
     /// Finding-4 regression: an explicit non-`Option` value that equals the
     /// library default must still win over a settings-derived base when its

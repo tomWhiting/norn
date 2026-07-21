@@ -1,0 +1,146 @@
+//! Prompt authority derived from the provenance of each instruction fragment.
+
+use crate::provider::request::MessageRole;
+
+/// Provider-neutral authority carried by a prompt fragment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PromptAuthority {
+    /// Product-owned policy sent with the provider's highest authority.
+    System,
+    /// Trusted operator or runtime guidance below product policy.
+    Developer,
+    /// Repository-controlled or human-authored input.
+    User,
+}
+
+impl PromptAuthority {
+    /// Stable discriminator used by prompt-plan fingerprints and diagnostics.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Developer => "developer",
+            Self::User => "user",
+        }
+    }
+}
+
+impl From<PromptAuthority> for MessageRole {
+    fn from(authority: PromptAuthority) -> Self {
+        match authority {
+            PromptAuthority::System => Self::System,
+            PromptAuthority::Developer => Self::Developer,
+            PromptAuthority::User => Self::User,
+        }
+    }
+}
+
+/// Provenance of an instruction fragment.
+///
+/// Authority is deliberately derived by [`Self::authority`]. Callers cannot
+/// attach an independent role that disagrees with the source.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PromptSource {
+    /// Norn's compiled product policy and runtime contract.
+    ProductPolicy,
+    /// Instructions from an explicit or user-level profile.
+    OperatorProfile,
+    /// Instructions from a profile discovered inside the workspace.
+    WorkspaceProfile,
+    /// Explicit `system_prompt` / `append_system_prompt` operator input.
+    OperatorOverride,
+    /// User-level `NORN.md` instructions.
+    UserContextFile,
+    /// Project-root `NORN.md` instructions.
+    ProjectContextFile,
+    /// Generated catalog describing available skills.
+    SkillCatalog,
+    /// Runtime-generated child, fork, or tool harness instructions.
+    GeneratedHarness,
+    /// Human-authored task, steering, or delegation request.
+    UserRequest,
+    /// Rule content loaded from a trusted user-level source.
+    OperatorRule,
+    /// Rule content loaded from the active workspace.
+    WorkspaceRule,
+}
+
+impl PromptSource {
+    /// Authority assigned to this source.
+    #[must_use]
+    pub const fn authority(self) -> PromptAuthority {
+        match self {
+            Self::ProductPolicy => PromptAuthority::System,
+            Self::OperatorProfile
+            | Self::OperatorOverride
+            | Self::UserContextFile
+            | Self::SkillCatalog
+            | Self::GeneratedHarness
+            | Self::OperatorRule => PromptAuthority::Developer,
+            Self::WorkspaceProfile
+            | Self::ProjectContextFile
+            | Self::UserRequest
+            | Self::WorkspaceRule => PromptAuthority::User,
+        }
+    }
+
+    /// Stable discriminator used by prompt-plan fingerprints and diagnostics.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ProductPolicy => "product_policy",
+            Self::OperatorProfile => "operator_profile",
+            Self::WorkspaceProfile => "workspace_profile",
+            Self::OperatorOverride => "operator_override",
+            Self::UserContextFile => "user_context_file",
+            Self::ProjectContextFile => "project_context_file",
+            Self::SkillCatalog => "skill_catalog",
+            Self::GeneratedHarness => "generated_harness",
+            Self::UserRequest => "user_request",
+            Self::OperatorRule => "operator_rule",
+            Self::WorkspaceRule => "workspace_rule",
+        }
+    }
+
+    pub(crate) const fn stable_order(self) -> u8 {
+        match self {
+            Self::ProductPolicy => 0,
+            Self::OperatorProfile => 10,
+            Self::WorkspaceProfile => 11,
+            Self::OperatorOverride => 20,
+            Self::UserContextFile => 30,
+            Self::ProjectContextFile => 40,
+            Self::SkillCatalog => 50,
+            Self::OperatorRule => 60,
+            Self::WorkspaceRule => 61,
+            Self::GeneratedHarness => 70,
+            Self::UserRequest => 80,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PromptAuthority, PromptSource};
+
+    #[test]
+    fn source_exhaustively_derives_authority() {
+        let cases = [
+            (PromptSource::ProductPolicy, PromptAuthority::System),
+            (PromptSource::OperatorProfile, PromptAuthority::Developer),
+            (PromptSource::WorkspaceProfile, PromptAuthority::User),
+            (PromptSource::OperatorOverride, PromptAuthority::Developer),
+            (PromptSource::UserContextFile, PromptAuthority::Developer),
+            (PromptSource::ProjectContextFile, PromptAuthority::User),
+            (PromptSource::SkillCatalog, PromptAuthority::Developer),
+            (PromptSource::GeneratedHarness, PromptAuthority::Developer),
+            (PromptSource::UserRequest, PromptAuthority::User),
+            (PromptSource::OperatorRule, PromptAuthority::Developer),
+            (PromptSource::WorkspaceRule, PromptAuthority::User),
+        ];
+
+        for (source, expected) in cases {
+            assert_eq!(source.authority(), expected, "source={source:?}");
+        }
+    }
+}

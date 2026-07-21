@@ -14,6 +14,7 @@ use crate::provider::tools::ProviderCapabilities;
 use crate::system_prompt::builder::{
     ExecutionMode, SystemPromptInputs, ToolPromptEntry, build_system_prompt,
 };
+use crate::system_prompt::{PromptPlan, PromptSource};
 use crate::tool::registry::ToolRegistry;
 
 /// Inputs for [`install_system_prompt`] beyond the loop context itself.
@@ -28,6 +29,8 @@ pub(crate) struct SystemPromptInstall<'a> {
     pub(crate) system_prompt_override: Option<String>,
     /// Caller-supplied fragment appended after the instructions.
     pub(crate) append_system_prompt: Option<String>,
+    /// Provenance of the resolved profile instructions.
+    pub(crate) profile_source: PromptSource,
     /// Whether auto-compaction is enabled on the effective config.
     pub(crate) has_auto_compact: bool,
     /// Capabilities of the provider this agent is being bound to. The
@@ -40,9 +43,12 @@ pub(crate) struct SystemPromptInstall<'a> {
     pub(crate) capabilities: ProviderCapabilities,
 }
 
-/// Build the Norn base system prompt from the gated registry and layer it
-/// over the profile instructions (or the caller's `system_prompt` override)
-/// into `loop_context.system_sections[0]`.
+/// Build the Norn base system prompt from the gated registry and install the
+/// source-aware stable prompt plan.
+///
+/// `system_sections[0]` remains a flattened compatibility view for existing
+/// introspection and child-inheritance surfaces; provider request assembly
+/// uses the typed plan so those fragments are not promoted to System.
 ///
 /// Runtime-dynamic tools are deliberately omitted from this cache-stable
 /// prefix. The request-boundary tool lease publishes their generation-bound
@@ -64,22 +70,38 @@ pub(crate) fn install_system_prompt(
     };
     let base_prompt = build_system_prompt(&inputs);
 
-    let profile_prefix = std::mem::take(&mut loop_context.system_sections);
-    let mut instructions = install
-        .system_prompt_override
-        .unwrap_or_else(|| profile_prefix.into_iter().next().unwrap_or_default());
-    if let Some(append) = install.append_system_prompt
-        && !append.is_empty()
-    {
-        append_prompt(&mut instructions, &append);
-    }
+    let profile_instructions = std::mem::take(&mut loop_context.system_sections)
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    let mut plan = PromptPlan::new();
+    plan.set(PromptSource::ProductPolicy, base_prompt.clone());
 
-    loop_context.base_prefix = if instructions.is_empty() {
-        base_prompt
+    let mut compatibility_prefix = base_prompt;
+    if let Some(mut replacement) = install.system_prompt_override {
+        if let Some(append) = install.append_system_prompt
+            && !append.is_empty()
+        {
+            append_prompt(&mut replacement, &append);
+        }
+        plan.set(PromptSource::OperatorOverride, replacement.clone());
+        append_prompt(&mut compatibility_prefix, &replacement);
     } else {
-        format!("{base_prompt}\n\n{instructions}")
-    };
-    loop_context.rebuild_base_section();
+        plan.set(install.profile_source, profile_instructions.clone());
+        if !profile_instructions.is_empty() {
+            append_prompt(&mut compatibility_prefix, &profile_instructions);
+        }
+        if let Some(append) = install.append_system_prompt
+            && !append.is_empty()
+        {
+            plan.set(PromptSource::OperatorOverride, append.clone());
+            append_prompt(&mut compatibility_prefix, &append);
+        }
+    }
+    plan.set(PromptSource::SkillCatalog, loop_context.base_suffix.clone());
+
+    loop_context.base_prefix = compatibility_prefix;
+    loop_context.install_stable_prompt_plan(plan);
 }
 
 fn append_prompt(prompt: &mut String, fragment: &str) {
@@ -121,9 +143,16 @@ fn collect_tool_prompt_entries(registry: &ToolRegistry) -> Vec<ToolPromptEntry> 
 mod tests {
     use async_trait::async_trait;
 
-    use super::{ExecutionMode, SystemPromptInputs, ToolRegistry, collect_tool_prompt_entries};
+    use super::{
+        ExecutionMode, SystemPromptInputs, SystemPromptInstall, ToolRegistry,
+        collect_tool_prompt_entries, install_system_prompt,
+    };
+    use crate::context::{ContextFile, ContextLoader};
     use crate::error::ToolError;
+    use crate::r#loop::loop_context::LoopContext;
+    use crate::provider::tools::ProviderCapabilities;
     use crate::system_prompt::builder::build_system_prompt;
+    use crate::system_prompt::{PromptAuthority, PromptFragment, PromptSource};
     use crate::tool::context::ToolContext;
     use crate::tool::envelope::ToolEnvelope;
     use crate::tool::scheduling::ToolEffect;
@@ -183,6 +212,113 @@ mod tests {
             has_rules_engine: false,
             has_auto_compact: false,
         })
+    }
+
+    #[test]
+    fn install_preserves_root_fragment_sources_and_authorities() {
+        let registry = ToolRegistry::new();
+        let mut context = LoopContext::new("workspace profile");
+        context.context_loader = Some(ContextLoader {
+            user: Some(ContextFile {
+                path: "/user/NORN.md".into(),
+                content: "user context".to_owned(),
+                mtime: None,
+            }),
+            project: Some(ContextFile {
+                path: "/repo/NORN.md".into(),
+                content: "project context".to_owned(),
+                mtime: None,
+            }),
+            cwd: "/repo".into(),
+        });
+        context.base_suffix = "skill listing".to_owned();
+
+        install_system_prompt(
+            &mut context,
+            SystemPromptInstall {
+                registry: &registry,
+                mode: ExecutionMode::Headless,
+                has_output_schema: false,
+                system_prompt_override: None,
+                append_system_prompt: None,
+                profile_source: PromptSource::WorkspaceProfile,
+                has_auto_compact: false,
+                capabilities: ProviderCapabilities::openai_responses(),
+            },
+        );
+
+        let plan = context
+            .stable_prompt_plan()
+            .expect("root prompt installation must publish a typed plan");
+        let sources = plan
+            .fragments()
+            .iter()
+            .map(PromptFragment::source)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            sources,
+            [
+                PromptSource::ProductPolicy,
+                PromptSource::WorkspaceProfile,
+                PromptSource::UserContextFile,
+                PromptSource::ProjectContextFile,
+                PromptSource::SkillCatalog,
+            ]
+        );
+        let authorities = plan
+            .fragments()
+            .iter()
+            .map(PromptFragment::authority)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            authorities,
+            [
+                PromptAuthority::System,
+                PromptAuthority::User,
+                PromptAuthority::Developer,
+                PromptAuthority::User,
+                PromptAuthority::Developer,
+            ]
+        );
+    }
+
+    #[test]
+    fn operator_override_replaces_profile_without_losing_append_authority() {
+        let registry = ToolRegistry::new();
+        let mut context = LoopContext::new("workspace profile");
+
+        install_system_prompt(
+            &mut context,
+            SystemPromptInstall {
+                registry: &registry,
+                mode: ExecutionMode::Headless,
+                has_output_schema: false,
+                system_prompt_override: Some("operator replacement".to_owned()),
+                append_system_prompt: Some("operator append".to_owned()),
+                profile_source: PromptSource::WorkspaceProfile,
+                has_auto_compact: false,
+                capabilities: ProviderCapabilities::openai_responses(),
+            },
+        );
+
+        let plan = context
+            .stable_prompt_plan()
+            .expect("root prompt installation must publish a typed plan");
+        assert!(
+            plan.fragments()
+                .iter()
+                .all(|fragment| fragment.source() != PromptSource::WorkspaceProfile)
+        );
+        let override_fragment = plan
+            .fragments()
+            .iter()
+            .find(|fragment| fragment.source() == PromptSource::OperatorOverride)
+            .expect("operator override must be present");
+        assert_eq!(override_fragment.authority(), PromptAuthority::Developer);
+        assert_eq!(
+            override_fragment.content(),
+            "operator replacement\n\noperator append"
+        );
     }
 
     /// The `# Tools` section — and the entries feeding it — must be

@@ -307,6 +307,7 @@ mod tests {
         let applied = AppliedOverrides {
             allowed_tools: vec!["read".to_owned(), "serch".to_owned()],
             disallowed_tools: vec!["bash".to_owned(), "nope".to_owned()],
+            ..AppliedOverrides::default()
         };
         let unmatched = unmatched_tool_flag_names(&registry, &applied);
         assert!(

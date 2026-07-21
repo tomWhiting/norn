@@ -105,24 +105,16 @@ pub(super) fn build_initial_messages(
         with_prompt_context_edits(store, loop_context.context_edits.as_ref(), |edits| {
             construct_prompt(store, edits).events
         });
-    let mut messages = Vec::with_capacity(1 + history_events.len() + new_msg_count);
-    messages.push(Message {
-        response_items: Vec::new(),
-        role: MessageRole::System,
-        content: Some(loop_context.base_system_instruction()),
-        thinking: String::new(),
-        reasoning: Vec::new(),
-        tool_calls: Vec::new(),
-        tool_call_id: None,
-        tool_name: None,
-        tool_call_kind: None,
-        tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
-    });
+    let stable_prompt = loop_context.stable_prompt_messages();
+    let mut messages =
+        Vec::with_capacity(stable_prompt.len() + history_events.len() + new_msg_count);
+    messages.extend(stable_prompt);
 
     // The managed dynamic-context Developer message is NOT placed here: it is
     // attached at the tail by the first `build_request` so the System message
     // plus history form one stable, cacheable prefix. The prefix is therefore
-    // exactly the System message.
+    // exactly the source-aware stable prompt plan (or the legacy single
+    // System message for a direct `LoopContext::new` caller).
     let prefix_len = messages.len();
     let response_thread_anchors =
         response_thread_anchors_for_prompt_view(&history_events, store, prefix_len, true)?;

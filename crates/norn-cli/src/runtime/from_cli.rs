@@ -5,7 +5,8 @@
 //! profile resolution + CLI overrides have already happened in the caller
 //! (they are CLI config surface, not assembly, and provider construction
 //! sits between model resolution and this call). This function only
-//! translates the resolved state — the resolved [`Profile`], the merged
+//! translates the resolved state — the resolved [`Profile`] and its retained
+//! prompt origin, the merged
 //! [`NornSettings`], the [`AppliedOverrides`] side-channel, and the raw
 //! [`Cli`] flags — into [`AgentBuilder`] setter calls.
 //!
@@ -41,7 +42,9 @@ use crate::runtime::build_write_tool;
 /// `profile` already carries the CLI model / tool / reasoning overrides
 /// (the caller ran `apply_cli_profile_overrides`, which produced
 /// `applied`); the allow-list therefore rides on `profile.tools` and is
-/// not re-applied here. `settings` is the merged settings the caller
+/// not re-applied here. Prompt overrides remain on `applied` so they retain
+/// operator authority independently of the profile's origin. `settings` is
+/// the merged settings the caller
 /// loaded. The returned builder has `.load_runtime_base()` set, so
 /// `build()` re-derives the settings-backed agent-loop config, rules,
 /// hooks, task store, skill catalog, and permission policy and overlays
@@ -77,11 +80,21 @@ pub fn builder_from_cli(
     let config_overrides = ConfigOverrides::parse(&cli.config)?;
     let write_tool = build_write_tool(&profile, &config_overrides)?;
 
-    let mut builder = AgentBuilder::new(provider)
-        .profile(profile)
-        .working_dir(cwd.clone())
-        .load_runtime_base()
-        .tool(Box::new(write_tool));
+    let builder = AgentBuilder::new(provider);
+    let mut builder = match applied.profile_origin {
+        Some(origin) => builder.profile_with_origin(profile, origin),
+        None => builder.profile(profile),
+    }
+    .working_dir(cwd.clone())
+    .load_runtime_base()
+    .tool(Box::new(write_tool));
+
+    if let Some(prompt) = applied.system_prompt.as_ref() {
+        builder = builder.system_prompt(prompt.clone());
+    }
+    if let Some(prompt) = applied.append_system_prompt.as_ref() {
+        builder = builder.append_system_prompt(prompt.clone());
+    }
 
     // `--workspace-root` confines the file tools to the given root.
     // `AgentBuilder::build` validates it through the single shared

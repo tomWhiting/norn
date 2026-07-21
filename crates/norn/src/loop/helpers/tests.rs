@@ -11,6 +11,7 @@ use crate::session::events::{EventUsage, ProviderEpochBoundaryReason};
 use crate::session::persistence::SessionPersistError;
 use crate::session::store::PersistenceSink;
 use crate::session::{committed_response_publication, response_publication_fixture};
+use crate::system_prompt::{PromptPlan, PromptSource};
 
 fn user_event(content: &str) -> SessionEvent {
     SessionEvent::UserMessage {
@@ -55,6 +56,45 @@ fn threaded_state(initial: InitialMessages) -> Result<ConversationRequestState, 
         initial.prefix_len,
         initial.response_thread_anchor,
     )?)
+}
+
+#[test]
+fn initial_messages_materialize_the_ordered_stable_authority_plan() -> Result<(), NornError> {
+    let mut plan = PromptPlan::new();
+    plan.set(PromptSource::ProductPolicy, "product");
+    plan.set(PromptSource::OperatorProfile, "operator");
+    plan.set(PromptSource::WorkspaceProfile, "repository");
+    plan.set(PromptSource::SkillCatalog, "skills");
+    let mut loop_context = LoopContext::new("legacy compatibility view");
+    loop_context.install_stable_prompt_plan(plan);
+
+    let initial = build_initial_messages(Some("task"), &loop_context, &EventStore::new())?;
+    assert_eq!(initial.prefix_len, 4);
+    let roles = initial
+        .messages
+        .iter()
+        .map(|message| message.role.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        roles,
+        [
+            MessageRole::System,
+            MessageRole::Developer,
+            MessageRole::User,
+            MessageRole::Developer,
+            MessageRole::User,
+        ]
+    );
+    let contents = initial
+        .messages
+        .iter()
+        .filter_map(|message| message.content.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        contents,
+        ["product", "operator", "repository", "skills", "task"]
+    );
+    Ok(())
 }
 
 #[test]

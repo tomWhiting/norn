@@ -111,6 +111,7 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
 
     let resolved_profile = resolve_profile_with_origin(cli.profile.as_deref())?;
     let profile_is_working_directory_controlled = resolved_profile.working_directory_controlled;
+    let profile_origin = resolved_profile.profile_origin;
     let mut profile = resolved_profile.profile;
     if cli.profile.is_none()
         && cli.model.is_none()
@@ -119,7 +120,8 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         model.clone_into(&mut profile.model);
     }
     apply_settings_reasoning_to_profile(&settings, &mut profile)?;
-    let applied = apply_cli_profile_overrides(cli, &mut profile)?;
+    let mut applied = apply_cli_profile_overrides(cli, &mut profile)?;
+    applied.profile_origin = profile_origin;
     let model_selection = resolve_model_selection(&profile.model, &settings)?;
     if profile_is_working_directory_controlled
         && cli.model.is_none()

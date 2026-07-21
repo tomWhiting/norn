@@ -31,6 +31,10 @@ pub struct ResolvedCliProfile {
     pub profile: Profile,
     /// True only for a bare name resolved from a workspace profile directory.
     pub working_directory_controlled: bool,
+    /// Filesystem origin for prompt-authority preservation. Explicit paths and
+    /// the built-in default are operator-selected and therefore carry no
+    /// discovered origin.
+    pub profile_origin: Option<profile::ProfileOrigin>,
 }
 
 /// Default model identifier used when no `--profile` is supplied and no
@@ -70,6 +74,7 @@ pub fn resolve_profile_with_origin(spec: Option<&str>) -> Result<ResolvedCliProf
         return Ok(ResolvedCliProfile {
             profile: default_profile(),
             working_directory_controlled: false,
+            profile_origin: None,
         });
     };
 
@@ -77,14 +82,17 @@ pub fn resolve_profile_with_origin(spec: Option<&str>) -> Result<ResolvedCliProf
         return Ok(ResolvedCliProfile {
             profile: load_from_path(Path::new(value))?,
             working_directory_controlled: false,
+            profile_origin: None,
         });
     }
 
     let cwd = std::env::current_dir()?;
     let resolved = profile::resolve_workspace_profile(value, &cwd)?;
+    let working_directory_controlled = resolved.origin == profile::ProfileOrigin::WorkingDirectory;
     Ok(ResolvedCliProfile {
         profile: resolved.profile,
-        working_directory_controlled: resolved.origin == profile::ProfileOrigin::WorkingDirectory,
+        working_directory_controlled,
+        profile_origin: Some(resolved.origin),
     })
 }
 
@@ -191,10 +199,14 @@ mod tests {
              [[prompt_commands]]\nname = \"trusted\"\ncommand = \"printf trusted\"\n",
         )
         .unwrap();
-        let profile = resolve_profile(Some(path.to_str().unwrap())).unwrap();
-        assert_eq!(profile.name, "explicit");
-        assert_eq!(profile.model, "gpt-5");
-        assert_eq!(profile.prompt_commands.len(), 1);
+        let resolved = resolve_profile_with_origin(Some(path.to_str().unwrap())).unwrap();
+        assert_eq!(resolved.profile.name, "explicit");
+        assert_eq!(resolved.profile.model, "gpt-5");
+        assert_eq!(resolved.profile.prompt_commands.len(), 1);
+        assert!(
+            resolved.profile_origin.is_none(),
+            "an explicit path is an operator selection, not repository discovery"
+        );
     }
 
     #[test]
@@ -221,9 +233,10 @@ mod tests {
         .unwrap();
         let _guard = TempNornHome::new(dir);
 
-        let profile = resolve_profile(Some("coding")).unwrap();
-        assert_eq!(profile.name, "coding");
-        assert_eq!(profile.model, "gpt-5");
+        let resolved = resolve_profile_with_origin(Some("coding")).unwrap();
+        assert_eq!(resolved.profile.name, "coding");
+        assert_eq!(resolved.profile.model, "gpt-5");
+        assert_eq!(resolved.profile_origin, Some(profile::ProfileOrigin::User));
     }
 
     #[test]
