@@ -1659,7 +1659,7 @@ This 64/64 record remains historical evidence for the initial H1 candidate. It
 is superseded for current implementation status by the residual correction
 below and does not replace the D7/P9 authenticated live-wire gate.
 
-#### H1 residual correction candidate (2026-07-21)
+#### H1 residual correction and D3 acceptance (2026-07-21 to 2026-07-22)
 
 Initial correction review `0dc2035` returned D3 `READY` while identifying H1-a,
 H1-b, and H1-c as nonblocking completeness residuals. Under the owner's
@@ -1687,9 +1687,12 @@ publication, and 30/30 exact sentinels. Retained artifact
 `docs/reviews/evidence/p5-d3/2026-07-21-p5-d3-h1-residual-correction-evidence.json`,
 committed at `a79af89`, has SHA-256
 `4e02c796ff79758eeb78caebeb93a3f8c11afc9614e2c0278729e1428268e04e`.
-This is an implementation candidate pending narrow same-reviewer confirmation
-and owner acceptance. It does not accept D3 or P5 and does not replace the
-D7/P9 authenticated live-wire gate.
+Same-reviewer confirmation `db3cf81` closes H1-a/b/c and leaves the D3 `READY`
+verdict unchanged. On 2026-07-22 the owner accepts D3; the reviewed D3 head
+`db3cf81` is incorporated into `main` by fast-forward as part of this
+acceptance. This accepts D3 only. D8, the broad conversation-state matrices,
+whole-P5 and P2 acceptance, WebSocket work, the headless follow-up, and D7/P9
+authenticated live-wire conformance remain open.
 
 The review's non-driven headless exit-class inversion is recorded separately as
 pre-existing follow-up work. It does not change the isolated driven-transport
