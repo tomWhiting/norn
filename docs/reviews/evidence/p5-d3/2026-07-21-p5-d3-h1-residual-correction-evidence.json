@@ -1,0 +1,1936 @@
+{
+  "acceptance": {
+    "boundary": "candidate evidence only; independent review remains required",
+    "d3_accepted": false,
+    "p5_accepted": false
+  },
+  "distribution_cases": [
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+      "duration_seconds": 101.981,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.182,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "6a7ea653056a553377d317b01765c509e0133578469588f104c28c3f0c8b314f"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.059,
+          "exit_status": 0,
+          "iteration": 2,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "d8e3ac8b3275261fccfce3f88df80d2d46c325dab1298d312959571790b4f111"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.025,
+          "exit_status": 0,
+          "iteration": 3,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "560a5236c242c3b3e99d9e3df55e4a35deb16a9b946daeb16f7640750156ba4b"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.061,
+          "exit_status": 0,
+          "iteration": 4,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "68fd36fbe9be429d21ed2b12ef8a2c94d10a2c3c46f0a79d9e93880bd10238d5"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.01,
+          "exit_status": 0,
+          "iteration": 5,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "99775764d25b9051dc7d54ae9c326482c0ab81dbd6094059ba6d4c267b8bd9d2"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 4.989,
+          "exit_status": 0,
+          "iteration": 6,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "4376ae0bb4a90530365fccca7c5c2200778a7b007519c1ae52769ff4b9194b69"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.033,
+          "exit_status": 0,
+          "iteration": 7,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "a8d81056955e350a746a8f7b349e506e07a70758f752d526fa015ed48a8310cd"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.024,
+          "exit_status": 0,
+          "iteration": 8,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "aed84672e696e6125429905b2bcad6bf938d85bb325c287e085ded5298537484"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.056,
+          "exit_status": 0,
+          "iteration": 9,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "71c27158f293970fec45b195844f4978d68a443ff7a91f62252773678b2a65b1"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.018,
+          "exit_status": 0,
+          "iteration": 10,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "99775764d25b9051dc7d54ae9c326482c0ab81dbd6094059ba6d4c267b8bd9d2"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.048,
+          "exit_status": 0,
+          "iteration": 11,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "71c27158f293970fec45b195844f4978d68a443ff7a91f62252773678b2a65b1"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.059,
+          "exit_status": 0,
+          "iteration": 12,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "68fd36fbe9be429d21ed2b12ef8a2c94d10a2c3c46f0a79d9e93880bd10238d5"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.019,
+          "exit_status": 0,
+          "iteration": 13,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "aed84672e696e6125429905b2bcad6bf938d85bb325c287e085ded5298537484"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.052,
+          "exit_status": 0,
+          "iteration": 14,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "db714fe7bfa36e8464a3a605ecf22aae70288de5b1ffa96d76de6f13c63425cd"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.087,
+          "exit_status": 0,
+          "iteration": 15,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "6b6446b8095ecd90cf918f8ef7ee1b7f850cefe0a66244ae700ad59f40eed1d5"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.027,
+          "exit_status": 0,
+          "iteration": 16,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "aed84672e696e6125429905b2bcad6bf938d85bb325c287e085ded5298537484"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.039,
+          "exit_status": 0,
+          "iteration": 17,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "5523749c84efbafc0e9497f4704858a8b48c0f35a17e95af45ea16df3c39f53c"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.014,
+          "exit_status": 0,
+          "iteration": 18,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "6229d0603dab8e5f4b9246b5a28436afbd7b6bd08c77832029d842d1b58775b0"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.297,
+          "exit_status": 0,
+          "iteration": 19,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "480edd260bae5c10b6a575a2f597356b46eebeb543873e47346297c4adc54c03"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 5.882,
+          "exit_status": 0,
+          "iteration": 20,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "e1c4ff1a5edb248435bd548f3653c5401eb8cfec880cc417cc772f5e09b6c6c4"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 20,
+      "result": "pass",
+      "runs": 20,
+      "test": "session::response_publication_batch_tests::independent_handles_publish_only_contiguous_response_groups"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+      "duration_seconds": 15.327,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.597,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "64ae3e75d6f5788b4256b07678ccdb2443dcf468a67e7617be25e76df87261db"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.619,
+          "exit_status": 0,
+          "iteration": 2,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "c9a922c6eeb73a2d879b67dd5d582c85b180e6bfde3bec6ef4e72dab1b2a053f"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.608,
+          "exit_status": 0,
+          "iteration": 3,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "9d470497e230314ce915a12530e39cae46669a3fb8e98817a3e8d0c966526b4d"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.588,
+          "exit_status": 0,
+          "iteration": 4,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "64ae3e75d6f5788b4256b07678ccdb2443dcf468a67e7617be25e76df87261db"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.642,
+          "exit_status": 0,
+          "iteration": 5,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "8e9836494ee07a8d9bafaaa5800175ded147aaffe1c6610a4ff88a58ba383b56"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.603,
+          "exit_status": 0,
+          "iteration": 6,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "89190d58ffd7a63b95b7bbee7198180881f6e783c832a8826945b9452f56c1d5"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.626,
+          "exit_status": 0,
+          "iteration": 7,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "2de4fecda0a232aa271d9b7acfd5eeb7dd88eac8cf3f285b3d77717da3025a7a"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.591,
+          "exit_status": 0,
+          "iteration": 8,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "058968e46401116d3ad5b43388126eb57a7d14c7017ad316551fb5eaa325f3aa"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.6,
+          "exit_status": 0,
+          "iteration": 9,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "9d470497e230314ce915a12530e39cae46669a3fb8e98817a3e8d0c966526b4d"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.591,
+          "exit_status": 0,
+          "iteration": 10,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "64ae3e75d6f5788b4256b07678ccdb2443dcf468a67e7617be25e76df87261db"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.695,
+          "exit_status": 0,
+          "iteration": 11,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "88db8efb365fa2582f0ecc6a6e64e1ab33570944de83a20a0cb44da109b8f4a4"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.609,
+          "exit_status": 0,
+          "iteration": 12,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "ea9d9084ad6dd43ffc8ce11838dd3c648375811bbfbe407ef97c607b0097672d"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.572,
+          "exit_status": 0,
+          "iteration": 13,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "a19559006596898acabea4efd04846a375b89f91a49a07bdc5835972f72e1e7f"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.598,
+          "exit_status": 0,
+          "iteration": 14,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "89190d58ffd7a63b95b7bbee7198180881f6e783c832a8826945b9452f56c1d5"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.589,
+          "exit_status": 0,
+          "iteration": 15,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "64ae3e75d6f5788b4256b07678ccdb2443dcf468a67e7617be25e76df87261db"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.574,
+          "exit_status": 0,
+          "iteration": 16,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "a19559006596898acabea4efd04846a375b89f91a49a07bdc5835972f72e1e7f"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.608,
+          "exit_status": 0,
+          "iteration": 17,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "4ec41ac68223d805fbcb0169d4c1407de751afea158104b0087ec8afbd0d7eba"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 2.639,
+          "exit_status": 0,
+          "iteration": 18,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "d2f405c4035bc76d0632a89c81832921bd1d9975341f22318a3019f7dfc0c8fd"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 1.78,
+          "exit_status": 0,
+          "iteration": 19,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "ceb2de0d625137e33cb6fb83181d6b1a42321371e9ce1150cb7780881ea993b4"
+          },
+          "result": "pass",
+          "summary_records": 1
+        },
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups -- --exact --test-threads=1",
+          "duration_seconds": 0.598,
+          "exit_status": 0,
+          "iteration": 20,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 381,
+            "sha256": "2de4fecda0a232aa271d9b7acfd5eeb7dd88eac8cf3f285b3d77717da3025a7a"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 20,
+      "result": "pass",
+      "runs": 20,
+      "test": "session::response_publication_batch_tests::independent_processes_publish_only_contiguous_response_groups"
+    }
+  ],
+  "environment": {
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "cargo_target_directory": "<repo>/target",
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)"
+  },
+  "kind": "p5_d3_contention_and_durability_evidence",
+  "provenance": {
+    "base": "0dc2035e177773583c4d1298761d67c52a647567",
+    "branch": "codex/p5-d3-correction",
+    "dirty_rust_paths": [],
+    "inventory": {
+      "count": 13,
+      "encoding": "NUL-delimited git diff --name-only -z",
+      "paths": [
+        "crates/norn/src/loop/context/tests.rs",
+        "crates/norn/src/loop/runner/tests/d3_provenance_validation.rs",
+        "crates/norn/src/session/jsonl_sink.rs",
+        "crates/norn/src/session/jsonl_sink/batch.rs",
+        "crates/norn/src/session/mod.rs",
+        "crates/norn/src/session/provider_state_validation.rs",
+        "crates/norn/src/session/response_publication_commitment.rs",
+        "crates/norn/src/session/response_publication_commitment_tests.rs",
+        "crates/norn/src/session/response_publication_transition_tests.rs",
+        "crates/norn/src/session/store.rs",
+        "crates/norn/src/session/store/append_batch.rs",
+        "crates/norn/src/session/store/test_support.rs",
+        "docs/reviews/evidence/p5-d3/run_p5_d3_evidence.py"
+      ],
+      "sha256": "200cfec964ffe9d49d964bb7d925540e6690162d4770f795e3f18dc4addd9bdb"
+    },
+    "runner": {
+      "blob": "35f5c47a33e48a1a7c35e110e9cfef9455e1992b",
+      "path": "docs/reviews/evidence/p5-d3/run_p5_d3_evidence.py",
+      "sha256": "57a17055c4c6907d335e4971df20202c1a1c88a4c3c1f272eb128d24b333f0df"
+    },
+    "rust_manifest": {
+      "encoding": "NUL-delimited git ls-tree -r -z",
+      "records": 998,
+      "sha256": "fc846815acdf965189a5e2d2a9fedde05a39cbb9f985d34e40b1a1be5551afa2"
+    },
+    "source": "c8619aec1ab065ddd14bd5cd2cd574bc95e087c3",
+    "source_tree": "e7f676a1a6389f307d6892ce3ae763de5436682e"
+  },
+  "result": "pass",
+  "schema_version": 1,
+  "sentinel_cases": [
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib tools::agent::fork_seed::tests::persistent_fork_seeds_framed_response_group_without_splitting_it -- --exact --test-threads=1",
+      "duration_seconds": 0.601,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib tools::agent::fork_seed::tests::persistent_fork_seeds_framed_response_group_without_splitting_it -- --exact --test-threads=1",
+          "duration_seconds": 0.601,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 373,
+            "sha256": "831c363f244dfeea8f2629ccd40051eda46eef116faf825d38bce8450648d38c"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "tools::agent::fork_seed::tests::persistent_fork_seeds_framed_response_group_without_splitting_it"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib tools::agent::fork_seed::tests::legacy_response_group_fork_deliberately_enriches_only_boundary_metadata -- --exact --test-threads=1",
+      "duration_seconds": 0.447,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib tools::agent::fork_seed::tests::legacy_response_group_fork_deliberately_enriches_only_boundary_metadata -- --exact --test-threads=1",
+          "duration_seconds": 0.447,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 380,
+            "sha256": "299e2912bfa15bdd259a9980c535f0c922dff274e1a62904546a0101e4495a99"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "tools::agent::fork_seed::tests::legacy_response_group_fork_deliberately_enriches_only_boundary_metadata"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib 'r#loop::runner::tests::response_publication_timeout::timeout_in_response_event_hook_never_duplicates_durable_output_as_partial' -- --exact --test-threads=1",
+      "duration_seconds": 0.416,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib 'r#loop::runner::tests::response_publication_timeout::timeout_in_response_event_hook_never_duplicates_durable_output_as_partial' -- --exact --test-threads=1",
+          "duration_seconds": 0.416,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 403,
+            "sha256": "4c2025a569663c169eb036b595cecd9d446914e21b2aa02959aa624c070a50ca"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "r#loop::runner::tests::response_publication_timeout::timeout_in_response_event_hook_never_duplicates_durable_output_as_partial"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::provider_epoch_tests::pre_d3_reader_fails_closed_on_new_boundary_reasons -- --exact --test-threads=1",
+      "duration_seconds": 0.41,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::provider_epoch_tests::pre_d3_reader_fails_closed_on_new_boundary_reasons -- --exact --test-threads=1",
+          "duration_seconds": 0.41,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 358,
+            "sha256": "8935d48179a9df3de7dbbef6b089b117f58ba55c07dc26796eec0647856d5f45"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::provider_epoch_tests::pre_d3_reader_fails_closed_on_new_boundary_reasons"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::fixed_direct_group_has_a_stable_canonical_commitment -- --exact --test-threads=1",
+      "duration_seconds": 1.568,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::fixed_direct_group_has_a_stable_canonical_commitment -- --exact --test-threads=1",
+          "duration_seconds": 1.568,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 377,
+            "sha256": "051aa38437d446231ee082e66e6023b57d42675a5e38a30cc4e1ef9539a20eb1"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_commitment_tests::fixed_direct_group_has_a_stable_canonical_commitment"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::canonical_commitment_sorts_nested_objects_and_distinguishes_signed_zero -- --exact --test-threads=1",
+      "duration_seconds": 2.139,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::canonical_commitment_sorts_nested_objects_and_distinguishes_signed_zero -- --exact --test-threads=1",
+          "duration_seconds": 2.139,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 396,
+            "sha256": "9a4f484d60291e9902cfeaeb34fd0d96d68f0e98170dd3293772af63866fa88f"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_commitment_tests::canonical_commitment_sorts_nested_objects_and_distinguishes_signed_zero"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::direct_publication_commitment_rejects_assistant_tamper -- --exact --test-threads=1",
+      "duration_seconds": 0.544,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::direct_publication_commitment_rejects_assistant_tamper -- --exact --test-threads=1",
+          "duration_seconds": 0.544,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 379,
+            "sha256": "5ed768eebae3adcb369900d7afbbf223721207f40f950edd450df25373a3b3b9"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_commitment_tests::direct_publication_commitment_rejects_assistant_tamper"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::audio_publication_commitment_rejects_link_tamper -- --exact --test-threads=1",
+      "duration_seconds": 0.451,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::audio_publication_commitment_rejects_link_tamper -- --exact --test-threads=1",
+          "duration_seconds": 0.451,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 373,
+            "sha256": "7f280a8c2dea9f5acdcbf7089c2025992bf188b55b28d03c61301d8f86e67c54"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_commitment_tests::audio_publication_commitment_rejects_link_tamper"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::complete_committed_group_rejects_tampered_suffix_on_replay -- --exact --test-threads=1",
+      "duration_seconds": 0.418,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::complete_committed_group_rejects_tampered_suffix_on_replay -- --exact --test-threads=1",
+          "duration_seconds": 0.418,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 383,
+            "sha256": "93833192a14f6c1754a955769b64af6db28466152f5d57155208ca4423e45d08"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_commitment_tests::complete_committed_group_rejects_tampered_suffix_on_replay"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::complete_legacy_uncommitted_group_remains_readable -- --exact --test-threads=1",
+      "duration_seconds": 0.455,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::complete_legacy_uncommitted_group_remains_readable -- --exact --test-threads=1",
+          "duration_seconds": 0.455,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 375,
+            "sha256": "11ca367b4853e08dc7c1de5e6504c8920ef287c20ac43a80449adeeca3e49e22"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_commitment_tests::complete_legacy_uncommitted_group_remains_readable"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::structurally_decodable_invalid_commitments_fail_validation -- --exact --test-threads=1",
+      "duration_seconds": 1.219,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::structurally_decodable_invalid_commitments_fail_validation -- --exact --test-threads=1",
+          "duration_seconds": 1.219,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 383,
+            "sha256": "a92d83012eba4f42d06173e70f0e4e644f8b7bb6b79d1590912429d3b7648884"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_commitment_tests::structurally_decodable_invalid_commitments_fail_validation"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::unknown_response_publication_v2_reason_fails_closed -- --exact --test-threads=1",
+      "duration_seconds": 2.729,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::unknown_response_publication_v2_reason_fails_closed -- --exact --test-threads=1",
+          "duration_seconds": 2.729,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 376,
+            "sha256": "88745f3e375d2351614b7366e15894cb472bb4804286c75edc33bd6becc8d12f"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_commitment_tests::unknown_response_publication_v2_reason_fails_closed"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::durable_committed_prefix_completes_on_exact_retry -- --exact --test-threads=1",
+      "duration_seconds": 0.629,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::durable_committed_prefix_completes_on_exact_retry -- --exact --test-threads=1",
+          "duration_seconds": 0.629,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 374,
+            "sha256": "b3a300ee09b3790d4aafd67a9578cedb0be3fbdbc9191867cfe0b604d1d31984"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_commitment_tests::durable_committed_prefix_completes_on_exact_retry"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::durable_committed_prefix_rejects_divergent_unwritten_suffix -- --exact --test-threads=1",
+      "duration_seconds": 0.522,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::durable_committed_prefix_rejects_divergent_unwritten_suffix -- --exact --test-threads=1",
+          "duration_seconds": 0.522,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 384,
+            "sha256": "d005a145f360988db640ee8a5a47235231fc98a90fa798faff10a56f5c89b847"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_commitment_tests::durable_committed_prefix_rejects_divergent_unwritten_suffix"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::durable_boundary_rejects_a_recomputed_divergent_commitment -- --exact --test-threads=1",
+      "duration_seconds": 0.503,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::durable_boundary_rejects_a_recomputed_divergent_commitment -- --exact --test-threads=1",
+          "duration_seconds": 0.503,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 383,
+            "sha256": "745886fe80230d12d117303caec5cb4f5a5e2fef2779afa414eae5d69eed1c6c"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_commitment_tests::durable_boundary_rejects_a_recomputed_divergent_commitment"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::durable_legacy_prefix_cannot_be_completed -- --exact --test-threads=1",
+      "duration_seconds": 0.461,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_commitment_tests::durable_legacy_prefix_cannot_be_completed -- --exact --test-threads=1",
+          "duration_seconds": 0.461,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 366,
+            "sha256": "c99c8b26dc6fec5986fdb7829316a714094dd6cc73ed831f35b86f16f39ca74e"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_commitment_tests::durable_legacy_prefix_cannot_be_completed"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::persistence::strict::validation_tests::rejects_a_canonical_timeline_with_a_tampered_publication_commitment -- --exact --test-threads=1",
+      "duration_seconds": 0.461,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::persistence::strict::validation_tests::rejects_a_canonical_timeline_with_a_tampered_publication_commitment -- --exact --test-threads=1",
+          "duration_seconds": 0.461,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 392,
+            "sha256": "3558ec07dae3137a978fd0cc3326350dddefa60696490059a59bdfd4f85f66b1"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::persistence::strict::validation_tests::rejects_a_canonical_timeline_with_a_tampered_publication_commitment"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib agent::fork_context_filter_error_tests::malformed_reserved_audio_link_fails_typed_only_for_nonidentity_filter -- --exact --test-threads=1",
+      "duration_seconds": 0.462,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib agent::fork_context_filter_error_tests::malformed_reserved_audio_link_fails_typed_only_for_nonidentity_filter -- --exact --test-threads=1",
+          "duration_seconds": 0.462,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 386,
+            "sha256": "e7d5b95cb3e555827d6be1bb40042e3fc4687049ebad2a0db6bc2d682d3bb557"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "agent::fork_context_filter_error_tests::malformed_reserved_audio_link_fails_typed_only_for_nonidentity_filter"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib agent::fork_context_filter_error_tests::unrelated_custom_event_with_audio_shaped_data_remains_opaque -- --exact --test-threads=1",
+      "duration_seconds": 0.412,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib agent::fork_context_filter_error_tests::unrelated_custom_event_with_audio_shaped_data_remains_opaque -- --exact --test-threads=1",
+          "duration_seconds": 0.412,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 377,
+            "sha256": "739c8e2c5002b215ab886cfe2a6b9b7883161140e43e70dda6af8dd26ca83eb9"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "agent::fork_context_filter_error_tests::unrelated_custom_event_with_audio_shaped_data_remains_opaque"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::provider_state_validation::tests::filtered_fork_closes_legacy_eligibility_across_a_later_cut -- --exact --test-threads=1",
+      "duration_seconds": 0.405,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::provider_state_validation::tests::filtered_fork_closes_legacy_eligibility_across_a_later_cut -- --exact --test-threads=1",
+          "duration_seconds": 0.405,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 378,
+            "sha256": "bad4761ad703ae5c672d4de2b3d3c024b0988f1343671262ae28bff798eb95bc"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::provider_state_validation::tests::filtered_fork_closes_legacy_eligibility_across_a_later_cut"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib 'r#loop::conversation_state::projection_tests::not_stored_disposition_closes_only_legacy_fallback' -- --exact --test-threads=1",
+      "duration_seconds": 0.456,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib 'r#loop::conversation_state::projection_tests::not_stored_disposition_closes_only_legacy_fallback' -- --exact --test-threads=1",
+          "duration_seconds": 0.456,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 373,
+            "sha256": "efce5f2a336f00604f9590dfa838d5e2b7e5426080aa9f4e468c6e58bad60d15"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "r#loop::conversation_state::projection_tests::not_stored_disposition_closes_only_legacy_fallback"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib 'r#loop::conversation_state::projection_tests::not_stored_disposition_preserves_an_older_proven_anchor' -- --exact --test-threads=1",
+      "duration_seconds": 0.411,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib 'r#loop::conversation_state::projection_tests::not_stored_disposition_preserves_an_older_proven_anchor' -- --exact --test-threads=1",
+          "duration_seconds": 0.411,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 378,
+            "sha256": "9900deb14d01428a853e99453f80d7db5ae663c1185547c1e524a7e60e4799e2"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "r#loop::conversation_state::projection_tests::not_stored_disposition_preserves_an_older_proven_anchor"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::provider_state_validation::tests::direct_publication_rejects_a_positional_assistant_with_the_wrong_id -- --exact --test-threads=1",
+      "duration_seconds": 0.423,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::provider_state_validation::tests::direct_publication_rejects_a_positional_assistant_with_the_wrong_id -- --exact --test-threads=1",
+          "duration_seconds": 0.423,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 387,
+            "sha256": "e601de6b46e281d1276ce4ab4061792f64b6d9c7bb3456cb814bcadc189d15af"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::provider_state_validation::tests::direct_publication_rejects_a_positional_assistant_with_the_wrong_id"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::provider_state_validation::tests::audio_publication_rejects_a_positional_assistant_with_the_wrong_id -- --exact --test-threads=1",
+      "duration_seconds": 0.411,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::provider_state_validation::tests::audio_publication_rejects_a_positional_assistant_with_the_wrong_id -- --exact --test-threads=1",
+          "duration_seconds": 0.411,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 386,
+            "sha256": "c6a1bafe0b37dd10788d376ef2220f056aa5611b41ecd48c657e884c0b40df08"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::provider_state_validation::tests::audio_publication_rejects_a_positional_assistant_with_the_wrong_id"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_transition_tests::single_append_rejects_response_boundaries_before_sink_or_memory_mutation -- --exact --test-threads=1",
+      "duration_seconds": 0.411,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_transition_tests::single_append_rejects_response_boundaries_before_sink_or_memory_mutation -- --exact --test-threads=1",
+          "duration_seconds": 0.411,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 397,
+            "sha256": "fb6d4070bc7b516125a0c7b8b2889f9bc4d3d85ace060ccec56e7e4d9e101d0e"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_transition_tests::single_append_rejects_response_boundaries_before_sink_or_memory_mutation"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_transition_tests::ordinary_single_events_still_reach_a_custom_sink -- --exact --test-threads=1",
+      "duration_seconds": 0.41,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_transition_tests::ordinary_single_events_still_reach_a_custom_sink -- --exact --test-threads=1",
+          "duration_seconds": 0.41,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 373,
+            "sha256": "0f2f19325ad8e58fa36eb917e16385f4a407df04c22b55fc790e76db26d7d2bf"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_transition_tests::ordinary_single_events_still_reach_a_custom_sink"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_transition_tests::custom_store_rejects_suffix_only_legacy_orphan_completion -- --exact --test-threads=1",
+      "duration_seconds": 0.412,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_transition_tests::custom_store_rejects_suffix_only_legacy_orphan_completion -- --exact --test-threads=1",
+          "duration_seconds": 0.412,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 382,
+            "sha256": "95db8b1a2e165044338ab498d9f2e0807f2ee45c3e099d59951b871413d63551"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_transition_tests::custom_store_rejects_suffix_only_legacy_orphan_completion"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_transition_tests::custom_store_single_append_rejects_legacy_orphan_completion -- --exact --test-threads=1",
+      "duration_seconds": 0.415,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_transition_tests::custom_store_single_append_rejects_legacy_orphan_completion -- --exact --test-threads=1",
+          "duration_seconds": 0.415,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 384,
+            "sha256": "a78f0797544327e92e1e91cc0698dc73c5e9ec49cc73b57afd040fea0b392100"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_transition_tests::custom_store_single_append_rejects_legacy_orphan_completion"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_transition_tests::jsonl_sink_rejects_suffix_only_legacy_orphan_completion_without_writes -- --exact --test-threads=1",
+      "duration_seconds": 0.762,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_transition_tests::jsonl_sink_rejects_suffix_only_legacy_orphan_completion_without_writes -- --exact --test-threads=1",
+          "duration_seconds": 0.762,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 395,
+            "sha256": "ac0928ff4a9cd6ff6a7fe011478425be8c23a87452872061a31232cf6f36efae"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_transition_tests::jsonl_sink_rejects_suffix_only_legacy_orphan_completion_without_writes"
+    },
+    {
+      "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_transition_tests::complete_legacy_group_can_precede_a_new_committed_group -- --exact --test-threads=1",
+      "duration_seconds": 0.499,
+      "expected_test_counts": {
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1
+      },
+      "failed": 0,
+      "observations": [
+        {
+          "command": "cargo +1.94.0 --locked test -p norn --lib session::response_publication_transition_tests::complete_legacy_group_can_precede_a_new_committed_group -- --exact --test-threads=1",
+          "duration_seconds": 0.499,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_test_counts": {
+            "failed": 0,
+            "filtered_out": 4213,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 1
+          },
+          "output": {
+            "bytes": 380,
+            "sha256": "e3eda7dc33f1b7c4456bd6f130a92b99f8f1ba75bfdb1b886026f25d9ddf8ef5"
+          },
+          "result": "pass",
+          "summary_records": 1
+        }
+      ],
+      "passed": 1,
+      "result": "pass",
+      "runs": 1,
+      "test": "session::response_publication_transition_tests::complete_legacy_group_can_precede_a_new_committed_group"
+    }
+  ],
+  "totals": {
+    "duration_seconds": 137.17,
+    "failed": 0,
+    "passed": 70,
+    "runs": 70
+  }
+}
