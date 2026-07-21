@@ -50,7 +50,11 @@ impl StreamRendererHandle {
     where
         E: Into<PrintError>,
     {
-        let renderer_error = self.finish_task().await.err().map(renderer_failure);
+        let renderer_error = self
+            .finish_task()
+            .await
+            .err()
+            .map(|error| renderer_failure(&error));
         preserve_run_failure(result, renderer_error)
     }
 
@@ -66,7 +70,7 @@ impl StreamRendererHandle {
 /// Map a renderer panic or cancellation onto the torn-stream path. The NDJSON
 /// already written to stdout is incomplete, so no terminal envelope may be
 /// appended to it.
-fn renderer_failure(err: tokio::task::JoinError) -> PrintError {
+fn renderer_failure(err: &tokio::task::JoinError) -> PrintError {
     PrintError::StreamTorn(format!(
         "stream renderer task failed ({kind}): {err}; streamed output on stdout is incomplete",
         kind = if err.is_panic() { "panic" } else { "cancelled" },
