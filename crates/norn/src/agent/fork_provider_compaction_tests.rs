@@ -67,7 +67,7 @@ fn provider_compaction_survives_prompt_resume_and_identity_fork_verbatim() -> Te
     let resumed_payload = payload_for(&resumed.events())?;
     assert_eq!(resumed_payload["input"][0], original_item);
 
-    let identity_fork = ContextFilter::default().apply(&resumed.events());
+    let identity_fork = ContextFilter::default().apply(&resumed.events())?;
     assert_eq!(
         serde_json::to_vec(&identity_fork)?,
         serde_json::to_vec(&resumed.events())?,
@@ -110,7 +110,7 @@ fn identity_filter_preserves_complete_durable_marked_history() -> TestResult {
         boundary,
     ];
 
-    let copied = ContextFilter::default().apply(&source);
+    let copied = ContextFilter::default().apply(&source)?;
     assert_eq!(
         serde_json::to_vec(&copied)?,
         serde_json::to_vec(&source)?,

@@ -83,6 +83,90 @@ fn response_ids_without_matching_durable_provenance_are_not_anchors()
 }
 
 #[test]
+fn not_stored_disposition_closes_only_legacy_fallback() {
+    let legacy = SessionEvent::AssistantMessage {
+        response_items: Vec::new(),
+        base: EventBase::new(None),
+        content: "legacy answer".to_owned(),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: EventUsage::default(),
+        stop_reason: "end_turn".to_owned(),
+        response_id: Some("resp_legacy".to_owned()),
+    };
+    let not_stored = SessionEvent::AssistantMessage {
+        response_items: Vec::new(),
+        base: EventBase::new(Some(legacy.base().id.clone())),
+        content: "manual replay answer".to_owned(),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: EventUsage::default(),
+        stop_reason: "end_turn".to_owned(),
+        response_id: Some("resp_not_stored".to_owned()),
+    };
+    let provenance = ActiveResponseProvenance::for_test([
+        (legacy.base().id.clone(), ResponseStateDisposition::Legacy),
+        (
+            not_stored.base().id.clone(),
+            ResponseStateDisposition::NotStored,
+        ),
+    ]);
+
+    let anchors = response_thread_anchors_in_epoch(&[legacy, not_stored], 1, false, &provenance);
+    assert!(anchors.proven.is_none());
+    assert!(
+        anchors.legacy_candidates.is_empty(),
+        "framed negative provenance must close pre-D3 fallback",
+    );
+}
+
+#[test]
+fn not_stored_disposition_preserves_an_older_proven_anchor()
+-> Result<(), Box<dyn std::error::Error>> {
+    let stored = SessionEvent::AssistantMessage {
+        response_items: Vec::new(),
+        base: EventBase::new(None),
+        content: "stored answer".to_owned(),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: EventUsage::default(),
+        stop_reason: "end_turn".to_owned(),
+        response_id: Some("resp_stored".to_owned()),
+    };
+    let not_stored = SessionEvent::AssistantMessage {
+        response_items: Vec::new(),
+        base: EventBase::new(Some(stored.base().id.clone())),
+        content: "manual replay answer".to_owned(),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: EventUsage::default(),
+        stop_reason: "end_turn".to_owned(),
+        response_id: Some("resp_not_stored".to_owned()),
+    };
+    let provenance = ActiveResponseProvenance::for_test([
+        (stored.base().id.clone(), ResponseStateDisposition::Stored),
+        (
+            not_stored.base().id.clone(),
+            ResponseStateDisposition::NotStored,
+        ),
+    ]);
+
+    let anchors = response_thread_anchors_in_epoch(&[stored, not_stored], 1, false, &provenance);
+    let Some(anchor) = anchors.proven.as_ref() else {
+        return Err(
+            std::io::Error::other("the negative disposition erased a proven anchor").into(),
+        );
+    };
+    assert_eq!(anchor.response_id, "resp_stored");
+    assert!(anchors.legacy_candidates.is_empty());
+    Ok(())
+}
+
+#[test]
 fn threaded_request_replaces_and_removes_managed_instructions()
 -> Result<(), Box<dyn std::error::Error>> {
     let store = EventStore::new();

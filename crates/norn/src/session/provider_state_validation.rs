@@ -35,6 +35,15 @@ impl ActiveResponseProvenance {
     ) -> Option<ResponseStateDisposition> {
         self.dispositions.get(assistant_event_id).copied()
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        dispositions: impl IntoIterator<Item = (EventId, ResponseStateDisposition)>,
+    ) -> Self {
+        Self {
+            dispositions: dispositions.into_iter().collect(),
+        }
+    }
 }
 
 /// A reserved provider-state record is malformed or internally inconsistent.
@@ -73,13 +82,15 @@ pub(crate) fn discover_active_response_provenance(
     // that this pre-D3 timeline had begun publishing provenance records.
     let legacy_closed_before_epoch = events[..active_start].windows(2).any(|pair| {
         is_response_state_publication_boundary(&pair[0]) && is_provenance_family(&pair[1])
-    }) || matches!(
-        events.get(active_start.saturating_sub(1)),
-        Some(SessionEvent::ProviderEpochBoundary {
-            reason: ProviderEpochBoundaryReason::FilteredFork,
-            ..
-        })
-    );
+    }) || events[..active_start].iter().any(|event| {
+        matches!(
+            event,
+            SessionEvent::ProviderEpochBoundary {
+                reason: ProviderEpochBoundaryReason::FilteredFork,
+                ..
+            }
+        )
+    });
     let starts_after_publication = events
         .get(active_start.saturating_sub(1))
         .is_some_and(is_response_state_publication_boundary);
@@ -306,6 +317,9 @@ fn valid_target_shape(
     if response_id.is_empty() {
         return Ok(false);
     }
+    if target_base.id != *target {
+        return Ok(false);
+    }
 
     let provenance_id = &events[record_index].base().id;
     if target_index == record_index.saturating_add(1) {
@@ -326,3 +340,6 @@ fn valid_target_shape(
         && link.response_id() == Some(response_id.as_str())
         && target_base.parent_id.as_ref() == Some(&link_event.base().id))
 }
+
+#[cfg(test)]
+mod tests;

@@ -14,7 +14,7 @@ fn context_filter_default_keeps_everything() -> TestResult {
     let filter = ContextFilter::default();
     assert!(filter.is_identity());
     let before = serde_json::to_vec(&events)?;
-    let out = filter.apply(&events);
+    let out = filter.apply(&events)?;
     let after = serde_json::to_vec(&out)?;
     assert_eq!(
         after, before,
@@ -36,7 +36,7 @@ fn context_filter_exclude_tool_calls_drops_tool_results_and_strips_tool_calls() 
         exclude_tool_calls: true,
     };
     assert!(!filter.is_identity());
-    let out = filter.apply(&events);
+    let out = filter.apply(&events)?;
     let out = filtered_payload(&out)
         .ok_or_else(|| std::io::Error::other("filtered fork omitted its epoch boundary"))?;
     assert_eq!(out.len(), 2, "tool result should be dropped");
@@ -55,7 +55,7 @@ fn context_filter_include_recent_n_truncates_to_last_n() -> TestResult {
         include_recent_n: Some(3),
         exclude_tool_calls: false,
     };
-    let out = filter.apply(&events);
+    let out = filter.apply(&events)?;
     let out = filtered_payload(&out)
         .ok_or_else(|| std::io::Error::other("filtered fork omitted its epoch boundary"))?;
     assert_eq!(out.len(), 3);
@@ -81,7 +81,7 @@ fn context_filter_include_recent_n_trims_leading_orphan_tool_results() -> TestRe
         include_recent_n: Some(4),
         exclude_tool_calls: false,
     };
-    let out = filter.apply(&events);
+    let out = filter.apply(&events)?;
     let out = filtered_payload(&out)
         .ok_or_else(|| std::io::Error::other("filtered fork omitted its epoch boundary"))?;
     assert!(
@@ -103,7 +103,7 @@ fn context_filter_exclude_system_drops_label_events() -> TestResult {
         include_recent_n: None,
         exclude_tool_calls: false,
     };
-    let out = filter.apply(&events);
+    let out = filter.apply(&events)?;
     let out = filtered_payload(&out)
         .ok_or_else(|| std::io::Error::other("filtered fork omitted its epoch boundary"))?;
     assert_eq!(out.len(), 2);

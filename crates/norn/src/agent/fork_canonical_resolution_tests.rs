@@ -163,7 +163,7 @@ fn exclude_tool_calls_removes_canonical_calls_and_outputs_from_exact_replay() ->
         include_recent_n: None,
         exclude_tool_calls: true,
     }
-    .apply(&[source]);
+    .apply(&[source])?;
     let filtered = filtered_payload(&filtered)?;
     let request = ProviderRequest {
         messages: events_to_messages(filtered),
@@ -195,7 +195,7 @@ fn library_context_filter_preserves_minimal_populated_and_opaque_shapes() -> Tes
         include_recent_n: Some(1),
         exclude_tool_calls: false,
     }
-    .apply(&[source]);
+    .apply(&[source])?;
     let payload = filtered_payload(&filtered)?;
     assert_eq!(payload.len(), 1);
     let SessionEvent::AssistantMessage { response_items, .. } = &payload[0] else {
@@ -254,7 +254,7 @@ fn recent_filter_drops_outputs_whose_calls_precede_metadata_boundary() -> TestRe
         include_recent_n: Some(3),
         exclude_tool_calls: false,
     }
-    .apply(&[legacy_call, metadata, legacy_output, tail]);
+    .apply(&[legacy_call, metadata, legacy_output, tail])?;
     let filtered = filtered_payload(&filtered)?;
     assert_eq!(filtered.len(), 2);
     assert!(matches!(filtered[0], SessionEvent::Custom { .. }));
@@ -277,7 +277,7 @@ fn recent_filter_drops_outputs_whose_calls_precede_metadata_boundary() -> TestRe
         metadata,
         canonical_output,
         filtered[1].clone(),
-    ]);
+    ])?;
     let filtered = filtered_payload(&filtered)?;
     assert_eq!(filtered.len(), 2);
     assert!(matches!(filtered[0], SessionEvent::Custom { .. }));
@@ -316,7 +316,7 @@ fn non_identity_filter_uses_persisted_prompt_view_and_resets_anchor() -> TestRes
         include_recent_n: Some(16),
         exclude_tool_calls: false,
     }
-    .apply(&[superseded, suppressed, summary, suppress_mark, retained]);
+    .apply(&[superseded, suppressed, summary, suppress_mark, retained])?;
     let payload = filtered_payload(&filtered)?;
 
     assert_eq!(payload.len(), 2);
@@ -361,7 +361,7 @@ fn effective_view_cleanup_drops_tool_output_after_its_call_is_superseded() -> Te
         include_recent_n: Some(16),
         exclude_tool_calls: false,
     }
-    .apply(&[call, output, summary]);
+    .apply(&[call, output, summary])?;
     let payload = filtered_payload(&filtered)?;
 
     assert_eq!(payload.len(), 1);
@@ -389,7 +389,7 @@ fn persisted_marks_cannot_split_or_resurrect_response_audio_pairs() -> TestResul
             include_recent_n: Some(16),
             exclude_tool_calls: false,
         }
-        .apply(&[link, assistant, mark]);
+        .apply(&[link, assistant, mark])?;
         let payload = filtered_payload(&filtered)?;
 
         assert!(
@@ -409,7 +409,7 @@ fn exclude_system_preserves_response_audio_link_with_its_assistant() -> TestResu
         include_recent_n: None,
         exclude_tool_calls: false,
     }
-    .apply(&[link, assistant]);
+    .apply(&[link, assistant])?;
 
     let payload = filtered_payload(&filtered)?;
     assert_eq!(payload.len(), 2);
@@ -431,7 +431,7 @@ fn recent_filter_restores_response_audio_precursor_as_an_atomic_companion() -> T
         include_recent_n: Some(1),
         exclude_tool_calls: false,
     }
-    .apply(&[link, assistant]);
+    .apply(&[link, assistant])?;
 
     let payload = filtered_payload(&filtered)?;
     assert_eq!(payload.len(), 2);

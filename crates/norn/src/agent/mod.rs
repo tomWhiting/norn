@@ -10,6 +10,7 @@ mod builder_setters;
 pub mod child_policy;
 pub mod fork;
 mod fork_context_filter;
+mod fork_context_filter_error;
 pub mod goals;
 pub mod handle;
 pub mod instance;
@@ -35,11 +36,11 @@ pub use child_policy::{
     ChildLoopConfig, ChildPolicy, CoordinationEnvelope, DelegationBudget, MessagingScope,
 };
 pub use fork::{
-    ContextFilter, FORK_SYNTHETIC_RESULT_MESSAGE, FORK_SYSTEM_PREAMBLE, ForkIdentity,
-    ForkRequirement, ParentSystemInstruction, build_fork_output_schema, build_fork_preamble,
-    combine_system_instruction, format_fork_failure, format_fork_result, format_spawn_failure,
-    format_spawn_result, inject_synthetic_fork_result, slugify_requirement_name,
-    verify_no_orphan_tool_calls,
+    ContextFilter, ContextFilterError, FORK_SYNTHETIC_RESULT_MESSAGE, FORK_SYSTEM_PREAMBLE,
+    ForkIdentity, ForkRequirement, ParentSystemInstruction, build_fork_output_schema,
+    build_fork_preamble, combine_system_instruction, format_fork_failure, format_fork_result,
+    format_spawn_failure, format_spawn_result, inject_synthetic_fork_result,
+    slugify_requirement_name, verify_no_orphan_tool_calls,
 };
 pub use goals::{ContinuationPolicy, Goal, GoalSignal, GoalTracker};
 pub use handle::{AgentHandle, ResolvedAgentInfo};
@@ -59,6 +60,8 @@ pub use session_spec::SessionSpec;
 mod credential_affinity_tests;
 #[cfg(test)]
 mod fork_canonical_resolution_tests;
+#[cfg(test)]
+mod fork_context_filter_error_tests;
 #[cfg(test)]
 mod fork_d3_projection_tests;
 #[cfg(test)]

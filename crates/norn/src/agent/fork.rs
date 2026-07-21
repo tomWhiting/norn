@@ -33,6 +33,7 @@ use uuid::Uuid;
 use crate::session::events::{EventBase, SessionEvent};
 
 pub use super::fork_context_filter::ContextFilter;
+pub use super::fork_context_filter_error::ContextFilterError;
 
 /// One requirement in a fork's request.
 ///

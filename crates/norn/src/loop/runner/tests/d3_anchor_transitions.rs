@@ -265,7 +265,7 @@ fn nonidentity_context_filter_starts_a_fresh_provider_epoch() -> TestResult {
         include_recent_n: Some(16),
         exclude_tool_calls: false,
     }
-    .apply(&parent_anchor);
+    .apply(&parent_anchor)?;
     let store = EventStore::new();
     for event in filtered {
         store.append(event)?;

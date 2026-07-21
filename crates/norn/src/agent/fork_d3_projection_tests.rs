@@ -99,7 +99,7 @@ fn nonidentity_filter_removes_a_call_whose_output_is_compacted() -> TestResult {
         include_recent_n: Some(16),
         exclude_tool_calls: false,
     }
-    .apply(&[call, output, summary]);
+    .apply(&[call, output, summary])?;
     let payload = filtered_payload(&filtered)?;
 
     assert_eq!(payload.len(), 1);
@@ -122,7 +122,7 @@ fn excluding_the_final_canonical_item_does_not_reactivate_flat_content() -> Test
         include_recent_n: None,
         exclude_tool_calls: true,
     }
-    .apply(&[event]);
+    .apply(&[event])?;
     let payload = filtered_payload(&filtered)?;
 
     assert!(payload.is_empty());
@@ -154,7 +154,7 @@ fn filtering_an_audio_linked_final_tool_item_removes_both_artifact_halves() -> T
         include_recent_n: None,
         exclude_tool_calls: true,
     }
-    .apply(&[link, assistant]);
+    .apply(&[link, assistant])?;
     let payload = filtered_payload(&filtered)?;
 
     assert!(payload.is_empty());

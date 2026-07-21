@@ -134,11 +134,10 @@ fn response_thread_anchors_in_epoch(
                         legacy_candidates.clear();
                     }
                     Some(ResponseStateDisposition::Legacy) => legacy_candidates.push(candidate),
-                    Some(
-                        ResponseStateDisposition::NotStored
-                        | ResponseStateDisposition::UnmarkedAfterProvenance,
-                    )
-                    | None => {}
+                    Some(ResponseStateDisposition::NotStored) => {
+                        legacy_candidates.clear();
+                    }
+                    Some(ResponseStateDisposition::UnmarkedAfterProvenance) | None => {}
                 }
             }
             _ if crate::session::is_interrupted_tool_result(event)

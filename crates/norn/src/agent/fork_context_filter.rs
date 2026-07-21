@@ -5,6 +5,8 @@ use crate::session::context_edit::ContextEdits;
 use crate::session::events::{EventBase, EventId, SessionEvent};
 use crate::session::{ProviderFilteredForkBoundary, ReplayArtifacts, ResponseAudioArtifactLink};
 
+use super::fork_context_filter_error::ContextFilterError;
+
 /// Filter applied to parent context events before forking.
 ///
 /// Defaults preserve everything (`include_system = true`, no recency cap,
@@ -53,10 +55,14 @@ impl ContextFilter {
     /// child. The filtered seed ends with a fresh provider epoch boundary;
     /// provider response IDs retained for audit can therefore never become the
     /// child's continuation anchor.
-    #[must_use]
-    pub fn apply(&self, events: &[SessionEvent]) -> Vec<SessionEvent> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextFilterError::ResponseAudio`] when a non-identity
+    /// filter encounters a malformed reserved response-audio artifact link.
+    pub fn apply(&self, events: &[SessionEvent]) -> Result<Vec<SessionEvent>, ContextFilterError> {
         if self.is_identity() {
-            return events.to_vec();
+            return Ok(events.to_vec());
         }
 
         let artifacts = ReplayArtifacts::from_events(events.to_vec());
@@ -69,7 +75,7 @@ impl ContextFilter {
             effective.push(event.clone());
         });
         effective = crate::session::atomic_local_tool_projection(&artifacts.events, effective);
-        effective = remove_split_response_audio_pairs(&artifacts.events, effective);
+        effective = remove_split_response_audio_pairs(&artifacts.events, effective)?;
 
         let mut filtered: Vec<SessionEvent> = effective
             .iter()
@@ -83,12 +89,12 @@ impl ContextFilter {
             filtered.drain(..cut);
         }
         filtered = crate::session::atomic_local_tool_projection(&effective, filtered);
-        let mut filtered = preserve_response_audio_pairs(&effective, filtered);
+        let mut filtered = preserve_response_audio_pairs(&effective, filtered)?;
         let parent_id = filtered.last().map(|event| event.base().id.clone());
         filtered.push(ProviderFilteredForkBoundary::into_event(EventBase::new(
             parent_id,
         )));
-        filtered
+        Ok(filtered)
     }
 
     fn transform(&self, event: &SessionEvent) -> Option<SessionEvent> {
@@ -163,7 +169,7 @@ impl ContextFilter {
 fn remove_split_response_audio_pairs(
     source: &[SessionEvent],
     mut effective: Vec<SessionEvent>,
-) -> Vec<SessionEvent> {
+) -> Result<Vec<SessionEvent>, ContextFilterError> {
     let source_assistants = source
         .iter()
         .filter_map(|event| match event {
@@ -177,7 +183,7 @@ fn remove_split_response_audio_pairs(
         .collect::<HashSet<_>>();
     let mut split_halves = HashSet::new();
     for event in source {
-        let Ok(Some(link)) = ResponseAudioArtifactLink::from_event(event) else {
+        let Some(link) = ResponseAudioArtifactLink::from_event(event)? else {
             continue;
         };
         let assistant_id = link.assistant_event_id();
@@ -193,13 +199,13 @@ fn remove_split_response_audio_pairs(
         }
     }
     effective.retain(|event| !split_halves.contains(&event.base().id));
-    effective
+    Ok(effective)
 }
 
 fn preserve_response_audio_pairs(
     source: &[SessionEvent],
     filtered: Vec<SessionEvent>,
-) -> Vec<SessionEvent> {
+) -> Result<Vec<SessionEvent>, ContextFilterError> {
     // Format-2 stores the link as a separate Custom row. Rebuild in source
     // order so generic system/recency filters cannot split that association.
     let source_assistants = source
@@ -219,7 +225,7 @@ fn preserve_response_audio_pairs(
     let mut required_links = HashSet::new();
     let mut excluded_links = HashSet::new();
     for event in source {
-        let Ok(Some(link)) = ResponseAudioArtifactLink::from_event(event) else {
+        let Some(link) = ResponseAudioArtifactLink::from_event(event)? else {
             continue;
         };
         if !source_assistants.contains(link.assistant_event_id()) {
@@ -249,5 +255,5 @@ fn preserve_response_audio_pairs(
             paired.push(event.clone());
         }
     }
-    paired
+    Ok(paired)
 }
