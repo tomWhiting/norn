@@ -205,12 +205,12 @@ mod tests {
         drop(registry_clone);
     }
 
-    /// A renderer task that panics must surface the `JoinError` from
-    /// `finish()` (the orchestrator maps it onto the agent-error exit
-    /// path) — never be swallowed as a clean completion.
+    /// The private task join retains the panic signal consumed by
+    /// `finish_run`; it must never be swallowed as a clean completion.
     #[tokio::test]
     async fn finish_surfaces_renderer_panic_as_join_error() {
-        let (shutdown, _shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let (shutdown, shutdown_receiver) = tokio::sync::oneshot::channel::<()>();
+        drop(shutdown_receiver);
         let task = tokio::spawn(async {
             panic!("simulated renderer panic");
         });
@@ -224,7 +224,7 @@ mod tests {
 
     /// The legacy termination path still works: with every sender
     /// dropped the channel closes and the task exits without any
-    /// shutdown signal (`finish()` then joins an already-finished task).
+    /// shutdown signal (`finish_task()` then joins an already-finished task).
     #[tokio::test]
     async fn renderer_exits_on_channel_closure_without_shutdown_signal() {
         let (tx, _rx) = tokio::sync::broadcast::channel::<norn::provider::AgentEvent>(16);
@@ -242,7 +242,8 @@ mod tests {
 
     #[tokio::test]
     async fn finish_run_preserves_auth_exit_and_suppresses_terminal_envelope() {
-        let (shutdown, _shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let (shutdown, shutdown_receiver) = tokio::sync::oneshot::channel::<()>();
+        drop(shutdown_receiver);
         let task = tokio::spawn(async {
             panic!("renderer blew up after auth failed");
         });
@@ -269,7 +270,8 @@ mod tests {
 
     #[tokio::test]
     async fn finish_run_renderer_panic_overrides_success() {
-        let (shutdown, _shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let (shutdown, shutdown_receiver) = tokio::sync::oneshot::channel::<()>();
+        drop(shutdown_receiver);
         let task = tokio::spawn(async {
             panic!("renderer blew up");
         });
@@ -288,13 +290,15 @@ mod tests {
 
     #[tokio::test]
     async fn finish_run_clean_renderer_preserves_primary_result() {
-        let (shutdown, _shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let (shutdown, shutdown_receiver) = tokio::sync::oneshot::channel::<()>();
+        drop(shutdown_receiver);
         let task = tokio::spawn(async {});
         let handle = StreamRendererHandle { shutdown, task };
         let success = handle.finish_run::<_, PrintError>(Ok(41_u8)).await;
         assert!(matches!(success, Ok(41)));
 
-        let (shutdown, _shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let (shutdown, shutdown_receiver) = tokio::sync::oneshot::channel::<()>();
+        drop(shutdown_receiver);
         let task = tokio::spawn(async {});
         let handle = StreamRendererHandle { shutdown, task };
         let failure = handle
@@ -309,7 +313,8 @@ mod tests {
 
     #[tokio::test]
     async fn finish_run_renderer_cancellation_overrides_success() {
-        let (shutdown, _shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let (shutdown, shutdown_receiver) = tokio::sync::oneshot::channel::<()>();
+        drop(shutdown_receiver);
         let task = tokio::spawn(async {
             std::future::pending::<()>().await;
         });
