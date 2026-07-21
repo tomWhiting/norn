@@ -1691,9 +1691,33 @@ Same-reviewer confirmation `db3cf81` closes H1-a/b/c and leaves the D3 `READY`
 verdict unchanged. On 2026-07-22 the owner accepts D3; the reviewed D3 head
 `db3cf81` is incorporated into `main` by fast-forward as part of this
 acceptance. This accepts D3 only. D8, the broad conversation-state matrices,
-whole-P5 and P2 acceptance, WebSocket work, the headless follow-up, and D7/P9
-authenticated live-wire conformance remain open.
+whole-P5 and P2 acceptance, WebSocket work, the headless correction review, and
+D7/P9 authenticated live-wire conformance remain open.
 
 The review's non-driven headless exit-class inversion is recorded separately as
 pre-existing follow-up work. It does not change the isolated driven-transport
 `READY` verdict and is not part of the D3 correction.
+
+### Non-driven stream exit-class correction candidate (2026-07-22)
+
+Source range `c6cc081..1c5a013` (`47a6685`, `ac8a95a`, `b1d4f7c`, and the
+comment-only `1c5a013`) corrects the pre-existing
+non-driven `stream-json` shutdown inversion identified by D3 review `7155196`.
+The stream renderer now owns shutdown reconciliation: its production completion
+API consumes the primary run result, a renderer panic or cancellation overrides
+a successful run, and a concurrent primary failure retains its original exit
+code and diagnostic. A torn stream remains ineligible for a terminal machine
+envelope, so preserving an authentication exit 3 cannot append a misleading
+well-formed error event to incomplete NDJSON.
+
+The raw task join is private, making the old return-before-reconciliation shape
+unavailable to the orchestrator. The exact early-return mutation changes the
+auth-plus-renderer case from exit 3 to exit 1 and fails its regression. Focused
+renderer and error suites pass 7/7 and 3/3; the complete CLI gate passes 573/573,
+including all seven loopback JSON-RPC tests; strict all-target/all-feature CLI
+Clippy with `-D warnings`, fmt, and diff checks pass without a suppression.
+
+This is a correction candidate pending narrow external review, not an expansion
+of D3 or P5 acceptance. It fixes the confirmed exit-class and diagnostic-loss
+path; it does not claim that every separately observed headless midstream death
+has the same cause or is now diagnosed.

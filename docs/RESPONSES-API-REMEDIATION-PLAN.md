@@ -2033,6 +2033,19 @@ driven slice `READY`. It separately records a pre-existing non-driven
 `stream-json` exit-class inversion in `print/orchestrator.rs`; that follow-up is
 outside D3 and does not weaken the driven verdict.
 
+The non-driven follow-up is implemented as a narrow correction candidate at
+source `1c5a013` over range `c6cc081..1c5a013`. Renderer completion now consumes
+and reconciles the primary run result as one structural operation: a torn
+renderer overrides success, while a concurrent run/auth failure keeps its exit
+class and both diagnostics without appending a terminal envelope to incomplete
+NDJSON.
+The raw join is private, and an early-return mutation is killed by the integrated
+renderer-handle regression. Focused suites pass 7/7 and 3/3; the complete CLI
+gate passes 573/573, including all seven loopback JSON-RPC tests; strict CLI
+Clippy with `-D warnings`, fmt, and diff checks pass without suppression. This
+candidate awaits narrow external review and does not claim to diagnose every
+historically observed headless process death.
+
 ### What this phase fixes
 
 Local removal of managed Developer context does not remove it from a
@@ -2120,6 +2133,14 @@ provider construction rather than degrading to account-only affinity.
   `ContextEdits` must not silently decompact retained assistant history: either
   carry durable supersession semantics or enter an explicit fresh-view contract
   before provider request construction.
+- [x] Correct the pre-existing non-driven `stream-json` exit-class inversion as
+  an isolated implementation candidate (source `1c5a013`, range
+  `c6cc081..1c5a013`). The renderer completion boundary structurally preserves
+  a primary exit class and
+  both diagnostics while suppressing terminal envelopes on torn NDJSON. The
+  complete CLI gate is 573/573 and strict lint/format/diff gates are clean. This
+  checkbox records implementation and evidence only; narrow review remains
+  open, and the correction does not claim a root cause for every headless death.
 - [ ] Implement D8 across root/nested `NORN.md`, rules, workspace/user profiles,
   dynamic harness context, product instructions, and child/fork prompt assembly.
 - [x] Keep ChatGPT/Codex `store:false` replay distinct from public Responses
