@@ -1,5 +1,6 @@
 use super::test_support::{
-    TestResult, assistant_with_tool_calls, golden_identity_policy, label, tool_result, user_msg,
+    TestResult, assistant_with_tool_calls, filtered_payload, golden_identity_policy, label,
+    tool_result, user_msg,
 };
 use super::*;
 
@@ -11,8 +12,14 @@ fn context_filter_default_keeps_everything() -> TestResult {
         tool_result("tc1", "read"),
     ];
     let filter = ContextFilter::default();
+    assert!(filter.is_identity());
+    let before = serde_json::to_vec(&events)?;
     let out = filter.apply(&events);
-    assert_eq!(out.len(), 3);
+    let after = serde_json::to_vec(&out)?;
+    assert_eq!(
+        after, before,
+        "the identity filter must be an exact audit copy"
+    );
     Ok(())
 }
 
@@ -28,7 +35,10 @@ fn context_filter_exclude_tool_calls_drops_tool_results_and_strips_tool_calls() 
         include_recent_n: None,
         exclude_tool_calls: true,
     };
+    assert!(!filter.is_identity());
     let out = filter.apply(&events);
+    let out = filtered_payload(&out)
+        .ok_or_else(|| std::io::Error::other("filtered fork omitted its epoch boundary"))?;
     assert_eq!(out.len(), 2, "tool result should be dropped");
     let SessionEvent::AssistantMessage { tool_calls, .. } = &out[1] else {
         return Err(std::io::Error::other("filtered row was not an assistant message").into());
@@ -46,6 +56,8 @@ fn context_filter_include_recent_n_truncates_to_last_n() -> TestResult {
         exclude_tool_calls: false,
     };
     let out = filter.apply(&events);
+    let out = filtered_payload(&out)
+        .ok_or_else(|| std::io::Error::other("filtered fork omitted its epoch boundary"))?;
     assert_eq!(out.len(), 3);
     let SessionEvent::UserMessage { content, .. } = &out[0] else {
         return Err(std::io::Error::other("filtered row was not a user message").into());
@@ -70,6 +82,8 @@ fn context_filter_include_recent_n_trims_leading_orphan_tool_results() -> TestRe
         exclude_tool_calls: false,
     };
     let out = filter.apply(&events);
+    let out = filtered_payload(&out)
+        .ok_or_else(|| std::io::Error::other("filtered fork omitted its epoch boundary"))?;
     assert!(
         !matches!(out.first(), Some(SessionEvent::ToolResult { .. })),
         "leading ToolResult must be trimmed to avoid orphan tool results",
@@ -90,6 +104,8 @@ fn context_filter_exclude_system_drops_label_events() -> TestResult {
         exclude_tool_calls: false,
     };
     let out = filter.apply(&events);
+    let out = filtered_payload(&out)
+        .ok_or_else(|| std::io::Error::other("filtered fork omitted its epoch boundary"))?;
     assert_eq!(out.len(), 2);
     assert!(out.iter().all(|e| !matches!(e, SessionEvent::Label { .. })));
     Ok(())

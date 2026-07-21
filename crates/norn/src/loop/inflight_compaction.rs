@@ -122,12 +122,11 @@ pub(super) struct PreflightOutcome {
 /// trigger, and in-flight compaction application.
 ///
 /// The estimate is computed over the **full live conversation**, not the
-/// threaded request delta: with provider-side response threading the
-/// server reconstructs the entire history from `previous_response_id`, so
-/// the delta drastically understates the real context size (fix campaign
-/// Track L, finding 2). When compaction fires, the response-thread anchor
-/// is dropped so the next request replays the genuinely compacted
-/// conversation instead of pointing at an uncompacted server-side thread.
+/// threaded request delta: with provider-side response threading the server
+/// reconstructs the entire history from `previous_response_id`, so the delta
+/// drastically understates the real context size. Threaded state is compacted
+/// by the provider and never by the local summarizer; stateless replay retains
+/// the local compaction path below.
 ///
 /// The caller must build its request message list *after* this returns.
 /// With no token estimator configured this is a no-op.
@@ -184,6 +183,18 @@ pub(super) async fn run_context_preflight(
         .await?;
     }
 
+    // D3: provider-owned threads and local prompt summaries are mutually
+    // exclusive state strategies. The estimate and warning above still use the
+    // full reconstructed context, but a threaded request relies on its
+    // `context_management` contract and must not reset the anchor to replay a
+    // locally rewritten view whose stored reasoning may be unavailable.
+    if args.conversation_state.store() {
+        return Ok(PreflightOutcome {
+            request_input_estimate: Some(estimated),
+            summarization_usage: None,
+        });
+    }
+
     // R4: auto-compaction trigger fires once per step when
     // `max(estimate, usage_floor)` crosses
     // `context_window_limit − auto_compact_reserve_tokens`.
@@ -215,11 +226,6 @@ pub(super) async fn run_context_preflight(
         newly_superseded = run.outcome.newly_superseded.len(),
         "auto-compaction suppressed older prompt context"
     );
-
-    // Track L finding 2: a fired compaction cannot shrink a server-side
-    // response thread, so the anchor is dropped unconditionally — the
-    // next request replays the full (compacted) conversation.
-    args.conversation_state.reset_thread_anchor();
 
     let summarization_usage = run.summarization_usage;
 

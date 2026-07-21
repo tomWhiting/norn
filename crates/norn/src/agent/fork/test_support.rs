@@ -1,4 +1,5 @@
 use super::*;
+use crate::session::ProviderFilteredForkBoundary;
 use crate::session::events::{EventBase, EventUsage, ToolCallEvent};
 
 pub(super) type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -50,6 +51,12 @@ pub(super) fn label() -> SessionEvent {
         label: "checkpoint".to_string(),
         description: None,
     }
+}
+
+pub(super) fn filtered_payload(events: &[SessionEvent]) -> Option<&[SessionEvent]> {
+    let (boundary, payload) = events.split_last()?;
+    assert!(ProviderFilteredForkBoundary::is_family(boundary));
+    Some(payload)
 }
 
 pub(super) fn golden_identity_policy() -> crate::agent::child_policy::ChildPolicy {

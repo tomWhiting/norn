@@ -3,7 +3,6 @@
 //! auto-compaction), and provider request construction.
 
 use crate::error::NornError;
-use crate::r#loop::conversation_state::ConversationRequestState;
 use crate::r#loop::expansion::{expand_system_instruction, expand_tool_descriptions};
 use crate::r#loop::helpers::apply_rule_injections;
 use crate::r#loop::inflight_compaction::{
@@ -195,17 +194,23 @@ impl StepMachine<'_> {
             });
         }
 
-        // Re-attach the managed dynamic-context Developer message at the tail
-        // — after any compaction summary the preflight appended — so it is the
-        // last message before the model responds. This is a pure tail append
-        // (see `ManagedDevMessage::attach`): it shifts nothing and the message
-        // rides the threaded delta, so `conversation_state` needs no cursor
-        // adjustment here.
-        if let Some(content) = dev_tail_content {
-            self.dev_message.attach(content, &mut self.messages);
-        }
+        // Provider-threaded Responses state uses top-level `instructions` for
+        // the managed context. The API does not inherit prior instructions
+        // through `previous_response_id`, so each request replaces the old
+        // dynamic context without dropping the provider-owned thread. The
+        // stateless Codex path retains the cache-friendly tail Developer item.
+        let managed_instructions = if self.conversation_state.store() {
+            dev_tail_content
+        } else {
+            if let Some(content) = dev_tail_content {
+                self.dev_message.attach(content, &mut self.messages);
+            }
+            None
+        };
 
-        let request_messages = self.conversation_state.request_messages(&self.messages);
+        let request_messages = self
+            .conversation_state
+            .request_messages_with_managed_instructions(&self.messages, managed_instructions);
 
         let request = ProviderRequest {
             messages: request_messages,
@@ -218,7 +223,7 @@ impl StepMachine<'_> {
             cache_key: self.config.cache_key.clone(),
             previous_response_id: self.conversation_state.previous_response_id(),
             store: self.conversation_state.store(),
-            context_management: ConversationRequestState::context_management(self.config),
+            context_management: self.conversation_state.context_management(self.config),
         };
 
         Ok(StepFlow::Next(StepState::CallProvider(Box::new(request))))

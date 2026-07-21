@@ -4,7 +4,6 @@ use tokio::process::Command;
 
 use crate::context::loader::ContextLoader;
 use crate::provider::request::ReasoningEffort;
-use crate::session::context_edit::ContextEdits;
 use crate::system_prompt::environment::format_environment_section;
 
 use super::{DEFAULT_PROMPT_COMMAND_TIMEOUT, LoopContext, PromptCommandCacheEntry};
@@ -113,8 +112,8 @@ impl LoopContext {
     }
 
     /// Build the current prompt view over `store`, honouring the active
-    /// [`ContextEdits`] when one is installed. When no edits tracker is
-    /// present nothing is suppressed, so the view is every stored event.
+    /// [`ContextEdits`] when one is installed. Without a tracker, durable
+    /// context marks are projected transiently from the store.
     /// Re-append every in-context [`DeliveryMode::SystemContextAppend`] rule's
     /// content to the dynamic system sections from the persisted event
     /// stream.
@@ -132,22 +131,26 @@ impl LoopContext {
         if self.rules.is_none() {
             return;
         }
-        let fallback = ContextEdits::new();
-        let edits = self.context_edits.as_ref().unwrap_or(&fallback);
-        let sections: Vec<String> = store.with_events(|events| {
-            let mut sections = Vec::new();
-            crate::r#loop::context::for_each_visible_event(events, edits, |event, _tag| {
-                if let crate::session::events::SessionEvent::RuleInjection {
-                    delivery: crate::rules::types::DeliveryMode::SystemContextAppend,
-                    content,
-                    ..
-                } = event
-                {
-                    sections.push(content.clone());
-                }
-            });
-            sections
-        });
+        let sections: Vec<String> = crate::r#loop::context::with_prompt_context_edits(
+            store,
+            self.context_edits.as_ref(),
+            |edits| {
+                store.with_events(|events| {
+                    let mut sections = Vec::new();
+                    crate::r#loop::context::for_each_visible_event(events, edits, |event, _tag| {
+                        if let crate::session::events::SessionEvent::RuleInjection {
+                            delivery: crate::rules::types::DeliveryMode::SystemContextAppend,
+                            content,
+                            ..
+                        } = event
+                        {
+                            sections.push(content.clone());
+                        }
+                    });
+                    sections
+                })
+            },
+        );
         for section in sections {
             self.append_system_section(section);
         }
@@ -163,15 +166,19 @@ impl LoopContext {
         if self.rules.is_none() {
             return;
         }
-        let fallback = ContextEdits::new();
-        let edits = self.context_edits.as_ref().unwrap_or(&fallback);
-        let tags = store.with_events(|events| {
-            let mut tags = Vec::new();
-            crate::r#loop::context::for_each_visible_event(events, edits, |_event, tag| {
-                tags.push(tag);
-            });
-            tags
-        });
+        let tags = crate::r#loop::context::with_prompt_context_edits(
+            store,
+            self.context_edits.as_ref(),
+            |edits| {
+                store.with_events(|events| {
+                    let mut tags = Vec::new();
+                    crate::r#loop::context::for_each_visible_event(events, edits, |_event, tag| {
+                        tags.push(tag);
+                    });
+                    tags
+                })
+            },
+        );
         if let Some(engine) = self.rules.as_mut() {
             engine.presence_mut().rebuild(&tags);
         }

@@ -225,10 +225,11 @@ fn compaction(raw: Value, item_type: String) -> Result<ResponseItem, ResponseIte
         optional_string(object, "created_by")?;
         (
             required_str(object, "id", "compaction item missing id")?.to_owned(),
-            required_str(
+            required_nonempty_str(
                 object,
                 "encrypted_content",
                 "compaction item missing encrypted_content",
+                "compaction item encrypted_content was empty",
             )?
             .to_owned(),
         )
@@ -271,6 +272,20 @@ fn required_str<'a>(
         .get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| ResponseItemError::new(reason))
+}
+
+fn required_nonempty_str<'a>(
+    object: &'a Map<String, Value>,
+    key: &str,
+    missing_reason: &'static str,
+    empty_reason: &'static str,
+) -> Result<&'a str, ResponseItemError> {
+    let value = required_str(object, key, missing_reason)?;
+    if value.is_empty() {
+        Err(ResponseItemError::new(empty_reason))
+    } else {
+        Ok(value)
+    }
 }
 
 fn required_literal<'a>(

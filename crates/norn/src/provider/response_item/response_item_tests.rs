@@ -366,6 +366,22 @@ fn unpinned_aliases_and_unknown_id_shapes_remain_exactly_opaque() -> TestResult 
 }
 
 #[test]
+fn compaction_rejects_empty_encrypted_content_without_echoing_provider_data() {
+    let result = ResponseItem::from_value(serde_json::json!({
+        "type": "compaction",
+        "id": "provider-controlled-id",
+        "encrypted_content": ""
+    }));
+
+    assert!(result.is_err());
+    let rendered = result.err().map(|error| format!("{error:?}"));
+    assert!(rendered.as_deref().is_some_and(|text| {
+        text.contains("compaction item encrypted_content was empty")
+            && !text.contains("provider-controlled-id")
+    }));
+}
+
+#[test]
 fn function_call_optional_fields_keep_contract_nullability() -> TestResult {
     let valid = serde_json::json!({
         "type": "function_call",

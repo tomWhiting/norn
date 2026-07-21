@@ -9,13 +9,18 @@ use crate::integration::hooks::{HookOutcome, LlmCallSummary};
 use crate::r#loop::assembly::AssembledResponse;
 use crate::r#loop::classify::call_provider_with_retry;
 use crate::r#loop::config::AgentStepResult;
-use crate::r#loop::helpers::{append_and_notify, handle_iteration_signals};
+use crate::r#loop::helpers::handle_iteration_signals;
 use crate::r#loop::iteration::evaluate_iteration;
 use crate::r#loop::programmatic_calling::validate_programmatic_callers;
+use crate::r#loop::response_publication::{
+    append_response_publication, notify_response_publication,
+};
 use crate::provider::events::StopReason;
 use crate::provider::request::{AssistantToolCall, Message, MessageRole, ProviderRequest};
-use crate::session::ResponseAudioArtifactLink;
-use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
+use crate::session::events::{
+    EventBase, EventUsage, ProviderEpochBoundaryReason, SessionEvent, ToolCallEvent,
+};
+use crate::session::{ProviderStateProvenance, ResponseAudioArtifactLink};
 
 use super::machine::{StepFlow, StepMachine, StepState};
 
@@ -158,9 +163,21 @@ impl StepMachine<'_> {
         };
 
         let parent_id = self.store.last_event_id();
+        let response_is_stored = self.conversation_state.store();
+        let publication_boundary_base = response
+            .response_id
+            .as_ref()
+            .is_some_and(|id| !id.is_empty())
+            .then(|| EventBase::new(parent_id.clone()));
+        let provenance_base = publication_boundary_base
+            .as_ref()
+            .map(|base| EventBase::new(Some(base.id.clone())));
+        let content_parent_id = provenance_base
+            .as_ref()
+            .map_or(parent_id, |base| Some(base.id.clone()));
         let (assistant_base, audio_link_event) = match response.response_audio {
             Some(reference) => {
-                let link_base = EventBase::new(parent_id);
+                let link_base = EventBase::new(content_parent_id);
                 let assistant_base = EventBase::new(Some(link_base.id.clone()));
                 let link = ResponseAudioArtifactLink::new(
                     assistant_base.id.clone(),
@@ -174,49 +191,70 @@ impl StepMachine<'_> {
                 })?;
                 (assistant_base, Some(event))
             }
-            None => (EventBase::new(parent_id), None),
+            None => (EventBase::new(content_parent_id), None),
         };
 
-        // Persist the sealed-artifact association first. A crash between the
-        // two appends leaves an explicit orphan precursor; it cannot leave a
-        // durable assistant turn whose audio association vanished silently.
-        if let Some(link_event) = audio_link_event {
-            append_and_notify(self.store, link_event, self.loop_context.hooks.as_deref()).await?;
+        let mut publication = Vec::with_capacity(4);
+
+        if let Some(base) = publication_boundary_base {
+            publication.push(SessionEvent::ProviderEpochBoundary {
+                base,
+                reason: ProviderEpochBoundaryReason::ResponseStatePublication,
+            });
         }
 
-        append_and_notify(
-            self.store,
-            SessionEvent::AssistantMessage {
-                response_items: response.response_items.clone(),
-                base: assistant_base,
-                content,
-                thinking: thinking.clone(),
-                // Persist the captured reasoning items so a resumed session
-                // rebuilds this assistant turn with its reasoning intact
-                // (encrypted-content items are what the Responses serializer
-                // replays across tool iterations on stateless backends).
-                reasoning: response.reasoning.clone(),
-                tool_calls: tool_call_events,
-                usage: EventUsage {
-                    input_tokens: response.usage.input_tokens,
-                    output_tokens: response.usage.output_tokens,
-                    cache_read_tokens: response.usage.cache_read_tokens,
-                    cache_write_tokens: response.usage.cache_write_tokens,
-                    cost_usd: response.usage.cost_usd,
-                },
-                stop_reason: match &response.stop_reason {
-                    StopReason::EndTurn => "end_turn",
-                    StopReason::ContinueTurn => "continue_turn",
-                    StopReason::ToolUse => "tool_use",
-                    StopReason::MaxTokens => "max_tokens",
-                    StopReason::ContentFilter => "content_filter",
-                }
-                .to_string(),
-                response_id: response.response_id.clone(),
+        // Provider-state provenance is durable before every assistant turn
+        // with a response ID and is framed by a first-class epoch boundary.
+        // The target ID is pre-generated; an interrupted write leaves a typed
+        // prefix that discovery rejects rather than guessing whether the
+        // absent response was stored.
+        if let Some(base) = provenance_base {
+            let event = ProviderStateProvenance::new(assistant_base.id.clone(), response_is_stored)
+                .into_custom_event(base)
+                .map_err(|_source| SessionError::StorageError {
+                    reason: "failed to encode provider-state provenance".to_owned(),
+                })?;
+            publication.push(event);
+        }
+
+        // Persist the sealed-artifact association before its assistant. A
+        // failed group write can leave only a typed precursor prefix.
+        if let Some(link_event) = audio_link_event {
+            publication.push(link_event);
+        }
+
+        publication.push(SessionEvent::AssistantMessage {
+            response_items: response.response_items.clone(),
+            base: assistant_base,
+            content,
+            thinking: thinking.clone(),
+            // Persist the captured reasoning items so a resumed session
+            // rebuilds this assistant turn with its reasoning intact
+            // (encrypted-content items are what the Responses serializer
+            // replays across tool iterations on stateless backends).
+            reasoning: response.reasoning.clone(),
+            tool_calls: tool_call_events,
+            usage: EventUsage {
+                input_tokens: response.usage.input_tokens,
+                output_tokens: response.usage.output_tokens,
+                cache_read_tokens: response.usage.cache_read_tokens,
+                cache_write_tokens: response.usage.cache_write_tokens,
+                cost_usd: response.usage.cost_usd,
             },
-            self.loop_context.hooks.as_deref(),
-        )
-        .await?;
+            stop_reason: match &response.stop_reason {
+                StopReason::EndTurn => "end_turn",
+                StopReason::ContinueTurn => "continue_turn",
+                StopReason::ToolUse => "tool_use",
+                StopReason::MaxTokens => "max_tokens",
+                StopReason::ContentFilter => "content_filter",
+            }
+            .to_string(),
+            response_id: response.response_id.clone(),
+        });
+
+        // No supported in-process observer may insert provider input inside
+        // this group. Hooks see each event only after all rows are present.
+        append_response_publication(self.store, &publication)?;
 
         // The turn is durable: only now may the Gap 7 capture disarm.
         // Clearing at assembly time (inside `call_provider`) would open a
@@ -226,6 +264,8 @@ impl StepMachine<'_> {
         // Cross-call staleness is guarded by the per-attempt reset at the
         // top of `call_provider`.
         self.timeout_state.lock().in_flight_partial = None;
+
+        notify_response_publication(&publication, self.loop_context.hooks.as_deref()).await;
 
         self.messages.push(Message {
             response_items: response.response_items.clone(),

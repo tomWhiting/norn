@@ -145,8 +145,7 @@ pub(crate) fn append_events(
     append_events_transaction(data_dir, session_id, events)
 }
 
-#[cfg(test)]
-pub(super) fn serialize_events(events: &[SessionEvent]) -> Result<Vec<u8>, SessionPersistError> {
+pub(crate) fn serialize_events(events: &[SessionEvent]) -> Result<Vec<u8>, SessionPersistError> {
     let mut bytes = Vec::new();
     for event in events {
         serde_json::to_writer(&mut bytes, event)?;
@@ -167,7 +166,7 @@ pub(super) fn retry_prefix_len(
     planner.finish()
 }
 
-pub(super) fn retry_prefix_from_file(
+pub(crate) fn retry_prefix_from_file(
     file: &mut File,
     display_path: &Path,
     requested: &[SessionEvent],
@@ -181,18 +180,29 @@ pub(super) fn retry_prefix_from_file(
     })
     .map_err(map_strict_error)?;
     Ok(TimelineAppendFacts {
-        #[cfg(test)]
         retry_prefix: planner.finish()?,
         counters,
         tail,
     })
 }
 
-pub(super) struct TimelineAppendFacts {
-    #[cfg(test)]
-    pub(super) retry_prefix: usize,
-    pub(super) counters: super::IndexCounters,
-    pub(super) tail: Option<SessionEvent>,
+pub(crate) fn strict_events_from_file(
+    file: &mut File,
+    display_path: &Path,
+) -> Result<Vec<SessionEvent>, SessionPersistError> {
+    let mut events = Vec::new();
+    file.seek(SeekFrom::Start(0))?;
+    visit_strict_event_file(BufReader::new(file), display_path, |event| {
+        events.push(event);
+    })
+    .map_err(map_strict_error)?;
+    Ok(events)
+}
+
+pub(crate) struct TimelineAppendFacts {
+    pub(crate) retry_prefix: usize,
+    pub(crate) counters: super::IndexCounters,
+    pub(crate) tail: Option<SessionEvent>,
 }
 
 struct RetryPlanner {
@@ -254,7 +264,6 @@ impl RetryPlanner {
         }
     }
 
-    #[cfg(test)]
     fn finish(self) -> Result<usize, SessionPersistError> {
         match self.conflict {
             Some(reason) => Err(invalid_data(reason)),

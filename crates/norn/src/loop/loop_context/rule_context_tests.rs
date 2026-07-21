@@ -73,6 +73,36 @@ fn materialize_system_context_rules_reappends_across_wipes()
     Ok(())
 }
 
+#[test]
+fn materialize_without_tracker_projects_persisted_suppression()
+-> Result<(), Box<dyn std::error::Error>> {
+    let store = EventStore::new();
+    let id = append_rule_event(
+        &store,
+        "sys-rule",
+        DeliveryMode::SystemContextAppend,
+        "APPEND_BODY",
+    )?;
+
+    let mut ctx = LoopContext::new("base");
+    ctx.rules = Some(RuleEngine::new(vec![]));
+    let mut persisted = ContextEdits::new();
+    persisted.suppress(&store, id.clone())?;
+    assert!(ctx.context_edits.is_none());
+
+    ctx.clear_dynamic_sections();
+    ctx.materialize_system_context_rules(&store);
+    assert!(
+        !ctx.system_instruction().contains("APPEND_BODY"),
+        "a compacted/suppressed rule event must not re-materialize",
+    );
+    assert!(
+        store.events().iter().any(|event| event.base().id == id),
+        "the suppressed rule remains in the canonical audit log",
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn presence_rebuild_suppresses_then_re_fires_after_eviction()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -112,6 +142,36 @@ async fn presence_rebuild_suppresses_then_re_fires_after_eviction()
     ctx.rebuild_rule_presence(&store);
     let after = attached_rules(&ctx)?.process_event(&event).await;
     assert_eq!(after.len(), 1, "evicted rule must re-fire");
+    Ok(())
+}
+
+#[tokio::test]
+async fn presence_without_tracker_projects_persisted_suppression()
+-> Result<(), Box<dyn std::error::Error>> {
+    let store = EventStore::new();
+    let id = append_rule_event(&store, "broad", DeliveryMode::ContextInjection, "BODY")?;
+    let mut persisted = ContextEdits::new();
+    persisted.suppress(&store, id.clone())?;
+    let mut ctx = LoopContext::new("base");
+    ctx.rules = Some(RuleEngine::new(vec![rs_rule(
+        "broad",
+        "BODY",
+        DeliveryMode::ContextInjection,
+    )]));
+    assert!(ctx.context_edits.is_none());
+
+    ctx.rebuild_rule_presence(&store);
+    let event = RuntimeEvent::PathChanged {
+        path: "src/lib.rs".to_owned(),
+        operation: PathOperation::Read,
+    };
+    let injections = attached_rules(&ctx)?.process_event(&event).await;
+
+    assert_eq!(injections.len(), 1, "suppressed rule must re-fire");
+    assert!(
+        store.events().iter().any(|event| event.base().id == id),
+        "presence rebuilding must not delete the canonical rule row",
+    );
     Ok(())
 }
 

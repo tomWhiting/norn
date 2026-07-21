@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::provider::response_item::{KnownResponseItemKind, ResponseItem};
-use crate::session::ResponseAudioArtifactLink;
-use crate::session::events::{EventId, SessionEvent};
+use crate::session::context_edit::ContextEdits;
+use crate::session::events::{EventBase, EventId, SessionEvent};
+use crate::session::{ProviderFilteredForkBoundary, ReplayArtifacts, ResponseAudioArtifactLink};
 
 /// Filter applied to parent context events before forking.
 ///
@@ -35,11 +36,42 @@ impl Default for ContextFilter {
 }
 
 impl ContextFilter {
+    /// Whether this filter preserves the parent's append-only audit history
+    /// exactly.
+    #[must_use]
+    pub const fn is_identity(&self) -> bool {
+        self.include_system && self.include_recent_n.is_none() && !self.exclude_tool_calls
+    }
+
     /// Apply the filter to `events` and return a fresh `Vec` of the
     /// retained or rewritten events.
+    ///
+    /// The identity filter is deliberately a byte-for-byte audit copy. A
+    /// non-identity filter instead starts from the effective persisted prompt
+    /// view: durable suppression and compaction supersession marks are applied
+    /// before any requested filtering, so removed rows cannot reappear in a
+    /// child. The filtered seed ends with a fresh provider epoch boundary;
+    /// provider response IDs retained for audit can therefore never become the
+    /// child's continuation anchor.
     #[must_use]
     pub fn apply(&self, events: &[SessionEvent]) -> Vec<SessionEvent> {
-        let mut filtered: Vec<SessionEvent> = events
+        if self.is_identity() {
+            return events.to_vec();
+        }
+
+        let artifacts = ReplayArtifacts::from_events(events.to_vec());
+        let mut edits = ContextEdits::new();
+        edits.mark_superseded(artifacts.superseded_event_ids.iter().cloned());
+        edits.mark_suppressed(artifacts.suppressed_event_ids.iter().cloned());
+        edits.mark_injected(artifacts.injected_event_ids.iter().cloned());
+        let mut effective = Vec::with_capacity(artifacts.events.len());
+        crate::r#loop::context::for_each_visible_event(&artifacts.events, &edits, |event, _tag| {
+            effective.push(event.clone());
+        });
+        effective = crate::session::atomic_local_tool_projection(&artifacts.events, effective);
+        effective = remove_split_response_audio_pairs(&artifacts.events, effective);
+
+        let mut filtered: Vec<SessionEvent> = effective
             .iter()
             .filter_map(|event| self.transform(event))
             .collect();
@@ -49,9 +81,14 @@ impl ContextFilter {
         {
             let cut = filtered.len() - limit;
             filtered.drain(..cut);
-            filtered = crate::session::without_orphan_local_tool_outputs(filtered);
         }
-        preserve_response_audio_pairs(events, filtered)
+        filtered = crate::session::atomic_local_tool_projection(&effective, filtered);
+        let mut filtered = preserve_response_audio_pairs(&effective, filtered);
+        let parent_id = filtered.last().map(|event| event.base().id.clone());
+        filtered.push(ProviderFilteredForkBoundary::into_event(EventBase::new(
+            parent_id,
+        )));
+        filtered
     }
 
     fn transform(&self, event: &SessionEvent) -> Option<SessionEvent> {
@@ -67,8 +104,9 @@ impl ContextFilter {
                 stop_reason,
                 response_id,
                 ..
-            } if self.exclude_tool_calls => Some(SessionEvent::AssistantMessage {
-                response_items: response_items
+            } if self.exclude_tool_calls => {
+                let had_canonical_items = !response_items.is_empty();
+                let response_items = response_items
                     .iter()
                     .filter(|item| {
                         !matches!(
@@ -87,16 +125,26 @@ impl ContextFilter {
                         )
                     })
                     .cloned()
-                    .collect(),
-                base: base.clone(),
-                content: content.clone(),
-                thinking: thinking.clone(),
-                reasoning: reasoning.clone(),
-                tool_calls: Vec::new(),
-                usage: usage.clone(),
-                stop_reason: stop_reason.clone(),
-                response_id: response_id.clone(),
-            }),
+                    .collect::<Vec<_>>();
+                // An empty response_items vector selects the legacy flat
+                // projections. Drop a canonical event emptied by this filter
+                // rather than reactivating compatibility-only content.
+                if had_canonical_items && response_items.is_empty() {
+                    None
+                } else {
+                    Some(SessionEvent::AssistantMessage {
+                        response_items,
+                        base: base.clone(),
+                        content: content.clone(),
+                        thinking: thinking.clone(),
+                        reasoning: reasoning.clone(),
+                        tool_calls: Vec::new(),
+                        usage: usage.clone(),
+                        stop_reason: stop_reason.clone(),
+                        response_id: response_id.clone(),
+                    })
+                }
+            }
             SessionEvent::ModelChange { .. }
             | SessionEvent::Compaction { .. }
             | SessionEvent::ChildBranch { .. }
@@ -110,6 +158,42 @@ impl ContextFilter {
             other => Some(other.clone()),
         }
     }
+}
+
+fn remove_split_response_audio_pairs(
+    source: &[SessionEvent],
+    mut effective: Vec<SessionEvent>,
+) -> Vec<SessionEvent> {
+    let source_assistants = source
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::AssistantMessage { base, .. } => Some(base.id.clone()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    let effective_ids = effective
+        .iter()
+        .map(|event| event.base().id.clone())
+        .collect::<HashSet<_>>();
+    let mut split_halves = HashSet::new();
+    for event in source {
+        let Ok(Some(link)) = ResponseAudioArtifactLink::from_event(event) else {
+            continue;
+        };
+        let assistant_id = link.assistant_event_id();
+        if !source_assistants.contains(assistant_id) {
+            continue;
+        }
+        let link_id = &event.base().id;
+        let link_visible = effective_ids.contains(link_id);
+        let assistant_visible = effective_ids.contains(assistant_id);
+        if link_visible != assistant_visible {
+            split_halves.insert(link_id.clone());
+            split_halves.insert(assistant_id.clone());
+        }
+    }
+    effective.retain(|event| !split_halves.contains(&event.base().id));
+    effective
 }
 
 fn preserve_response_audio_pairs(

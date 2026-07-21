@@ -7,6 +7,9 @@ use serde_json::{Value, json};
 
 use crate::session::events::{EventBase, ProviderEpochBoundaryReason, SessionEvent};
 use crate::session::persistence::SessionStatus;
+use crate::session::{
+    PROVIDER_STATE_PROVENANCE_EVENT_TYPE, ProviderFilteredForkBoundary, ProviderStateProvenance,
+};
 
 use super::{
     ResumeFidelity, SessionIndexEntry, SessionRecordOrigin, StrictFormatHeader, StrictStoreError,
@@ -91,6 +94,107 @@ fn accepts_provider_epoch_boundary_event() -> TestResult {
             ..
         }]
     ));
+    Ok(())
+}
+
+#[test]
+fn preserves_unframed_provider_state_custom_event() -> TestResult {
+    for stored in [false, true] {
+        let assistant_event_id = crate::session::events::EventId::new();
+        let provenance = ProviderStateProvenance::new(assistant_event_id.clone(), stored)
+            .into_custom_event(EventBase::new(None))?;
+        let bytes = file_with_rows(&[provenance])?;
+        let timeline = read_strict_event_file(Cursor::new(bytes), Path::new("session-a.jsonl"))?;
+        let [event] = timeline.events.as_slice() else {
+            return Err(
+                std::io::Error::other("strict reader returned the wrong event count").into(),
+            );
+        };
+        assert!(matches!(
+            event,
+            SessionEvent::Custom { event_type, .. }
+                if event_type == PROVIDER_STATE_PROVENANCE_EVENT_TYPE
+        ));
+        let Some(decoded) = ProviderStateProvenance::from_event(event)? else {
+            return Err(std::io::Error::other("strict reader lost the provenance family").into());
+        };
+        assert_eq!(decoded.assistant_event_id(), &assistant_event_id);
+        assert_eq!(decoded.stored(), stored);
+    }
+    Ok(())
+}
+
+#[test]
+fn leaves_unframed_legacy_discriminator_payloads_to_semantic_validation() -> TestResult {
+    for data in [
+        json!({
+            "version": 2,
+            "assistant_event_id": crate::session::events::EventId::new(),
+            "stored": true,
+        }),
+        json!({
+            "version": 1,
+            "assistant_event_id": crate::session::events::EventId::new(),
+            "stored": true,
+            "future": true,
+        }),
+        json!({
+            "version": 1,
+            "assistant_event_id": crate::session::events::EventId::new(),
+        }),
+    ] {
+        let anchor = SessionEvent::Custom {
+            base: EventBase::new(None),
+            event_type: PROVIDER_STATE_PROVENANCE_EVENT_TYPE.to_owned(),
+            data,
+        };
+        let bytes = file_with_rows(&[anchor])?;
+        let timeline = read_strict_event_file(Cursor::new(bytes), Path::new("session-a.jsonl"))?;
+        assert!(matches!(
+            timeline.events.as_slice(),
+            [SessionEvent::Custom { event_type, .. }]
+                if event_type == PROVIDER_STATE_PROVENANCE_EVENT_TYPE
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn accepts_filtered_fork_provider_boundary() -> TestResult {
+    let boundary = ProviderFilteredForkBoundary::into_event(EventBase::new(None));
+    let bytes = file_with_rows(&[boundary])?;
+    let timeline = read_strict_event_file(Cursor::new(bytes), Path::new("session-a.jsonl"))?;
+    let [event] = timeline.events.as_slice() else {
+        return Err(std::io::Error::other("strict reader returned the wrong event count").into());
+    };
+    assert!(ProviderFilteredForkBoundary::is_family(event));
+    assert_eq!(
+        ProviderFilteredForkBoundary::from_event(event),
+        Some(ProviderFilteredForkBoundary),
+    );
+    Ok(())
+}
+
+#[test]
+fn preserves_legacy_filtered_fork_custom_discriminator_as_application_data() -> TestResult {
+    for data in [
+        json!({"version": 2}),
+        json!({"version": 1, "future": true}),
+        json!({}),
+    ] {
+        let boundary = SessionEvent::Custom {
+            base: EventBase::new(None),
+            event_type: "provider.epoch.filtered_fork".to_owned(),
+            data,
+        };
+        let bytes = file_with_rows(&[boundary])?;
+        let timeline = read_strict_event_file(Cursor::new(bytes), Path::new("session-a.jsonl"))?;
+        assert!(matches!(
+            timeline.events.as_slice(),
+            [SessionEvent::Custom { event_type, .. }]
+                if event_type == "provider.epoch.filtered_fork"
+        ));
+    }
     Ok(())
 }
 

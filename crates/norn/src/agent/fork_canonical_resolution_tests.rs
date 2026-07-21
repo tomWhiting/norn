@@ -8,13 +8,25 @@ use crate::provider::response_item::{
     ResponseItem, ResponseStreamProvenance, ResponseTranscriptItem,
 };
 use crate::session::conversion::events_to_messages;
-use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
+use crate::session::events::{ContextMarkKind, EventBase, EventUsage, SessionEvent, ToolCallEvent};
 use crate::session::{
-    RESPONSE_AUDIO_ARTIFACT_EVENT_TYPE, ResponseAudioArtifactLink, ResponseAudioArtifactRef,
-    response_audio_artifact_links,
+    ProviderFilteredForkBoundary, RESPONSE_AUDIO_ARTIFACT_EVENT_TYPE, ResponseAudioArtifactLink,
+    ResponseAudioArtifactRef, response_audio_artifact_links,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+fn filtered_payload(
+    events: &[SessionEvent],
+) -> Result<&[SessionEvent], Box<dyn std::error::Error>> {
+    let Some((boundary, payload)) = events.split_last() else {
+        return Err("a non-identity filter omitted its provider epoch boundary".into());
+    };
+    if !ProviderFilteredForkBoundary::is_family(boundary) {
+        return Err("a non-identity filter ended without a filtered-fork boundary".into());
+    }
+    Ok(payload)
+}
 
 fn canonical_assistant(
     suffix: &str,
@@ -152,8 +164,9 @@ fn exclude_tool_calls_removes_canonical_calls_and_outputs_from_exact_replay() ->
         exclude_tool_calls: true,
     }
     .apply(&[source]);
+    let filtered = filtered_payload(&filtered)?;
     let request = ProviderRequest {
-        messages: events_to_messages(&filtered),
+        messages: events_to_messages(filtered),
         tools: Vec::new(),
         model: "gpt-test".to_owned(),
         reasoning_effort: None,
@@ -183,8 +196,9 @@ fn library_context_filter_preserves_minimal_populated_and_opaque_shapes() -> Tes
         exclude_tool_calls: false,
     }
     .apply(&[source]);
-    assert_eq!(filtered.len(), 1);
-    let SessionEvent::AssistantMessage { response_items, .. } = &filtered[0] else {
+    let payload = filtered_payload(&filtered)?;
+    assert_eq!(payload.len(), 1);
+    let SessionEvent::AssistantMessage { response_items, .. } = &payload[0] else {
         return Err("context filter changed the canonical assistant event kind".into());
     };
     let actual = response_items
@@ -241,6 +255,7 @@ fn recent_filter_drops_outputs_whose_calls_precede_metadata_boundary() -> TestRe
         exclude_tool_calls: false,
     }
     .apply(&[legacy_call, metadata, legacy_output, tail]);
+    let filtered = filtered_payload(&filtered)?;
     assert_eq!(filtered.len(), 2);
     assert!(matches!(filtered[0], SessionEvent::Custom { .. }));
     assert!(matches!(filtered[1], SessionEvent::UserMessage { .. }));
@@ -263,9 +278,126 @@ fn recent_filter_drops_outputs_whose_calls_precede_metadata_boundary() -> TestRe
         canonical_output,
         filtered[1].clone(),
     ]);
+    let filtered = filtered_payload(&filtered)?;
     assert_eq!(filtered.len(), 2);
     assert!(matches!(filtered[0], SessionEvent::Custom { .. }));
     assert!(matches!(filtered[1], SessionEvent::UserMessage { .. }));
+    Ok(())
+}
+
+#[test]
+fn non_identity_filter_uses_persisted_prompt_view_and_resets_anchor() -> TestResult {
+    let superseded = canonical_assistant("superseded", &["message", "reasoning"])?;
+    let suppressed = SessionEvent::UserMessage {
+        base: EventBase::new(None),
+        content: "suppressed user content".to_owned(),
+    };
+    let summary = SessionEvent::Compaction {
+        base: EventBase::new(None),
+        summary: "durable local summary".to_owned(),
+        replaced_event_ids: vec![superseded.base().id.clone()],
+    };
+    let suppress_mark = SessionEvent::ContextMark {
+        base: EventBase::new(None),
+        mark: ContextMarkKind::Suppress,
+        target_event_id: suppressed.base().id.clone(),
+    };
+    let mut retained = canonical_assistant("retained", &["message"])?;
+    let SessionEvent::AssistantMessage { response_id, .. } = &mut retained else {
+        return Err("canonical assistant fixture changed kind".into());
+    };
+    *response_id = Some("resp_parent_anchor".to_owned());
+    let retained_id = retained.base().id.clone();
+    let superseded_id = superseded.base().id.clone();
+    let suppressed_id = suppressed.base().id.clone();
+
+    let filtered = ContextFilter {
+        include_system: true,
+        include_recent_n: Some(16),
+        exclude_tool_calls: false,
+    }
+    .apply(&[superseded, suppressed, summary, suppress_mark, retained]);
+    let payload = filtered_payload(&filtered)?;
+
+    assert_eq!(payload.len(), 2);
+    assert!(matches!(
+        &payload[0],
+        SessionEvent::Compaction { summary, .. } if summary == "durable local summary"
+    ));
+    assert_eq!(payload[1].base().id, retained_id);
+    assert!(
+        payload
+            .iter()
+            .all(|event| event.base().id != superseded_id && event.base().id != suppressed_id),
+        "persisted supersession and suppression must apply before filtering",
+    );
+    let Some(boundary) = filtered.last() else {
+        return Err("filtered result omitted its epoch boundary".into());
+    };
+    assert!(ProviderFilteredForkBoundary::is_family(boundary));
+    assert_eq!(boundary.base().parent_id.as_ref(), Some(&retained_id));
+    assert!(payload.iter().all(|event| {
+        match event {
+            SessionEvent::AssistantMessage { response_items, .. } => response_items
+                .iter()
+                .all(|item| item.item.item_type() != "compaction"),
+            _ => true,
+        }
+    }));
+    Ok(())
+}
+
+#[test]
+fn effective_view_cleanup_drops_tool_output_after_its_call_is_superseded() -> TestResult {
+    let call = canonical_assistant("superseded_call", &["function_call"])?;
+    let output = canonical_assistant("superseded_call", &["function_call_output"])?;
+    let summary = SessionEvent::Compaction {
+        base: EventBase::new(None),
+        summary: "tool interaction summary".to_owned(),
+        replaced_event_ids: vec![call.base().id.clone()],
+    };
+    let filtered = ContextFilter {
+        include_system: true,
+        include_recent_n: Some(16),
+        exclude_tool_calls: false,
+    }
+    .apply(&[call, output, summary]);
+    let payload = filtered_payload(&filtered)?;
+
+    assert_eq!(payload.len(), 1);
+    assert!(matches!(payload[0], SessionEvent::Compaction { .. }));
+    assert!(verify_no_orphan_tool_calls(payload, "unrelated_fork_call").is_empty());
+    Ok(())
+}
+
+#[test]
+fn persisted_marks_cannot_split_or_resurrect_response_audio_pairs() -> TestResult {
+    for suppress_link in [true, false] {
+        let [link, assistant] = response_audio_turn()?;
+        let target_event_id = if suppress_link {
+            link.base().id.clone()
+        } else {
+            assistant.base().id.clone()
+        };
+        let mark = SessionEvent::ContextMark {
+            base: EventBase::new(None),
+            mark: ContextMarkKind::Suppress,
+            target_event_id,
+        };
+        let filtered = ContextFilter {
+            include_system: true,
+            include_recent_n: Some(16),
+            exclude_tool_calls: false,
+        }
+        .apply(&[link, assistant, mark]);
+        let payload = filtered_payload(&filtered)?;
+
+        assert!(
+            payload.is_empty(),
+            "a persisted mark hiding either pair half must remove both without resurrection",
+        );
+        assert!(response_audio_artifact_links(&filtered)?.is_empty());
+    }
     Ok(())
 }
 
@@ -279,13 +411,14 @@ fn exclude_system_preserves_response_audio_link_with_its_assistant() -> TestResu
     }
     .apply(&[link, assistant]);
 
-    assert_eq!(filtered.len(), 2);
+    let payload = filtered_payload(&filtered)?;
+    assert_eq!(payload.len(), 2);
     assert!(matches!(
-        &filtered[0],
+        &payload[0],
         SessionEvent::Custom { event_type, .. }
             if event_type == RESPONSE_AUDIO_ARTIFACT_EVENT_TYPE
     ));
-    assert!(matches!(filtered[1], SessionEvent::AssistantMessage { .. }));
+    assert!(matches!(payload[1], SessionEvent::AssistantMessage { .. }));
     assert_eq!(response_audio_artifact_links(&filtered)?.len(), 1);
     Ok(())
 }
@@ -300,13 +433,14 @@ fn recent_filter_restores_response_audio_precursor_as_an_atomic_companion() -> T
     }
     .apply(&[link, assistant]);
 
-    assert_eq!(filtered.len(), 2);
+    let payload = filtered_payload(&filtered)?;
+    assert_eq!(payload.len(), 2);
     assert!(matches!(
-        &filtered[0],
+        &payload[0],
         SessionEvent::Custom { event_type, .. }
             if event_type == RESPONSE_AUDIO_ARTIFACT_EVENT_TYPE
     ));
-    assert!(matches!(filtered[1], SessionEvent::AssistantMessage { .. }));
+    assert!(matches!(payload[1], SessionEvent::AssistantMessage { .. }));
     assert_eq!(response_audio_artifact_links(&filtered)?.len(), 1);
     Ok(())
 }

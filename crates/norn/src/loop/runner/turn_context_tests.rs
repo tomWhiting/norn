@@ -12,7 +12,7 @@ use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::retry::{RetryPolicy, RetryableError};
 use crate::provider::events::{ProviderEvent, StopReason};
 use crate::provider::mock::MockProvider;
-use crate::provider::request::ProviderRequest;
+use crate::provider::request::{Message, MessageRole, ProviderRequest};
 use crate::provider::tools::ProviderCapabilities;
 use crate::provider::traits::{Provider, ProviderStream};
 use crate::provider::usage::Usage;
@@ -139,6 +139,30 @@ impl Provider for ContextRecordingProvider {
     }
 }
 
+#[derive(Default)]
+struct ReplayRejectingProvider {
+    calls: AtomicUsize,
+}
+
+impl Provider for ReplayRejectingProvider {
+    fn validate_replay(&self, messages: &[Message]) -> Result<(), ProviderError> {
+        if messages
+            .iter()
+            .any(|message| message.role == MessageRole::Assistant)
+        {
+            return Err(ProviderError::ProviderStateReplayUnavailable);
+        }
+        Ok(())
+    }
+
+    fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Err(ProviderError::InvalidRequest {
+            message: "replay preflight was bypassed".to_owned(),
+        })
+    }
+}
+
 fn done_event(stop_reason: StopReason) -> ProviderEvent {
     ProviderEvent::Done {
         stop_reason,
@@ -255,6 +279,45 @@ async fn store_identity_mismatch_precedes_prompt_append_and_provider_dispatch() 
         serde_json::to_vec(&store.events())?,
         before,
         "mismatch must not mutate the prompt log",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn replay_validation_precedes_prompt_append_and_provider_dispatch() -> TestResult {
+    let provider = ReplayRejectingProvider::default();
+    let store = EventStore::new();
+    store.append(SessionEvent::AssistantMessage {
+        response_items: Vec::new(),
+        base: EventBase::new(None),
+        content: "prior provider response".to_owned(),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: EventUsage::default(),
+        stop_reason: "end_turn".to_owned(),
+        response_id: None,
+    })?;
+    let before = serde_json::to_vec(&store.events())?;
+    let mut loop_context = LoopContext::new("system");
+
+    let result = run_step(&provider, &store, &mut loop_context, "must not persist").await;
+
+    assert!(matches!(
+        result,
+        Err(crate::error::NornError::Provider(
+            ProviderError::ProviderStateReplayUnavailable
+        ))
+    ));
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        0,
+        "unreplayable history must dispatch no request",
+    );
+    assert_eq!(
+        serde_json::to_vec(&store.events())?,
+        before,
+        "replay validation must precede user-prompt persistence",
     );
     Ok(())
 }

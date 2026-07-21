@@ -256,6 +256,10 @@ pub enum SessionPersistError {
     #[error("event store rejected resumed event: {0}")]
     EventStore(String),
 
+    /// Reserved provider-state records are malformed or internally inconsistent.
+    #[error(transparent)]
+    InvalidProviderStateProvenance(#[from] crate::session::ProviderStateValidationError),
+
     /// The active format-2 index failed strict structural validation.
     #[error("invalid active session index: {0}")]
     InvalidIndex(#[source] Box<super::strict::StrictStoreError>),

@@ -6,7 +6,9 @@
 use crate::error::{ConfigError, HookType, NornError, ProviderError, SessionError};
 use crate::integration::hooks::HookOutcome;
 use crate::r#loop::compaction::{CompactionState, SharedTimeoutState};
-use crate::r#loop::conversation_state::ConversationRequestState;
+use crate::r#loop::conversation_state::{
+    ConversationRequestState, validate_response_state_provenance,
+};
 use crate::r#loop::delivery::{
     drain_child_results, flush_inbound_messages, flush_pending_agent_messages,
     inject_inbound_messages,
@@ -58,6 +60,9 @@ impl<'a> StepMachine<'a> {
         let loop_context = request.loop_context;
         let provider_state_identity = provider.state_identity();
 
+        // Reserved provider-state records are untrusted durable input. Check
+        // them before affinity adoption can stamp an otherwise-unbound store.
+        validate_response_state_provenance(&store.events())?;
         validate_or_bind_store_identity(store, provider_state_identity)?;
 
         // The embedder-installed ToolOutputBudget governs the model-facing
@@ -114,13 +119,50 @@ impl<'a> StepMachine<'a> {
         // still recorded as a UserMessage session event for audit (CO7).
         let initial_messages = build_initial_messages(user_prompt, loop_context, store)?;
         let mut messages = initial_messages.messages;
-        let conversation_state = ConversationRequestState::new(
+        let mut conversation_state = ConversationRequestState::new(
             config,
             provider.capabilities(),
             initial_messages.prefix_len,
             initial_messages.response_thread_anchor,
         )?;
         conversation_state.require_state_identity(provider_state_identity)?;
+        // Validate the exact initial provider-facing view before the operator's
+        // new prompt becomes durable. The provider request builder repeats this
+        // check defensively for later tool continuations and library callers.
+        if let Err(error) =
+            provider.validate_replay(&conversation_state.request_messages(&messages))
+        {
+            if !matches!(&error, ProviderError::ProviderStateReplayUnavailable) {
+                return Err(error.into());
+            }
+            let mut recovered = None;
+            for candidate in initial_messages.legacy_response_thread_anchors {
+                let Some(witness) = candidate.witness_message(&messages) else {
+                    continue;
+                };
+                match provider.validate_replay(std::slice::from_ref(witness)) {
+                    Err(ProviderError::ProviderStateReplayUnavailable) => {}
+                    Ok(()) => continue,
+                    Err(candidate_error) => return Err(candidate_error.into()),
+                }
+                let suffix =
+                    conversation_state.request_messages_for_legacy_anchor(&messages, &candidate);
+                match provider.validate_replay(&suffix) {
+                    Ok(()) => {
+                        recovered = Some(candidate);
+                        break;
+                    }
+                    Err(ProviderError::ProviderStateReplayUnavailable) => {}
+                    Err(candidate_error) => return Err(candidate_error.into()),
+                }
+            }
+            let Some(anchor) = recovered else {
+                return Err(error.into());
+            };
+            if !conversation_state.adopt_legacy_anchor(anchor) {
+                return Err(error.into());
+            }
+        }
         // The managed dynamic-context Developer message is attached at the
         // tail by the first `build_request`, so the tracker starts absent.
         let dev_message = ManagedDevMessage::new();

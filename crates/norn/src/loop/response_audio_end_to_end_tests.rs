@@ -12,6 +12,7 @@ use super::runner::{AgentLoopConfig, AgentStepRequest, MockToolExecutor, run_age
 use super::stop_records::{PARTIAL_OUTPUT_EVENT_TYPE, StepStopContext, record_abnormal_step_stop};
 use crate::error::ProviderError;
 use crate::integration::hooks::{Hook, HookRegistry, SessionEventHook};
+use crate::provider::ProviderStateIdentity;
 use crate::provider::events::{ProviderEvent, StopReason};
 use crate::provider::openai::response_stream_event::ResponseStreamEvent;
 use crate::provider::request::ProviderRequest;
@@ -21,15 +22,17 @@ use crate::provider::traits::{Provider, ProviderStream};
 use crate::provider::usage::Usage;
 use crate::session::events::{EventBase, SessionEvent};
 use crate::session::{
-    CreateSessionOptions, DurabilityPolicy, EventStore, RESPONSE_AUDIO_ARTIFACT_EVENT_TYPE,
-    ResponseAudioArtifactLink, ResponseAudioArtifactRef, ResponseAudioArtifactState,
-    SessionManager, referenced_response_audio_artifacts, response_audio_artifact_links,
+    CreateSessionOptions, DurabilityPolicy, EventStore, PROVIDER_STATE_PROVENANCE_EVENT_TYPE,
+    ProviderStateProvenance, RESPONSE_AUDIO_ARTIFACT_EVENT_TYPE, ResponseAudioArtifactLink,
+    ResponseAudioArtifactRef, ResponseAudioArtifactState, SessionManager,
+    referenced_response_audio_artifacts, response_audio_artifact_links,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 struct AudioProvider {
     events: Vec<ProviderEvent>,
+    state_identity: Option<ProviderStateIdentity>,
 }
 
 struct CancelAfterAudioProvider {
@@ -79,6 +82,10 @@ impl Provider for CancelAfterAudioProvider {
 }
 
 impl Provider for AudioProvider {
+    fn state_identity(&self) -> Option<ProviderStateIdentity> {
+        self.state_identity
+    }
+
     fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         Ok(Box::pin(stream::iter(
             self.events.clone().into_iter().map(Ok),
@@ -86,7 +93,10 @@ impl Provider for AudioProvider {
     }
 
     fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities::default()
+        self.state_identity
+            .map_or_else(ProviderCapabilities::default, |_| {
+                ProviderCapabilities::openai_responses()
+            })
     }
 }
 
@@ -143,7 +153,10 @@ fn provider() -> Result<AudioProvider, Box<dyn std::error::Error>> {
         usage: Usage::default(),
         response_id: Some("resp_audio_end_to_end".to_owned()),
     });
-    Ok(AudioProvider { events })
+    Ok(AudioProvider {
+        events,
+        state_identity: None,
+    })
 }
 
 fn persisted_link(
@@ -168,7 +181,14 @@ async fn real_agent_step_persists_audio_and_resume_resolves_it() -> TestResult {
         },
         DurabilityPolicy::FsyncPerEvent,
     )?;
-    let provider = provider()?;
+    let mut provider = provider()?;
+    provider.state_identity = Some(ProviderStateIdentity::derive(
+        "norn.response-audio-end-to-end",
+        b"stateful-audio-fixture",
+    ));
+    opened
+        .store
+        .validate_or_bind_provider_state_identity(provider.state_identity())?;
     let executor = MockToolExecutor::empty();
     let config = AgentLoopConfig::default();
     let mut loop_context = LoopContext::default();
@@ -189,11 +209,46 @@ async fn real_agent_step_persists_audio_and_resume_resolves_it() -> TestResult {
     })
     .await?;
     assert!(matches!(result, AgentStepResult::Completed { .. }));
-    let link = persisted_link(&opened.store.events())?;
+    let events = opened.store.events();
+    let link = persisted_link(&events)?;
+    let provenance_index = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                SessionEvent::Custom { event_type, .. }
+                    if event_type == PROVIDER_STATE_PROVENANCE_EVENT_TYPE
+            )
+        })
+        .ok_or_else(|| std::io::Error::other("provider-state provenance missing"))?;
+    let link_index = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                SessionEvent::Custom { event_type, .. }
+                    if event_type == RESPONSE_AUDIO_ARTIFACT_EVENT_TYPE
+            )
+        })
+        .ok_or_else(|| std::io::Error::other("audio link missing"))?;
+    let provenance = ProviderStateProvenance::from_event(&events[provenance_index])?
+        .ok_or_else(|| std::io::Error::other("provider-state provenance did not decode"))?;
+    let assistant_index = events
+        .iter()
+        .position(|event| event.base().id == *provenance.assistant_event_id())
+        .ok_or_else(|| std::io::Error::other("provider-state provenance target missing"))?;
+    assert!(provenance_index < link_index && link_index < assistant_index);
     let reference = link.reference();
     drop(opened);
 
     let resumed = manager.resume("audio-agent-step", DurabilityPolicy::FsyncPerEvent)?;
+    assert!(
+        resumed
+            .store
+            .events()
+            .iter()
+            .any(|event| matches!(ProviderStateProvenance::from_event(event), Ok(Some(_))))
+    );
     let link = persisted_link(&resumed.store.events())?;
     assert_eq!(link.reference(), reference);
     let artifact = resumed
@@ -210,7 +265,7 @@ async fn real_agent_step_persists_audio_and_resume_resolves_it() -> TestResult {
 }
 
 #[tokio::test]
-async fn session_event_hook_may_append_between_audio_link_and_assistant() -> TestResult {
+async fn session_event_hook_runs_after_audio_response_publication() -> TestResult {
     let directory = tempdir()?;
     let manager = SessionManager::new(directory.path());
     let opened = manager.create_with_id(
@@ -278,7 +333,7 @@ async fn session_event_hook_may_append_between_audio_link_and_assistant() -> Tes
         .iter()
         .position(|event| event.base().id == *link.assistant_event_id())
         .ok_or_else(|| std::io::Error::other("linked assistant event missing"))?;
-    assert!(link_index < marker_index && marker_index < assistant_index);
+    assert!(link_index < assistant_index && assistant_index < marker_index);
     assert_eq!(
         events[assistant_index].base().parent_id.as_ref(),
         Some(&events[link_index].base().id)

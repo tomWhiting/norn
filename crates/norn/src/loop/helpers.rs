@@ -16,9 +16,9 @@ use crate::integration::hooks::HookRegistry;
 use crate::r#loop::assembly::AssembledResponse;
 use crate::r#loop::commands::{PreprocessResult, preprocess_input};
 use crate::r#loop::config::{AgentLoopConfig, ToolExecutor};
-use crate::r#loop::context::construct_prompt;
+use crate::r#loop::context::{construct_prompt, with_prompt_context_edits};
 use crate::r#loop::conversation_state::{
-    ResponseThreadAnchor, latest_response_anchor_for_prompt_view,
+    ResponseThreadAnchor, response_thread_anchors_for_prompt_view,
 };
 use crate::r#loop::iteration::{IterationSignal, format_handoff_message};
 use crate::r#loop::loop_context::LoopContext;
@@ -51,6 +51,9 @@ pub(super) struct InitialMessages {
     pub(super) prefix_len: usize,
     /// Latest provider response anchor visible in the prompt history.
     pub(super) response_thread_anchor: Option<ResponseThreadAnchor>,
+    /// Unmarked pre-D3 candidates, newest first. Setup may use one only when
+    /// its own opaque state is the reason exact full replay is unavailable.
+    pub(super) legacy_response_thread_anchors: Vec<ResponseThreadAnchor>,
     /// Number of trailing messages the new user input occupies: 1 for a
     /// literal prompt, N for a slash-command expansion. Used by in-flight
     /// compaction to map the persisted prompt event onto its local message
@@ -61,9 +64,10 @@ pub(super) struct InitialMessages {
 /// Build the initial conversation: system prompt, conversation history
 /// from the event store, and the new user input (or slash expansion).
 ///
-/// History is read from `store` via [`events_to_messages`] and spliced
-/// between the system message and the new user message. This ensures
-/// the provider sees the full conversation on every turn.
+/// History is read from `store` through its durable prompt projection and
+/// spliced between the system message and the new user message. This ensures
+/// stateless providers see the effective conversation while threaded providers
+/// can derive an exact post-anchor delta from the same view.
 ///
 /// When `loop_context.slash_commands` is `Some` and the input matches a
 /// registered slash command, the expansion replaces the literal user
@@ -97,13 +101,10 @@ pub(super) fn build_initial_messages(
         (None, None) => 0,
     };
 
-    let (history_events, include_compactions) =
-        if let Some(edits) = loop_context.context_edits.as_ref() {
-            let view = construct_prompt(store, edits);
-            (view.events, true)
-        } else {
-            (store.events(), false)
-        };
+    let history_events =
+        with_prompt_context_edits(store, loop_context.context_edits.as_ref(), |edits| {
+            construct_prompt(store, edits).events
+        });
     let mut messages = Vec::with_capacity(1 + history_events.len() + new_msg_count);
     messages.push(Message {
         response_items: Vec::new(),
@@ -123,18 +124,10 @@ pub(super) fn build_initial_messages(
     // plus history form one stable, cacheable prefix. The prefix is therefore
     // exactly the System message.
     let prefix_len = messages.len();
-    let response_thread_anchor = latest_response_anchor_for_prompt_view(
-        &history_events,
-        store,
-        prefix_len,
-        include_compactions,
-    );
+    let response_thread_anchors =
+        response_thread_anchors_for_prompt_view(&history_events, store, prefix_len, true)?;
 
-    let history = if include_compactions {
-        crate::session::conversion::prompt_events_to_messages(&history_events)
-    } else {
-        crate::session::conversion::events_to_messages(&history_events)
-    };
+    let history = crate::session::conversion::prompt_events_to_messages(&history_events);
 
     messages.extend(history);
 
@@ -160,7 +153,8 @@ pub(super) fn build_initial_messages(
     Ok(InitialMessages {
         messages,
         prefix_len,
-        response_thread_anchor,
+        response_thread_anchor: response_thread_anchors.proven,
+        legacy_response_thread_anchors: response_thread_anchors.legacy_candidates,
         new_input_len,
     })
 }
@@ -497,179 +491,4 @@ pub(super) async fn execute_tool_batch(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::Duration;
-
-    use super::*;
-    use crate::r#loop::config::{AgentLoopConfig, ConversationStateMode};
-    use crate::r#loop::conversation_state::ConversationRequestState;
-    use crate::provider::tools::ProviderCapabilities;
-    use crate::session::context_edit::ContextEdits;
-    use crate::session::events::{EventUsage, ProviderEpochBoundaryReason};
-    use crate::session::persistence::SessionPersistError;
-    use crate::session::store::PersistenceSink;
-
-    fn user_event(content: &str) -> SessionEvent {
-        SessionEvent::UserMessage {
-            base: EventBase::new(None),
-            content: content.to_owned(),
-        }
-    }
-
-    fn assistant_event(store: &EventStore, response_id: &str) -> SessionEvent {
-        SessionEvent::AssistantMessage {
-            base: EventBase::new(store.last_event_id()),
-            response_items: Vec::new(),
-            content: format!("answer from {response_id}"),
-            thinking: String::new(),
-            reasoning: Vec::new(),
-            tool_calls: Vec::new(),
-            usage: EventUsage::default(),
-            stop_reason: "end_turn".to_owned(),
-            response_id: Some(response_id.to_owned()),
-        }
-    }
-
-    fn threaded_state(initial: InitialMessages) -> Result<ConversationRequestState, NornError> {
-        Ok(ConversationRequestState::new(
-            &AgentLoopConfig {
-                conversation_state: ConversationStateMode::ProviderThreaded,
-                ..AgentLoopConfig::default()
-            },
-            ProviderCapabilities::openai_responses(),
-            initial.prefix_len,
-            initial.response_thread_anchor,
-        )?)
-    }
-
-    #[test]
-    fn context_edited_prompt_respects_provider_epoch_boundaries() -> Result<(), NornError> {
-        let store = EventStore::new();
-        store.append(assistant_event(&store, "response_before_adoption"))?;
-        store.append(SessionEvent::ProviderEpochBoundary {
-            base: EventBase::new(store.last_event_id()),
-            reason: ProviderEpochBoundaryReason::ProviderIdentityAdoption,
-        })?;
-        let mut loop_context = LoopContext::new("system");
-        loop_context.context_edits = Some(ContextEdits::new());
-
-        let initial = build_initial_messages(Some("next"), &loop_context, &store)?;
-        let state = threaded_state(initial)?;
-        assert!(state.previous_response_id().is_none());
-
-        store.append(assistant_event(&store, "response_after_adoption"))?;
-        store.append(SessionEvent::UserMessage {
-            base: EventBase::new(store.last_event_id()),
-            content: "queued after the new response".to_owned(),
-        })?;
-        let initial = build_initial_messages(Some("next"), &loop_context, &store)?;
-        let messages = initial.messages.clone();
-        let state = threaded_state(initial)?;
-        assert_eq!(
-            state.previous_response_id().as_deref(),
-            Some("response_after_adoption"),
-        );
-        let request_messages = state.request_messages(&messages);
-        assert_eq!(request_messages.len(), 3);
-        assert_eq!(request_messages[0].role, MessageRole::System);
-        assert_eq!(
-            request_messages[1].content.as_deref(),
-            Some("queued after the new response"),
-        );
-        assert_eq!(request_messages[2].content.as_deref(), Some("next"));
-        Ok(())
-    }
-
-    /// A sink whose `persist` blocks until a handshake task — which can
-    /// only run if the executor stays live while the write blocks —
-    /// releases it.
-    struct HandshakeSink {
-        entered: Arc<AtomicBool>,
-        release_rx: std::sync::mpsc::Receiver<()>,
-    }
-
-    impl PersistenceSink for HandshakeSink {
-        fn persist(&mut self, _event: &SessionEvent) -> Result<(), SessionPersistError> {
-            self.entered.store(true, Ordering::SeqCst);
-            self.release_rx
-                .recv_timeout(Duration::from_secs(10))
-                .map_err(|e| {
-                    SessionPersistError::Io(std::io::Error::other(format!(
-                        "executor stalled: no task released the blocking persist: {e}"
-                    )))
-                })?;
-            Ok(())
-        }
-    }
-
-    /// The off-executor guarantee: with exactly one worker thread, a
-    /// blocking sink write inside `append_and_notify` must not stall the
-    /// runtime. The sink blocks until a *separately spawned task* releases
-    /// it — with an inline append on the single worker that task could
-    /// never run and the handshake would time out; `block_in_place`
-    /// hands the worker's queue back to the runtime, so the release task
-    /// proceeds while the write blocks.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn append_and_notify_does_not_stall_other_tasks_on_the_worker() {
-        let entered = Arc::new(AtomicBool::new(false));
-        let (release_tx, release_rx) = std::sync::mpsc::channel();
-        let store = EventStore::with_sink(Box::new(HandshakeSink {
-            entered: Arc::clone(&entered),
-            release_rx,
-        }));
-
-        let entered_for_task = Arc::clone(&entered);
-        let releaser = tokio::spawn(async move {
-            while !entered_for_task.load(Ordering::SeqCst) {
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            }
-            release_tx.send(()).expect("sink is waiting on the channel");
-        });
-
-        let id = append_and_notify(&store, user_event("hello"), None)
-            .await
-            .expect("append must succeed once the release task runs");
-        assert_eq!(store.len(), 1);
-        assert_eq!(store.last_event_id(), Some(id));
-        releaser.await.expect("release task completes");
-    }
-
-    /// Error-surfacing parity: a failing sink persist comes back as the
-    /// same typed `StorageError` the inline append produced, and the
-    /// event is not in the in-memory store.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn append_and_notify_surfaces_sink_errors_unchanged() {
-        struct FailingSink;
-        impl PersistenceSink for FailingSink {
-            fn persist(&mut self, _event: &SessionEvent) -> Result<(), SessionPersistError> {
-                Err(SessionPersistError::Io(std::io::Error::other("disk full")))
-            }
-        }
-        let store = EventStore::with_sink(Box::new(FailingSink));
-
-        let err = append_and_notify(&store, user_event("lost"), None)
-            .await
-            .expect_err("sink failure must surface");
-        assert!(
-            matches!(err, SessionError::StorageError { .. }),
-            "expected StorageError, got {err:?}",
-        );
-        assert!(store.is_empty(), "failed append must not reach memory");
-    }
-
-    /// The flavor gate: on a current-thread runtime `block_in_place`
-    /// panics by contract, so the append must take the inline arm. A
-    /// plain `#[tokio::test]` runs on the current-thread flavor — this
-    /// test passing at all proves the gate.
-    #[tokio::test]
-    async fn append_and_notify_runs_inline_on_current_thread_runtime() {
-        let store = EventStore::new();
-        append_and_notify(&store, user_event("inline"), None)
-            .await
-            .expect("inline append on current-thread runtime");
-        assert_eq!(store.len(), 1);
-    }
-}
+mod tests;

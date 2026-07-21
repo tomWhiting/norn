@@ -127,6 +127,12 @@ pub(super) fn open_root_session(
 }
 
 fn map_session_open_error(context: &str, error: crate::session::SessionPersistError) -> NornError {
+    if matches!(
+        &error,
+        crate::session::SessionPersistError::InvalidProviderStateProvenance(_)
+    ) {
+        return NornError::Provider(ProviderError::ProviderStateProvenanceInvalid);
+    }
     match SessionError::from(error) {
         SessionError::ProviderStateIdentityRequired
         | SessionError::ProviderStateIdentityMismatch => {
@@ -136,5 +142,24 @@ fn map_session_open_error(context: &str, error: crate::session::SessionPersistEr
             reason: format!("{context}: {reason}"),
         }),
         other => NornError::Session(other),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_managed_provenance_stays_a_typed_provider_error() {
+        let error = map_session_open_error(
+            "open_session failed",
+            crate::session::SessionPersistError::InvalidProviderStateProvenance(
+                crate::session::ProviderStateValidationError,
+            ),
+        );
+        assert!(matches!(
+            error,
+            NornError::Provider(ProviderError::ProviderStateProvenanceInvalid)
+        ));
     }
 }

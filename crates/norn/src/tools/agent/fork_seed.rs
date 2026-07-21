@@ -19,6 +19,7 @@ use crate::agent::fork::OrphanToolCall;
 use crate::error::{NornError, SessionError};
 use crate::session::events::{EventBase, SessionEvent};
 use crate::session::store::EventStore;
+use crate::session::{response_publication_group_len, validate_provider_state_provenance};
 
 /// Truncate a parent-history snapshot at the branch anchor the
 /// reservation recorded: everything AFTER the anchor — the reservation
@@ -107,22 +108,49 @@ pub(super) fn seed_fork_events(
             duration_ms: 0,
         });
     }
-    for event in &events {
-        child_store.append(event.clone()).map_err(|e| {
-            NornError::Session(SessionError::EventAppendFailed {
-                reason: e.to_string(),
-            })
-        })?;
+    validate_provider_state_provenance(&events).map_err(|_error| {
+        NornError::Session(SessionError::EventAppendFailed {
+            reason: "fork seed contains invalid provider-state provenance".to_owned(),
+        })
+    })?;
+
+    let mut index = 0;
+    while index < events.len() {
+        if let Some(group_len) =
+            response_publication_group_len(&events, index).map_err(|_error| {
+                NornError::Session(SessionError::EventAppendFailed {
+                    reason: "fork seed contains invalid provider-state provenance".to_owned(),
+                })
+            })?
+        {
+            child_store
+                .append_batch(&events[index..index.saturating_add(group_len)])
+                .map_err(|error| map_seed_append_error(&error))?;
+            index = index.saturating_add(group_len);
+        } else {
+            child_store
+                .append(events[index].clone())
+                .map_err(|error| map_seed_append_error(&error))?;
+            index = index.saturating_add(1);
+        }
     }
     Ok(())
 }
 
-/// Scan ALL `AssistantMessage` events for `tool_call`s without either local
-/// result representation anywhere after them. Returns every orphan across the
-/// entire history, not just the latest turn. This is the unconditional safety
-/// net that ensures the child context never reaches the API with orphans.
+fn map_seed_append_error(error: &SessionError) -> NornError {
+    NornError::Session(SessionError::EventAppendFailed {
+        reason: error.to_string(),
+    })
+}
+
+/// Scan the durable effective prompt view for `tool_call`s without either
+/// local result representation anywhere after them. Returns every visible
+/// orphan across the entire history, not just the latest turn. Suppressed and
+/// compacted calls stay hidden instead of gaining a new visible synthetic
+/// output. This is the unconditional safety net that ensures the child context
+/// never reaches the API with orphans.
 fn find_all_orphan_tool_calls(events: &[SessionEvent]) -> Vec<OrphanToolCall> {
-    crate::session::unresolved_local_tool_calls(events)
+    crate::session::unresolved_effective_local_tool_calls(events)
         .into_iter()
         .map(|call| OrphanToolCall {
             id: call.call_id,
@@ -135,6 +163,8 @@ fn find_all_orphan_tool_calls(events: &[SessionEvent]) -> Vec<OrphanToolCall> {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     fn user(content: &str) -> SessionEvent {
         SessionEvent::UserMessage {
@@ -239,6 +269,95 @@ mod tests {
         );
     }
 
+    #[test]
+    fn persistent_fork_seeds_framed_response_group_without_splitting_it() -> TestResult {
+        use std::sync::Arc;
+
+        use crate::session::events::{EventUsage, ProviderEpochBoundaryReason};
+        use crate::session::manager::{CreateSessionOptions, SessionManager};
+        use crate::session::store::DurabilityPolicy;
+        use crate::session::{
+            ChildBranchRequest, ChildDurability, ProviderStateProvenance, SessionBinding,
+            SessionBrancher, validate_provider_state_provenance,
+        };
+
+        let temp = tempfile::tempdir()?;
+        let manager = SessionManager::new(temp.path());
+        let opened = manager.create(
+            CreateSessionOptions {
+                model: "m".to_owned(),
+                working_dir: "/w".to_owned(),
+                name: None,
+            },
+            DurabilityPolicy::Flush,
+        )?;
+        let root_id = opened.entry.id.clone();
+        let root_entry = opened.entry.clone();
+        let parent = opened.store;
+        parent.append(user("prompt"))?;
+
+        let boundary = SessionEvent::ProviderEpochBoundary {
+            base: EventBase::new(parent.last_event_id()),
+            reason: ProviderEpochBoundaryReason::ResponseStatePublication,
+        };
+        let assistant_id = crate::session::events::EventId::new();
+        let provenance = ProviderStateProvenance::new(assistant_id.clone(), true)
+            .into_custom_event(EventBase::new(Some(boundary.base().id.clone())))?;
+        let mut assistant_base = EventBase::new(Some(provenance.base().id.clone()));
+        assistant_base.id = assistant_id;
+        let assistant = SessionEvent::AssistantMessage {
+            base: assistant_base,
+            response_items: Vec::new(),
+            content: "answer".to_owned(),
+            thinking: String::new(),
+            reasoning: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: EventUsage::default(),
+            stop_reason: "end_turn".to_owned(),
+            response_id: Some("resp_fork-seed".to_owned()),
+        };
+        parent.append_batch(&[boundary, provenance, assistant])?;
+
+        let binding = SessionBinding::persistent_root(
+            Arc::new(SessionBrancher::new(
+                manager.clone(),
+                root_id,
+                DurabilityPolicy::Flush,
+            )),
+            &root_entry,
+            &[],
+        );
+        let child_id = Uuid::new_v4().to_string();
+        let branched = binding.branch_child(
+            &parent,
+            &ChildBranchRequest {
+                child_session_id: child_id.clone(),
+                name_stem: "fork".to_owned(),
+                kind: crate::session::events::ChildBranchKind::Fork,
+                durability: ChildDurability::Persist,
+                model: "m".to_owned(),
+                working_dir: "/w".to_owned(),
+            },
+        )?;
+        let seed = truncate_seed_at_anchor(parent.events(), branched.parent_event_anchor.as_ref())?;
+        seed_fork_events(&branched.store, &seed, None, Uuid::new_v4())?;
+
+        let resumed = manager.resume(&child_id, DurabilityPolicy::Flush)?;
+        validate_provider_state_provenance(&resumed.store.events())?;
+        assert!(resumed.store.events().windows(3).any(|events| matches!(
+            events,
+            [
+                SessionEvent::ProviderEpochBoundary {
+                    reason: ProviderEpochBoundaryReason::ResponseStatePublication,
+                    ..
+                },
+                SessionEvent::Custom { .. },
+                SessionEvent::AssistantMessage { .. },
+            ]
+        )));
+        Ok(())
+    }
+
     /// A missing anchor is an append-only violation and refuses typed.
     #[test]
     fn truncate_seed_missing_anchor_is_typed_error() {
@@ -251,3 +370,6 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod effective_view_tests;

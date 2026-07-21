@@ -12,13 +12,18 @@ use crate::session::persistence::index::{
     open_registered_timeline_bound, read_index_with_deadline, reconcile_registered_timeline,
     registered_timeline_identity,
 };
-use crate::session::persistence::io::{ExistingEventInspection, ExistingEventState};
+use crate::session::persistence::io::{
+    ExistingEventInspection, ExistingEventState, strict_events_from_file,
+};
 #[cfg(test)]
 use crate::session::persistence::io::{open_session_append, open_session_append_bound};
 use crate::session::persistence::{IndexCounters, LockedTimelineFile, SessionPersistError};
+use crate::session::validate_provider_state_provenance;
 use crate::util::PrivateFileIdentity;
 
 use super::store::PersistenceSink;
+
+mod batch;
 
 /// Durability level applied by [`JsonlSink`] after each event write.
 ///
@@ -338,6 +343,10 @@ impl PersistenceSink for JsonlSink {
         )?;
         match inspection.state {
             ExistingEventState::Absent => {
+                let display_path = self.target.display_path()?;
+                let mut candidate = strict_events_from_file(&mut file, &display_path)?;
+                candidate.push(event.clone());
+                validate_provider_state_provenance(&candidate)?;
                 inspection
                     .counters
                     .checked_with(event)
@@ -354,7 +363,11 @@ impl PersistenceSink for JsonlSink {
                     return Err(error.into());
                 }
             }
-            ExistingEventState::ExactTail if self.pending_write.is_some() => {}
+            ExistingEventState::ExactTail if self.pending_write.is_some() => {
+                let display_path = self.target.display_path()?;
+                let candidate = strict_events_from_file(&mut file, &display_path)?;
+                validate_provider_state_provenance(&candidate)?;
+            }
             ExistingEventState::ExactTail => {
                 return Err(SessionPersistError::EventAppendConflict {
                     event_id: event_id.to_owned(),
@@ -414,6 +427,10 @@ impl PersistenceSink for JsonlSink {
         }
         self.pending_write = None;
         Ok(())
+    }
+
+    fn persist_batch(&mut self, events: &[SessionEvent]) -> Result<(), SessionPersistError> {
+        self.persist_batch_inner(events)
     }
 
     fn checkpoint(&mut self) -> Result<(), SessionPersistError> {

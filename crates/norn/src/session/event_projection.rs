@@ -5,6 +5,10 @@ use crate::provider::response_item::{KnownResponseItemKind, ResponseContentPart,
 
 use super::events::{SessionEvent, ToolCallEvent};
 
+mod atomic;
+
+pub(crate) use atomic::{atomic_local_tool_projection, unresolved_effective_local_tool_calls};
+
 /// Return unresolved local function/custom calls in occurrence order.
 ///
 /// Canonical call-output items resolve only an earlier call with the same
@@ -52,7 +56,7 @@ pub(crate) fn apply_local_tool_event(
 }
 
 /// Remove local outputs whose originating call is outside `events`.
-pub(crate) fn without_orphan_local_tool_outputs(events: Vec<SessionEvent>) -> Vec<SessionEvent> {
+fn without_orphan_local_tool_outputs(events: Vec<SessionEvent>) -> Vec<SessionEvent> {
     let mut pending = Vec::new();
     let mut retained = Vec::with_capacity(events.len());
     for mut event in events {

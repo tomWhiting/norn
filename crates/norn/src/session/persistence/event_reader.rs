@@ -87,6 +87,7 @@ fn replay_from_events(
 ) -> Result<ReplayArtifacts, SessionPersistError> {
     let mut artifacts =
         ReplayArtifacts::from_strict_events(events, display_path).map_err(map_strict_error)?;
+    crate::session::validate_provider_state_provenance(&artifacts.events)?;
     artifacts.format_version = Some(STRICT_SESSION_FORMAT_VERSION);
     Ok(artifacts)
 }
