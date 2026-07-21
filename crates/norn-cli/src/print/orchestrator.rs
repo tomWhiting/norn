@@ -588,7 +588,7 @@ async fn orchestrate_run(
         // REVIEW C1: the registry's shared ToolContext still holds the
         // SharedAgentEventChannel sender the builder installed (subagent
         // event forwarding), so the broadcast channel never closes here.
-        // finish() signals the renderer explicitly; it drains the events
+        // finish_run() signals the renderer explicitly; it drains the events
         // already buffered and exits instead of awaiting closure forever.
         // A JoinError (renderer panic or cancellation) means the streamed
         // output on stdout is incomplete or torn. Retain it until the run
