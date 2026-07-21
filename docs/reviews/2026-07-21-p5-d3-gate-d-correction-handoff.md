@@ -4,8 +4,8 @@ Date: 2026-07-21
 
 Candidate branch: `codex/p5-d3-correction`
 
-Requested narrow verdict: `R1 CLOSED; R2 CLOSED; D3 READY as an
-implementation candidate`
+Requested narrow verdict after owner confirmation of the proposed H1 scope:
+`R1 CLOSED; R2 CLOSED; D3 READY as an implementation candidate`
 
 Whole-P5 acceptance: explicitly out of scope
 
@@ -21,8 +21,9 @@ sound but returned `NOT READY` on two categorical repository requirements:
    kept tracker-free durable-mark behavior in the feature commit that defined
    it.
 
-This handoff supersedes the original candidate. The original handoff, evidence,
-and verdict remain unchanged as historical records.
+This handoff supersedes the original candidate. Banner notes were added to the
+original handoff and verdict; their substantive bodies, retained evidence, and
+verdict remain unchanged as historical records.
 
 ## Exact correction targets
 
@@ -52,8 +53,10 @@ source under test.
 
 The split was reconstructed rather than waived or hidden by squash. At
 `61c7a52`, both the library and test targets compile without any symbol from the
-following commit. At `97f63a5`, the tree is byte-identical to the reviewed D3
-feature tree.
+following commit. In addition to the all-target check, `cargo +1.94.0 test
+--locked -p norn --lib --no-run` completes at that exact commit using the
+repository target directory. At `97f63a5`, the tree is byte-identical to the
+reviewed D3 feature tree.
 
 ## R1 closure
 
@@ -100,14 +103,15 @@ tree. No per-commit-bisectability waiver is requested.
 The original review made H1-H4 owner-rulable because their reported product
 exploits were blocked by current caller construction.
 
-- **H1, scoped by construction:** Norn-managed publication mints one random
-  boundary and can resubmit only the same group. Already-durable divergence is
-  rejected and an orphan prefix fails closed. The low-level public
-  `JsonlSink` is not advertised as a general guarantee against a caller
-  resubmitting a different not-yet-durable suffix under the same boundary. Any
-  future divergent-resubmission surface must first add and validate a durable
-  canonical group length/digest. This correction deliberately does not expand
-  the session format for an unexposed managed-runner behavior.
+- **H1, proposed scope pending explicit owner confirmation:** Norn-managed
+  publication mints one random boundary and can resubmit only the same group.
+  Already-durable divergence is rejected and an orphan prefix fails closed. The
+  low-level public `JsonlSink` is not advertised as a general guarantee against
+  a caller resubmitting a different not-yet-durable suffix under the same
+  boundary. Any future divergent-resubmission surface must first add and
+  validate a durable canonical group length/digest. The proposal deliberately
+  avoids expanding the session format for an unexposed managed-runner behavior,
+  but it is not accepted or waived until the owner confirms it.
 - **H2, implemented:** `FilteredFork` closure is monotonic across later cuts.
   `NotStored` clears only legacy fallback candidates and preserves an older
   proven anchor. All three properties have direct regressions.
@@ -156,11 +160,12 @@ All commands use the repository `target` directory; no temporary build target
 was used.
 
 - `cargo fmt --all -- --check`: pass.
-- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: pass.
+- `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`:
+  pass.
 - `git diff --check`: pass.
-- `cargo test --workspace --all-targets --all-features --no-fail-fast --quiet`:
-  pass, including Norn 4,199/4,199, CLI 518/518, and TUI 683/683.
-- `cargo test --workspace --doc --quiet`: pass, 8/8.
+- `cargo test --locked --workspace --all-targets --all-features --no-fail-fast
+  --quiet`: pass, including Norn 4,199/4,199, CLI 518/518, and TUI 683/683.
+- `cargo test --locked --workspace --doc --quiet`: pass, 8/8.
 - Corrected retained runner: 49/49.
 - All new source and test files remain under 500 lines; no lint allowance,
   `unwrap`, `expect`, `panic`, ignored test, or disabled-code bypass was added.
@@ -184,8 +189,9 @@ driven-transport `READY` verdict or the D3 correction.
 - D8 role authority, broad volatile-context and concurrent-agent matrices,
   WebSocket state transport, P2 acceptance, and whole-P5 gates remain open.
 - The authenticated public/Codex real-wire fixture remains mandatory at D7/P9.
-- H1's low-level embedder boundary is explicit; this handoff does not claim a
-  durable whole-group commitment that the format does not contain.
+- H1's proposed low-level embedder boundary is explicit and awaits owner
+  confirmation; this handoff does not claim a durable whole-group commitment
+  that the format does not contain.
 - Registered append still holds the global index lock across timeline scan and
   fsync; the earlier scale/quadratic-rescan observation remains open for later
   persistence work.
@@ -198,7 +204,8 @@ driven-transport `READY` verdict or the D3 correction.
    durability behavior atomically with the exact reviewed feature tree.
 3. Confirm H2/H3 regressions bind monotonic closure, negative-provenance
    fallback behavior, and both target-ID shapes.
-4. Confirm H1 is scoped without a false whole-group commitment claim and H4's
-   lock wording now matches the implementation.
+4. Confirm H1's owner disposition is recorded accurately, its scope makes no
+   false whole-group commitment claim, and H4's lock wording matches the
+   implementation.
 5. Return the narrow verdict requested above; leave D8, D7/P9, and whole-P5
    acceptance untouched.

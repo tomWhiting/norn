@@ -1543,7 +1543,10 @@ and [server-side compaction](https://developers.openai.com/api/docs/guides/compa
   live connection. Connection-local chaining and reconnect recovery remain a
   later transport decision.
 
-### D3 implementation-candidate reconciliation (2026-07-20)
+### Historical D3 implementation-candidate reconciliation (2026-07-20)
+
+This subsection records the original candidate and is superseded by the Gate D
+correction disposition below. It is not a current acceptance statement.
 
 Exact D3 source `ef3b9c7b0fd12946d5b993457106dda0b34f0edd` implements
 the ruling with these explicit format and failure boundaries:
@@ -1559,10 +1562,12 @@ the ruling with these explicit format and failure boundaries:
   preserve complete events and their durable context marks.
 - Response groups are published non-interleaved under one retained
   index-and-timeline lock. A filesystem interruption may leave the exact durable
-  prefix. The exact group may complete that prefix on retry; a different
-  continuation is rejected, and ordinary
-  reopen of an incomplete semantic prefix fails closed. In-memory publication
-  occurs only after the sink operation succeeds.
+  prefix. The exact managed group may complete that prefix on retry;
+  already-durable divergence is rejected, and ordinary reopen of an incomplete
+  semantic prefix fails closed. The managed publisher never submits a divergent
+  unseen suffix; the low-level sink does not claim a durable whole-group
+  commitment. In-memory publication occurs only after the sink operation
+  succeeds.
 - Managed open, resume, and fork validate the complete provider-state
   provenance timeline before affinity adoption, prompt mutation, dispatch, or
   child publication. Response-audio association validation remains a separate
@@ -1591,11 +1596,11 @@ source-bound contention/durability observations. Post-source packaging commit
 fixture correction; no D3 production path differs. The runner records the
 exact-prefix interruption boundary rather than claiming atomic publication.
 
-This reconciliation records an implementation candidate, not D3 or P5
-acceptance. D8, the broad volatile-context and concurrent-agent matrices,
-independent review, and whole-P5 acceptance remain open. The authenticated
-public/Codex real-wire fixture remains mandatory under D7/P9 before integrated
-Responses acceptance.
+This reconciliation recorded an implementation candidate, not D3 or P5
+acceptance. Its independent review later returned `NOT READY` on R1/R2; the
+correction status is recorded below. D8, the broad volatile-context and
+concurrent-agent matrices, whole-P5 acceptance, and the authenticated D7/P9
+public/Codex real-wire fixture remain open.
 
 ### D3 Gate D correction disposition (2026-07-21)
 
@@ -1619,12 +1624,14 @@ a squash waiver:
   shapes require the positional assistant event ID to equal the provenance
   target; an invalid local frame cannot hide its provenance row from the prompt
   projection.
-- H1 is accepted only as a managed-publication construction boundary. Norn's
-  publisher mints one random boundary and resubmits only the same group; an
-  orphan prefix fails closed. The low-level `JsonlSink` API is not advertised
-  as a general divergent-suffix retry guarantee. Any future caller that can
-  resubmit a different suffix under the same boundary must first add and
-  validate a durable canonical group length/digest.
+- H1 has a proposed disposition pending explicit owner confirmation: treat it
+  as a managed-publication construction boundary. Norn's publisher mints one
+  random boundary and resubmits only the same group; an orphan prefix fails
+  closed. The low-level `JsonlSink` API is not advertised as a general
+  divergent-suffix retry guarantee. Any future caller that can resubmit a
+  different suffix under the same boundary must first add and validate a
+  durable canonical group length/digest. This proposal is not an acceptance or
+  waiver until the owner confirms it.
 - H4 is corrected as claim precision, not code work. The lock covers strict
   read, retry-prefix validation, provenance validation, writes, and fsync.
   Cadence/index counters update after release; later writers rederive that
