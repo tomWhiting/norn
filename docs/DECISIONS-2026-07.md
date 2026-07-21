@@ -1655,8 +1655,41 @@ artifact
 `docs/reviews/evidence/p5-d3/2026-07-21-p5-d3-h1-commitment-evidence.json`,
 committed at `2b9e77a`, has SHA-256
 `a5dd19f7759bcf2f7ef93de89d68a6e270bb3a17298136d36dc489823ded9af3`.
-This remains a candidate pending narrow same-reviewer confirmation; it does not
-accept D3 or P5 and does not replace the D7/P9 authenticated live-wire gate.
+This 64/64 record remains historical evidence for the initial H1 candidate. It
+is superseded for current implementation status by the residual correction
+below and does not replace the D7/P9 authenticated live-wire gate.
+
+#### H1 residual correction candidate (2026-07-21)
+
+Initial correction review `0dc2035` returned D3 `READY` while identifying H1-a,
+H1-b, and H1-c as nonblocking completeness residuals. Under the owner's
+approved continuation, strict implementation candidate `e96ee64` closes all
+three without attributing a new owner ruling:
+
+- Number canonicalization distinguishes negative and positive floating-point
+  zero, so changing only the sign of zero invalidates the V1 group commitment.
+- `EventStore`-managed `append` and `append_batch` validate response-publication
+  transitions before sink or memory mutation for both sinkless and custom-sink
+  stores.
+- Direct and registered JSONL append paths refuse a suffix when the durable
+  timeline ends in an incomplete legacy response-publication group. A complete
+  legacy group remains readable and may precede a new committed V1 group.
+
+Direct calls to an embedder-owned `PersistenceSink` and explicitly trusted
+preload construction remain outside `EventStore`-managed enforcement; this
+candidate does not claim to mediate those authorities.
+
+Exact residual-correction source and runner
+`c8619aec1ab065ddd14bd5cd2cd574bc95e087c3`, tree
+`e7f676a1a6389f307d6892ce3ae763de5436682e`, record 70/70 observations:
+20/20 independent-handle contention, 20/20 synchronized independent-process
+publication, and 30/30 exact sentinels. Retained artifact
+`docs/reviews/evidence/p5-d3/2026-07-21-p5-d3-h1-residual-correction-evidence.json`,
+committed at `a79af89`, has SHA-256
+`4e02c796ff79758eeb78caebeb93a3f8c11afc9614e2c0278729e1428268e04e`.
+This is an implementation candidate pending narrow same-reviewer confirmation
+and owner acceptance. It does not accept D3 or P5 and does not replace the
+D7/P9 authenticated live-wire gate.
 
 The review's non-driven headless exit-class inversion is recorded separately as
 pre-existing follow-up work. It does not change the isolated driven-transport
