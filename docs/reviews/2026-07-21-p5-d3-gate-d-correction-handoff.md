@@ -4,8 +4,9 @@ Date: 2026-07-21
 
 Candidate branch: `codex/p5-d3-correction`
 
-Requested narrow verdict after owner confirmation of the proposed H1 scope:
-`R1 CLOSED; R2 CLOSED; D3 READY as an implementation candidate`
+Requested narrow verdict after the owner approved and the candidate implemented
+the stronger H1 disposition:
+`R1 CLOSED; R2 CLOSED; H1 CLOSED; D3 READY as an implementation candidate`
 
 Whole-P5 acceptance: explicitly out of scope
 
@@ -27,15 +28,18 @@ verdict remain unchanged as historical records.
 
 ## Exact correction targets
 
-The source-bound correction candidate is
-`ef3cbbbfc1eec0c279dc848bcf155dddb5dd5725`, tree
-`b5a692fd3c70ae2c043ed3521d5f06afa3d20757`, over corrected structural base
+The owner-approved H1 product candidate is
+`af8e7979c4dc4ac1543ab5e3c735b8e8f65e8a3b`. The source-bound evidence
+candidate is `467041bfa565011babca9a85aa070739ab824aa5`, tree
+`224022a8f0c475a184c0924f7fd4e25c64ccca23`, over corrected structural base
 `61c7a528ee9468c0a9ae3698f8dd55cee262e1a2`.
 
-Product corrections are in `acfcb69`. Commit `ef3cbbb` adds only the updated
-source-bound evidence runner so the runner can attest its own committed bytes.
-The evidence JSON is retained separately at `828fc81` and is not part of the
-source under test.
+R1, R2, H2, and H3 remain closed by the reconstructed history and `acfcb69`.
+Commit `af8e797` adds the whole-group V1 commitment and its compatibility,
+fork, strict-reader, offline-validation, and retry evidence. Commit `467041b`
+changes only the source-bound evidence runner so it can attest those sentinels
+and its own committed bytes. Commit `2b9e77a` retains the resulting evidence
+JSON separately; it is not part of the source under test.
 
 ### Reconstructed history
 
@@ -50,6 +54,8 @@ source under test.
 | `2ef1427` OAuth framing test fix | `e2a7d67` | Patch-identical replay |
 | `beeb1f5` historical handoff | `b0b6796` | Historical content retained |
 | `7155196` historical review | `8a90c68` | Historical `NOT READY` verdict retained |
+| H1 whole-group commitment | `af8e797` | Owner-approved product implementation and focused tests |
+| H1 evidence runner | `467041b` | Source-bound runner adds 15 H1 and compatibility sentinels |
 
 The split was reconstructed rather than waived or hidden by squash. At
 `61c7a52`, both the library and test targets compile without any symbol from the
@@ -99,20 +105,64 @@ The corrected split passed
 passed the same matrix and has the exact reviewed feature tree. No
 per-commit-bisectability waiver is requested.
 
+## H1 closure
+
+The owner did not accept the weaker construction-only disposition. New
+response publications now use
+`ProviderEpochBoundaryReason::ResponseStatePublicationV1`, whose
+`ResponsePublicationCommitment` stores the total group event count and a
+lowercase SHA-256 digest. The domain-separated digest covers a canonical,
+commitment-free projection of the boundary followed by every ordered suffix
+event. It sorts JSON object keys, length-frames values, preserves array order,
+and normalizes signed zero. A fixed direct-group vector pins the representation.
+
+The production publisher seals the complete direct or response-audio group
+before persistence. The response-publication append path, `EventStore` batch
+append, and the low-level retry planner reject an uncommitted legacy
+publication or an invalid V1 commitment before writing. Full provider-state
+validation, strict session reading, and the offline strict validator
+independently reverify committed groups, so a post-write suffix mutation also
+fails closed on replay or inspection.
+
+The retry behavior is bound at the actual durable seam:
+
+- an exact V1 group can complete its exact fsynced prefix;
+- the same durable boundary plus a changed unwritten suffix fails its unchanged
+  commitment before mutation;
+- recomputing the commitment changes the serialized boundary, so retry-prefix
+  comparison rejects it; and
+- a durable legacy prefix cannot be completed as a new publication.
+
+Compatibility is deliberately asymmetric and does not change the strict
+session format version. Complete legacy D3 groups remain readable. Incomplete
+legacy groups still fail closed, and new writes cannot mint or extend them.
+Pre-D3 readers reject the associated V1 boundary reason rather than
+misinterpreting it. Unknown future response-publication reasons also fail
+closed. Persistent fork seeding copies a complete group as one batch and
+deliberately enriches a copied legacy boundary to V1 while preserving the
+boundary identity, provenance, optional audio link, assistant payload, and
+ordering.
+
+`ProviderEpochBoundaryReason` is public. Adding the associated V1 variant is an
+intentional Rust source-compatibility break for exhaustive downstream matches,
+including Meridian: embedders must handle the new committed form rather than
+silently treating it as the legacy unit variant. The serialized compatibility
+and old-reader failure behavior are pinned separately.
+
+This is an integrity commitment, not authentication. An actor able to rewrite
+the complete stored group can recompute it. It also does not make a multi-row
+append physically atomic or reconstruct a missing suffix after a crash; the
+existing exact-prefix retry and fail-closed reopen rules still define those
+cases.
+
 ## Hardening dispositions
 
 The original review made H1-H4 owner-rulable because their reported product
 exploits were blocked by current caller construction.
 
-- **H1, proposed scope pending explicit owner confirmation:** Norn-managed
-  publication mints one random boundary and can resubmit only the same group.
-  Already-durable divergence is rejected and an orphan prefix fails closed. The
-  low-level public `JsonlSink` is not advertised as a general guarantee against
-  a caller resubmitting a different not-yet-durable suffix under the same
-  boundary. Any future divergent-resubmission surface must first add and
-  validate a durable canonical group length/digest. The proposal deliberately
-  avoids expanding the session format for an unexposed managed-runner behavior,
-  but it is not accepted or waived until the owner confirms it.
+- **H1, implemented:** every new response-publication boundary commits the
+  total canonical group length and digest. Exact-prefix retry may finish only
+  the committed group; changed or recomputed suffixes fail before writes.
 - **H2, implemented:** `FilteredFork` closure is monotonic across later cuts.
   `NotStored` clears only legacy fallback candidates and preserves an older
   proven anchor. All three properties have direct regressions.
@@ -129,51 +179,76 @@ exploits were blocked by current caller construction.
 Coordinator mutation checks removed the H2 closure scan, the `NotStored`
 fallback clear, and the H3 target-ID check separately. Their exact sentinels
 failed in every case; all guards were restored before the committed source and
-the source-bound run.
+the source-bound run. H1 is covered by the retained canonicalization, tamper,
+retry-prefix, strict/offline-validation, and fork/reader sentinels listed below.
 
 ## Retained correction evidence
 
 | Artifact | SHA-256 | Result |
 | --- | --- | --- |
-| [`D3 runner`](evidence/p5-d3/run_p5_d3_evidence.py) | `de7be62051db25c5f983993d9fb644e353579b4cfa6f89978a2bc36fde03a9dd` | Binds branch, base, source, tree, inventory, recursive Rust manifest, and its own committed bytes; repository `target` only |
-| [`49-observation record`](evidence/p5-d3/2026-07-21-p5-d3-correction-evidence.json) | `553b657651fa2ad44fc947263907fd75039f340940dbbbd3b606634ace149b0a` | `49/49`, zero failures |
+| [`D3 runner`](evidence/p5-d3/run_p5_d3_evidence.py) | `6438c4978b95f64afdc902f6a9861b8a6f8afcf81c4bd23d8771b06d87ff1ae7` | Binds branch, base, source, tree, inventory, recursive Rust manifest, and its own committed bytes; repository `target` only |
+| [`H1 commitment record`](evidence/p5-d3/2026-07-21-p5-d3-h1-commitment-evidence.json) | `a5dd19f7759bcf2f7ef93de89d68a6e270bb3a17298136d36dc489823ded9af3` | `64/64`, zero failures: `20 + 20 + 24` |
 
 The JSON binds:
 
 - base `61c7a528ee9468c0a9ae3698f8dd55cee262e1a2`;
-- source `ef3cbbbfc1eec0c279dc848bcf155dddb5dd5725`;
-- tree `b5a692fd3c70ae2c043ed3521d5f06afa3d20757`;
-- 111-path NUL inventory, SHA-256
-  `1dabbae20a661c2a0b0c3cd2a3093ee3c92f395aafcc43f0d0a9a696546f1b6c`;
-- 994-record recursive Rust manifest, SHA-256
-  `629c089f35987579776bd915ebc6d0eafe8d103fab0e68cbd92414024da19d2f`;
+- source `467041bfa565011babca9a85aa070739ab824aa5`;
+- tree `224022a8f0c475a184c0924f7fd4e25c64ccca23`;
+- 129-path NUL inventory, SHA-256
+  `179ad01f37794f47220bcefd2d3d5e4263245f576782a4b401c208b263c17ec3`;
+- 996-record recursive Rust manifest, SHA-256
+  `c4076a0c879c6aaa6718784acf56d129bd5cfed5abd0b43933943677f5622388`;
 - 20/20 independent-handle contention runs;
 - 20/20 synchronized independent-process publication runs; and
-- 9/9 exact fork, durability, R1, H2, and H3 sentinels.
+- 24/24 exact H1 canonicalization, direct/audio tamper, replay, legacy,
+  retry-prefix, strict/offline validation, fork enrichment, old-reader, R1,
+  H2, and H3 sentinels.
 
 Every invocation uses `--exact --test-threads=1`, observes exactly one test,
 and retains exit status, duration, test counts, output byte count, and output
 hash. The artifact keeps `d3_accepted:false` and `p5_accepted:false`.
+
+The original 2026-07-20 record, the 49-observation correction record, the
+original handoff, and review verdict are unchanged historical artifacts. The
+H1 evidence is additive; it does not rewrite or retroactively broaden them.
 
 ## Coordinator verification
 
 All commands use the repository `target` directory; no temporary build target
 was used.
 
+- Source-bound H1 retained runner: 64/64 (`20 + 20 + 24`).
+- Evidence provenance, runner bytes, inventory, and recursive Rust manifest:
+  pass at exact source `467041b` and tree `224022a`.
 - `cargo fmt --all -- --check`: pass.
-- `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`:
-  pass.
+- `cargo clippy --locked --workspace --all-targets --all-features -- -D
+  warnings`: pass with no suppression.
+- `cargo test --locked --workspace --all-targets --all-features
+  --no-fail-fast --quiet`: pass, including Norn 4,213/4,213, CLI 518/518, and
+  TUI 683/683 primary harnesses.
+- `cargo test --locked --workspace --doc --quiet`: 8/8 doctests.
 - `git diff --check`: pass.
-- `cargo test --locked --workspace --all-targets --all-features --no-fail-fast
-  --quiet`: pass, including Norn 4,199/4,199, CLI 518/518, and TUI 683/683.
-- `cargo test --locked --workspace --doc --quiet`: pass, 8/8.
-- Corrected retained runner: 49/49.
-- All new source and test files remain under 500 lines; no lint allowance,
-  `unwrap`, `expect`, `panic`, ignored test, or disabled-code bypass was added.
 
-The final strict Clippy and doctest statements are recorded only after fresh
-execution on this correction branch; the historical 4,192-test Norn count is
-not carried forward.
+The final gate chronology is retained rather than collapsed into the last green
+sample. The first repository-local rebuild exhausted the 101 GiB `target`
+directory while linking. With owner approval, `cargo clean` removed 119.3 GiB
+from that repository target only; no temporary target was introduced. A
+post-clean sandboxed sample then failed only where the sandbox prohibited
+loopback listener creation. The first unrestricted sample passed every target
+except the pre-existing process-manager test
+`model_output_is_incremental_and_unknown_id_is_none`: under full-suite pressure
+its fixed 100 ms sleep observed empty output. The exact all-feature test then
+passed 20/20 in isolation, and the complete unrestricted workspace command
+above passed on the next sample. None of the failed samples is reported as a
+pass, and no product or fixture change was made to obtain the green rerun.
+
+Across the H1 product range, the 1,071 added Rust lines contain zero added
+`allow`/`expect`/`deny`/`warn`/`ignore` attributes, `unwrap`/`expect` shortcuts,
+`panic!`/`todo!`/`unimplemented!`, `include!`, or empty `cfg(any())` bypasses.
+No new file exceeds 500 lines and no touched file newly crosses 500. Three
+already-oversized files grow slightly and remain disclosed: TUI schema render
+`884 -> 885`, session events `1,003 -> 1,008`, and legacy integration tests
+`1,769 -> 1,772`. The largest new H1 test module is 457 lines.
 
 ## Out-of-slice observation
 
@@ -190,9 +265,14 @@ driven-transport `READY` verdict or the D3 correction.
 - D8 role authority, broad volatile-context and concurrent-agent matrices,
   WebSocket state transport, P2 acceptance, and whole-P5 gates remain open.
 - The authenticated public/Codex real-wire fixture remains mandatory at D7/P9.
-- H1's proposed low-level embedder boundary is explicit and awaits owner
-  confirmation; this handoff does not claim a durable whole-group commitment
-  that the format does not contain.
+- H1 provides durable whole-group retry integrity, not storage authentication,
+  physical multi-row atomicity, or reconstruction of a missing suffix.
+- Complete legacy D3 groups remain readable but cannot be newly appended or
+  used to complete a durable legacy prefix. Persistent fork copying enriches
+  their boundary metadata to V1 in the child.
+- The public associated enum variant is a disclosed source break for exhaustive
+  Meridian/embedder matches; no binary/source compatibility beyond the pinned
+  serialized and fail-closed reader behavior is claimed.
 - Registered append still holds the global index lock across timeline scan and
   fsync; the earlier scale/quadratic-rescan observation remains open for later
   persistence work.
@@ -203,10 +283,14 @@ driven-transport `READY` verdict or the D3 correction.
    and unrelated custom data retain their distinct semantics.
 2. Confirm `61c7a52` is independently buildable and `97f63a5` contains the
    durability behavior atomically with the exact reviewed feature tree.
-3. Confirm H2/H3 regressions bind monotonic closure, negative-provenance
-   fallback behavior, and both target-ID shapes.
-4. Confirm H1's owner disposition is recorded accurately, its scope makes no
-   false whole-group commitment claim, and H4's lock wording matches the
-   implementation.
-5. Return the narrow verdict requested above; leave D8, D7/P9, and whole-P5
-   acceptance untouched.
+3. Confirm H1 binds event count and every ordered group row, rejects both
+   unchanged-commitment and recomputed-commitment divergent retries before
+   writes, and is reverified by replay, strict reading, and offline validation.
+4. Confirm complete legacy read, legacy-prefix refusal, V1 fork enrichment,
+   pre-D3/unknown-reader fail-closed behavior, and the disclosed public-enum
+   source break.
+5. Confirm H2/H3 regressions bind monotonic closure, negative-provenance
+   fallback behavior, and both target-ID shapes, and that H4's lock wording
+   still matches the implementation.
+6. Return `R1 CLOSED; R2 CLOSED; H1 CLOSED; D3 READY as an implementation
+   candidate`; leave D8, D7/P9, and whole-P5 acceptance untouched.

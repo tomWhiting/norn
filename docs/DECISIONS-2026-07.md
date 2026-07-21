@@ -1624,25 +1624,39 @@ a squash waiver:
   shapes require the positional assistant event ID to equal the provenance
   target; an invalid local frame cannot hide its provenance row from the prompt
   projection.
-- H1 has a proposed disposition pending explicit owner confirmation: treat it
-  as a managed-publication construction boundary. Norn's publisher mints one
-  random boundary and resubmits only the same group; an orphan prefix fails
-  closed. The low-level `JsonlSink` API is not advertised as a general
-  divergent-suffix retry guarantee. Any future caller that can resubmit a
-  different suffix under the same boundary must first add and validate a
-  durable canonical group length/digest. This proposal is not an acceptance or
-  waiver until the owner confirms it.
+- H1 is implemented rather than scoped away. Owner-approved product commit
+  `af8e7979c4dc4ac1543ab5e3c735b8e8f65e8a3b` adds a durable V1
+  response-publication commitment: the boundary commits to the canonical whole
+  group with an explicit event count and SHA-256 digest. Live publication,
+  exact-prefix retry, reopen, replay, fork, and the offline verifier validate
+  the commitment. An unchanged boundary with a divergent suffix fails before
+  any append; recomputing the commitment changes the boundary and is rejected
+  against its durable predecessor.
+- Compatibility remains within strict session format 2, with no file-header
+  version bump. Complete legacy response-publication groups remain readable,
+  but incomplete legacy groups fail closed and no new or retrying publication
+  may append the legacy form. Older readers fail closed on the new V1 enum
+  reason. A fork may enrich a complete legacy boundary into V1 only in the
+  copied child group; it does not rewrite the source timeline. Pre-D3 sessions
+  remain governed by the separate legacy-anchor rules.
+- The V1 digest is an integrity commitment, not authentication. It detects a
+  changed group under a durable boundary and does not make multi-row publication
+  physically atomic, reconstruct an interrupted suffix, or establish trust in
+  an attacker-controlled file.
 - H4 is corrected as claim precision, not code work. The lock covers strict
   read, retry-prefix validation, provenance validation, writes, and fsync.
   Cadence/index counters update after release; later writers rederive that
   derived cache from durable timeline state under lock.
 
-Exact correction evidence source `ef3cbbbfc1eec0c279dc848bcf155dddb5dd5725`,
-tree `b5a692fd3c70ae2c043ed3521d5f06afa3d20757`, records 49/49:
-20/20 independent-handle contention, 20/20 synchronized independent-process
-publication, and 9/9 exact sentinels. This remains a candidate pending narrow
-same-reviewer confirmation; it does not accept D3 or P5 and does not replace
-the D7/P9 authenticated live-wire gate.
+Exact H1 evidence source `467041bfa565011babca9a85aa070739ab824aa5`, tree
+`224022a8f0c475a184c0924f7fd4e25c64ccca23`, records 64/64 across
+the retained D3 correction distributions and commitment sentinels. Retained
+artifact
+`docs/reviews/evidence/p5-d3/2026-07-21-p5-d3-h1-commitment-evidence.json`,
+committed at `2b9e77a`, has SHA-256
+`a5dd19f7759bcf2f7ef93de89d68a6e270bb3a17298136d36dc489823ded9af3`.
+This remains a candidate pending narrow same-reviewer confirmation; it does not
+accept D3 or P5 and does not replace the D7/P9 authenticated live-wire gate.
 
 The review's non-driven headless exit-class inversion is recorded separately as
 pre-existing follow-up work. It does not change the isolated driven-transport
