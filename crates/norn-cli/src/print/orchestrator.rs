@@ -591,14 +591,13 @@ async fn orchestrate_run(
         // finish() signals the renderer explicitly; it drains the events
         // already buffered and exits instead of awaiting closure forever.
         // A JoinError (renderer panic or cancellation) means the streamed
-        // output on stdout is incomplete or torn — that must not exit 0
-        // with a clean `completed` envelope, so it surfaces on stderr via
-        // the PrintError path and degrades the exit code.
-        if let Some(handle) = stream_renderer
-            && let Err(err) = handle.finish().await
-        {
-            return Err(renderer_failure(&err));
-        }
+        // output on stdout is incomplete or torn. Retain it until the run
+        // result is reconciled so a primary failure keeps its exit class.
+        let result = if let Some(handle) = stream_renderer {
+            handle.finish_run(result).await
+        } else {
+            result.map_err(Into::into)
+        };
         // Drain and stop the driven-mode event emitter before the run
         // response is sent, so every `event/*` notification is on the wire
         // ahead of the terminal result. A panic/cancellation means the live
@@ -757,19 +756,6 @@ async fn checkpoint_session(store: &Arc<EventStore>) -> Result<(), PrintError> {
         .checkpoint_off_executor()
         .await
         .map_err(|err| PrintError::Session(err.to_string()))
-}
-
-/// Map a stream-renderer [`tokio::task::JoinError`] (panic or
-/// cancellation) onto the agent-error path: the NDJSON already written to
-/// stdout is incomplete, so the run must surface the failure on stderr
-/// and exit non-zero instead of emitting a clean `completed` envelope.
-/// Typed [`PrintError::StreamTorn`] so the error-envelope emitter skips
-/// it (owner ruling R4): no terminal event is appended to a torn stream.
-fn renderer_failure(err: &tokio::task::JoinError) -> PrintError {
-    PrintError::StreamTorn(format!(
-        "stream renderer task failed ({kind}): {err}; streamed output on stdout is incomplete",
-        kind = if err.is_panic() { "panic" } else { "cancelled" },
-    ))
 }
 
 fn collect_new_events(store: &EventStore, since: usize) -> Vec<SessionEvent> {
@@ -1115,51 +1101,6 @@ mod tests {
             },
             ExitCode::AgentError
         );
-    }
-
-    /// A renderer `JoinError` (panic) must degrade to the agent-error exit
-    /// path with a stderr-visible message — never a clean exit 0.
-    #[tokio::test]
-    async fn renderer_panic_maps_to_agent_error_exit() {
-        let task = tokio::spawn(async {
-            panic!("renderer blew up");
-        });
-        let join_err = task.await.expect_err("task must panic");
-        let err = renderer_failure(&join_err);
-        match &err {
-            PrintError::StreamTorn(message) => {
-                assert!(message.contains("panic"), "message: {message}");
-                assert!(message.contains("incomplete"), "message: {message}");
-            }
-            other => panic!("expected StreamTorn, got {other:?}"),
-        }
-        assert_eq!(err.exit_code(), ExitCode::AgentError);
-        assert_eq!(
-            err.envelope_class(),
-            None,
-            "a torn stream never gets an error envelope (R4)"
-        );
-        // The stderr line is unchanged from the pre-StreamTorn rendering.
-        assert!(err.to_string().starts_with("agent error: "));
-    }
-
-    /// A cancelled renderer task is also a failure (output torn), mapped
-    /// to the same degraded exit path with the cancellation named.
-    #[tokio::test]
-    async fn renderer_cancellation_maps_to_agent_error_exit() {
-        let task = tokio::spawn(async {
-            std::future::pending::<()>().await;
-        });
-        task.abort();
-        let join_err = task.await.expect_err("task must be cancelled");
-        let err = renderer_failure(&join_err);
-        match &err {
-            PrintError::StreamTorn(message) => {
-                assert!(message.contains("cancelled"), "message: {message}");
-            }
-            other => panic!("expected StreamTorn, got {other:?}"),
-        }
-        assert_eq!(err.exit_code(), ExitCode::AgentError);
     }
 
     #[test]

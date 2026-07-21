@@ -36,6 +36,16 @@ pub enum PrintError {
     /// line is unchanged from when this failure rode the `Agent` variant.
     #[error("agent error: {0}")]
     StreamTorn(String),
+    /// A primary run failure occurred before the stream renderer tore stdout.
+    /// The primary failure remains the exit-code authority, while the torn
+    /// stream suppresses the otherwise eligible terminal error envelope.
+    #[error("{primary}; additionally, {renderer}")]
+    StreamTornWithPrimary {
+        /// The first causal failure and source of the process exit code.
+        primary: Box<PrintError>,
+        /// The renderer failure proving stdout cannot receive an envelope.
+        renderer: String,
+    },
 }
 
 impl PrintError {
@@ -45,6 +55,7 @@ impl PrintError {
         match self {
             Self::Argument(_) => ExitCode::ArgumentError,
             Self::Auth(_) => ExitCode::AuthError,
+            Self::StreamTornWithPrimary { primary, .. } => primary.exit_code(),
             Self::Agent(_) | Self::Io(_) | Self::Session(_) | Self::StreamTorn(_) => {
                 ExitCode::AgentError
             }
@@ -58,7 +69,7 @@ impl PrintError {
     #[must_use]
     pub const fn envelope_class(&self) -> Option<&'static str> {
         match self {
-            Self::Argument(_) | Self::StreamTorn(_) => None,
+            Self::Argument(_) | Self::StreamTorn(_) | Self::StreamTornWithPrimary { .. } => None,
             Self::Auth(_) => Some("auth"),
             Self::Agent(_) => Some("agent"),
             Self::Io(_) => Some("io"),
@@ -82,6 +93,17 @@ impl PrintError {
             Self::Io(message) => Self::Io(append(message)),
             Self::Session(message) => Self::Session(append(message)),
             Self::StreamTorn(message) => Self::StreamTorn(append(message)),
+            Self::StreamTornWithPrimary { primary, renderer } => Self::StreamTornWithPrimary {
+                primary,
+                renderer: append(renderer),
+            },
+        }
+    }
+
+    fn with_primary_for_torn_stream(primary: Self, renderer: &Self) -> Self {
+        Self::StreamTornWithPrimary {
+            primary: Box::new(primary),
+            renderer: renderer.to_string(),
         }
     }
 }
@@ -113,6 +135,9 @@ where
         (Ok(value), None) => Ok(value),
         (Ok(_), Some(error)) => Err(error),
         (Err(error), None) => Err(error.into()),
+        (Err(error), Some(background @ PrintError::StreamTorn(_))) => Err(
+            PrintError::with_primary_for_torn_stream(error.into(), &background),
+        ),
         (Err(error), Some(background)) => Err(error.into().with_related_failure(background)),
     }
 }
@@ -196,5 +221,26 @@ mod tests {
             assert!(rendered.contains(expected), "error: {rendered}");
         }
         assert_eq!(error.exit_code(), ExitCode::AuthError);
+    }
+
+    #[test]
+    fn torn_stream_preserves_primary_auth_exit_without_terminal_envelope() {
+        let outcome = preserve_run_failure::<(), _>(
+            Err(PrintError::Auth("credential expired".to_owned())),
+            Some(PrintError::StreamTorn(
+                "stream renderer task failed (panic); stdout is incomplete".to_owned(),
+            )),
+        );
+        assert!(outcome.is_err(), "torn stream must fail the run");
+        let Err(error) = outcome else { return };
+        assert_eq!(error.exit_code(), ExitCode::AuthError);
+        assert_eq!(error.envelope_class(), None);
+        let rendered = error.to_string();
+        assert!(rendered.contains("credential expired"), "error: {rendered}");
+        assert!(
+            rendered.contains("stream renderer task failed (panic)"),
+            "error: {rendered}"
+        );
+        assert!(rendered.contains("incomplete"), "error: {rendered}");
     }
 }
