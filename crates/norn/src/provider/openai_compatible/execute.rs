@@ -7,6 +7,7 @@
 //! the executor a stateful [`ChatCompletionsMapper`].
 
 use super::request::build_payload;
+use super::role_policy::DeveloperRolePolicy;
 use super::sse::ChatCompletionsMapper;
 use crate::error::ProviderError;
 use crate::provider::events::ProviderEvent;
@@ -17,6 +18,8 @@ use crate::provider::request::ProviderRequest;
 pub(super) struct SenderProvider {
     /// Shared transport core.
     pub(super) executor: StreamExecutor,
+    /// Provider-pinned developer-message compatibility policy.
+    pub(super) developer_role_policy: DeveloperRolePolicy,
 }
 
 impl SenderProvider {
@@ -31,7 +34,7 @@ impl SenderProvider {
         request: ProviderRequest,
         tx: tokio::sync::mpsc::Sender<Result<ProviderEvent, ProviderError>>,
     ) -> Result<(), ProviderError> {
-        let payload = build_payload(&request)?;
+        let payload = build_payload(&request, self.developer_role_policy)?;
         let body = serde_json::to_string(&payload).map_err(|err| {
             ProviderError::RequestSerializationFailed {
                 reason: format!("failed to serialize chat completions request: {err}"),

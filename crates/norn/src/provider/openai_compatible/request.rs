@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 
+use super::role_policy::{DeveloperRolePolicy, OPTION_KEY};
 use crate::error::ProviderError;
 use crate::provider::request::{
     Message, MessageRole, ProviderOptions, ProviderRequest, ReasoningEffort, ToolCallKind,
@@ -49,11 +50,14 @@ pub(super) struct StreamOptions {
 ///
 /// Returns [`ProviderError`] when the request contains a tool surface or
 /// replay item that Chat Completions cannot represent safely.
-pub(super) fn build_payload(request: &ProviderRequest) -> Result<serde_json::Value, ProviderError> {
+pub(super) fn build_payload(
+    request: &ProviderRequest,
+    developer_role_policy: DeveloperRolePolicy,
+) -> Result<serde_json::Value, ProviderError> {
     let messages = request
         .messages
         .iter()
-        .map(serialize_message)
+        .map(|message| serialize_message(message, developer_role_policy))
         .collect::<Result<Vec<_>, _>>()?;
     let tools = request
         .tools
@@ -99,6 +103,9 @@ fn merge_provider_options(
         });
     };
     for (key, value) in option_object {
+        if key == OPTION_KEY {
+            continue;
+        }
         reject_protected_option_key(key)?;
         payload_object.insert(key.clone(), value.clone());
     }
@@ -152,11 +159,16 @@ fn reject_protected_option_key(key: &str) -> Result<(), ProviderError> {
     Ok(())
 }
 
-fn serialize_message(message: &Message) -> Result<serde_json::Value, ProviderError> {
+fn serialize_message(
+    message: &Message,
+    developer_role_policy: DeveloperRolePolicy,
+) -> Result<serde_json::Value, ProviderError> {
     match message.role {
-        MessageRole::System | MessageRole::Developer => {
-            Ok(chat_message("system", message.content.as_deref()))
-        }
+        MessageRole::System => Ok(chat_message("system", message.content.as_deref())),
+        MessageRole::Developer => Ok(chat_message(
+            developer_role_policy.wire_role()?,
+            message.content.as_deref(),
+        )),
         MessageRole::User => Ok(chat_message("user", message.content.as_deref())),
         MessageRole::Assistant => serialize_assistant_message(message),
         MessageRole::ToolResult => serialize_tool_result(message),
@@ -350,7 +362,7 @@ mod tests {
 
     #[test]
     fn payload_uses_chat_shape_and_omits_responses_only_fields() -> TestResult {
-        let value = build_payload(&base_request())?;
+        let value = build_payload(&base_request(), DeveloperRolePolicy::Native)?;
 
         assert_eq!(value["model"], "local-model");
         assert_eq!(value["stream"], true);
@@ -369,7 +381,7 @@ mod tests {
             .iter()
             .map(|message| message.get("role").and_then(serde_json::Value::as_str))
             .collect::<Vec<_>>();
-        assert_eq!(roles, [Some("system"), Some("system"), Some("user")]);
+        assert_eq!(roles, [Some("system"), Some("developer"), Some("user")]);
 
         assert_eq!(
             value.pointer("/tools/0/type"),
@@ -386,7 +398,7 @@ mod tests {
     fn max_reasoning_effort_uses_canonical_wire_value() -> TestResult {
         let mut request = base_request();
         request.reasoning_effort = Some(ReasoningEffort::Max);
-        let value = build_payload(&request)?;
+        let value = build_payload(&request, DeveloperRolePolicy::Native)?;
         assert_eq!(value["reasoning_effort"], "max");
         Ok(())
     }
@@ -425,7 +437,7 @@ mod tests {
             tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
 
-        let value = build_payload(&request)?;
+        let value = build_payload(&request, DeveloperRolePolicy::Native)?;
         let messages = value["messages"]
             .as_array()
             .ok_or("chat replay messages must be an array")?;
@@ -459,7 +471,7 @@ mod tests {
             tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
 
-        let Err(err) = build_payload(&request) else {
+        let Err(err) = build_payload(&request, DeveloperRolePolicy::Native) else {
             return Err("a tool result without a call id must fail serialization".into());
         };
         assert!(matches!(
@@ -477,7 +489,7 @@ mod tests {
             HostedToolDefinition::WebSearch(HostedWebSearchTool::default()),
         )];
 
-        let Err(err) = build_payload(&request) else {
+        let Err(err) = build_payload(&request, DeveloperRolePolicy::Native) else {
             return Err("hosted tools must fail closed on chat completions".into());
         };
         assert!(matches!(err, ProviderError::UnsupportedFeature { .. }));
@@ -489,7 +501,7 @@ mod tests {
         let mut request = base_request();
         request.service_tier = Some(ServiceTier::Fast);
 
-        let Err(err) = build_payload(&request) else {
+        let Err(err) = build_payload(&request, DeveloperRolePolicy::Native) else {
             return Err("an unsupported service tier must fail request construction".into());
         };
         assert!(matches!(err, ProviderError::InvalidRequest { .. }));
@@ -506,7 +518,7 @@ mod tests {
             "response_format": {"type": "json_object"}
         })));
 
-        let value = build_payload(&request)?;
+        let value = build_payload(&request, DeveloperRolePolicy::Native)?;
 
         assert_eq!(value["logprobs"], true);
         assert_eq!(value["top_logprobs"], 5);
@@ -529,7 +541,7 @@ mod tests {
             }
         })));
 
-        let value = build_payload(&request)?;
+        let value = build_payload(&request, DeveloperRolePolicy::Native)?;
 
         assert_eq!(value["logit_bias"]["42"], -100);
         assert_eq!(value["temperature"], 0.2);
@@ -544,7 +556,7 @@ mod tests {
             "messages": []
         })));
 
-        let Err(err) = build_payload(&request) else {
+        let Err(err) = build_payload(&request, DeveloperRolePolicy::Native) else {
             return Err("protected chat fields must be rejected".into());
         };
 
@@ -580,7 +592,7 @@ mod tests {
             tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
 
-        let value = build_payload(&request)?;
+        let value = build_payload(&request, DeveloperRolePolicy::Native)?;
         let serialized = value.to_string();
         assert!(
             !serialized.contains("opaque-blob"),
@@ -628,7 +640,7 @@ mod tests {
             tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         });
 
-        let Err(error) = build_payload(&request) else {
+        let Err(error) = build_payload(&request, DeveloperRolePolicy::Native) else {
             return Err(
                 "canonical Responses items must fail closed before chat serialization".into(),
             );

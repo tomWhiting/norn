@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::execute::SenderProvider;
+use super::role_policy::DeveloperRolePolicy;
 use crate::error::ProviderError;
 use crate::provider::auth::{AuthProvider, AuthSource, build_from_auth_source};
 use crate::provider::events::ProviderEvent;
@@ -25,6 +26,7 @@ pub struct OpenAiCompatibleProvider {
     config: ProviderConfig,
     rate_limiter: Arc<RateLimiter>,
     auth_provider: Arc<dyn AuthProvider>,
+    developer_role_policy: DeveloperRolePolicy,
 }
 
 impl std::fmt::Debug for OpenAiCompatibleProvider {
@@ -84,6 +86,8 @@ impl OpenAiCompatibleProvider {
         endpoint: String,
         auth_provider: Arc<dyn AuthProvider>,
     ) -> Result<Self, ProviderError> {
+        let developer_role_policy =
+            DeveloperRolePolicy::from_provider_options(config.provider_options.as_ref())?;
         let client_started = startup_trace::start("openai_compatible_http_client_build_start");
         let client = build_http_client(config.timeout)?;
         startup_trace::elapsed("openai_compatible_http_client_build_done", client_started);
@@ -105,6 +109,7 @@ impl OpenAiCompatibleProvider {
             config,
             rate_limiter,
             auth_provider,
+            developer_role_policy,
         })
     }
 }
@@ -129,6 +134,7 @@ impl Provider for OpenAiCompatibleProvider {
             request.config = self.config.provider_options.clone().map(ProviderOptions);
         }
         let sender = SenderProvider {
+            developer_role_policy: self.developer_role_policy,
             executor: StreamExecutor {
                 client: self.client.clone(),
                 endpoint: self.endpoint.clone(),
