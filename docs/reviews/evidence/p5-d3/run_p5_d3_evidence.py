@@ -16,7 +16,7 @@ import time
 from typing import Final
 
 
-BRANCH: Final = "codex/p5-d3-compaction"
+BRANCH: Final = "codex/p5-d3-correction"
 TOOLCHAIN: Final = "1.94.0"
 RUNS: Final = 20
 EVIDENCE_DIRECTORY: Final = Path("docs/reviews/evidence/p5-d3")
@@ -27,6 +27,13 @@ DISTRIBUTION_TESTS: Final = (
 SENTINEL_TESTS: Final = (
     "tools::agent::fork_seed::tests::persistent_fork_seeds_framed_response_group_without_splitting_it",
     "r#loop::runner::tests::response_publication_timeout::timeout_in_response_event_hook_never_duplicates_durable_output_as_partial",
+    "agent::fork_context_filter_error_tests::malformed_reserved_audio_link_fails_typed_only_for_nonidentity_filter",
+    "agent::fork_context_filter_error_tests::unrelated_custom_event_with_audio_shaped_data_remains_opaque",
+    "session::provider_state_validation::tests::filtered_fork_closes_legacy_eligibility_across_a_later_cut",
+    "r#loop::conversation_state::projection_tests::not_stored_disposition_closes_only_legacy_fallback",
+    "r#loop::conversation_state::projection_tests::not_stored_disposition_preserves_an_older_proven_anchor",
+    "session::provider_state_validation::tests::direct_publication_rejects_a_positional_assistant_with_the_wrong_id",
+    "session::provider_state_validation::tests::audio_publication_rejects_a_positional_assistant_with_the_wrong_id",
 )
 TEST_RESULT = re.compile(
     rb"test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; "
