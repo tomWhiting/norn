@@ -94,9 +94,10 @@ following feature commit atomically introduces:
 - the tracker-free durable-mark documentation; and
 - both tracker-free suppression/presence regressions.
 
-The corrected split passed `cargo check -p norn --all-targets --all-features`.
-The feature commit passed the same matrix and has the exact reviewed feature
-tree. No per-commit-bisectability waiver is requested.
+The corrected split passed
+`cargo check --locked -p norn --all-targets --all-features`. The feature commit
+passed the same matrix and has the exact reviewed feature tree. No
+per-commit-bisectability waiver is requested.
 
 ## Hardening dispositions
 
