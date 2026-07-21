@@ -30,7 +30,7 @@ SENTINEL_TESTS: Final = (
     "r#loop::runner::tests::response_publication_timeout::timeout_in_response_event_hook_never_duplicates_durable_output_as_partial",
     "session::provider_epoch_tests::pre_d3_reader_fails_closed_on_new_boundary_reasons",
     "session::response_publication_commitment_tests::fixed_direct_group_has_a_stable_canonical_commitment",
-    "session::response_publication_commitment_tests::canonical_commitment_sorts_nested_objects_and_normalizes_signed_zero",
+    "session::response_publication_commitment_tests::canonical_commitment_sorts_nested_objects_and_distinguishes_signed_zero",
     "session::response_publication_commitment_tests::direct_publication_commitment_rejects_assistant_tamper",
     "session::response_publication_commitment_tests::audio_publication_commitment_rejects_link_tamper",
     "session::response_publication_commitment_tests::complete_committed_group_rejects_tampered_suffix_on_replay",
@@ -49,6 +49,12 @@ SENTINEL_TESTS: Final = (
     "r#loop::conversation_state::projection_tests::not_stored_disposition_preserves_an_older_proven_anchor",
     "session::provider_state_validation::tests::direct_publication_rejects_a_positional_assistant_with_the_wrong_id",
     "session::provider_state_validation::tests::audio_publication_rejects_a_positional_assistant_with_the_wrong_id",
+    "session::response_publication_transition_tests::single_append_rejects_response_boundaries_before_sink_or_memory_mutation",
+    "session::response_publication_transition_tests::ordinary_single_events_still_reach_a_custom_sink",
+    "session::response_publication_transition_tests::custom_store_rejects_suffix_only_legacy_orphan_completion",
+    "session::response_publication_transition_tests::custom_store_single_append_rejects_legacy_orphan_completion",
+    "session::response_publication_transition_tests::jsonl_sink_rejects_suffix_only_legacy_orphan_completion_without_writes",
+    "session::response_publication_transition_tests::complete_legacy_group_can_precede_a_new_committed_group",
 )
 TEST_RESULT = re.compile(
     rb"test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; "
