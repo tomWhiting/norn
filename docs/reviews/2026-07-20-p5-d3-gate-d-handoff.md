@@ -1,5 +1,12 @@
 # P5 D3 conversation-state Gate D handoff
 
+> **Historical candidate.** Gate D review `7155196` returned `NOT READY` on
+> R1/R2. The superseding correction, reconstructed commit map, and fresh
+> evidence are recorded in
+> [`2026-07-21-p5-d3-gate-d-correction-handoff.md`](2026-07-21-p5-d3-gate-d-correction-handoff.md).
+> The hashes and claims below remain the immutable record of the original
+> candidate and are not current correction evidence.
+
 Date: 2026-07-20
 Candidate branch: `codex/p5-d3-compaction`
 Requested verdict: `READY` or `NOT READY` as a D3 implementation candidate

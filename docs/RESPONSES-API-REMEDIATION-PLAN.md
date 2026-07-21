@@ -64,7 +64,12 @@
   corrected P4 Gate D `READY`, and P4 is accepted on 2026-07-19.
   Owner-approved D15 makes deterministic public/Codex contract fixtures the P4
   gate and requires credentialed real-wire conformance later under D7/P9 before
-  overall integrated acceptance.
+  overall integrated acceptance. P5 D3 review `7155196` found its running
+  product sound but returned `NOT READY` on R1 error propagation and R2 commit
+  integrity. The superseding history closes R2 at buildable split `61c7a52`,
+  closes R1 plus elected H2/H3 hardening at `acfcb69`, and binds source
+  `ef3cbbb` to 49/49 retained observations. Narrow same-reviewer confirmation
+  remains open; D3 and P5 are not accepted.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -484,7 +489,7 @@ artifacts to the same clean head with zero errors.
 | P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; D14 records base `6669b9d`; retained Gate C, live A/B/A, and independent acceptance remain open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
 | P3. Canonical ordered transcript | [x] Accepted by whole-phase Gate D review `06be7c7` on 2026-07-18. Frozen combined source `7f47218` contains the exact 28-item union, canonical model/replay/persistence, caller ownership, strict format-2 store, offline migration, explicit resume classifications, and response-scoped private audio artifacts. The reviewer independently reproduced the final source-bound gate, zero-violation policy audit, 60/60 distributions, redaction report, and attestation | Responses items survive stream, persistence, resume, and replay in order; explicit context edits change only the provider-facing view, not the audit timeline. |
 | P4. Streaming and replay conformance | [x] Accepted on 2026-07-19 by corrected Gate D review `0095f5c`. Product correction `ab26632` closes the orphan-core-preview authority defect; evidence binds to source `180759f`, and the independently reproduced five-artifact bundle is retained at `8faf1f4`. P3 remains accepted and D15's D7/P9 live-wire boundary is unchanged | Supported events/items are complete, reconciled against terminal authority, and fail closed without promoting preview-only content. |
-| P5. Conversation and Codex turn semantics | [ ] The `TRANS-01` retained 200/200 candidate is externally checked; `CODEX-01`, `CODEX-02`, and `AFFINITY-01` are accepted as isolated implementation candidates. `AFFINITY-01` confirmation `79c8366` closes both findings against corrected source `693d5b1`. Corrected D3 source `ef3b9c7` now covers framed response-state publication, provider-epoch cuts, managed provenance-validation ordering, pre-D3 compatibility, interrupted-result anchor clearing, request strategy, and replay rejection. Its source-bound contention/durability evidence is 42/42; the post-source packaging gate through `2ef1427` is green. Independent D3 review, D8, and whole-P5 acceptance remain open | Local/provider history and turn-scoped state have explicit lifetimes. |
+| P5. Conversation and Codex turn semantics | [ ] The `TRANS-01` retained 200/200 candidate is externally checked; `CODEX-01`, `CODEX-02`, and `AFFINITY-01` are accepted as isolated implementation candidates. Original D3 review `7155196` returned `NOT READY` only on swallowed response-audio errors (R1) and non-bisectable split history (R2), with no reachable product defect. The superseding branch reconstructs a buildable split at `61c7a52`, preserves the reviewed feature tree at `97f63a5`, closes R1 and the elected H2/H3 hardening at `acfcb69`, and binds corrected source `ef3cbbb` to 49/49 retained observations. Same-reviewer D3 confirmation, D8, and whole-P5 acceptance remain open | Local/provider history and turn-scoped state have explicit lifetimes. |
 | P6. Transport, retry, and usage | [ ] | Retries terminate once; observed and unknown attempt usage remain explicit. |
 | P7. Request, schema, and model controls | [ ] | Advertised capabilities match validated payload and tool behavior. |
 | P8. Prompt-cache measurement and policy | [ ] | Cache policy is observable, backend-specific, and empirically justified. |
@@ -521,7 +526,7 @@ blocks phase acceptance and cannot be represented as implemented evidence.
 | D1E | Structural descriptor closure after the owner rejected residual Norn-owned `EMFILE` risk. | P0 | [x] Decided, implemented, and independently accepted at `7ce29d7`. Idle session/history/process retention and eager spool-root probing are removed; cancellation-safe adoption owns process groups until spool attachment commits; and the process-wide fail-fast authority covers active/scalable process, spool, session, diagnostic, persistent stdio, LSP, HTTP, OAuth callback/browser, read/search, Rhai, debug, ordinary one-shot configuration, discovery, task, and write/edit/patch families. The former arbitrary transient headroom is replaced by exact observer reserve and typed filesystem/subprocess/HTTP permits. The final distribution and Gate D review cover selected descriptor-retention/admission, cancellation, live-transport release, and OAuth launcher permit lifecycles. This item does not claim that Norn can prevent unrelated embedder or operating-system-wide exhaustion. |
 | D1D | Complete `NornSettings.mcp_servers` as the layered MCP client surface: user, shared project, private project-local, per-agent, CLI, and live-session scopes with remembered shared-project approval and dynamic tool-catalogue refresh. | P0 | [x] Owner decision confirmed by Tom on 2026-07-13 and attributed in `DECISIONS-2026-07.md` section 10; implementation and its complete startup/live-control fixture matrix were independently accepted at `7ce29d7`. Precedence is `session > CLI > local > project > user`; same-name entries replace wholesale. Only shared checked-in project definitions require definition-bound remembered approval; user-owned private, CLI, and live-session input is direct operator configuration. Root, variant, and spawned agents select views from the connected pool without treating MCP roots as confinement. Startup consumption, live add/remove/enable/disable/reload, contextual roots, and provider-visible tool refresh are implemented. |
 | D2 | Existing session policy: isolated strict runtime storage plus an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [x] Owner ruling recorded 2026-07-17 and implemented in accepted range `2c0350d..e9755fe`; exact-correction D2 Gate C is retained at 10/10 gates and 280/280 distributions, with 145 changed Rust files/33 test-only and zero policy violations. The strict runtime namespace is the versionless `~/.norn/session-store/`; `~/.norn/sessions/` remains an untouched legacy source, an immutable digest-addressed private backup is published separately, and no `sessions-v2` path exists. `norn session migrate` performs an explicit offline, no-replace, staged publication that is idempotent and interruption-recoverable; normal startup does not decode legacy history. It checks only legacy-path metadata and, when legacy data exists, a bounded fixed-size cutover receipt, exact ownership marker, and required regular-file presence inside the active store. `norn session legacy verify` is the separate history-proportional audit over the strict store, immutable backup, manifest evidence, and live legacy tree. Canonically complete legacy sessions require a recorded fresh provider epoch; flattened but coherent sessions require explicit degraded/fresh-epoch approval with fidelity loss retained; corrupt or ambiguous sessions are inspect/export-only. `SessionManager::standard()` and the shared checked resolver apply this boundary to CLI and library embedders, while `SessionManager::new` remains an explicit custom-store authority. No class fabricates provider items, hidden reasoning, ordering, phase, or provider-side continuity. Gate D at `59dc244` returned `READY` contingent on F1; the populated backup-stage fsync was fixed and freshly evidenced at `e9755fe`, then independently closed at `26b4e28`. Corrected D2 now holds unconditional Gate D `READY`. This checkbox records D2 acceptance, not P3/P4 acceptance. |
-| D3 | Threaded-state policy: decide replaceable Developer context and whether/how local compaction may reset an anchor without losing stored reasoning. Select a genuinely replaceable surface, lossless replay contract, fresh-thread transition, or disable threading/local replay. | P5 | [x] Decided 2026-07-20 in `DECISIONS-2026-07.md` section 23. The compiled Codex-subscription backend remains `store:false` with exact local replay and local Norn compaction. Public Responses threading uses `store:true`, `previous_response_id`, and provider server compaction; it does not also run the local summarizer. Compaction, suppression, and non-identity filtered views start a fresh provider epoch; injection does not. A required full replay of reasoning without nonempty `encrypted_content` fails typed before mutation or dispatch. An unavailable stored anchor fails typed after that one provider request and is not silently retried without the anchor. Source `ef3b9c7`, tree `975d6fd`, realizes this contract with first-class `ResponseStatePublication` and `FilteredFork` boundaries, framed response groups, managed provenance validation before affinity or fork mutation, pre-D3 historical-cut compatibility, and local interrupted-result anchor clearing. Retained evidence is 42/42; independent review is open. This records the owner decision and candidate status, not D3 acceptance, P5 acceptance, or authenticated live-wire evidence. |
+| D3 | Threaded-state policy: decide replaceable Developer context and whether/how local compaction may reset an anchor without losing stored reasoning. Select a genuinely replaceable surface, lossless replay contract, fresh-thread transition, or disable threading/local replay. | P5 | [x] Decided 2026-07-20 in `DECISIONS-2026-07.md` section 23. The compiled Codex-subscription backend remains `store:false` with exact local replay and local Norn compaction. Public Responses threading uses `store:true`, `previous_response_id`, and provider server compaction; it does not also run the local summarizer. Compaction, suppression, and non-identity filtered views start a fresh provider epoch; injection does not. A required full replay of reasoning without nonempty `encrypted_content` fails typed before mutation or dispatch. An unavailable stored anchor fails typed after that one provider request and is not silently retried without the anchor. Original review `7155196` found no reachable product defect but required R1/R2 correction. The corrected history has a buildable split `61c7a52`, reviewed-tree-equivalent feature commit `97f63a5`, product correction `acfcb69`, exact evidence source `ef3cbbb` (tree `b5a692f`), and 49/49 retained observations. Same-reviewer confirmation remains open. This records the owner decision and corrected candidate status, not D3 acceptance, P5 acceptance, or authenticated live-wire evidence. |
 | D4 | Single retry owner and existing configured attempt/budget semantics for HTTP and in-stream failures. | P6 | [ ] Open |
 | D5 | Native `text.format` versus synthetic tool policy by API shape, catalog-selected apply-patch/search envelopes, and local-dispatch versus user-request semantics for tool-backed slash commands. | P7 | [ ] Open |
 | D6 | Pre-register the cache experiment: ratify or replace the proposed 20-iteration design; approve public/private backends, models, spending, warm-up, key isolation/reuse, an approximately 15 requests/minute per-key ceiling rechecked against current guidance, concurrency, retention/cooldown, service tier, output/effort controls, randomization, primary measures, and statistical treatment. | P8 | [ ] Open |
@@ -1970,9 +1975,11 @@ confirmation `efdf913` close the finding and return candidate `READY`.
 D3 contract is decided in section 23 of `DECISIONS-2026-07.md`, and its current
 implementation candidate covers request strategy, framed provider-state
 publication, epoch cuts, managed provider-state provenance-validation ordering,
-and replay guards. Its
-retained gates and independent review remain in progress. D8 and the remaining
-source work are open;
+and replay guards. Review `7155196` returned `NOT READY` on the categorical R1
+error swallow and R2 split-history integrity only. The correction reconstructs
+the split/feature boundary, closes R1, implements H2/H3, and retains fresh
+49/49 source-bound evidence; same-reviewer confirmation is pending. D8 and the
+remaining source work are open;
 **findings owned:** `STATE-02`,
 `STATE-03`, `ROLE-01`, `CODEX-01`, `CODEX-02`, `TRANS-01`; **dependencies:**
 P2-P4 and D3/D8/D9.
@@ -1991,8 +1998,9 @@ an implementation candidate by correction confirmation `efdf913`.
 `AFFINITY-01` corrected source `693d5b1` implements user-and-account-bound OAuth
 anchors and turn state with retained source-bound evidence. Same-reviewer
 confirmation `79c8366` returns candidate `READY`, and the owner accepts the
-isolated candidate. D3 now has an unreviewed implementation candidate; D8 role
-authority and whole-phase evidence remain open.
+isolated candidate. D3 now has a corrected implementation candidate awaiting
+narrow same-reviewer confirmation; D8 role authority and whole-phase evidence
+remain open.
 
 A separate headless driven-transport reliability slice is packaged at
 `e3549b4` plus correction `31553e8`: stdout-writer, event-emitter, and accepted
@@ -2000,7 +2008,10 @@ intervention failures are joined and surface nonzero; compound failures preserve
 the original run/auth exit class and every transport diagnostic. Its
 [`isolated handoff`](reviews/2026-07-20-headless-reliability-gate-d-handoff.md)
 does not claim to diagnose every previously observed headless process death and
-does not count as D3 or P5 acceptance.
+does not count as D3 or P5 acceptance. External review `7155196` returns this
+driven slice `READY`. It separately records a pre-existing non-driven
+`stream-json` exit-class inversion in `print/orchestrator.rs`; that follow-up is
+outside D3 and does not weaken the driven verdict.
 
 ### What this phase fixes
 
@@ -2037,6 +2048,16 @@ provider construction rather than degrading to account-only affinity.
   capabilities, compaction, persistence, resume, and request construction.
   This checkbox records source and focused regression coverage, not independent
   review or P5 acceptance.
+- [x] Close D3 review R1 with typed fork-filter error propagation. Only
+  unrelated events may take the `Ok(None)` skip; malformed reserved
+  response-audio rows fail typed, while identity filtering stays exact.
+- [x] Close D3 review R2 by replacing the broken split history rather than
+  waiving it: `61c7a52` builds independently and `97f63a5` lands the durable
+  tracker-free behavior atomically with its helper/docs/tests.
+- [x] Implement elected D3 H2/H3 hardening: monotonic `FilteredFork` legacy
+  closure, negative-provenance legacy fallback closure, and exact target-ID
+  checks for direct/audio publication shapes. H1/H4 scope and claim precision
+  are recorded in decision 23 and the correction handoff.
 - [x] Decide the D3 state strategy: compiled Codex subscription uses
   `store:false` exact local replay and Norn compaction; public Responses
   threading uses `store:true`, `previous_response_id`, and provider server
@@ -2132,9 +2153,10 @@ TRANS-01 panel and whole-P5 acceptance remain open, so this is not P5 Gate B
 completion. See the
 [`TRANS-01` Gate D handoff](reviews/2026-07-19-p5-trans-01-gate-d-handoff.md).
 
-D3 now has an implementation candidate but remains unaccepted; D8 remains open.
-Both therefore still block whole-P5 Gate A. `TRANS-01` remains an isolated slice
-and cannot be represented as P5 Gate B completion.
+D3 now has a corrected implementation candidate awaiting narrow same-reviewer
+confirmation and remains unaccepted; D8 remains open. Both therefore still
+block whole-P5 Gate A. `TRANS-01` remains an isolated slice and cannot be
+represented as P5 Gate B completion.
 
 ### Second reviewable implementation slice: `CODEX-01`
 
@@ -2342,11 +2364,12 @@ boundary.
 
 ### Fifth reviewable implementation slice: D3 conversation state
 
-**Status:** [ ] Exact source `ef3b9c7`, tree `975d6fd`, is packaged as a D3
-implementation candidate. The retained contention/durability runner passes
-42/42, the post-source packaging battery through `2ef1427` is green, and the
-exact handoff is linked below. Independent state-machine review and whole-P5
-acceptance have not run.
+**Status:** [ ] Original review `7155196` returned `NOT READY` on R1/R2 only.
+The superseding history makes the mechanical split independently buildable at
+`61c7a52`, lands the reviewed feature tree atomically at `97f63a5`, and closes
+R1 plus elected H2/H3 hardening at `acfcb69`. Exact correction source
+`ef3cbbb`, tree `b5a692f`, is bound to a fresh 49/49 retained record. Narrow
+same-reviewer confirmation and whole-P5 acceptance have not run.
 
 A stored public Responses result is published as one explicitly framed group:
 `ProviderEpochBoundary(ResponseStatePublication)`, then the reserved
@@ -2358,9 +2381,13 @@ audit-visible and is replayed only when every required item has replay material;
 no inherited response ID is treated as its provider anchor.
 
 `EventStore::append_batch` and the registered JSONL sink keep each response
-group non-interleaved under one retained index-and-timeline lock. An I/O failure
-or process interruption may leave the exact durable prefix of the requested
-group. Retrying the exact group may complete that prefix; an unrelated
+group non-interleaved. The lock covers strict timeline read, retry-prefix and
+provenance validation, writes, and fsync. Cadence/index counters update after
+release; later writers rederive that cache from durable timeline state under
+lock. An I/O failure or process interruption may leave the exact durable prefix
+of the requested group. Norn-managed publication retries only the exact group;
+the low-level sink is not advertised as a general divergent-suffix resubmission
+surface. Retrying the exact group may complete that prefix; an unrelated
 continuation is rejected, and a
 normal reopen of an incomplete semantic prefix fails closed. The complete group
 becomes visible in that process's in-memory store only after the sink operation
@@ -2414,12 +2441,11 @@ P5 acceptance.
 - [x] Focused stateless and threaded tests prove their intended request shape,
   anchor use, effective context, and top-level instruction behavior. The broader
   volatile-source matrix immediately above remains open.
-- [x] Source-bound D3 evidence records 20/20 independent-handle contention and
-  20/20 synchronized four-process convergence trials plus 2/2 fork/durability
-  sentinels. The runner,
-  42-observation JSON, exact source/tree, and honest exact-prefix interruption
-  boundary are in the
-  [`D3 Gate D handoff`](reviews/2026-07-20-p5-d3-gate-d-handoff.md).
+- [x] Corrected source-bound D3 evidence records 20/20 independent-handle
+  contention and 20/20 synchronized four-process convergence trials plus 9/9
+  exact fork/durability/R1/H2/H3 sentinels. The runner, 49-observation JSON,
+  exact source/tree, and honest exact-prefix interruption boundary are in the
+  [`D3 correction handoff`](reviews/2026-07-21-p5-d3-gate-d-correction-handoff.md).
 - [ ] Root and nested repository context, rule/profile bodies, user input, and
   trusted operator policy produce the exact D8 roles for root, spawn, and fork.
 - [x] Raw `end_turn:false`, `true`, `null`, and absence plus typed loop
@@ -2818,7 +2844,7 @@ evidence.
 | P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and the bounded source fixture matrices are present | D14 establishes retrospective base `6669b9d`. Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks; retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle | Run the live A/B/A validity experiment after explicit credential-use approval, execute and retain the complete candidate gates, then obtain P2 acceptance |
 | P3 | Accepted source `7f47218` over D12 base `a90b730`; tree `b8b042f61b8d921b4cb27496d5a72b8d56b8bb0c`; accepted D2 source `e9755fe`, lifecycle fixtures `f252cbb`, M-1/F-2 correction `df47e9e`, and finite D11 source `56fd4dd` are included | D2 remains unconditionally `READY`; review `dad0291` closes M-1/F-2; review `5af7308` accepts D11's 28/274/659 inventory and seven-by-ten matrix. The final gate passes strict fmt/Clippy, Norn 4,035/4,035, CLI 551/551, TUI 700/700, workspace 5,364/5,364, doctests 8/8, redaction sentinels 23/23, exact diff, and policy. The policy reports 298 changed Rust files, 78 test-only, and zero LOC/module/added-line violations. Three repeated cases pass 60/60; the 213-record redaction report has zero findings; the single-process attestation has zero errors. Whole-phase review `06be7c7` independently reproduces the evidence and returns `READY` | None; accepted 2026-07-18. `STATE-01` and `EVT-01..07` remain P4-owned |
 | P4 | Accepted product correction `ab26632` over common source `7f47218`; corrected source-bound evidence head `180759f`; public/Codex manifests, 53 event contracts, 28 item validators, reconciliation, terminal parsing, raw CLI events, refusal, hosted-search replay, response-audio persistence, and successful-terminal core-delta authority are implemented | The correction bundle at `8faf1f4` passes strict fmt/Clippy, Norn 4,042, CLI 551, TUI 700, workspace 5,371, doctests 8, 60/60 distributions, 25 redaction sentinels, zero policy violations, 219-record zero-finding redaction, and zero-error attestation. Same-reviewer confirmation `0095f5c` reproduces the evidence and returns corrected P4 Gate D `READY`. P3 remains accepted at `06be7c7`; D15's D7/P9 live-wire gate is unchanged | None; accepted 2026-07-19. P6 separately owns usage-presence projection and retry-attempt UI cleanup |
-| P5 | Codex `store:false` and public threaded request shapes are distinct; stateless encrypted-reasoning replay exists; `TRANS-01` owns provider producers; accepted `CODEX-01` scopes and projects `end_turn` with durable intermediate replay; accepted `CODEX-02` carries first-wins private turn state across retry/continuation with recursive observer/debug redaction. Accepted `AFFINITY-01` source `693d5b1` binds anchors and turn state to opaque credential/backend/endpoint identity across managed create, resume, adoption, append, and fork; managed OAuth requires a stable account/user principal and stale same-identity stores must reopen. Corrected D3 source `ef3b9c7` adds replaceable current instructions, provider/local compaction separation, first-class response-publication and filtered-fork frames, exact-prefix non-interleaving group persistence, safe pre-D3 historical-cut compatibility, interrupted-result anchor clearing, managed fail-before-mutation provenance validation, and typed replay rejection. D8 role authority remains missing | `TRANS-01` retains 200/200 exact process-isolated observations and a bounded external check. `CODEX-01` confirmation `2f55b15`, CODEX-02 confirmation `efdf913`, and AFFINITY-01 confirmation `79c8366` return unconditional candidate `READY`; all three are owner-accepted. AFFINITY-01 retains 91/91 source-bound observations. D3 retains 42/42 source-bound contention/durability observations and a 991-record Rust manifest. Post-source packaging commit `2ef1427` passes strict Clippy/fmt/diff, Norn 4,192/4,192, CLI 518/518, TUI 683/683, and doctests 8/8 after a test-only HTTP-framing correction; no independent D3 verdict exists yet | Obtain D3 independent review; complete the still-open broad D3 matrices and D8 provenance/role authority; then run whole-phase gates. D7/P9 authenticated real-wire remains an integrated-release requirement, not a D3 pass |
+| P5 | Codex `store:false` and public threaded request shapes are distinct; stateless encrypted-reasoning replay exists; `TRANS-01` owns provider producers; accepted `CODEX-01` scopes and projects `end_turn` with durable intermediate replay; accepted `CODEX-02` carries first-wins private turn state across retry/continuation with recursive observer/debug redaction. Accepted `AFFINITY-01` source `693d5b1` binds anchors and turn state to opaque credential/backend/endpoint identity across managed create, resume, adoption, append, and fork; managed OAuth requires a stable account/user principal and stale same-identity stores must reopen. Corrected D3 source `ef3cbbb` adds replaceable current instructions, provider/local compaction separation, first-class response-publication and filtered-fork frames, exact-prefix non-interleaving managed publication, monotonic legacy closure, strict direct/audio target identity, interrupted-result anchor clearing, managed fail-before-mutation provenance validation, typed fork-filter errors, and typed replay rejection. D8 role authority remains missing | `TRANS-01` retains 200/200 exact process-isolated observations and a bounded external check. `CODEX-01` confirmation `2f55b15`, CODEX-02 confirmation `efdf913`, and AFFINITY-01 confirmation `79c8366` return unconditional candidate `READY`; all three are owner-accepted. AFFINITY-01 retains 91/91 source-bound observations. D3 correction evidence is 49/49 with a 994-record Rust manifest; original review `7155196` is `NOT READY` on R1/R2, both corrected, and narrow confirmation is pending | Obtain D3 same-reviewer correction confirmation; complete the still-open broad D3 matrices and D8 provenance/role authority; then run whole-phase gates. D7/P9 authenticated real-wire remains an integrated-release requirement, not a D3 pass |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|
@@ -2827,7 +2853,7 @@ evidence.
 | P2 | `6669b9d` (D14 retrospective timing exception) | | | | | | [ ] |
 | P3 | `a90b730` (D12 retrospective timing exception) | Source `a90b730..7f47218`; evidence/docs `d8c16f3`; review `06be7c7` | [`P3 handoff`](reviews/2026-07-18-p3-final-gate-d-handoff.md); final gate 10/10; Norn 4,035/4,035; CLI 551/551; TUI 700/700; workspace 5,364/5,364; doctests 8/8; distributions 60/60; redaction 23/23 and zero findings; attestation pass; independent reproduction in `06be7c7` | 298 changed Rust files; 78 test-only; 143 writer candidates; zero bypass, over-500, module-shape, or thin-entrypoint violations | Responses-protocol and session/persistence Opus seats plus coordinator, 2026-07-18 | [Fable `READY`](reviews/2026-07-18-p3-final-gate-d-review.md), `06be7c7` | [x] Accepted |
 | P4 | `a90b730` (D12 retrospective timing exception) | Product correction `ab26632`; evidence support/source `180759f`; evidence commit `8faf1f4`; handoff `84949b2`; review `0095f5c` | [`Original P4 review`](reviews/2026-07-18-p4-final-gate-d-review.md) `80f0e36`: `NOT READY`; [`correction confirmation`](reviews/2026-07-19-p4-final-gate-d-correction-review.md) `0095f5c`: `READY`; corrected gate 10/10; Norn 4,042/4,042; CLI 551/551; TUI 700/700; workspace 5,371/5,371; doctests 8/8; distributions 60/60; redaction 25/25 and zero findings; attestation pass | 299 changed Rust files; 78 test-only; zero bypass, over-500, module-shape, or thin-entrypoint violations | Original P4 panel plus same-reviewer correction confirmation, 2026-07-19 | Corrected Gate D [`READY`](reviews/2026-07-19-p4-final-gate-d-correction-review.md), `0095f5c` | [x] Accepted |
-| P5 | `b75e64b` for D3 after mechanical split `e3549b4..b75e64b` | Corrected D3 source `ef3b9c7`; headless correction `31553e8`; test-only packaging correction `2ef1427`; evidence/docs packaging follows | [`D3 handoff`](reviews/2026-07-20-p5-d3-gate-d-handoff.md) and [`headless handoff`](reviews/2026-07-20-headless-reliability-gate-d-handoff.md); 42/42 retained D3 observations; Norn 4,192/4,192; CLI 518/518; TUI 683/683; doctests 8/8; corrected OAuth framing fixture 20/20; strict Clippy/fmt/diff green | 102 D3 Rust paths; no new or newly over-500 D3 file; six pre-existing over-limit paths disclosed in the handoff; OAuth test file remains 485 lines; no lint bypass | Independent D3 review pending | Pending | [ ] |
+| P5 | Corrected D3 split `61c7a52` after strategy base `974a216` | Feature `97f63a5`; compatibility `201f4b5`; R1/H2/H3 correction `acfcb69`; evidence source `ef3cbbb`; retained record `828fc81`; headless correction `362e13d` | [`Original D3 handoff`](reviews/2026-07-20-p5-d3-gate-d-handoff.md), [`NOT READY` review](reviews/2026-07-21-p5-d3-gate-d-review.md), and [`correction handoff`](reviews/2026-07-21-p5-d3-gate-d-correction-handoff.md); 49/49 retained D3 observations; strict fmt/Clippy/diff; Norn 4,199/4,199; CLI 518/518; TUI 683/683; doctests 8/8 | Evidence inventory 111 paths and 994 Rust records; all 14 R1/H2/H3 correction Rust paths are below 500 lines (maximum 463); zero added lint/unwrap/expect/panic/ignore/disabled-code bypass | Same-reviewer correction confirmation pending | Original `NOT READY`; correction pending | [ ] |
 | P6 | | | | | | | [ ] |
 | P7 | | | | | | | [ ] |
 | P8 | | | | | | | [ ] |

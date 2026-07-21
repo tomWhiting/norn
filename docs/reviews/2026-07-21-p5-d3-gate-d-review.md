@@ -1,5 +1,11 @@
 # P5 D3 conversation-state Gate D review
 
+> **Historical `NOT READY` verdict.** The implementer correction is submitted
+> in
+> [`2026-07-21-p5-d3-gate-d-correction-handoff.md`](2026-07-21-p5-d3-gate-d-correction-handoff.md).
+> This review remains authoritative for the original candidate until the same
+> reviewer records a narrow confirmation; it has not been rewritten as a pass.
+
 **Date:** 2026-07-21
 
 **Reviewer:** Sable Nightwick (coordinator) + five Opus area seats

@@ -1596,3 +1596,47 @@ acceptance. D8, the broad volatile-context and concurrent-agent matrices,
 independent review, and whole-P5 acceptance remain open. The authenticated
 public/Codex real-wire fixture remains mandatory under D7/P9 before integrated
 Responses acceptance.
+
+### D3 Gate D correction disposition (2026-07-21)
+
+Original review `7155196` returned `NOT READY` on R1/R2 while finding no
+reachable product security or correctness defect. The correction does not use
+a squash waiver:
+
+- R2 is resolved by reconstructing the branch. Mechanical split `61c7a52`
+  builds across all Norn targets/features. Feature commit `97f63a5` introduces
+  the tracker-free durable-mark behavior, helper, documentation, and tests
+  atomically and has the exact tree of reviewed commit `5358bea`. Compatibility
+  commit `201f4b5` likewise has the exact tree of reviewed `ef3b9c7`.
+- R1 is resolved at `acfcb69`: `ContextFilter::apply` returns a typed result,
+  non-identity filtering propagates malformed reserved response-audio links,
+  unrelated custom events remain ordinary data, and identity filtering remains
+  an exact copy.
+- H2 is implemented rather than waived. `FilteredFork` closes legacy
+  eligibility monotonically across later cuts, and negative stored-state
+  provenance clears legacy fallback without erasing an older proven anchor.
+- H3 is implemented rather than waived. Direct and response-audio publication
+  shapes require the positional assistant event ID to equal the provenance
+  target; an invalid local frame cannot hide its provenance row from the prompt
+  projection.
+- H1 is accepted only as a managed-publication construction boundary. Norn's
+  publisher mints one random boundary and resubmits only the same group; an
+  orphan prefix fails closed. The low-level `JsonlSink` API is not advertised
+  as a general divergent-suffix retry guarantee. Any future caller that can
+  resubmit a different suffix under the same boundary must first add and
+  validate a durable canonical group length/digest.
+- H4 is corrected as claim precision, not code work. The lock covers strict
+  read, retry-prefix validation, provenance validation, writes, and fsync.
+  Cadence/index counters update after release; later writers rederive that
+  derived cache from durable timeline state under lock.
+
+Exact correction evidence source `ef3cbbbfc1eec0c279dc848bcf155dddb5dd5725`,
+tree `b5a692fd3c70ae2c043ed3521d5f06afa3d20757`, records 49/49:
+20/20 independent-handle contention, 20/20 synchronized independent-process
+publication, and 9/9 exact sentinels. This remains a candidate pending narrow
+same-reviewer confirmation; it does not accept D3 or P5 and does not replace
+the D7/P9 authenticated live-wire gate.
+
+The review's non-driven headless exit-class inversion is recorded separately as
+pre-existing follow-up work. It does not change the isolated driven-transport
+`READY` verdict and is not part of the D3 correction.
