@@ -505,7 +505,7 @@ artifacts to the same clean head with zero errors.
 | P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; D14 records base `6669b9d`; retained Gate C, live A/B/A, and independent acceptance remain open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit. |
 | P3. Canonical ordered transcript | [x] Accepted by whole-phase Gate D review `06be7c7` on 2026-07-18. Frozen combined source `7f47218` contains the exact 28-item union, canonical model/replay/persistence, caller ownership, strict format-2 store, offline migration, explicit resume classifications, and response-scoped private audio artifacts. The reviewer independently reproduced the final source-bound gate, zero-violation policy audit, 60/60 distributions, redaction report, and attestation | Responses items survive stream, persistence, resume, and replay in order; explicit context edits change only the provider-facing view, not the audit timeline. |
 | P4. Streaming and replay conformance | [x] Accepted on 2026-07-19 by corrected Gate D review `0095f5c`. Product correction `ab26632` closes the orphan-core-preview authority defect; evidence binds to source `180759f`, and the independently reproduced five-artifact bundle is retained at `8faf1f4`. P3 remains accepted and D15's D7/P9 live-wire boundary is unchanged | Supported events/items are complete, reconciled against terminal authority, and fail closed without promoting preview-only content. |
-| P5. Conversation and Codex turn semantics | [ ] The `TRANS-01` retained 200/200 candidate is externally checked; `CODEX-01`, `CODEX-02`, and `AFFINITY-01` are accepted as isolated implementation candidates. Original D3 review `7155196` returned `NOT READY` only on swallowed response-audio errors (R1) and non-bisectable split history (R2), with no reachable product defect. The superseding branch reconstructs a buildable split at `61c7a52`, preserves the reviewed feature tree at `97f63a5`, closes R1 and elected H2/H3 at `acfcb69`, and retains historical 49/49 and 64/64 records. Same-reviewer confirmation `0dc2035` closes R1/R2/H2/H3/H4 and returns D3 `READY` as an implementation candidate, with three nonblocking H1 residuals. Product correction `e96ee64` closes those residuals; exact source `c8619ae` (tree `e7f676a`) retains 70/70 observations. Same-reviewer confirmation `db3cf81` closes H1-a/b/c; D3 is owner-accepted on 2026-07-22 and incorporated into `main` through reviewed head `db3cf81`. D8 is decided and frozen at source `4fa6c6756ed497a002b4281f51cbb14f7bd7a3eb` (tree `c0d9f69bb5283184432862016c1212644f7088c2`): source-derived System/Developer/User authority, request-local Responses instructions for Norn-owned policy, Developer seed binding for trusted prompt-command output, tool-definition-only runtime MCP descriptions, and explicit compatible-backend lowering are present. Focused D8 Gate D and whole-P5 acceptance remain open | Local/provider history and turn-scoped state have explicit lifetimes. |
+| P5. Conversation and Codex turn semantics | [ ] The `TRANS-01` retained 200/200 candidate is externally checked; `CODEX-01`, `CODEX-02`, and `AFFINITY-01` are accepted as isolated implementation candidates. Original D3 review `7155196` returned `NOT READY` only on swallowed response-audio errors (R1) and non-bisectable split history (R2), with no reachable product defect. The superseding branch reconstructs a buildable split at `61c7a52`, preserves the reviewed feature tree at `97f63a5`, closes R1 and elected H2/H3 at `acfcb69`, and retains historical 49/49 and 64/64 records. Same-reviewer confirmation `0dc2035` closes R1/R2/H2/H3/H4 and returns D3 `READY` as an implementation candidate, with three nonblocking H1 residuals. Product correction `e96ee64` closes those residuals; exact source `c8619ae` (tree `e7f676a`) retains 70/70 observations. Same-reviewer confirmation `db3cf81` closes H1-a/b/c; D3 is owner-accepted on 2026-07-22 and incorporated into `main` through reviewed head `db3cf81`. D8 is decided and frozen at source `4fa6c6756ed497a002b4281f51cbb14f7bd7a3eb` (tree `c0d9f69bb5283184432862016c1212644f7088c2`): source-derived System/Developer/User authority, request-local Responses instructions for Norn-owned policy, Developer seed binding for trusted prompt-command output, tool-definition-only runtime MCP descriptions, and explicit compatible-backend lowering are present. Live Codex terminal-authority correction `d86a4ed` supports completed-item authority when terminal output is absent or empty while keeping public Responses strict; focused tests and strict Clippy/fmt pass, but its external review and authenticated D7/P9 wire check remain open. Focused D8 Gate D and whole-P5 acceptance remain open | Local/provider history and turn-scoped state have explicit lifetimes. |
 | P6. Transport, retry, and usage | [ ] | Retries terminate once; observed and unknown attempt usage remain explicit. |
 | P7. Request, schema, and model controls | [ ] | Advertised capabilities match validated payload and tool behavior. |
 | P8. Prompt-cache measurement and policy | [ ] | Cache policy is observable, backend-specific, and empirically justified. |
@@ -2034,6 +2034,19 @@ incorporated into `main` by fast-forward. Frozen D8 source `4fa6c6756ed497a002b4
 (tree `c0d9f69bb5283184432862016c1212644f7088c2`) is pending Gate D; whole-phase
 evidence remains open.
 
+The live Codex terminal-authority correction at `d86a4ed` addresses an
+authenticated response whose canonical `response.output_item.done` item was not
+present in `response.completed.response.output`. Only the compiled
+Codex-subscription dialect may use exact completed-item authority when terminal
+output is absent or empty; public Responses remains strict, nonempty Codex
+terminal output remains strictly cross-checked, and incomplete preview or
+actionable state fails closed. The focused 11/11 Codex matrix, 26/26 integrated
+reconciliation tests, 117/117 reconciler tests, strict Norn Clippy, fmt, and
+diff checks pass. The
+[`narrow Gate D handoff`](reviews/2026-07-22-p5-codex-terminal-authority-correction-handoff.md)
+is prepared, but external review and the authenticated D7/P9 live-wire rerun
+remain open. This candidate does not re-accept P4 or accept P5.
+
 A separate headless driven-transport reliability slice is packaged at
 `e3549b4` plus original correction `31553e8`, replayed patch-identically as
 `362e13d` on the corrected D3 branch: stdout-writer, event-emitter, and accepted
@@ -2621,6 +2634,20 @@ P5 acceptance.
   focused `15/15` D8 fixtures, and the loopback-sandbox execution chronology.
   This package is candidate evidence only; focused Gate D and P5 acceptance
   remain open.
+- [x] The live Codex terminal-authority correction at `d86a4ed` uses exact
+  completed-item authority only for missing/empty Codex terminal output, keeps
+  public Responses and nonempty terminal output strict, and retains fail-closed
+  preview/actionability guards. Deterministic fixtures pass 11/11, 26/26, and
+  117/117; strict Norn Clippy, fmt, and diff checks pass. The
+  [`narrow handoff`](reviews/2026-07-22-p5-codex-terminal-authority-correction-handoff.md)
+  records the exact source boundary and honest residuals.
+- [ ] Obtain independent review of the live Codex terminal-authority correction.
+  Preparing its handoff does not complete this gate.
+- [ ] Under the D7 credential, spending, redaction, and retention approval, rerun
+  the authenticated Codex request and retain a redacted trace proving one
+  canonical item plus one terminal outcome without the prior protocol error.
+  This remains part of the mandatory D7/P9 real-wire boundary; a skipped run is
+  not a pass.
 - [x] Raw `end_turn:false`, `true`, `null`, and absence plus typed loop
   projections have explicit tests; function/custom/schema calls, refusal-only,
   mixed refusal-plus-tool, text, and empty continuation interactions are pinned.
