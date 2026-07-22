@@ -84,7 +84,9 @@ Other dependencies:
 
 - Responses P5 supplies correct turn, account-affinity, cancellation, and
   provider-state boundaries before the read supervisor may add mutations or
-  claim active-turn recovery.
+  claim active-turn recovery. D3 is accepted at `db3cf81`; D8 is implemented
+  as frozen candidate source `4fa6c6756ed497a002b4281f51cbb14f7bd7a3eb`
+  (tree `c0d9f69bb5283184432862016c1212644f7088c2`) pending focused Gate D.
 - Responses P6 supplies transport/retry/usage truth before remote operational
   status can claim attempt or cost accuracy.
 - Responses P7 supplies truthful tool/schema/action behavior before generated
@@ -1003,12 +1005,12 @@ The critical and parallel paths are:
    transcript implementation from that arm.
 3. Complete the post-P4 NS0B contract freeze; after NS0 acceptance, begin NS2's
    read-only event projection. NS0 and NS1, not P1/P2, are its prerequisites.
-4. Under D13, prepare P5 as the next Responses arm while P2 acceptance remains
-   an independently gated credential-lifecycle track. P5's first
-   compact review boundary is HTTP producer ownership; starting that isolated
-   source slice before D3/D8 are decided requires the scoped owner disposition
-   recorded by the Responses plan. Codex turn semantics and the eventual D3/D8
-   state and role contracts remain outside NS2's read-only event projection.
+4. Under D13, continue P5 while P2 acceptance remains an independently gated
+   credential-lifecycle track. D3 is accepted at `db3cf81`. D8 is implemented
+   at frozen source `4fa6c6756ed497a002b4281f51cbb14f7bd7a3eb` (tree
+   `c0d9f69bb5283184432862016c1212644f7088c2`) and awaits focused Gate D. The
+   remaining D3/D8 integration and acceptance work stays in P5; those state and
+   role contracts remain outside NS2's read-only event projection.
 5. Complete P2 retained evidence and acceptance independently; do not treat it
    as authorization for account selection or state replay in P5.
 6. Carry D15's authenticated D7/P9 live-wire gate into overall integration, and

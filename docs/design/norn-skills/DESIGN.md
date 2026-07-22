@@ -139,7 +139,12 @@ skill's name to load its full instructions.
 
 When no skills exist, the listing is empty and the section is omitted entirely. The SkillTool is not registered when the catalog is empty (per the standard's "adding support" guide: "don't register a skill tool with no valid options").
 
-The listing is part of the base system instruction (`system_sections[0]`), byte-stable for prefix caching.
+D8 supersedes the original flattened placement. Compiled skill-use policy is a
+System fragment, operator/home-owned skill metadata is Developer, and
+workspace-owned skill metadata is User in the stable `PromptPlan`.
+`system_sections[0]` retains
+only a flattened compatibility view; root provider assembly preserves the
+three source authorities.
 
 #### D4: Slash command registration
 
@@ -227,7 +232,11 @@ During `build_runtime`, `SkillSearchPaths` is constructed from the configured se
 
 #### D13: SkillCatalog construction and injection
 
-During `build_runtime`, a `SkillCatalog` is constructed by scanning search paths. The catalog's system prompt listing is included in the base system instruction. The catalog is stored on the `ToolContext` as an extension (via `Arc<SkillCatalog>`) so the SkillTool can access metadata at invocation time.
+During `build_runtime`, a `SkillCatalog` is constructed by scanning search
+paths. D8 decomposes its model-facing listing into compiled System policy,
+operator Developer metadata, and workspace User metadata in the stable prompt
+plan. The catalog is stored on the `ToolContext` as an extension (via
+`Arc<SkillCatalog>`) so the SkillTool can access metadata at invocation time.
 
 The SkillTool activation result includes the skill directory path and a listing of bundled resources (files in the skill directory other than SKILL.md), capped at 20 entries. This supports progressive disclosure tier 3 — the model can see what resources exist without loading them.
 

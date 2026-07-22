@@ -38,7 +38,12 @@ two are behaviors an agent explicitly wrote "needs sign-off" against. Full detai
    default is confirmed correct and must stay). For callers that opt in via `--timeout` /
    `AgentLoopConfig::step_timeout`, today's documented hard-cut semantics stand; the graceful
    grace-period redesign is **dropped** (it would invent a grace default for a knob the owner
-   considers niche).
+   considers niche). **D8 durability refinement, 2026-07-22:** the hard cut applies to the
+   provider/tool machine after validated setup has durably committed accepted inputs. Setup
+   time is charged and can exhaust the budget before any provider call, but the input commit is
+   cancellation-shielded and may finish after the nominal deadline. This adds no default, grace
+   period, or tool-completion wait; it prevents the hard cut from losing or duplicating accepted
+   prompts and wake messages at the append/notification seam.
 2. **`WalkBuilder::require_git(false)`** in the search/file tools (§2, §3). — **DECIDED
    2026-07-02 (owner)**: ratified. Outside a git repo there is normally no `.gitignore`, so the
    behavior is moot there; where ignore files do exist, applying them deterministically is
@@ -296,11 +301,12 @@ These are the items agents themselves marked as unresolved, proposed-only, or re
 explicit owner call — either because implementing them would require inventing a default, or
 because a design fork exists that the agent didn't feel authorized to resolve alone.
 
-- **`step_timeout` graceful-timeout redesign** (T4-loop-agent, Item 6). Current hard-cut
-  semantics (inner future dropped mid-tool-batch) are documented as-is. Agent explicitly wrote:
-  *"PROPOSED FOR OWNER DISCUSSION, not implemented: a graceful-timeout redesign where elapsing
-  the budget triggers the cancellation token plus a bounded grace period before the hard cut —
-  the grace value would be an invented default, so it needs an owner decision."* — **Discuss**
+- **`step_timeout` graceful-timeout redesign** (T4-loop-agent, Item 6). — **DECIDED
+  2026-07-02 (owner), refined by D8 on 2026-07-22:** keep no timeout by default and do not
+  invent a grace period. An opted-in timeout charges setup time, allows the accepted-input
+  commit to finish under cancellation shielding, and hard-cuts the provider/tool machine after
+  the remaining budget expires. This is the resolved contract recorded in §0, not an open
+  discussion item.
 - **Mustache reading session variables from user-supplied argument names** (T6-config-profile-skill,
   R10a). Left functional as-is. Agent's own tag: *"OWNER FLAG (as instructed): stage-3 mustache
   can read session variables whose names arrive from user-supplied arguments — left functional;
@@ -474,18 +480,16 @@ Decisions recorded in the Wave 3–4 commit record, verified against HEAD.
   majority Keep; 4 flagged Discuss inline (degraded-mode cancel alternative, service-tier
   consequence, in-band-error terminal reclassification, reasoning-replay content-skip
   ambiguity).
-- **Section 3 (explicitly proposed/flagged):** 8 items the agents themselves called out as
-  needing an owner decision, ranging from a genuine feature-design question
-  (`step_timeout` graceful redesign) to two explicit "needs sign-off" search-tool behaviors. The
-  CLAUDE.md 500-LOC compliance gap (`loop/runner.rs`) is now **Resolved** at Wave 4 (R2 runner
-  state machine, `loop/runner/`), leaving 7 open owner items in this section.
+- **Section 3 (explicitly proposed/flagged):** the historical list now records the resolved
+  `step_timeout` contract and the resolved CLAUDE.md 500-LOC gap alongside the remaining owner
+  questions. Neither resolved item is counted as open.
 - **Section 4 (held):** RESOLVED 2026-07-03 — both items (`RunMonitored`,
   `ToolEnvelope.runtime_inputs` / `ToolContext.runtime_args`) owner-ruled **deleted**;
   boundary signals ride message injection. Forward design:
   `docs/design/norn/INTERNAL-AGENTS.md`.
 - **Section 5 (R1 D1-D7 + Wave 3-4):** 7 R1 decisions applied autonomously (owner-overridable, 5
-  Discuss / 2 Keep) plus 7 Wave 3-4 load-bearing decisions (mostly Keep). The three items in §0
-  remain the highest-priority owner calls.
+  Discuss / 2 Keep) plus 7 Wave 3-4 load-bearing decisions (mostly Keep). Section 0 is the
+  controlling owner disposition; its first three historical priority items are all decided.
 
 ---
 
@@ -1514,13 +1518,16 @@ and [server-side compaction](https://developers.openai.com/api/docs/guides/compa
   replay, and local Norn compaction. Replay preserves every applicable provider
   output item, including nonempty encrypted reasoning, rather than reconstructing
   or normalizing it.
-- Public Responses threading uses `store:true`, `previous_response_id`, and
-  provider server compaction. While an anchor is active, a request sends only
-  the new turn input plus current top-level instructions: the stable base
-  instruction combined with the current replaceable dynamic context. The API
-  does not carry prior top-level instructions across `previous_response_id`, so
-  an older dynamic version does not accumulate in provider history. Norn does
-  not also run its local summarizer over that provider-owned thread.
+- **Later D8 refinement (2026-07-22):** public Responses threading uses `store:true`,
+  `previous_response_id`, and
+  provider server compaction. While an anchor is active, a request sends new
+  turn input plus current request-local instructions containing source-System
+  fragments and Norn-owned volatile policy. Stable Developer/User input,
+  including current trusted prompt-command output, is seed-bound and inherited;
+  a changed seed cuts the anchor. The API does not carry prior top-level
+  instructions across `previous_response_id`, so current instructions replace
+  rather than accumulate. Norn does not also run its local summarizer over that
+  provider-owned thread.
 - An explicit server-compaction threshold wins. Otherwise, when the existing
   context-window limit and auto-compaction reserve define a valid threshold,
   their existing difference is used. D3 introduces no new fallback number.
@@ -1721,3 +1728,73 @@ This is a correction candidate pending narrow external review, not an expansion
 of D3 or P5 acceptance. It fixes the confirmed exit-class and diagnostic-loss
 path; it does not claim that every separately observed headless midstream death
 has the same cause or is now diagnosed.
+
+## 24. P5 D8 prompt source and wire authority (2026-07-22)
+
+**Owner ruling:** Prompt authority derives from provenance, not discovery path,
+file position, labels inside content, or transport shape.
+
+- **System:** compiled product policy, trusted embedder base policy, child/fork
+  lifecycle policy, built-in variants, and compiled skill-catalog policy.
+- **Developer:** trusted operator profiles and overrides,
+  `~/.norn/NORN.md`, operator rules and skill metadata, and trusted
+  prompt-command output.
+- **User:** project-root and nested `NORN.md`, workspace profiles/rules/skills,
+  configured variants, human task/delegation/steering text, and
+  runtime-delivered child output.
+
+Moving repository prose between supported workspace sources never raises its
+authority. Sourced rules persist their origin and reconstruct at the same
+authority. Readable originless pre-D8 append rows reconstruct conservatively as
+User and cannot carry an unbound legacy anchor forward. Child results retain
+User wire authority and use neutral Norn agent-result framing; content labels
+cannot impersonate System or Developer authority.
+
+For public provider-threaded Responses, source-System fragments and current
+Norn-owned runtime policy are projected through top-level `instructions` on
+every request. The
+[Responses create reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
+describes `instructions` as inserting a system or developer message, while the
+[text guide](https://developers.openai.com/api/docs/guides/text#message-roles-and-instruction-following)
+treats it as roughly equivalent to Developer input. It is a request-local
+instruction channel, not an input item with a literal role discriminator; Norn
+keeps source authority in its typed plan rather than inferring it from that
+field.
+
+The stable non-System Developer/User seed is sent once per anchor. Trusted
+prompt-command output joins that seed at Developer authority: an unchanged
+value is inherited, while a changed value cuts the anchor and requires replay.
+A System-only or Norn-owned runtime-policy change preserves the anchor and
+takes effect through current instructions. A required cut that cannot replay
+reasoning fails typed before another dispatch.
+
+Runtime MCP descriptions are wire tool-definition data only. They are not
+duplicated into System, Developer, or User prompt messages. Norn-owned runtime
+policy may describe the hosted tool surface but cannot promote server-supplied
+MCP description prose.
+
+Stateless transports receive one cache-friendly trailing Developer
+compatibility message containing Norn-owned runtime policy followed by trusted
+prompt-command output. OpenAI-compatible Chat preserves native Developer by
+default; a provider-pinned incapable backend must reject or explicitly
+downgrade Developer to User. Claude has no Developer message channel: only
+source-System text reaches `--system-prompt`, while Developer text is lowered
+into ordinary positional prompt input. No compatibility path promotes
+Developer to System.
+
+Prompt commands are resolved once per request. An entry is reusable only when
+the command text, configured positive TTL, and working directory all match; its
+absolute completion-time deadline never slides on a hit, and no TTL means no
+cache. Setup is cancellation-shielded through the durable accepted-input commit,
+while elapsed setup time is charged to the configured step budget and can leave
+no provider/tool time. A proven prompt or wake transfer leaves its outer retry
+queue immediately after durable append and before cancellable notification
+hooks. When no coordination or pending-input store exists, an early setup error
+cannot make the same durability guarantee and is reported as a scoped residual.
+
+This ruling is implemented by frozen source
+`4fa6c6756ed497a002b4281f51cbb14f7bd7a3eb` (tree
+`c0d9f69bb5283184432862016c1212644f7088c2`) as an implementation candidate
+pending focused Gate D. It does not complete the broader
+volatile/concurrent-agent matrices, authenticated D7/P9 live-wire conformance,
+or whole-P5 acceptance.

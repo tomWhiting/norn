@@ -29,7 +29,11 @@ Three modules have independent frontmatter splitters: `profile/loader.rs`, `rule
 1. **Context is what the agent always knows. Rules are what it learns when it touches something specific.** The boundary is activation: context files are always-on, rules are conditional.
 2. **Claude Code compatibility for rules.** A rule file with `globs:` frontmatter should work when dropped into `.norn/rules/`.
 3. **Mtime-based staleness, not file watchers.** Simple stat checks per iteration. No external dependencies.
-4. **Additive layering.** All applicable context files concatenate. No override mechanism — user-level provides defaults, project-level provides specifics, nested directories provide local additions.
+4. **Additive layering.** All applicable context fragments remain present in
+   deterministic order; no layer overrides another. The canonical plan keeps
+   their source-derived types, while only the compatibility view concatenates
+   their text. Operator/home context provides defaults, project context adds
+   repository-specific guidance, and nested directories add local guidance.
 
 ### Prerequisite: Shared Frontmatter Utility
 
@@ -43,38 +47,57 @@ A `crates/norn/src/util/frontmatter.rs` provides a single `split_frontmatter()` 
 
 #### D1: NORN.md discovery
 
-Context files are discovered from a fixed set of locations, loaded in order, and concatenated.
+Context files are discovered from a fixed set of locations and loaded in a
+deterministic order. Their canonical representation is an ordered set of typed,
+source-addressed fragments. Concatenation exists only as a flattened
+compatibility/introspection view; it is not the provider authority model.
 
 **Always-on context (loaded at session start):**
 
 1. `~/.norn/NORN.md` — user-level conventions (applies to all projects)
 2. `{cwd}/NORN.md` — project-root conventions (committed to repo)
 
-Both are loaded if they exist. User-level first, project-root second (project-root content appears later, giving it higher effective precedence since the model reads it more recently).
+Both are loaded if they exist. User-level content is trusted operator guidance
+at Developer authority; project-root content is repository-controlled User
+input. The typed prompt plan orders the operator layer before the repository
+layer without flattening either into System authority.
 
 **Lazy-activated context (loaded on directory access):**
 
 3. `{subdir}/NORN.md` — subdirectory conventions (activated when the agent reads a file in that directory)
 
-Nested files are not loaded at startup. They activate when a `RuntimeEvent::PathChanged` occurs for a file in a directory (or descendant) that contains a `NORN.md`. Once activated, the content is delivered as a rule injection via `DeliveryMode::SystemContextAppend` — it persists in context until compacted, and re-activates on next directory access.
+Nested files are not loaded at startup. They activate when a
+`RuntimeEvent::PathChanged` occurs for a file in a directory (or descendant)
+that contains a `NORN.md`. Once activated, the content is persisted as a
+sourced workspace rule injection and reaches the provider once at User
+authority. The legacy `DeliveryMode::SystemContextAppend` name selects its
+lifecycle, not its authority. It re-activates after compaction on the next
+matching directory access.
 
 #### D2: Context file loading and injection
 
-Always-on context files are read at session start. Their content is appended to the base system instruction (`system_sections[0]`), after the Norn base prompt and profile instructions, before the skill catalog listing.
+Always-on context files are read at session start and installed into the
+source-addressed stable `PromptPlan`. The provider prefix order is:
 
-The full layering order for `system_sections[0]`:
+1. Norn compiled product policy at System authority.
+2. Compiled skill-catalog policy at System authority.
+3. Trusted operator profile, `~/.norn/NORN.md`, and operator skill metadata at
+   Developer authority.
+4. Workspace profile, project-root `NORN.md`, and workspace skill metadata at
+   User authority.
 
-1. Norn base prompt (from `build_system_prompt()`)
-2. Profile `system_instructions`
-3. User-level `NORN.md` (`~/.norn/NORN.md`)
-4. Project-root `NORN.md` (`{cwd}/NORN.md`)
-5. Skill catalog listing (from norn-skills D3)
-
-This is byte-stable for prefix caching. Dynamic content (rule injections, prompt commands, nested NORN.md) goes in `system_sections[1..]`.
+Each source remains a distinct provider-neutral message. The flattened
+`system_sections[0]` value is a compatibility/introspection view and is not the
+root provider assembly path. Sourced rule injections are durable conversation
+messages. Prompt-command output uses a separate volatile Developer channel.
 
 #### D3: Mtime-based staleness detection
 
-At the start of each iteration (after `clear_dynamic_sections()`, before `evaluate_prompt_commands()`), stat the always-on context files. If any file's mtime differs from the last-seen mtime, re-read the file and rebuild `system_sections[0]`.
+At each request boundary (after `clear_dynamic_sections()`, before prompt-command
+resolution), stat the always-on context files. If any file's mtime differs from
+the last-seen mtime, re-read it and replace its exact source-addressed fragment
+in the stable `PromptPlan`. The compatibility base view is rebuilt at the same
+boundary.
 
 Cost: two `stat()` syscalls per iteration (user-level and project-root). If neither exists, the stat returns `NotFound` immediately.
 
@@ -128,7 +151,9 @@ Claude Code format mapping:
 | (implicit) | `DeliveryMode::SystemContextAppend` |
 | (implicit) | `TriggerTiming::After` |
 
-A rule file with only `globs: "**/*.rs"` is mapped to a single PathGlob trigger with SystemContextAppend delivery and After timing — matching Claude Code's behavior where rules persist once activated.
+A rule file with only `globs: "**/*.rs"` is mapped to a single PathGlob trigger
+with SystemContextAppend lifecycle and After timing. Workspace provenance still
+fixes its wire authority as User.
 
 The `paths:` key is treated as an alias for `globs:` (Claude Code uses both interchangeably in different contexts).
 
@@ -136,39 +161,37 @@ The `paths:` key is treated as an alias for `globs:` (Claude Code uses both inte
 
 #### D7: Context layering order
 
-The complete system prompt assembly:
+The complete provider prompt assembly is source-typed:
 
-**Base instruction (`system_sections[0]`, cached):**
+| Layer | Authority | Lifecycle |
+|-------|-----------|-----------|
+| Norn base and compiled skill-use policy | System | Stable; current Responses instructions |
+| Trusted operator profile, user NORN.md, operator skill metadata | Developer | Stable seed |
+| Workspace profile, project NORN.md, workspace skill metadata | User | Stable seed |
+| Environment, collaboration mode, hosted-surface framing | Norn-owned request policy | Refreshed per request |
+| Prompt-command output | Developer | Resolved once per request; an exact live cache entry may supply the value; seed-bound when threaded |
+| Operator/workspace rules and nested NORN.md | Developer/User from origin | Durable sourced message on trigger |
 
-| Layer | Source | When loaded |
-|-------|--------|-------------|
-| Norn base prompt | `build_system_prompt()` | Session start |
-| Profile instructions | `Profile.system_instructions` | Session start |
-| User NORN.md | `~/.norn/NORN.md` | Session start |
-| Project NORN.md | `{cwd}/NORN.md` | Session start |
-| Skill catalog | `SkillCatalog.system_prompt_listing()` | Session start |
-
-**Dynamic sections (`system_sections[1..]`, cleared per iteration):**
-
-| Layer | Source | When loaded |
-|-------|--------|-------------|
-| Prompt commands | Profile `PromptCommand` shell output | Each iteration |
-| Active rule injections | `RuleEngine.process_event()` | On trigger match |
-| Nested NORN.md | Synthetic rules from D4 | On directory access |
-| Active skill body | SkillTool invocation | On skill invocation |
-
-Dynamic sections are cleared at the top of each iteration (`clear_dynamic_sections()`). Rules re-fire based on the presence set. Nested NORN.md files re-activate via their synthetic rules.
+`clear_dynamic_sections()` removes the per-request Norn-owned and
+prompt-command channels. It does not remove stable typed fragments or durable
+rule messages. Nested NORN.md files re-activate through their synthetic rules
+after the prior durable message leaves the prompt view.
 
 #### D8: Compaction survival
 
 When auto-compaction fires:
 
-- **Always-on context files** survive — they are part of `system_sections[0]` which is not compacted.
-- **Active rules** (including nested NORN.md synthetic rules) are lost from dynamic sections but re-activate on the next trigger match via the rules engine's presence tracking.
-- **Skill catalog** survives — it is part of `system_sections[0]`.
-- **Prompt commands** re-execute on the next iteration.
+- **Always-on context files** survive as stable source-addressed fragments.
+- **Active rules** (including nested NORN.md synthetic rules) persist as sourced
+  events; once compacted out of the prompt view they become eligible to
+  re-activate on the next trigger match.
+- **Skill catalog** survives as compiled/operator/workspace typed fragments.
+- **Prompt commands** resolve again on the next request. A command with no TTL
+  executes; an explicitly TTL-cached command may reuse a still-live entry only
+  when its command text, TTL, and working directory still match.
 
-No special compaction logic is needed. The existing split-prompt architecture (base in `[0]`, dynamic in `[1..]`) handles this naturally.
+Compaction preserves source authority when reconstructing every surviving
+fragment or event.
 
 ### Group 4: Wiring
 
@@ -177,7 +200,7 @@ No special compaction logic is needed. The existing split-prompt architecture (b
 During `build_runtime`:
 
 1. Read `~/.norn/NORN.md` and `{cwd}/NORN.md` if they exist.
-2. Concatenate their content and append to the base system instruction.
+2. Install them as distinct Developer and User fragments in the stable plan.
 3. Record initial mtime for both files for staleness detection (D3).
 4. Scan rule directories (D5) and load all rules into the `RuleEngine`.
 5. Start with no synthetic rules for nested NORN.md — they are created lazily (D4).
@@ -200,9 +223,10 @@ G4. Nested `NORN.md` files activate lazily on directory access via synthetic rul
 
 G5. Context staleness detected via mtime stat checks per iteration.
 
-G6. Context layering is deterministic: base instruction is byte-stable for prefix caching; dynamic sections clear and rebuild each iteration.
+G6. Context layering is deterministic: stable fragments retain source-derived
+authority, while per-request sections clear and rebuild each iteration.
 
-G7. No new compaction logic needed — split-prompt architecture handles survival naturally.
+G7. Compaction and resume reconstruct sourced context at the same authority.
 
 ## Non-Goals
 
@@ -231,7 +255,7 @@ crates/norn/
 │   ├── profile/
 │   │   └── loader.rs           — MODIFY: use util::frontmatter (D0)
 │   └── loop/
-│       └── loop_context.rs     — MODIFY: mtime check integration (D3), context in base instruction (D2)
+│       └── loop_context.rs     — MODIFY: mtime integration and typed prompt plan (D2, D3)
 
 crates/norn-cli/
 ├── src/
@@ -275,8 +299,10 @@ crates/norn-cli/
 - CO1: No `.unwrap()` or `.expect()` in library code.
 - CO2: All files under 500 lines of code (excluding tests, comments, whitespace).
 - CO3: Shared frontmatter utility replaces all existing implementations.
-- CO4: Always-on context files are part of `system_sections[0]` (cached, byte-stable).
-- CO5: Dynamic context (rules, nested NORN.md, prompt commands) uses `system_sections[1..]`.
+- CO4: Always-on context files retain separate source-derived authority in the
+  stable prompt plan; the flattened base is compatibility-only.
+- CO5: Norn-owned volatile policy and prompt-command output use separate
+  request-local channels; rules and nested NORN.md persist as sourced events.
 - CO6: Mtime-based staleness detection — stat check per iteration, no file watchers.
 - CO7: Claude Code rule format detection by frontmatter key presence (`triggers:` vs `globs:`).
 - CO8: Nested NORN.md files are synthetic rules — they use the rules engine, not a parallel system.
@@ -310,10 +336,13 @@ APIs remain trusted-input-only for embedders; they are not safe entrypoints for 
 repository-controlled root. Workspace text remains unbounded, pending an
 owner-approved streaming/size design rather than an arbitrary limit.
 
-The role contract remains open under `ROLE-01`. Root project `NORN.md` currently
-reaches top-level System instructions, while nested context and rules reach the
-managed Developer tail and workspace profiles can become a child base prompt.
-P0 closes command authority but does not silently change this static guidance.
-P5 must ratify one source-to-wire-role matrix so moving repository prose between
-files cannot raise its authority; product System policy, trusted operator policy,
-repository context, and user input must remain distinct.
+The D8 role contract derives authority from source rather than delivery shape.
+Compiled product/embedder/child/fork policy, built-in variants, and compiled
+skill-catalog policy are System. Trusted operator profiles and overrides,
+`~/.norn/NORN.md`, operator rules and skills, and trusted prompt-command output
+are Developer. Repository context, workspace profiles/rules/skills, configured
+variants, human task/delegation/steering text, and child output are User.
+Runtime Norn policy uses the request-local Responses `instructions` channel,
+trusted prompt-command output is Developer seed material, and runtime MCP
+descriptions remain only in live tool definitions. Moving repository prose
+between supported workspace files therefore cannot raise its authority.

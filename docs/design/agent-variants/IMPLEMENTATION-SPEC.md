@@ -182,10 +182,12 @@ Resolution (typed failures via `ToolError`, messages name exact config keys):
    published at every assembly site from the actual launch model. NEVER from
    re-read settings, NEVER a literal. If no source exists → typed error.
    Same rule with no variant at all: `args.model` else parent model.
-5. System prompt: variant prompt present → child base =
-   `build_child_system_prompt(&variant.prompt, &task)` (new helper in
-   `system_prompt/` — variant prompt block, then the task). No variant →
-   existing behavior (profile / task literal).
+5. Prompt plan: every child receives compiled child-agent policy at System
+   authority and the task separately at User authority. A built-in variant
+   prompt is an additional System fragment; a configured variant prompt is an
+   additional User fragment. On the profile path, trusted operator-profile
+   guidance is Developer and workspace-profile guidance is User. No variant or
+   profile leaves only the compiled child policy in the stable plan.
 6. `reasoning_effort`: thread `variant.reasoning_effort` into the child
    launch → the child loop's provider requests. **Owner ruling 2026-07-07
    ("reasoning effort inherited"):** resolution is variant effort → (a
@@ -246,30 +248,25 @@ your position (path address), your requirements contract (the slugs, which
 are already schema-forced), and your delegation rights — remaining depth,
 max concurrent children, messaging scope — because "a limit an agent doesn't
 know about is an assassination" (brief R4 verbatim; tell the child its
-budget). `combine_system_instruction` keeps its shape but takes the built
-preamble. Golden-file test: render with fixed inputs, `assert_eq!` against
+budget). D8 installs the built preamble as a `ForkAgentPolicy` System fragment
+in the inherited `ParentPromptPlan`; `combine_system_instruction` remains only
+as a legacy embedder helper. Golden-file test: render with fixed inputs, `assert_eq!` against
 `testdata/fork_preamble.golden.md` checked into the repo (no snapshot crate;
 plain file + assert).
 
-## 6. Wire ParentSystemInstruction (R5 — WIRE, do not delete)
+## 6. Wire ParentPromptPlan (R5 — D8 completion)
 
-Evidence: consumer and child-forwarding already exist and are correct; only
-the publish end is missing. Deleting would orphan R4's parent-context
-inheritance and re-create the gap later. Wire it:
+The live root/spawn/fork path publishes a source-aware `ParentPromptPlan` that
+preserves every inherited System/Developer/User fragment. Root assembly
+captures its installed stable plan; spawn publishes the child's own plan; fork
+adds its compiled fork preamble to the inherited plan and publishes that child
+plan for the next generation.
 
-- Root: after `install_system_prompt` sets `loop_context.base_prefix`
-  (AgentBuilder::build path), publish
-  `ParentSystemInstruction::new(<the agent's base system instruction>)` on
-  the agent's ToolContext.
-- Spawn child: publish the CHILD's own base instruction on the child ctx in
-  `build_child_context` (site passes it in).
-- Fork child: publish the fork child's own combined base on the child ctx —
-  REPLACING the blind parent-forward in `fork_context.rs:161-163` (the
-  forwarded value is the grandparent's base; the correct value for the next
-  fork level is this child's own base).
-
-Semantics: every agent's ctx carries ITS OWN base system instruction under
-this extension; `fork` reads it to give the fork child the forker's context.
+`ParentSystemInstruction` remains an input-only bridge for legacy embedders.
+When no typed plan is present, fork maps that exact legacy text to
+`EmbedderPolicy` System authority and immediately continues on the typed path.
+D8-assembled agents never publish the legacy extension, so a flattened
+Developer/User plan cannot be re-armed as System authority.
 
 ## 7. Child context-window validation (closes the deferred gap)
 
@@ -317,8 +314,9 @@ observability-only there; do NOT silently pretend variant.tools applies).
 - Fork preamble golden test: contract slugs + depth budget present.
 - Child window validation: oversized explicit window on a child rejected
   (mirror `oversized_explicit_window_is_rejected_at_build`).
-- ParentSystemInstruction: root ctx carries it after build; fork child's ctx
-  carries the CHILD's base (not the grandparent's).
+- ParentPromptPlan: root and child contexts carry their own source-aware stable
+  plans; fork inheritance preserves each source and authority without
+  publishing `ParentSystemInstruction`.
 
 ## 10. File budget
 
@@ -340,6 +338,7 @@ Variant/profile resolution must also keep model-selected authority separate from
 operator selection. A profile selected through a model-facing spawn request is
 rejected when it carries `prompt_commands`, including a trusted user profile.
 This is an intentional confused-deputy closure, not a same-name fallback. Static
-profile/variant prompt text remains available subject to the open `ROLE-01`
-source-to-wire-role decision; P0 does not promote repository text merely because
-it is attached to a variant.
+profile/variant prompt text remains available. D8 later resolved `ROLE-01`:
+compiled built-in variants are System authority, while every prompt supplied
+through configured variant settings is User authority. A configured prompt is
+never promoted merely because its settings layer or variant name is trusted.

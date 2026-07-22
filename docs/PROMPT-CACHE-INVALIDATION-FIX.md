@@ -1,157 +1,172 @@
-# Prompt-Cache Invalidation in the Per-Iteration Prompt
+# Prompt-Cache Invalidation in Per-Iteration Context
 
-**Status:** implemented 2026-07-09. The managed dynamic-context Developer
-message is now attached at the tail of every request (after history, after the
-new user input) and re-synced fresh each iteration; the System message plus
-history form one stable, fully-cacheable prefix. See
-`crates/norn/src/loop/dev_context.rs` and `runner/prompt.rs::build_request`.
-**Author:** Frodo (design + source verification). **Date:** 2026-07-09.
-**Provenance:** surfaced by an external adopter (brup/ANKS, running norn headless via
-aion stacked-dev, gpt-5.5 / ChatGPT-auth) with measured token telemetry; root cause
-confirmed against norn `main` HEAD by reading the assembly path directly.
+**Status:** the original placement correction was implemented 2026-07-09. The
+typed D8 reconciliation is frozen as an implementation candidate at source
+`4fa6c6756ed497a002b4281f51cbb14f7bd7a3eb` (tree
+`c0d9f69bb5283184432862016c1212644f7088c2`) and remains pending focused Gate D.
+**Author:** Frodo (original diagnosis and design).
 
----
+The original defect was reported by an external adopter running Norn headless
+through Aion. The correction keeps volatile runtime context out of the stable
+prefix while preserving current request values; prompt-command output follows
+an explicitly configured cache TTL when present. D8 subsequently made the
+transport explicit:
 
-## Summary
+- Stateless providers append one compatibility Developer message at the
+  request tail, containing Norn-owned runtime policy followed by trusted
+  prompt-command output.
+- Provider-threaded Responses sends Norn-owned runtime policy through current
+  request-local `instructions`; the wire field is an instruction channel, not
+  a literal message-role discriminator, and is not stored as an input item.
+- Trusted prompt-command output is an explicit Developer seed item on threaded
+  requests. An unchanged value is inherited; a changed value cuts the anchor
+  and is sent once with the replacement seed.
+- Stable product, operator, repository, and human content retains its typed
+  System/Developer/User authority rather than being flattened into one System
+  message.
 
-norn re-syncs a single managed **dynamic-context Developer message** at **`messages[1]`**
-(i.e. *ahead of the conversation history*) on every loop iteration. That message contains
-a `# Environment` section whose `Time:` field is a second-resolution wall-clock stamp, so
-its bytes change **every turn**. Because the provider prefix cache extends
-`messages[0] → messages[1] → messages[2..]` in order, a change at `messages[1]`
-invalidates the cache for *everything after it* — i.e. the entire growing history. The
-cacheable prefix collapses to just the static System message; all of history is re-billed
-uncached, every turn.
-
-**Measured impact (ANKS, ~1 week):** ~554M input tokens across 147 sessions, prompt-cache
-hit rate ~13% (agent loops normally sit >90%), output only ~0.5% of input (so it is *not*
-reasoning cost). `cache_read` pinned at the static system+tools prefix (~15.5k tokens) for
-entire 150-turn sessions while input climbed to ~163k/turn. Estimated amplification vs. a
-stable prefix: **~40×**. This affects everything that runs agents through norn — the
-interactive dev loop and the aion dispatch / stacked-dev workflows alike.
-
-This is **not fundamentally an "environment" bug.** The timestamp is merely the field that
-changes most reliably. Any dynamic section in that message (collaboration mode, context
-rules, prompt-command output) busts the same cache whenever *it* changes. The correct fix
-addresses the whole class by fixing **position**, not any single field.
+See `crates/norn/src/loop/dev_context.rs`,
+`crates/norn/src/loop/runner/prompt.rs`, and
+`crates/norn/src/system_prompt/plan.rs`.
 
 ---
 
-## Full accounting — what goes into the prompt each turn
+## Original defect
 
-Per-iteration message layout sent to the provider (assembled in
-`crates/norn/src/loop/runner/prompt.rs::build_request`):
+Before the 2026-07-09 correction, Norn rewrote one managed dynamic-context
+Developer message near the start of the message list on every iteration. That
+message contained a `# Environment` section with a second-resolution clock, so
+its bytes changed every turn. Because provider prompt caches cover only a
+contiguous prefix, the change invalidated the cache for the complete growing
+history after that message.
 
-| # | Message | Contents | Volatility | Cache effect |
-|---|---------|----------|------------|--------------|
-| `messages[0]` | **System** | base prompt + profile instructions + always-on `NORN.md` + `# Available Skills` catalog (`base_prefix` + loader + `base_suffix`) | **Static.** Rebuilt only when `NORN.md` changes (`refresh_context_if_stale` → `rebuild_base_section`). Deliberately kept byte-stable and *not* variable-expanded, explicitly "for prefix caching." | Correct — cacheable. |
-| `messages[1]` | **Managed dynamic-context Developer message** (`dev_message.sync(dynamic_context())`) | Concatenation of all dynamic sections, re-synced every iteration: `# Environment`; `# Collaboration Mode`; materialized SystemContextAppend rules; hosted-tools prompt section; prompt-command stdout; Before-timing rule injections. | **Volatile.** `# Environment` `Time:` changes **every turn**; git branch / cwd change occasionally; mode / rules / prompt-commands change intermittently. | **The bug.** Sits ahead of history; any change invalidates the cache for all of history. |
-| `messages[2..]` | **Conversation history** | user / assistant / tool messages; compaction-summary Developer messages (which live here permanently and are never overwritten). | Append-only. | Would be cacheable *if nothing before it changed* — but `messages[1]` always does. |
+The timestamp was only the most reliable trigger. Collaboration mode,
+prompt-command output, hosted-tool framing, and any other volatile managed
+section caused the same class of invalidation. The correction therefore changed
+the position/projection of the complete managed container rather than freezing
+or special-casing an individual field.
 
-Dynamic-section contents of `messages[1]`, with the specific volatility:
+**Reported impact:** approximately 554 million input tokens across 147 sessions,
+with a prompt-cache hit rate near 13 percent where agent loops normally exceeded
+90 percent. `cache_read` remained pinned near the static prompt size while the
+per-turn input grew with a roughly 150-turn history. The raw diagnostic corpus
+remains with the reporter.
 
-- **`# Environment`** (`system_prompt/environment.rs::format_environment_section`): Working
-  directory, Platform, Shell, **Time (`Utc::now()`, second resolution — `environment.rs:53`)**,
-  Git branch (read from `.git/HEAD` each call), Session id, Model. → time busts every turn;
-  branch/cwd bust on switch/`cd`.
-- **`# Collaboration Mode`** (`inject_collaboration_mode`): changeable mid-session.
-- **Materialized context rules** (`materialize_system_context_rules`): re-derived from
-  persisted `RuleInjection` events every iteration; change as rules fire / compact out.
-- **Hosted-tools section** (`hosted_tools_prompt_section`): recomputed each iteration from
-  live provider capabilities; effectively static unless the provider rebinds.
-- **Prompt-command stdout** (`evaluate_prompt_commands`): whatever the configured commands emit.
+## Current request layout
 
-Iteration assembly order (`runner/prompt.rs`): `clear_dynamic_sections` → (stale?
-`rebuild_base_section`) → `inject_environment_section` → `inject_collaboration_mode` →
-`materialize_system_context_rules` → hosted-tools → `evaluate_prompt_commands` →
-Before-injections → **`dev_message.sync(...)`** (writes `messages[1]`).
+The stable prompt is an ordered `PromptPlan`; it is not one authority-flattened
+string:
 
----
+| Stable source | Authority | Cache/anchor treatment |
+|---|---|---|
+| Compiled product, child, fork, and built-in policy | System | Projected to current Responses instructions; stable on stateless transports |
+| Trusted operator profile, user `~/.norn/NORN.md`, operator rules/skills | Developer | Included in the stable non-System seed and sent once per threaded anchor |
+| Repository context, workspace profile/rules/skills, configured variants, human task | User | Included in the stable non-System seed or durable turn history |
 
-## Root cause (precise)
+Persisted user, assistant, tool, compaction, and sourced-rule events follow the
+stable prefix. Rule delivery formatting does not choose authority: operator
+rules reconstruct as Developer, workspace rules as User, and readable
+originless pre-D8 rows reconstruct conservatively as User.
 
-The team already did the two hard, correct things: (1) all volatile content is **isolated**
-into a single managed Developer message rather than scattered through the System message, and
-(2) `messages[0]` is explicitly held byte-stable for prefix caching. The remaining defect is
-purely **placement**: that one dynamic message is written at **index 1, ahead of the
-history**, instead of after it. The provider (OpenAI automatic prefix caching here — the
-lever is *ordering*, there are no manual cache breakpoints) can only cache a contiguous
-prefix; the first byte that changes ends the cacheable region. With volatile content at
-index 1, the cacheable region can never extend past index 1 into history.
+Volatile request context is assembled before stable-seed reconciliation and
+preflight, then split by authority:
 
----
+- `# Environment`, including current time, working directory, branch, session,
+  model, platform, and shell.
+- `# Collaboration Mode`.
+- Norn-owned hosted-tool surface framing selected from current provider
+  capabilities. Runtime MCP descriptions themselves remain only in live tool
+  definitions.
+- Trusted prompt-command output at Developer authority.
 
-## Options considered
+Sourced rule injections are no longer materialized into this volatile block.
+They are durable messages with origin-derived authority.
 
-1. **Freeze the environment block at session start** — *rejected.* It would make branch /
-   cwd / time read as current when they are not (stale-implying-correct), which is worse than
-   a cache miss. (Owner's explicit objection; correct.)
-2. **Move just the `# Environment` block after history** — works, but only fixes one section;
-   collaboration-mode / rules / prompt-commands would each still bust the cache when they
-   change. Partial.
-3. **Coarsen the timestamp (date-only)** — *rejected.* Only reduces frequency; still busts at
-   every rollover and does nothing for the other volatile sections. A band-aid.
-4. **Split the block: static fields → System, volatile fields → tail** — valid but more
-   surgery than needed, given the dynamic content is already isolated in one message.
+Prompt commands are resolved exactly once while preparing each request. A
+command without `cache_ttl` always executes and cannot populate the cache. A
+cache hit requires the same command name, exact command text, configured TTL,
+and working directory. Its absolute deadline is set after the successful
+execution; hits do not extend that deadline. If the deadline cannot be
+represented on the platform clock, Norn uses the fresh output for that request
+but does not cache it.
 
-## Recommended fix — move the managed dynamic-context Developer message to the tail
+### Stateless providers
 
-Relocate the **entire** managed dynamic-context Developer message from `messages[1]` to the
-**tail** of the message list — the last message before the model responds, i.e. after the
-conversation history — while continuing to re-sync it fresh every iteration.
+`ManagedDevMessage` detaches the prior volatile tail before token estimation and
+in-flight compaction, then attaches the freshly assembled Developer message at
+the tail. The stable typed prefix plus persisted history remains a contiguous
+cacheable prefix; only the final volatile message changes.
 
-Result:
-- `messages[0]` (System, stable) **+** history become one clean, fully-cacheable prefix.
-- The dynamic message is still regenerated every turn — **nothing is frozen, nothing goes
-  stale** — but now its per-turn change invalidates only itself (a small message at the end),
-  not the history.
-- Fixes the **entire class** at once (environment, collaboration mode, rules, prompt-command
-  output) by fixing the container's position, not by patching individual fields.
-- Reuses the existing machinery: `dev_message.sync` already tracks its own slot; this changes
-  **where** that tracked slot sits, not what it contains.
+### Provider-threaded Responses
 
-This is the smallest change that closes the whole class while preserving full per-turn
-freshness.
+Norn-owned volatile policy is not appended to `input`. It is projected to
+top-level `instructions` on every request because `previous_response_id` does
+not carry prior top-level instructions forward. The
+[Responses create reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
+describes this field as inserting a system or developer message, while the
+[text guide](https://developers.openai.com/api/docs/guides/text#message-roles-and-instruction-following)
+treats it as roughly equivalent to Developer input. Norn therefore records the
+source authority separately rather than claiming the field has a literal role.
 
----
+The stable non-System prompt seed, including current trusted prompt-command
+output, is sent once when an anchor is created and is bound into V2
+provider-state provenance. A stable Developer/User or prompt-command change
+cuts the anchor and requires full replay. Replay is not guaranteed: when the
+provider cannot safely replay the exact history, Norn fails with a typed error
+before persisting the new prompt or dispatching the request. A Norn-owned
+request-local policy change preserves the anchor and takes effect through
+current instructions.
 
-## What to validate before/while implementing
+## Why the alternatives were rejected
 
-1. **Behavioral (needs an eyes-on check).** Moving rules / collaboration-mode to the tail
-   means the model reads them as the *latest-turn* framing rather than up-front system
-   context. For instructions this is usually neutral-to-better (recency raises salience), but
-   confirm agent behavior is unchanged on a real run — especially anything that depends on
-   the rules/mode being positioned as system-level context.
-2. **Implementation.** The moved tracked slot must not collide with the compaction-summary
-   Developer messages that legitimately live *in* the history (`messages[2..]`) and must
-   never be overwritten. `dev_message.sync` already distinguishes its managed slot from
-   history Developer messages; the move must preserve that invariant while tracking the tail
-   position (which shifts as history grows).
-3. **Verify the win.** After the change, confirm `cache_read` grows with history across a
-   multi-turn session (rather than pinning at ~15.5k), and the per-turn input is no longer
-   re-billing the full history uncached. A before/after on the ANKS repro
-   (`cache_read` per turn over a ~20-turn session) is the acceptance test.
+1. Freezing the environment at session start would make mutable state appear
+   current when it was not.
+2. Moving only the timestamp would leave every other volatile section capable
+   of invalidating the history cache.
+3. Coarsening the timestamp would reduce frequency but retain the defect.
+4. Flattening repository/operator content into System would improve neither
+   cache behavior nor authority correctness and would violate D8 provenance.
 
----
+The implemented design isolates the complete volatile class and gives each
+transport an explicit compatible projection.
 
-## Key source references (norn `main` HEAD)
+## Invariants and evidence
 
-- `crates/norn/src/loop/runner/prompt.rs` — `build_request`: full per-iteration assembly;
-  `dev_message.sync(...)` writes the managed Developer message; comment at the sync notes
-  `messages[0]` is kept stable "for prefix caching."
-- `crates/norn/src/loop/runner/machine.rs` — the `dev_message` tracker ("managed
-  dynamic-context Developer message").
-- `crates/norn/src/loop/loop_context.rs` — `dynamic_context()` (collects the dynamic
-  sections), `clear_dynamic_sections()`, `inject_environment_section()`,
-  `inject_collaboration_mode()`, `materialize_system_context_rules()`, `append_system_section()`,
-  `base_system_instruction()` / `rebuild_base_section()` / `refresh_context_if_stale()`.
-- `crates/norn/src/system_prompt/environment.rs:31` — `format_environment_section`;
-  **`:53`** — the `Utc::now().format("%Y-%m-%dT%H:%M:%SZ")` per-turn timestamp.
+- Stable prompt fragments retain typed provenance through root, spawn, and
+  fork assembly.
+- A hot stable Developer/User change changes the seed, cuts a threaded anchor,
+  and requires replay; an unreplayable history fails typed before the new
+  prompt is persisted or sent. A stable System-only change does not cut the
+  anchor.
+- Prompt-command cache entries bind command name, exact command text, TTL, and
+  working directory to a non-sliding absolute deadline. No TTL disables
+  caching.
+- Managed stateless context is absent during preflight and exists at most once
+  at the request tail.
+- Threaded Norn-owned runtime policy is present at most once in current
+  top-level instructions and never becomes a durable provider input row.
+- Threaded prompt-command output appears once as Developer seed material;
+  unchanged output reuses the anchor and changed output cuts it.
+- Runtime-dynamic tool descriptions have one authority path: the live tool
+  definitions selected for that request.
+- Durable sourced rules reconstruct exactly once with the same authority live
+  and after resume.
+- A readable old originless System-append row makes an unbound pre-D8 anchor
+  ineligible, forcing one safe full replay before V2 threading resumes.
 
-## Appendix — measured evidence (ANKS, reported via exchange, 2026-07)
+Deterministic source-to-wire tests bind these structural guarantees. The
+reported adopter's credentialed before/after cache telemetry remains a separate
+live A/B evidence item; this document does not claim that external experiment
+has run.
 
-gpt-5.5, ChatGPT-auth, norn headless via aion stacked-dev. ~554M input tokens / 147 sessions
-/ ~1 week; ~13% prompt-cache hit (vs. >90% typical for agent loops); output ~0.5% of input;
-`cache_read` frozen at the static system+tools prefix (~15.5k) across full ~150-turn
-sessions while input grew to ~163k/turn; ≈40× amplification vs. a stable prefix. The raw
-16-file diagnostic JSON and box repro are available from the reporter on request.
+## Key source references
+
+- `crates/norn/src/loop/runner/prompt.rs`: per-request seed reconciliation,
+  managed-context assembly, and transport projection.
+- `crates/norn/src/loop/dev_context.rs`: stateless tail lifecycle.
+- `crates/norn/src/loop/conversation_state/request_state.rs`: anchor/seed
+  matching and threaded request slicing.
+- `crates/norn/src/system_prompt/authority.rs`: source-derived authority.
+- `crates/norn/src/system_prompt/plan.rs`: ordered typed stable prompt.
+- `crates/norn/src/session/conversion.rs`: durable event reconstruction.
+- `crates/norn/src/system_prompt/environment.rs`: current environment section.

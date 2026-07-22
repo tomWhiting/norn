@@ -143,6 +143,33 @@ Resolution order is:
 Exact bundled model ids therefore cannot be shadowed, while settings aliases
 can intentionally override a bundled short alias.
 
+## Prompt Authority Across Backends
+
+The D8 prompt-authority implementation is frozen as a candidate at source
+`4fa6c6756ed497a002b4281f51cbb14f7bd7a3eb` (tree
+`c0d9f69bb5283184432862016c1212644f7088c2`) and remains pending focused Gate D.
+Authority derives from provenance, not from a filename, settings precedence, or
+the transport field used to carry the text:
+
+| Authority | Sources |
+| --- | --- |
+| System | Compiled product/embedder/child/fork policy, built-in variants, and compiled skill-catalog policy |
+| Developer | Trusted operator profiles and overrides, home `~/.norn/NORN.md`, operator rules/skills, and trusted prompt-command output |
+| User | Project/workspace context, profiles, rules, and skills; configured variants; human task/delegation/steering text; child output |
+
+OpenAI Responses projects source-System fragments plus current Norn-owned
+runtime policy through request-local `instructions`. Stable Developer/User
+fragments and trusted prompt-command output form the provider seed. On a
+threaded request, a changed seed makes the old anchor ineligible and requires
+replay; if exact replay cannot be validated, Norn fails typed before persisting
+the new prompt or dispatching the request. Runtime MCP descriptions remain only
+in the live tool definitions.
+
+Chat Completions preserves Developer natively by default and provides explicit
+reject/lower policies for incompatible servers. Claude Runner sends only System
+fragments through `--system-prompt`; it explicitly lowers Developer fragments
+to ordinary positional input alongside User content, never to System.
+
 ## OpenAI-Compatible Chat Completions
 
 Use this backend when the target server implements the OpenAI Chat Completions
@@ -237,6 +264,21 @@ not expose as first-class flags:
 
 Norn rejects overrides for fields it owns for correctness, including `model`,
 `messages`, `tools`, `stream`, `functions`, and `function_call`.
+
+Norn emits trusted operator instructions with the Chat Completions `developer`
+role by default. For a legacy compatible backend, set
+`norn_developer_role_policy` in the selected `openai_chat_completions` object to
+one of:
+
+- `native` (default): preserve the `developer` role.
+- `reject`: fail locally when a Developer message is present.
+- `downgrade_to_user`: explicitly lower Developer messages to `user`; Norn
+  never silently promotes them to `system`.
+
+The Claude Runner adapter has no native Developer channel. It sends only System
+fragments through `--system-prompt`; Developer fragments are explicitly lowered
+into the ordinary positional prompt in their original order alongside User
+content. They are never dropped or promoted to System.
 
 ## OpenAI Responses
 
