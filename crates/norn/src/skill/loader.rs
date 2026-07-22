@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::SkillError;
 use crate::integration::diagnostics::{DiagnosticSeverity, NornDiagnostic};
+use crate::skill::origin::SkillOrigin;
 use crate::skill::types::SkillMetadata;
 use crate::util::frontmatter::{FrontmatterError, split_frontmatter};
 use crate::util::{
@@ -44,6 +45,8 @@ pub struct LoadedSkill {
     pub name: String,
     /// Path to the SKILL.md or `<name>.md` file on disk.
     pub path: PathBuf,
+    /// Trust provenance used to choose the model-facing prompt authority.
+    pub origin: SkillOrigin,
     /// Parsed frontmatter.
     pub metadata: SkillMetadata,
     /// Markdown body following the frontmatter, ownership-cloned from
@@ -264,7 +267,7 @@ pub fn load_skill_from_path(path: &Path) -> Result<LoadedSkill, Vec<NornDiagnost
         }
     };
 
-    parse_loaded_skill(path, &content)
+    parse_loaded_skill(path, &content, SkillOrigin::Operator)
 }
 
 /// Loads a repository-controlled skill without following symlinks.
@@ -291,7 +294,7 @@ pub(crate) fn load_workspace_skill_from_path(
             })?
             .content
     };
-    parse_loaded_skill(path, &content)
+    parse_loaded_skill(path, &content, SkillOrigin::Workspace)
 }
 
 fn acquire_skill_fs(
@@ -306,7 +309,11 @@ fn acquire_skill_fs(
     })
 }
 
-fn parse_loaded_skill(path: &Path, content: &str) -> Result<LoadedSkill, Vec<NornDiagnostic>> {
+fn parse_loaded_skill(
+    path: &Path,
+    content: &str,
+    origin: SkillOrigin,
+) -> Result<LoadedSkill, Vec<NornDiagnostic>> {
     let default_name = match infer_default_name(path) {
         Ok(name) => name,
         Err(reason) => {
@@ -314,7 +321,7 @@ fn parse_loaded_skill(path: &Path, content: &str) -> Result<LoadedSkill, Vec<Nor
         }
     };
 
-    parse_skill_content(path, &default_name, content)
+    parse_skill_content_with_origin(path, &default_name, content, origin)
 }
 
 /// Parse skill content already read from disk.
@@ -335,6 +342,15 @@ pub fn parse_skill_content(
     path: &Path,
     default_name: &str,
     content: &str,
+) -> Result<LoadedSkill, Vec<NornDiagnostic>> {
+    parse_skill_content_with_origin(path, default_name, content, SkillOrigin::Operator)
+}
+
+fn parse_skill_content_with_origin(
+    path: &Path,
+    default_name: &str,
+    content: &str,
+    origin: SkillOrigin,
 ) -> Result<LoadedSkill, Vec<NornDiagnostic>> {
     let (yaml, body) = match split_frontmatter(content) {
         Ok(parts) => parts,
@@ -420,6 +436,7 @@ pub fn parse_skill_content(
     Ok(LoadedSkill {
         name: resolved_name,
         path: path.to_path_buf(),
+        origin,
         metadata,
         body: body.to_owned(),
         diagnostics,
@@ -627,6 +644,21 @@ mod tests {
         let skill = load_skill_from_path(&path).expect("loads");
         assert_eq!(skill.name, "my-skill");
         assert_eq!(skill.body, "body\n");
+        assert_eq!(skill.origin, SkillOrigin::Operator);
+    }
+
+    #[test]
+    fn workspace_loader_assigns_workspace_origin() {
+        let root = tempdir().unwrap();
+        let path = root.path().join(".norn/skills/repository/SKILL.md");
+        write_file(&path, "---\ndescription: repository skill\n---\nbody\n");
+        let workspace_root = root
+            .path()
+            .canonicalize()
+            .expect("canonical workspace root");
+
+        let skill = load_workspace_skill_from_path(&workspace_root, &path).expect("loads");
+        assert_eq!(skill.origin, SkillOrigin::Workspace);
     }
 
     #[test]

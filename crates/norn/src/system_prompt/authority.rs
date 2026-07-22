@@ -53,8 +53,12 @@ pub enum PromptSource {
     UserContextFile,
     /// Project-root `NORN.md` instructions.
     ProjectContextFile,
-    /// Generated catalog describing available skills.
-    SkillCatalog,
+    /// Compiled guidance describing how the skill catalog is used.
+    SkillCatalogPolicy,
+    /// Skill metadata loaded from caller-trusted paths.
+    OperatorSkillCatalog,
+    /// Skill metadata loaded from inside the active workspace.
+    WorkspaceSkillCatalog,
     /// Compiled child and fork policy owned by the Norn runtime.
     ChildAgentPolicy,
     /// Request-local runtime guidance such as tool and environment context.
@@ -72,15 +76,18 @@ impl PromptSource {
     #[must_use]
     pub const fn authority(self) -> PromptAuthority {
         match self {
-            Self::ProductPolicy | Self::ChildAgentPolicy => PromptAuthority::System,
+            Self::ProductPolicy
+            | Self::SkillCatalogPolicy
+            | Self::ChildAgentPolicy
+            | Self::ManagedRuntimeContext => PromptAuthority::System,
             Self::OperatorProfile
             | Self::OperatorOverride
             | Self::UserContextFile
-            | Self::SkillCatalog
-            | Self::ManagedRuntimeContext
+            | Self::OperatorSkillCatalog
             | Self::OperatorRule => PromptAuthority::Developer,
             Self::WorkspaceProfile
             | Self::ProjectContextFile
+            | Self::WorkspaceSkillCatalog
             | Self::UserRequest
             | Self::WorkspaceRule => PromptAuthority::User,
         }
@@ -96,7 +103,9 @@ impl PromptSource {
             Self::OperatorOverride => "operator_override",
             Self::UserContextFile => "user_context_file",
             Self::ProjectContextFile => "project_context_file",
-            Self::SkillCatalog => "skill_catalog",
+            Self::SkillCatalogPolicy => "skill_catalog_policy",
+            Self::OperatorSkillCatalog => "operator_skill_catalog",
+            Self::WorkspaceSkillCatalog => "workspace_skill_catalog",
             Self::ChildAgentPolicy => "child_agent_policy",
             Self::ManagedRuntimeContext => "managed_runtime_context",
             Self::UserRequest => "user_request",
@@ -114,7 +123,9 @@ impl PromptSource {
             Self::OperatorOverride => 20,
             Self::UserContextFile => 30,
             Self::ProjectContextFile => 40,
-            Self::SkillCatalog => 50,
+            Self::SkillCatalogPolicy => 50,
+            Self::OperatorSkillCatalog => 51,
+            Self::WorkspaceSkillCatalog => 52,
             Self::OperatorRule => 60,
             Self::WorkspaceRule => 61,
             Self::ManagedRuntimeContext => 70,
@@ -137,11 +148,13 @@ mod tests {
             (PromptSource::OperatorOverride, PromptAuthority::Developer),
             (PromptSource::UserContextFile, PromptAuthority::Developer),
             (PromptSource::ProjectContextFile, PromptAuthority::User),
-            (PromptSource::SkillCatalog, PromptAuthority::Developer),
+            (PromptSource::SkillCatalogPolicy, PromptAuthority::System),
             (
-                PromptSource::ManagedRuntimeContext,
+                PromptSource::OperatorSkillCatalog,
                 PromptAuthority::Developer,
             ),
+            (PromptSource::WorkspaceSkillCatalog, PromptAuthority::User),
+            (PromptSource::ManagedRuntimeContext, PromptAuthority::System),
             (PromptSource::UserRequest, PromptAuthority::User),
             (PromptSource::OperatorRule, PromptAuthority::Developer),
             (PromptSource::WorkspaceRule, PromptAuthority::User),

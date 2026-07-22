@@ -26,6 +26,7 @@ pub mod result_channel;
 pub mod resume;
 pub(crate) mod session_open;
 pub mod session_spec;
+mod skill_prompt;
 pub mod variants;
 
 pub use crate::r#loop::config::TruncationKind;

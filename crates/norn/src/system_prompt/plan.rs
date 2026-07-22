@@ -135,7 +135,7 @@ mod tests {
         plan.set(PromptSource::ProductPolicy, "product");
         plan.set(PromptSource::UserContextFile, "user-home");
         plan.set(PromptSource::UserContextFile, "user-home-v2");
-        plan.set(PromptSource::SkillCatalog, "");
+        plan.set(PromptSource::SkillCatalogPolicy, "");
 
         let sources = plan
             .fragments()

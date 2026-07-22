@@ -25,10 +25,13 @@ use crate::r#loop::tokens::SimpleTokenEstimator;
 use crate::process::{ProcessManager, ProcessManagerGuard};
 use crate::session::context_edit::ContextEdits;
 use crate::session::store::EventStore;
-use crate::skill::SkillCatalog;
 use crate::tool::context::{SessionId, ToolContext};
 use crate::tool::registry::ToolRegistry;
 use crate::tools::agent::{AgentModel, AgentWakeRegistry};
+
+pub(crate) use super::skill_prompt::{
+    apply_skill_listing, child_skill_tool_available, install_child_skill_listing,
+};
 
 /// Publish the exact parent instruction, model, and effort inherited by child launches.
 pub(crate) fn publish_parent_execution_context(
@@ -45,88 +48,6 @@ pub(crate) fn publish_parent_execution_context(
         model: model.to_owned(),
         reasoning_effort: loop_context.reasoning_effort,
     }));
-}
-
-/// Whether the `skill` tool is on a child's resolved tool surface: it must
-/// be present (and un-gated) in the shared parent registry *and* admitted
-/// by the child's allow-list — the same two filters
-/// [`collect_function_definitions`](crate::provider::surface::collect_function_definitions)
-/// applies to the child's tool definitions. A child's system prompt
-/// advertises the skill listing only when this holds, so it never lists a
-/// skill the child has no tool to load.
-pub(crate) fn child_skill_tool_available(
-    parent_registry: &ToolRegistry,
-    allow_list: Option<&[String]>,
-) -> bool {
-    parent_registry.get("skill").is_some()
-        && allow_list.is_none_or(|list| list.iter().any(|name| name == "skill"))
-}
-
-/// Apply the skill-catalog "# Available Skills" listing to a loop context's
-/// `base_suffix` — the single shared mechanism the root builder and the
-/// child launch paths use for the listing's content and gating, so the
-/// section cannot drift between them.
-///
-/// Sets nothing when `skill_tool_available` is `false`: advertising a skill
-/// the agent has no tool to load would be a lie. The content is the
-/// catalog's filtered
-/// [`SkillCatalog::system_prompt_listing`], identical for root and
-/// children (an all-hidden or empty catalog yields an empty string, which
-/// the system-prompt build omits).
-pub(crate) fn apply_skill_listing(
-    loop_context: &mut LoopContext,
-    catalog: &SkillCatalog,
-    skill_tool_available: bool,
-) {
-    if skill_tool_available {
-        loop_context.base_suffix = catalog.system_prompt_listing();
-    }
-}
-
-/// Give a spawned/forked child the same "# Available Skills" listing the
-/// root gets.
-///
-/// Children build a bare [`LoopContext`] and never run the root's
-/// `install_system_prompt` — the step that materializes `base_suffix` into
-/// the system instruction — so this applies the shared listing via
-/// [`apply_skill_listing`], then folds the child's base instruction into
-/// `base_prefix` and rebuilds the base section, producing the same
-/// base-instruction-then-listing layering the root emits. A no-op when the
-/// resulting listing is empty (the skill tool is gated off for the child,
-/// or the catalog is empty / all-hidden), leaving the child's system
-/// instruction untouched.
-pub(crate) fn install_child_skill_listing(
-    loop_context: &mut LoopContext,
-    catalog: &SkillCatalog,
-    skill_tool_available: bool,
-) {
-    // An embedder-supplied parent base (`ParentSystemInstruction`) may
-    // legitimately already contain the listing — the root's
-    // `base_system_instruction()` includes its materialized `base_suffix`.
-    // Appending again would duplicate the section, so the exact generated
-    // listing text already present anywhere in the child's base is treated
-    // as installed.
-    let listing = catalog.system_prompt_listing();
-    if !listing.is_empty()
-        && loop_context
-            .system_sections
-            .first()
-            .is_some_and(|base| base.contains(&listing))
-    {
-        return;
-    }
-    apply_skill_listing(loop_context, catalog, skill_tool_available);
-    if loop_context.base_suffix.is_empty() {
-        return;
-    }
-    if loop_context.base_prefix.is_empty() {
-        loop_context.base_prefix = loop_context
-            .system_sections
-            .first()
-            .cloned()
-            .unwrap_or_default();
-    }
-    loop_context.rebuild_base_section();
 }
 
 /// Arm auto-compaction on a loop context and its effective agent-loop
@@ -481,6 +402,8 @@ pub(crate) fn arm_process_manager(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, unsafe_code)]
 mod tests {
     use super::*;
+    use crate::skill::SkillCatalog;
+    use crate::system_prompt::PromptSource;
 
     /// A `NORN_HOME` guard so a spawned process's spool lands under a temp dir,
     /// serialised via `#[serial]`.
@@ -1113,6 +1036,27 @@ mod tests {
             "the base instruction must precede the listing: {base}",
         );
 
+        install_child_skill_listing(&mut available, &catalog, false);
+        assert_eq!(available.base_system_instruction(), "You are a sub-agent.");
+        assert!(available.base_suffix.is_empty());
+        let remaining_sources = available
+            .stable_prompt_plan()
+            .expect("typed child plan remains installed")
+            .fragments()
+            .iter()
+            .map(crate::system_prompt::PromptFragment::source)
+            .collect::<Vec<_>>();
+        assert!(
+            [
+                PromptSource::SkillCatalogPolicy,
+                PromptSource::OperatorSkillCatalog,
+                PromptSource::WorkspaceSkillCatalog,
+            ]
+            .iter()
+            .all(|source| !remaining_sources.contains(source)),
+            "gating the skill tool must remove every inherited catalog source",
+        );
+
         let mut gated = LoopContext::new("You are a sub-agent.");
         install_child_skill_listing(&mut gated, &catalog, false);
         assert_eq!(
@@ -1130,19 +1074,33 @@ mod tests {
     #[test]
     fn install_child_skill_listing_does_not_duplicate_listing_bearing_base() {
         let dir = tempfile::tempdir().unwrap();
-        let skill_dir = dir.path().join("greet");
-        std::fs::create_dir(&skill_dir).unwrap();
+        let workspace = dir.path().join("workspace");
+        let skill_dir = workspace.join(".norn/skills/greet");
+        let operator_dir = dir.path().join("operator");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(operator_dir.join("trusted")).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
-            "---\ndescription: greet the user\n---\nbody",
+            "---\ndescription: WORKSPACE_CHILD_SKILL_SENTINEL\n---\nbody",
         )
         .unwrap();
-        let catalog = SkillCatalog::scan(&[dir.path().to_path_buf()]);
+        std::fs::write(
+            operator_dir.join("trusted/SKILL.md"),
+            "---\ndescription: OPERATOR_CHILD_SKILL_SENTINEL\n---\nbody",
+        )
+        .unwrap();
+        let workspace_root = workspace.canonicalize().expect("canonical workspace root");
+        let catalog = SkillCatalog::scan_with_workspace(
+            &[workspace.join(".norn/skills"), operator_dir],
+            &workspace_root,
+        );
 
         // A parent base that already carries the exact generated listing,
         // as a root's materialized instruction would.
-        let listing_bearing_base =
-            format!("You are the parent.\n\n{}", catalog.system_prompt_listing());
+        let listing_bearing_base = format!(
+            "You are the parent.\n\n{}",
+            catalog.prompt_sections().flattened_content()
+        );
         let mut child = LoopContext::new(&listing_bearing_base);
         install_child_skill_listing(&mut child, &catalog, true);
 
@@ -1154,10 +1112,42 @@ mod tests {
         );
         assert_eq!(
             base, listing_bearing_base,
-            "a listing-bearing base is left untouched",
+            "the flattened compatibility view stays byte-identical",
+        );
+        let plan = child
+            .stable_prompt_plan()
+            .expect("child listing installation must publish a typed plan");
+        let workspace_fragment = plan
+            .fragments()
+            .iter()
+            .find(|fragment| fragment.source() == PromptSource::WorkspaceSkillCatalog)
+            .expect("workspace skill fragment");
+        assert_eq!(
+            workspace_fragment.authority(),
+            crate::system_prompt::PromptAuthority::User
+        );
+        assert!(
+            plan.fragments()
+                .iter()
+                .filter(|fragment| {
+                    fragment.authority() != crate::system_prompt::PromptAuthority::User
+                })
+                .all(|fragment| !fragment
+                    .content()
+                    .contains("WORKSPACE_CHILD_SKILL_SENTINEL")),
+            "repository metadata must not survive in a higher-authority child fragment",
+        );
+        assert!(
+            plan.fragments()
+                .iter()
+                .find(|fragment| fragment.source() == PromptSource::OperatorSkillCatalog)
+                .is_some_and(|fragment| {
+                    fragment.content().contains("OPERATOR_CHILD_SKILL_SENTINEL")
+                        && fragment.authority() == crate::system_prompt::PromptAuthority::Developer
+                })
         );
 
-        // Idempotency of the guard itself: a second install is also a no-op.
+        // Re-installation updates the typed sources without duplicating text.
         install_child_skill_listing(&mut child, &catalog, true);
         assert_eq!(
             child
@@ -1167,5 +1157,15 @@ mod tests {
             1,
             "repeat installs must not duplicate the section",
         );
+
+        let legacy_listing_bearing_base =
+            format!("You are the parent.\n\n{}", catalog.system_prompt_listing());
+        let mut legacy_gated = LoopContext::new(&legacy_listing_bearing_base);
+        install_child_skill_listing(&mut legacy_gated, &catalog, false);
+        assert_eq!(
+            legacy_gated.base_system_instruction(),
+            "You are the parent."
+        );
+        assert!(legacy_gated.stable_prompt_plan().is_none());
     }
 }

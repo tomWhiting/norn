@@ -11,10 +11,10 @@
 use crate::r#loop::loop_context::LoopContext;
 use crate::provider::surface::reframe_prompt_entries;
 use crate::provider::tools::ProviderCapabilities;
+use crate::system_prompt::PromptSource;
 use crate::system_prompt::builder::{
     ExecutionMode, SystemPromptInputs, ToolPromptEntry, build_system_prompt,
 };
-use crate::system_prompt::{PromptPlan, PromptSource};
 use crate::tool::registry::ToolRegistry;
 
 /// Inputs for [`install_system_prompt`] beyond the loop context itself.
@@ -74,7 +74,7 @@ pub(crate) fn install_system_prompt(
         .into_iter()
         .next()
         .unwrap_or_default();
-    let mut plan = PromptPlan::new();
+    let mut plan = loop_context.stable_prompt_plan.take().unwrap_or_default();
     plan.set(PromptSource::ProductPolicy, base_prompt.clone());
 
     let mut compatibility_prefix = base_prompt;
@@ -98,8 +98,6 @@ pub(crate) fn install_system_prompt(
             append_prompt(&mut compatibility_prefix, &append);
         }
     }
-    plan.set(PromptSource::SkillCatalog, loop_context.base_suffix.clone());
-
     loop_context.base_prefix = compatibility_prefix;
     loop_context.install_stable_prompt_plan(plan);
 }
@@ -141,6 +139,8 @@ fn collect_tool_prompt_entries(registry: &ToolRegistry) -> Vec<ToolPromptEntry> 
     clippy::unnecessary_literal_bound
 )]
 mod tests {
+    use std::fs;
+
     use async_trait::async_trait;
 
     use super::{
@@ -151,6 +151,7 @@ mod tests {
     use crate::error::ToolError;
     use crate::r#loop::loop_context::LoopContext;
     use crate::provider::tools::ProviderCapabilities;
+    use crate::skill::SkillCatalog;
     use crate::system_prompt::builder::build_system_prompt;
     use crate::system_prompt::{PromptAuthority, PromptFragment, PromptSource};
     use crate::tool::context::ToolContext;
@@ -216,6 +217,27 @@ mod tests {
 
     #[test]
     fn install_preserves_root_fragment_sources_and_authorities() {
+        let root = tempfile::tempdir().expect("temporary skill root");
+        let operator_skills = root.path().join("operator-skills");
+        let workspace = root.path().join("workspace");
+        let workspace_skills = workspace.join(".norn/skills");
+        fs::create_dir_all(operator_skills.join("trusted")).expect("operator skill directory");
+        fs::create_dir_all(workspace_skills.join("repository")).expect("workspace skill directory");
+        fs::write(
+            operator_skills.join("trusted/SKILL.md"),
+            "---\ndescription: OPERATOR_SKILL_SENTINEL\n---\nbody\n",
+        )
+        .expect("operator skill");
+        fs::write(
+            workspace_skills.join("repository/SKILL.md"),
+            "---\ndescription: WORKSPACE_SKILL_SENTINEL\n---\nbody\n",
+        )
+        .expect("workspace skill");
+        let workspace_root = workspace.canonicalize().expect("canonical workspace root");
+        let catalog = SkillCatalog::scan_with_workspace(
+            &[workspace_skills, operator_skills],
+            &workspace_root,
+        );
         let registry = ToolRegistry::new();
         let mut context = LoopContext::new("workspace profile");
         context.context_loader = Some(ContextLoader {
@@ -231,7 +253,7 @@ mod tests {
             }),
             cwd: "/repo".into(),
         });
-        context.base_suffix = "skill listing".to_owned();
+        crate::agent::arming::apply_skill_listing(&mut context, &catalog, true);
 
         install_system_prompt(
             &mut context,
@@ -262,7 +284,9 @@ mod tests {
                 PromptSource::WorkspaceProfile,
                 PromptSource::UserContextFile,
                 PromptSource::ProjectContextFile,
-                PromptSource::SkillCatalog,
+                PromptSource::SkillCatalogPolicy,
+                PromptSource::OperatorSkillCatalog,
+                PromptSource::WorkspaceSkillCatalog,
             ]
         );
         let authorities = plan
@@ -277,9 +301,56 @@ mod tests {
                 PromptAuthority::User,
                 PromptAuthority::Developer,
                 PromptAuthority::User,
+                PromptAuthority::System,
                 PromptAuthority::Developer,
+                PromptAuthority::User,
             ]
         );
+        let developer_text = plan
+            .fragments()
+            .iter()
+            .filter(|fragment| fragment.authority() == PromptAuthority::Developer)
+            .map(PromptFragment::content)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(developer_text.contains("OPERATOR_SKILL_SENTINEL"));
+        assert!(!developer_text.contains("WORKSPACE_SKILL_SENTINEL"));
+        let workspace_fragment = plan
+            .fragments()
+            .iter()
+            .find(|fragment| fragment.source() == PromptSource::WorkspaceSkillCatalog)
+            .expect("workspace catalog fragment must be retained");
+        assert_eq!(workspace_fragment.authority(), PromptAuthority::User);
+        assert!(
+            workspace_fragment
+                .content()
+                .contains("WORKSPACE_SKILL_SENTINEL")
+        );
+        let operator_skill_position = context
+            .base_suffix
+            .find("OPERATOR_SKILL_SENTINEL")
+            .expect("operator skill remains in compatibility view");
+        let workspace_skill_position = context
+            .base_suffix
+            .find("WORKSPACE_SKILL_SENTINEL")
+            .expect("workspace skill remains in compatibility view");
+        assert!(
+            operator_skill_position < workspace_skill_position,
+            "flattened compatibility order must match typed source order",
+        );
+
+        crate::agent::arming::apply_skill_listing(&mut context, &catalog, false);
+        assert!(context.base_suffix.is_empty());
+        let gated_plan = context
+            .stable_prompt_plan()
+            .expect("root typed plan remains installed after gating");
+        assert!(gated_plan.fragments().iter().all(|fragment| !matches!(
+            fragment.source(),
+            PromptSource::SkillCatalogPolicy
+                | PromptSource::OperatorSkillCatalog
+                | PromptSource::WorkspaceSkillCatalog
+        )));
+        assert!(!context.base_system_instruction().contains("SKILL_SENTINEL"));
     }
 
     #[test]

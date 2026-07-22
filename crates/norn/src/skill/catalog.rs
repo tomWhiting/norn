@@ -4,9 +4,9 @@
 //! The catalog wraps [`crate::skill::loader::discover_skills`] with
 //! shadow-aware merging across the seven-tier directory list. It holds
 //! each [`LoadedSkill`] in directory-priority order (first match wins),
-//! exposes fast lookup by name, and produces the formatted listing the
-//! system-prompt builder injects so the model can see which skills are
-//! available.
+//! exposes fast lookup by name, and produces source-partitioned prompt
+//! sections so the model can see which skills are available without
+//! promoting repository-controlled metadata.
 //!
 //! Diagnostics are accumulated from three sources:
 //!
@@ -25,12 +25,12 @@
 //! The catalog never reaches into a registry on its own.
 
 use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use crate::integration::diagnostics::{DiagnosticSeverity, NornDiagnostic};
 use crate::r#loop::commands::{SlashCommand, SlashCommandHandler, SlashCommandRegistry};
 use crate::skill::loader::{LoadedSkill, discover_skills, discover_skills_with_workspace};
+use crate::skill::origin::SkillOrigin;
 use crate::skill::types::SkillMetadata;
 
 const SOURCE_TOOL: &str = "skill";
@@ -39,6 +39,58 @@ const SYSTEM_PROMPT_HEADER: &str = "# Available Skills\n\n\
 The following skills provide specialized instructions for specific tasks.\n\
 When a task matches a skill's description, call the skill tool with that\n\
 skill's name to load its full instructions.";
+
+/// Model-facing skill catalog split by trust provenance.
+///
+/// `policy` is compiled Norn guidance. Operator and workspace entries stay
+/// separate so prompt assembly can assign Developer and User authority
+/// without promoting repository-controlled metadata.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SkillPromptSections {
+    policy: String,
+    operator_entries: String,
+    workspace_entries: String,
+}
+
+impl SkillPromptSections {
+    /// Compiled guidance explaining how to use listed skills.
+    #[must_use]
+    pub fn policy(&self) -> &str {
+        &self.policy
+    }
+
+    /// Entries discovered from caller-trusted paths.
+    #[must_use]
+    pub fn operator_entries(&self) -> &str {
+        &self.operator_entries
+    }
+
+    /// Entries proven to come from inside the immutable workspace root.
+    #[must_use]
+    pub fn workspace_entries(&self) -> &str {
+        &self.workspace_entries
+    }
+
+    /// Whether there are no model-invocable skills in either origin class.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.operator_entries.is_empty() && self.workspace_entries.is_empty()
+    }
+
+    /// Flattened compatibility view in the same order as typed prompt sources.
+    #[must_use]
+    pub(crate) fn flattened_content(&self) -> String {
+        [
+            self.policy.as_str(),
+            self.operator_entries.as_str(),
+            self.workspace_entries.as_str(),
+        ]
+        .into_iter()
+        .filter(|section| !section.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+    }
+}
 
 /// Scanned skills together with the diagnostics produced while loading.
 ///
@@ -181,6 +233,15 @@ impl SkillCatalog {
             .map(|s| &s.metadata)
     }
 
+    /// Trust provenance of a loaded skill.
+    #[must_use]
+    pub fn origin(&self, name: &str) -> Option<SkillOrigin> {
+        self.by_name
+            .get(name)
+            .and_then(|idx| self.skills.get(*idx))
+            .map(|skill| skill.origin)
+    }
+
     /// True when no skills were discovered.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -203,14 +264,14 @@ impl SkillCatalog {
         &self.diagnostics
     }
 
-    /// Formatted listing for system-prompt injection.
+    /// Flattened compatibility listing for authority-unaware display surfaces.
     ///
     /// Excludes skills where `disable_model_invocation` is `true`. For
     /// each included skill the description and (when present)
     /// `when_to_use` are concatenated, separated by a single space.
-    /// Returns an empty string when no model-invocable skills exist —
-    /// the system-prompt builder uses this to omit the section
-    /// entirely.
+    /// Returns an empty string when no model-invocable skills exist. Runtime
+    /// prompt assembly uses [`Self::prompt_sections`] instead; callers must not
+    /// assign this mixed-origin rendering one model authority.
     ///
     /// The output has no trailing newline so it joins cleanly into a
     /// larger prompt assembly.
@@ -226,30 +287,35 @@ impl SkillCatalog {
             return String::new();
         }
 
-        let mut out = String::with_capacity(SYSTEM_PROMPT_HEADER.len() + 64 * visible.len());
+        let entries = render_entries(visible.into_iter());
+        let mut out = String::with_capacity(SYSTEM_PROMPT_HEADER.len() + 2 + entries.len());
         out.push_str(SYSTEM_PROMPT_HEADER);
         out.push_str("\n\n");
-
-        for (idx, skill) in visible.iter().enumerate() {
-            let description = skill.metadata.description.as_deref().unwrap_or("").trim();
-            let when_to_use = skill
-                .metadata
-                .when_to_use
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-
-            if idx > 0 {
-                out.push('\n');
-            }
-            let _ = write!(out, "- {}: {description}", skill.name);
-            if let Some(when) = when_to_use {
-                out.push(' ');
-                out.push_str(when);
-            }
-        }
-
+        out.push_str(&entries);
         out
+    }
+
+    /// Model-facing listing split into compiled policy, trusted entries, and
+    /// repository-controlled entries.
+    #[must_use]
+    pub fn prompt_sections(&self) -> SkillPromptSections {
+        let visible = |origin| {
+            self.skills.iter().filter(move |skill| {
+                !skill.metadata.disable_model_invocation && skill.origin == origin
+            })
+        };
+        let operator_entries = render_entries(visible(SkillOrigin::Operator));
+        let workspace_entries = render_entries(visible(SkillOrigin::Workspace));
+        let policy = if operator_entries.is_empty() && workspace_entries.is_empty() {
+            String::new()
+        } else {
+            SYSTEM_PROMPT_HEADER.to_owned()
+        };
+        SkillPromptSections {
+            policy,
+            operator_entries,
+            workspace_entries,
+        }
     }
 
     /// Register every `user_invocable` skill in `registry` as a
@@ -278,6 +344,31 @@ impl SkillCatalog {
             });
         }
     }
+}
+
+fn render_entries<'a>(skills: impl Iterator<Item = &'a LoadedSkill>) -> String {
+    let mut out = String::new();
+    for skill in skills {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        let description = skill.metadata.description.as_deref().unwrap_or("").trim();
+        out.push_str("- ");
+        out.push_str(&skill.name);
+        out.push_str(": ");
+        out.push_str(description);
+        if let Some(when) = skill
+            .metadata
+            .when_to_use
+            .as_deref()
+            .map(str::trim)
+            .filter(|when| !when.is_empty())
+        {
+            out.push(' ');
+            out.push_str(when);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -470,6 +561,56 @@ mod tests {
             listing.contains("call the skill tool with that"),
             "listing should include call-the-tool instruction, got: {listing}"
         );
+    }
+
+    #[test]
+    fn prompt_sections_partition_operator_and_workspace_metadata() {
+        let root = tempdir().unwrap();
+        let operator_dir = root.path().join("operator");
+        let workspace = root.path().join("workspace");
+        let workspace_dir = workspace.join(".norn/skills");
+        write_skill(&operator_dir, "trusted", "OPERATOR_DESCRIPTION_SENTINEL");
+        write_file(
+            &workspace_dir.join("repository/SKILL.md"),
+            "---\ndescription: WORKSPACE_DESCRIPTION_SENTINEL\n\
+             when-to-use: WORKSPACE_WHEN_SENTINEL\n---\nbody\n",
+        );
+        let workspace_root = workspace.canonicalize().expect("canonical workspace root");
+
+        let catalog =
+            SkillCatalog::scan_with_workspace(&[workspace_dir, operator_dir], &workspace_root);
+        let sections = catalog.prompt_sections();
+
+        assert_eq!(catalog.origin("trusted"), Some(SkillOrigin::Operator));
+        assert_eq!(catalog.origin("repository"), Some(SkillOrigin::Workspace));
+        assert!(sections.policy().contains("# Available Skills"));
+        assert!(
+            sections
+                .operator_entries()
+                .contains("OPERATOR_DESCRIPTION_SENTINEL")
+        );
+        assert!(
+            !sections
+                .operator_entries()
+                .contains("WORKSPACE_DESCRIPTION_SENTINEL")
+        );
+        assert!(
+            sections
+                .workspace_entries()
+                .contains("WORKSPACE_DESCRIPTION_SENTINEL")
+        );
+        assert!(
+            sections
+                .workspace_entries()
+                .contains("WORKSPACE_WHEN_SENTINEL")
+        );
+        assert!(
+            !sections
+                .workspace_entries()
+                .contains("OPERATOR_DESCRIPTION_SENTINEL")
+        );
+        assert!(!sections.policy().contains("OPERATOR_DESCRIPTION_SENTINEL"));
+        assert!(!sections.policy().contains("WORKSPACE_DESCRIPTION_SENTINEL"));
     }
 
     #[test]
