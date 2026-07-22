@@ -26,7 +26,7 @@ pub(super) fn input_schema() -> Value {
             },
             "profile": {
                 "type": "string",
-                "description": "Optional bare profile name (e.g. \"developer\", \"code-reviewer\") resolved as a markdown profile from $WORKSPACE/.norn/profiles, $WORKSPACE/.meridian/profiles, or ~/.norn/profiles. Supplies the child's system instructions, tool allow-list, and reasoning config. Mutually exclusive with variant. Omit for a minimal default."
+                "description": "Optional bare profile name (e.g. \"developer\", \"code-reviewer\") resolved as a markdown profile from $WORKSPACE/.norn/profiles, $WORKSPACE/.meridian/profiles, or ~/.norn/profiles. Supplies source-authorized child instructions (workspace profiles are User; user-level profiles are Developer), a tool allow-list, and reasoning config. Mutually exclusive with variant. Omit for a minimal default."
             },
             "tools": {
                 "type": "array",

@@ -4,8 +4,8 @@ type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 /// Register a `**/*.rs` path-glob rule with `SystemContextAppend`
 /// delivery, then run a turn that calls the `write` tool on a `.rs`
-/// file. The rule body must appear in the next dynamic context while
-/// the System message stays stable.
+/// file. The operator rule body must appear once as a Developer conversation
+/// message on the next request while the System message stays stable.
 #[tokio::test]
 async fn rule_with_path_glob_fires_when_write_tool_runs() -> TestResult {
     use std::sync::Arc;
@@ -20,7 +20,7 @@ async fn rule_with_path_glob_fires_when_write_tool_runs() -> TestResult {
     #[derive(Clone)]
     struct CapturedTurn {
         system: String,
-        dynamic: Option<String>,
+        developer_messages: Vec<String>,
     }
     struct CaptureSystem {
         captured: Arc<parking_lot::Mutex<Vec<CapturedTurn>>>,
@@ -33,12 +33,16 @@ async fn rule_with_path_glob_fires_when_write_tool_runs() -> TestResult {
                 .first()
                 .and_then(|m| m.content.clone())
                 .unwrap_or_default();
-            let dynamic = req
+            let developer_messages = req
                 .messages
-                .last()
-                .filter(|m| matches!(m.role, MessageRole::Developer))
-                .and_then(|m| m.content.clone());
-            self.captured.lock().push(CapturedTurn { system, dynamic });
+                .iter()
+                .filter(|message| matches!(message.role, MessageRole::Developer))
+                .filter_map(|message| message.content.clone())
+                .collect();
+            self.captured.lock().push(CapturedTurn {
+                system,
+                developer_messages,
+            });
             HookOutcome::Proceed
         }
     }
@@ -110,16 +114,22 @@ async fn rule_with_path_glob_fires_when_write_tool_runs() -> TestResult {
     let snapshots = captured.lock().clone();
     assert_eq!(snapshots.len(), 2, "expected two provider calls");
     assert_eq!(snapshots[0].system, "base-system");
-    let dyn_0 = snapshots[0].dynamic.as_deref().unwrap_or("");
-    assert!(!dyn_0.contains("Follow Rust conventions."));
-    assert_eq!(snapshots[1].system, "base-system");
-    let dynamic = snapshots[1]
-        .dynamic
-        .as_ref()
-        .ok_or_else(|| std::io::Error::other("turn 2 had no Developer message"))?;
     assert!(
-        dynamic.contains("Follow Rust conventions."),
-        "developer message must contain rule body, got: {dynamic}",
+        snapshots[0]
+            .developer_messages
+            .iter()
+            .all(|message| !message.contains("Follow Rust conventions."))
+    );
+    assert_eq!(snapshots[1].system, "base-system");
+    let matching_rules = snapshots[1]
+        .developer_messages
+        .iter()
+        .filter(|message| message.contains("Follow Rust conventions."))
+        .count();
+    assert_eq!(
+        matching_rules, 1,
+        "operator rule must appear in exactly one Developer message: {:?}",
+        snapshots[1].developer_messages,
     );
     Ok(())
 }

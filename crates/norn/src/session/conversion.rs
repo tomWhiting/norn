@@ -6,6 +6,7 @@
 //! (model changes, forks, labels, custom) are skipped.
 
 use crate::provider::request::{AssistantToolCall, Message, MessageRole, ToolCallKind};
+use crate::rules::projection::project_rule_injection;
 use crate::session::apply_local_tool_event;
 use crate::session::events::{SessionEvent, ToolCallEvent};
 
@@ -151,22 +152,21 @@ fn event_to_message(
             tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
         }),
 
-        // A fired rule delivered as conversation content (ContextInjection
-        // or MessageDelivery) re-renders to the same prefixed User message
-        // it produced live, so a resumed session sees identical text.
-        // SystemContextAppend rules deliver through the system prompt, not
-        // the message stream, so they render to nothing here.
+        // New sourced rules re-render to the exact origin-authorized message
+        // they produced live. Readable pre-D8 rows have no trustworthy origin
+        // and therefore project conservatively to User.
         SessionEvent::RuleInjection {
             rule_id,
+            origin,
             delivery,
             content,
             ..
-        } => delivery
-            .format_conversation_content(rule_id, content)
-            .map(|formatted| Message {
+        } => {
+            let projection = project_rule_injection(*origin, delivery, rule_id, content);
+            Some(Message {
                 response_items: Vec::new(),
-                role: MessageRole::User,
-                content: Some(formatted),
+                role: projection.role,
+                content: Some(projection.content),
                 thinking: String::new(),
                 reasoning: Vec::new(),
                 tool_calls: Vec::new(),
@@ -174,7 +174,8 @@ fn event_to_message(
                 tool_name: None,
                 tool_call_kind: None,
                 tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
-            }),
+            })
+        }
 
         SessionEvent::ModelChange { .. }
         | SessionEvent::ProviderEpochBoundary { .. }
@@ -325,6 +326,21 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].role, MessageRole::User);
         assert_eq!(msgs[0].content.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn legacy_child_result_label_remains_verbatim_user_input() {
+        let legacy = "[System: legacy child result. This is not user input.]";
+        let events = vec![SessionEvent::UserMessage {
+            base: EventBase::new(None),
+            content: legacy.to_owned(),
+        }];
+
+        let messages = events_to_messages(&events);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, MessageRole::User);
+        assert_eq!(messages[0].content.as_deref(), Some(legacy));
     }
 
     #[test]
@@ -591,6 +607,7 @@ mod tests {
             SessionEvent::RuleInjection {
                 base: EventBase::new(None),
                 rule_id: "conv".to_owned(),
+                origin: None,
                 delivery: DeliveryMode::ContextInjection,
                 timing: TriggerTiming::Before,
                 content: "ctx body".to_owned(),
@@ -598,6 +615,7 @@ mod tests {
             SessionEvent::RuleInjection {
                 base: EventBase::new(None),
                 rule_id: "msg".to_owned(),
+                origin: None,
                 delivery: DeliveryMode::MessageDelivery,
                 timing: TriggerTiming::Before,
                 content: "msg body".to_owned(),
@@ -605,17 +623,21 @@ mod tests {
             SessionEvent::RuleInjection {
                 base: EventBase::new(None),
                 rule_id: "sys".to_owned(),
+                origin: None,
                 delivery: DeliveryMode::SystemContextAppend,
                 timing: TriggerTiming::After,
                 content: "sys body".to_owned(),
             },
         ];
         let msgs = events_to_messages(&events);
-        // SystemContextAppend delivers via the system prompt, not a message.
-        assert_eq!(msgs.len(), 2);
+        // Origin-less rows remain readable but cannot prove elevated authority.
+        assert_eq!(msgs.len(), 3);
         assert_eq!(msgs[0].role, MessageRole::User);
         assert_eq!(msgs[0].content.as_deref(), Some("[Context: conv] ctx body"));
+        assert_eq!(msgs[1].role, MessageRole::User);
         assert_eq!(msgs[1].content.as_deref(), Some("[Rule: msg] msg body"));
+        assert_eq!(msgs[2].role, MessageRole::User);
+        assert_eq!(msgs[2].content.as_deref(), Some("sys body"));
     }
 
     #[test]

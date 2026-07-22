@@ -4,24 +4,20 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 // -- PROMPT-CACHE fix: the managed dynamic-context message rides the tail --
 
-/// Acceptance test for the prompt-cache-invalidation fix. Across two turns
-/// whose managed dynamic-context message differs, every message BEFORE that
-/// message is byte-identical (a stable, fully-cacheable prefix), and the
-/// managed message is always the LAST message in the request. The pre-fix
-/// layout (managed message at index 1, ahead of history) would break this:
-/// its per-turn byte change invalidated the cache for all of history.
+/// Acceptance test for the prompt-cache-invalidation fix. Across two turns,
+/// every existing message before the managed tail is byte-identical and the
+/// managed message is always last. A sourced rule fired between requests is a
+/// separate durable conversation message, never folded into that tail.
 #[tokio::test]
-async fn managed_dev_message_rides_the_tail_keeping_the_history_prefix_byte_stable() -> TestResult {
+async fn managed_dev_tail_keeps_event_backed_rule_history_stable() -> TestResult {
     use crate::rules::engine::RuleEngine;
     use crate::rules::types::{
         DeliveryMode as RDM, Rule, RuleId, TriggerCondition, TriggerTiming as TT,
     };
     use crate::system_prompt::environment::EnvironmentConfig;
 
-    // Turn 1 writes a `.rs` file (firing a Before-timing SystemContextAppend
-    // rule); turn 2 ends. The rule body enters the managed dynamic-context
-    // message only from turn 2 on, so the two managed messages differ
-    // deterministically — no wall-clock dependence.
+    // Turn 1 writes a `.rs` file, firing an operator-owned append rule. D8
+    // projects it as one durable Developer conversation message in turn 2.
     let turn1 = vec![
         tool_call_delta("tc_write", Some("write"), r#"{"path":"src/lib.rs"}"#),
         done_event(StopReason::ToolUse),
@@ -116,8 +112,8 @@ async fn managed_dev_message_rides_the_tail_keeping_the_history_prefix_byte_stab
         );
     }
 
-    // The tail managed message genuinely changes across turns (turn 2 gains
-    // the rule body) — the per-turn volatility the fix isolates to the tail.
+    // Rule authority is event-backed and must never contaminate the managed
+    // request-local Developer tail.
     let dev1 = requests[0]
         .messages
         .last()
@@ -128,15 +124,28 @@ async fn managed_dev_message_rides_the_tail_keeping_the_history_prefix_byte_stab
         .last()
         .and_then(|m| m.content.clone())
         .unwrap_or_default();
-    assert_ne!(dev1, dev2, "the tail managed message must change per turn");
-    assert!(
-        dev2.contains("Follow Rust conventions."),
-        "turn 2's managed message must carry the rule body",
-    );
     assert!(
         !dev1.contains("Follow Rust conventions."),
-        "turn 1's managed message must not yet carry the rule body",
+        "turn 1's managed message must not carry sourced rule content",
     );
+    assert!(
+        !dev2.contains("Follow Rust conventions."),
+        "turn 2's managed message must not carry sourced rule content",
+    );
+    for (request_index, expected_count) in [(0, 0), (1, 1)] {
+        let rule_count = requests[request_index]
+            .messages
+            .iter()
+            .filter(|message| {
+                message.role == MessageRole::Developer
+                    && message.content.as_deref() == Some("Follow Rust conventions.")
+            })
+            .count();
+        assert_eq!(
+            rule_count, expected_count,
+            "request {request_index} has the wrong durable rule-message count",
+        );
+    }
 
     // The cacheable prefix — every message BEFORE the tail managed message —
     // is byte-identical across turns: request 1's non-managed messages are a

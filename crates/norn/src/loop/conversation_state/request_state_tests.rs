@@ -1,6 +1,9 @@
 use super::test_support::{append_stored_assistant, config, message};
 use super::*;
+use crate::r#loop::config::{AgentLoopConfig, ConversationStateMode};
+use crate::provider::ProviderStateIdentity;
 use crate::provider::request::{MessageRole, ToolCallKind};
+use crate::provider::tools::ProviderCapabilities;
 use crate::session::events::{EventBase, EventUsage, ToolCallEvent};
 use crate::session::response_publication_fixture;
 use crate::session::store::EventStore;
@@ -61,10 +64,7 @@ fn auto_mode_falls_back_when_provider_cannot_thread() -> Result<(), ProviderErro
         &config(ConversationStateMode::Auto),
         ProviderCapabilities::default(),
         1,
-        Some(ResponseThreadAnchor {
-            response_id: "resp_old".to_string(),
-            input_start: 1,
-        }),
+        Some(ResponseThreadAnchor::for_test("resp_old".to_string(), 1)),
     )?;
 
     assert_eq!(state.previous_response_id(), None);
@@ -78,10 +78,7 @@ fn auto_mode_threads_when_provider_supports_it() -> Result<(), ProviderError> {
         &config(ConversationStateMode::Auto),
         ProviderCapabilities::openai_responses(),
         1,
-        Some(ResponseThreadAnchor {
-            response_id: "resp_old".to_string(),
-            input_start: 1,
-        }),
+        Some(ResponseThreadAnchor::for_test("resp_old".to_string(), 1)),
     )?;
 
     assert_eq!(state.previous_response_id().as_deref(), Some("resp_old"));

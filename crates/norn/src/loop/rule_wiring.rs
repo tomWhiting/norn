@@ -8,7 +8,7 @@
 //! - [`partition_injections_by_timing`] — split an injection batch into
 //!   Before- and After-timing buckets.
 //! - [`apply_rule_injections`] — apply an injection batch to the running
-//!   prompt, system sections, and event store.
+//!   conversation and event store.
 
 use serde_json::Value;
 
@@ -16,7 +16,8 @@ use crate::error::SessionError;
 use crate::integration::hooks::HookRegistry;
 use crate::r#loop::helpers::append_and_notify;
 use crate::r#loop::loop_context::LoopContext;
-use crate::provider::request::{Message, MessageRole};
+use crate::provider::request::Message;
+use crate::rules::projection::project_sourced_rule;
 use crate::rules::types::{PathOperation, RuleInjection, RuntimeEvent, TriggerTiming};
 use crate::session::events::{EventBase, SessionEvent};
 use crate::session::store::EventStore;
@@ -78,7 +79,7 @@ fn extract_str(value: &Value, key: &str) -> Option<String> {
 /// between prompt-construction passes, never mid-batch). A broad rule that
 /// matches two of those calls would otherwise fire twice for one context
 /// window — duplicate audit events, doubled token cost, and a doubled
-/// system section on re-materialization. The rule's guidance is identical
+/// durable conversation message. The rule's guidance is identical
 /// regardless of which matching call triggered it, so the first firing is
 /// authoritative.
 pub(super) fn dedup_injections_by_rule(injections: Vec<RuleInjection>) -> Vec<RuleInjection> {
@@ -117,18 +118,15 @@ pub(super) fn partition_injections_by_timing(
 /// engine's presence set tracks it, and it survives resume/compaction as an
 /// immutable audit record of which rule fired and how.
 ///
-/// - [`RuleDeliveryMode::SystemContextAppend`] additionally appends the raw
-///   content to [`LoopContext::system_sections`] for the current iteration.
-///   On every subsequent prompt-construction pass the content is
-///   re-materialized from the persisted event (see
-///   [`LoopContext::materialize_system_context_rules`]), so it persists for
-///   the remainder of the session yet is dropped the moment the event is
-///   compacted out — at which point the rule re-fires on its next trigger.
-/// - [`RuleDeliveryMode::ContextInjection`] / [`RuleDeliveryMode::MessageDelivery`]
-///   additionally push the delivery-prefixed content into the in-flight
-///   `messages` so the current provider call sees it. On resume the same
-///   prefixed message is reconstructed from the persisted event via
-///   [`crate::session::conversion`], so nothing is pushed twice.
+/// Every new sourced delivery mode pushes exactly one conversation message.
+/// The role comes only from [`RuleOrigin`](crate::rules::source::RuleOrigin):
+/// operator rules are Developer messages and workspace rules are User
+/// messages. Delivery controls formatting and lifetime, never authority. On
+/// resume the same message is reconstructed from the persisted event via
+/// [`crate::session::conversion`], so nothing is pushed twice. A readable
+/// pre-D8 row without origin reconstructs conservatively as User; an old
+/// System-append row also makes an unbound provider anchor ineligible because
+/// its former request-local projection cannot prove equivalence.
 pub(super) async fn apply_rule_injections(
     loop_context: &mut LoopContext,
     injections: Vec<RuleInjection>,
@@ -137,15 +135,19 @@ pub(super) async fn apply_rule_injections(
 ) -> Result<(), SessionError> {
     for injection in injections {
         let rule_id = injection.rule_id.to_string();
-        let live_message = injection
-            .delivery
-            .format_conversation_content(&rule_id, &injection.content);
+        let live_message = project_sourced_rule(
+            injection.origin,
+            &injection.delivery,
+            &rule_id,
+            &injection.content,
+        );
 
         append_and_notify(
             store,
             SessionEvent::RuleInjection {
                 base: EventBase::new(store.last_event_id()),
                 rule_id,
+                origin: Some(injection.origin),
                 delivery: injection.delivery.clone(),
                 timing: injection.timing.clone(),
                 content: injection.content.clone(),
@@ -154,36 +156,30 @@ pub(super) async fn apply_rule_injections(
         )
         .await?;
 
-        match live_message {
-            None => loop_context.append_system_section(injection.content),
-            Some(formatted) => messages.push(Message {
-                response_items: Vec::new(),
-                role: MessageRole::User,
-                content: Some(formatted),
-                thinking: String::new(),
-                reasoning: Vec::new(),
-                tool_calls: Vec::new(),
-                tool_call_id: None,
-                tool_name: None,
-                tool_call_kind: None,
-                tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
-            }),
-        }
+        messages.push(Message {
+            response_items: Vec::new(),
+            role: live_message.role,
+            content: Some(live_message.content),
+            thinking: String::new(),
+            reasoning: Vec::new(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_call_kind: None,
+            tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
+        });
     }
     Ok(())
 }
 
 /// Persist the [`SessionEvent::RuleInjection`] audit event for every fired
 /// Before-timing injection that no `build_request` ever consumed, without
-/// the live-delivery side effects (the message push / system-section append
-/// that [`apply_rule_injections`] also performs).
+/// the live message push that [`apply_rule_injections`] also performs.
 ///
 /// Those live-delivery effects are meaningless on a step-exit path — the
-/// `messages` vec and the current iteration's `system_sections` are both
-/// discarded when the step ends, and the delivered content re-enters the
-/// next step reconstructed from this very event (see
-/// [`crate::session::conversion`] and
-/// [`LoopContext::materialize_system_context_rules`](crate::r#loop::loop_context::LoopContext::materialize_system_context_rules)).
+/// `messages` vec is discarded when the step ends, and the delivered content
+/// re-enters the next step reconstructed from this very event (see
+/// [`crate::session::conversion`]).
 /// What must survive is the audit event, whose presence keeps "fired" and
 /// "in context" coherent identically to After-timing.
 ///
@@ -207,6 +203,7 @@ pub(super) async fn persist_before_injection_audit(
             SessionEvent::RuleInjection {
                 base: EventBase::new(store.last_event_id()),
                 rule_id: injection.rule_id.to_string(),
+                origin: Some(injection.origin),
                 delivery: injection.delivery.clone(),
                 timing: injection.timing.clone(),
                 content: injection.content.clone(),
@@ -227,6 +224,7 @@ mod tests {
     fn injection(id: &str) -> RuleInjection {
         RuleInjection {
             rule_id: RuleId::from(id),
+            origin: crate::rules::source::RuleOrigin::Operator,
             delivery: DeliveryMode::ContextInjection,
             timing: TriggerTiming::Before,
             content: id.to_owned(),

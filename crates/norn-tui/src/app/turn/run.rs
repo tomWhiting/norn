@@ -209,11 +209,9 @@ async fn run_turn(
     let agent_config = runtime.agent_config.clone();
     let tools = runtime.tools.clone();
 
-    runtime.loop_context.clear_dynamic_sections();
-    runtime
-        .loop_context
-        .evaluate_prompt_commands(agent_config.prompt_command_timeout)
-        .await;
+    // Prompt commands are evaluated by the library request builder. The TUI
+    // must not pre-run them: uncached commands may have side effects, and a
+    // driver-side pass would be discarded and then executed again.
 
     let mut seed = seed;
     let mut tick = tokio::time::interval(RENDER_TICK);

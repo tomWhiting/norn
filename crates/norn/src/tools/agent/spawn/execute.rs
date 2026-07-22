@@ -4,12 +4,12 @@ use super::{
     ActionLog, AgentCancellation, AgentEventSender, AgentHandles, AgentModel, AgentRegistry,
     AgentWakeRegistry, Arc, ChildBranchKind, ChildBranchMetadata, ChildBranchRequest, ChildLaunch,
     ChildLoopConfig, ChildResultSender, CoordinationEnvelope, HookRegistry, LifecycleEmitter,
-    ParentSystemInstruction, ReclaimHandshake, ReclaimOnResultDelivery, SpawnAgentArgs,
-    SpawnIdentityArgs, SubagentDescriptor, SubagentKind, ToolContext, ToolEnvelope, ToolError,
-    ToolOutput, Utc, VariantCatalog, auto_child_path, build_child_context,
-    build_child_loop_context, effective_child_tools, grant_child_policy, infra_from,
-    install_child_result_channel, launch_child, resolve_parent_model, resolve_profile_root,
-    resolve_spawn, resolve_spawner_policy, slugify_name_stem,
+    ParentPromptPlan, ReclaimHandshake, ReclaimOnResultDelivery, SpawnAgentArgs, SpawnIdentityArgs,
+    SubagentDescriptor, SubagentKind, ToolContext, ToolEnvelope, ToolError, ToolOutput, Utc,
+    VariantCatalog, auto_child_path, build_child_context, build_child_loop_context,
+    effective_child_tools, grant_child_policy, infra_from, install_child_result_channel,
+    launch_child, resolve_parent_model, resolve_profile_root, resolve_spawn,
+    resolve_spawner_policy, slugify_name_stem,
 };
 
 pub(super) async fn execute(
@@ -114,9 +114,11 @@ pub(super) async fn execute(
     // execution directory with `cd`.
     let profile_root = resolve_profile_root(ctx, args.profile.is_some())?;
     let (mut child_loop_ctx, profile_tools) = build_child_loop_context(
-        resolution.variant_prompt.as_deref(),
+        resolution
+            .variant_prompt
+            .as_deref()
+            .zip(resolution.variant_prompt_origin),
         args.profile.as_deref(),
-        &args.task,
         &profile_root,
     )?;
     // Reasoning effort (spec §3.6 + owner rulings 2026-07-07):
@@ -332,18 +334,17 @@ pub(super) async fn execute(
         child_policy.clone(),
         child_cancel.clone(),
     );
-    // Every agent's context carries its OWN launch model (parent-model
-    // ground truth for the child's own spawns) and its OWN base system
-    // instruction (the carrier `fork` reads for the next level's
-    // parent-context inheritance, R5). The base is final here: the
-    // variant/profile/task instruction plus the skill listing were
-    // installed on `child_loop_ctx` above.
+    // Every agent's context carries its own launch model and source-aware
+    // prompt plan. A later fork inherits that typed plan, preserving the
+    // distinct compiled-policy, configured-policy, profile, and skill
+    // authorities installed on `child_loop_ctx` above. The human task is sent
+    // separately as the child's User message and never enters this plan.
     child_ctx.insert_extension(Arc::new(AgentModel {
         model: child_model.clone(),
         reasoning_effort: child_loop_ctx.reasoning_effort,
     }));
-    child_ctx.insert_extension(Arc::new(ParentSystemInstruction::new(
-        child_loop_ctx.base_system_instruction(),
+    child_ctx.insert_extension(Arc::new(ParentPromptPlan::from_loop_context(
+        &child_loop_ctx,
     )));
     // Per-agent result channel (W3.4): a child whose grant lets it
     // delegate gets its own child-result channel — sender on its

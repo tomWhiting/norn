@@ -313,7 +313,9 @@ fn reject_unknown_event_field(
         "Label" => &["type", "base", "label", "description"],
         "Custom" => &["type", "base", "event_type", "data"],
         "ContextMark" => &["type", "base", "mark", "target_event_id"],
-        "RuleInjection" => &["type", "base", "rule_id", "delivery", "timing", "content"],
+        "RuleInjection" => &[
+            "type", "base", "rule_id", "origin", "delivery", "timing", "content",
+        ],
         _ => return Ok(()),
     };
     if let Some(field) = object

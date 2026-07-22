@@ -1,6 +1,21 @@
 use super::test_support::{TestResult, assistant_with_tool_calls, tool_result, user_msg};
 use super::*;
 
+fn assert_neutral_result_framing(result: &str, expected_notice: &str) {
+    assert!(
+        result.contains(expected_notice),
+        "neutral runtime notice: {result:?}",
+    );
+    assert!(
+        !result.contains("[System:"),
+        "child output must not claim System authority: {result:?}",
+    );
+    assert!(
+        !result.contains("This is not user input"),
+        "legacy pseudo-role disclaimer must not reappear: {result:?}",
+    );
+}
+
 #[test]
 fn slugify_requirement_name_basic_cases() {
     assert_eq!(
@@ -24,7 +39,7 @@ fn slugify_requirement_name_special_characters() {
 }
 
 #[test]
-fn format_fork_result_includes_system_notice_and_envelope() {
+fn format_fork_result_includes_neutral_notice_and_envelope() {
     let fork_id = Uuid::new_v4();
     let reqs = serde_json::json!({
         "check_code": { "completed": true, "completion_notes": "all good" },
@@ -33,13 +48,9 @@ fn format_fork_result_includes_system_notice_and_envelope() {
     let result = format_fork_result(fork_id, "Summary text", &reqs);
     let short_id = &fork_id.to_string()[..8];
 
-    assert!(
-        result.contains("automatically delivered by fork"),
-        "system notice: {result:?}"
-    );
-    assert!(
-        result.contains("This is not user input"),
-        "user-input disclaimer: {result:?}"
+    assert_neutral_result_framing(
+        &result,
+        &format!("[Norn agent result: automatically delivered by fork {short_id} on completion.]"),
     );
     assert!(result.contains(&format!("FORK RESULT ({short_id})")));
     assert!(result.contains("Summary text"));
@@ -75,15 +86,15 @@ fn format_fork_result_handles_non_object_requirements() {
 }
 
 #[test]
-fn format_fork_failure_includes_system_notice_and_error() {
+fn format_fork_failure_includes_neutral_notice_and_error() {
     let fork_id = Uuid::new_v4();
     let names = vec!["check code".to_string(), "run tests".to_string()];
     let result = format_fork_failure(fork_id, "context window exceeded", &names);
     let short_id = &fork_id.to_string()[..8];
 
-    assert!(
-        result.contains("automatically delivered by fork"),
-        "system notice: {result:?}"
+    assert_neutral_result_framing(
+        &result,
+        &format!("[Norn agent failure: automatically delivered by fork {short_id} on completion.]"),
     );
     assert!(result.contains(&format!("FORK FAILED ({short_id})")));
     assert!(result.contains("context window exceeded"));
@@ -100,14 +111,16 @@ fn format_fork_failure_empty_requirements() {
 }
 
 #[test]
-fn format_spawn_result_includes_system_notice_and_output() {
+fn format_spawn_result_includes_neutral_notice_and_output() {
     let agent_id = Uuid::new_v4();
     let result = format_spawn_result(agent_id, "reviewer", "Looks good");
     let short_id = &agent_id.to_string()[..8];
 
-    assert!(
-        result.contains("automatically delivered by reviewer"),
-        "system notice: {result:?}"
+    assert_neutral_result_framing(
+        &result,
+        &format!(
+            "[Norn agent result: automatically delivered by reviewer {short_id} on completion.]"
+        ),
     );
     assert!(result.contains(&format!("AGENT RESULT (reviewer {short_id})")));
     assert!(result.contains("Looks good"));
@@ -115,14 +128,16 @@ fn format_spawn_result_includes_system_notice_and_output() {
 }
 
 #[test]
-fn format_spawn_failure_includes_system_notice_and_error() {
+fn format_spawn_failure_includes_neutral_notice_and_error() {
     let agent_id = Uuid::new_v4();
     let result = format_spawn_failure(agent_id, "reviewer", "timed out");
     let short_id = &agent_id.to_string()[..8];
 
-    assert!(
-        result.contains("automatically delivered by reviewer"),
-        "system notice: {result:?}"
+    assert_neutral_result_framing(
+        &result,
+        &format!(
+            "[Norn agent failure: automatically delivered by reviewer {short_id} on completion.]"
+        ),
     );
     assert!(result.contains(&format!("AGENT FAILED (reviewer {short_id})")));
     assert!(result.contains("timed out"));

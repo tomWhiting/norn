@@ -31,7 +31,7 @@ use super::variant_resolve::{SpawnIdentityArgs, resolve_parent_model, resolve_sp
 #[cfg(test)]
 use crate::agent::child_policy::ChildPolicy;
 use crate::agent::child_policy::{ChildLoopConfig, CoordinationEnvelope};
-use crate::agent::fork::ParentSystemInstruction;
+use crate::agent::fork::ParentPromptPlan;
 use crate::agent::registry::AgentRegistry;
 use crate::agent::result_channel::ChildResultSender;
 use crate::agent::variants::VariantCatalog;

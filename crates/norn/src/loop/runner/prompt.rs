@@ -2,6 +2,9 @@
 //! variable expansion, the context preflight (token estimation and
 //! auto-compaction), and provider request construction.
 
+use std::sync::Arc;
+
+use crate::agent::fork::ParentPromptPlan;
 use crate::error::NornError;
 use crate::r#loop::expansion::{expand_system_instruction, expand_tool_descriptions};
 use crate::r#loop::helpers::apply_rule_injections;
@@ -9,13 +12,11 @@ use crate::r#loop::inflight_compaction::{
     InFlightPromptLayout, PreflightArgs, run_context_preflight,
 };
 use crate::provider::agent_event::AgentUsageEstimate;
-use crate::provider::request::ProviderRequest;
-use crate::provider::surface::{
-    ResolvedToolSurface, hosted_tools_prompt_section, reframe_prompt_entries,
-};
-use crate::system_prompt::builder::build_tool_prompt_section;
+use crate::provider::request::{Message, MessageRole, ProviderRequest, ToolCallCaller};
+use crate::provider::surface::{ResolvedToolSurface, hosted_tools_prompt_section};
+use crate::system_prompt::{PromptSeedFingerprint, PromptSource};
 
-use super::machine::{StepFlow, StepMachine, StepState};
+use super::machine::{PromptCommandContextState, StepFlow, StepMachine, StepState};
 
 impl StepMachine<'_> {
     /// Assemble the dynamic prompt view and build the provider request.
@@ -23,6 +24,13 @@ impl StepMachine<'_> {
         // Rules cleared at the top of each iteration so re-firings produce
         // fresh dynamic sections rather than accumulating duplicates.
         self.loop_context.clear_dynamic_sections();
+
+        // Detach the previous iteration's managed tail before any stable
+        // prefix replacement can shift its recorded index. The detached live
+        // conversation maps 1:1 to stable prompt plus persisted events for
+        // both seed reconciliation and preflight compaction.
+        self.dev_message
+            .detach(&mut self.messages, &mut self.conversation_state);
 
         // Capture one coherent executable/model-facing generation at the
         // request boundary. The snapshot remains installed until dispatch of
@@ -34,15 +42,14 @@ impl StepMachine<'_> {
         );
         self.all_tools.extend(self.schema_tool.iter().cloned());
 
-        if let Some(snapshot) = self.tool_snapshot.as_ref() {
-            let entries = reframe_prompt_entries(
-                snapshot.dynamic_prompt_entries.as_ref().to_vec(),
-                self.provider.capabilities(),
-            );
-            if let Some(section) = build_tool_prompt_section(&entries) {
-                self.loop_context.append_system_section(section);
-            }
-        }
+        let prompt_command_state = std::mem::replace(
+            &mut self.prompt_command_context,
+            PromptCommandContextState::Pending,
+        );
+        let first_request = matches!(
+            &prompt_command_state,
+            PromptCommandContextState::Prepared(_)
+        );
 
         // NX-005 R6: re-stat the always-on NORN.md layers between
         // `clear_dynamic_sections` and `evaluate_prompt_commands`. When
@@ -50,22 +57,22 @@ impl StepMachine<'_> {
         // freshly-read content takes effect this iteration. The two
         // `stat` syscalls per iteration are unconditional but cheap; an
         // absent loader short-circuits inside `refresh_context_if_stale`.
-        if self.loop_context.refresh_context_if_stale() {
+        // Setup already froze and validated the first request's stable source
+        // snapshot. Re-stat only on later iterations, when a detected change
+        // is reconciled and replay-validated before any further dispatch.
+        if !first_request && self.loop_context.refresh_context_if_stale() {
             self.loop_context.rebuild_base_section();
         }
 
+        // Child launch tools read their inherited authority from the executor
+        // context, not directly from LoopContext. Keep both the outer executor
+        // and this request's exact generation lease synchronized before any
+        // response can dispatch a fork or spawn. Fork identity is request-local
+        // authority and must never become the next generation's inherited base.
+        self.publish_parent_prompt_plan();
+
         self.loop_context.inject_environment_section();
         self.loop_context.inject_collaboration_mode();
-
-        // N-007 R3 / N-017 R3: SystemContextAppend rules persist "for the
-        // remainder of the session" by being re-materialized from their
-        // persisted RuleInjection events every iteration — after the
-        // per-iteration wipe above, before the developer message is synced
-        // below — rather than surviving the wipe in place. A rule whose
-        // event has been compacted out simply stops re-materializing and
-        // re-fires on its next trigger.
-        self.loop_context
-            .materialize_system_context_rules(self.store);
 
         // Provider tool surface, recomputed every iteration from the live
         // provider's capabilities — the same cadence as the wire resolution
@@ -80,13 +87,20 @@ impl StepMachine<'_> {
             self.loop_context.append_system_section(section);
         }
 
-        // Evaluate runtime prompt commands before applying Before-timing
-        // rule injections so their stdout becomes part of the dynamic
-        // section stack the rest of this iteration builds on. Failures are
-        // logged inside the helper and produce no section.
-        self.loop_context
-            .evaluate_prompt_commands(self.config.prompt_command_timeout)
-            .await;
+        // Setup prepared the first request's exact value and, for threaded
+        // providers, replay-validated it as part of the seed before prompt
+        // persistence. Stateless providers validate the complete managed tail
+        // below after preflight. Later requests evaluate the then-current
+        // definition after their iteration gate. No request executes a command
+        // more than once.
+        let managed_developer_context = match prompt_command_state {
+            PromptCommandContextState::Prepared(content) => content,
+            PromptCommandContextState::Pending => {
+                self.loop_context
+                    .prepare_prompt_command_context(self.config.prompt_command_timeout)
+                    .await
+            }
+        };
 
         // Apply any Before-timing injections accumulated by the previous
         // iteration's tool batch. These must hit the prompt before the next
@@ -102,25 +116,11 @@ impl StepMachine<'_> {
             .await?;
         }
 
-        // Detach the previous iteration's managed dynamic-context Developer
-        // message BEFORE the preflight (PROMPT-CACHE fix). While detached the
-        // live conversation past the System prefix maps 1:1 to persisted
-        // events, which the token estimate and the in-flight compaction walk
-        // rely on. The message is re-attached at the tail AFTER the preflight
-        // (below), so messages[0] (System) + history form one stable,
-        // fully-cacheable prefix and the volatile dynamic context is the last
-        // message the model sees — never overwriting a history Developer
-        // compaction summary, which lives in history and is left untouched.
-        self.dev_message
-            .detach(&mut self.messages, &mut self.conversation_state);
-
-        // Build the fresh managed message content from the current dynamic
-        // context, expanding session-variable placeholders (R5). The System
-        // message (messages[0]) is NOT expanded so it stays byte-stable for
-        // caching. Empty dynamic context yields no message — an empty
-        // Developer message would read to the model as a prompt — so this
-        // iteration simply attaches nothing.
-        let dev_tail_content: Option<String> = match self.loop_context.dynamic_context() {
+        // Build the two fresh managed-context authority channels, expanding
+        // session-variable placeholders (R5). Stable prompt fragments are not
+        // expanded and remain byte-stable for caching. Norn-owned runtime
+        // policy stays System; trusted prompt-command output stays Developer.
+        let managed_system_context = match self.loop_context.managed_system_context() {
             Some(content) => Some(match self.loop_context.variables.as_ref() {
                 Some(var_store) => expand_system_instruction(&content, var_store).await,
                 None => content,
@@ -128,13 +128,54 @@ impl StepMachine<'_> {
             None => None,
         };
 
-        // The managed message goes over the wire at the tail, after the
-        // preflight — so it is absent from `self.messages` during estimation.
-        // Feed its token cost in explicitly so the token warning and the
-        // auto-compaction trigger account for what actually ships.
-        let dev_tail_tokens = match (
+        // Re-materialize the exact prefix at every request boundary. Stable
+        // Developer/User fragments and current operator command output bind the
+        // threaded seed. A change cuts V2 and replays under the new authority;
+        // unchanged output is sent once and inherited by the provider anchor.
+        // System-only changes remain request-local instructions and preserve
+        // the anchor. Stateless transports keep all volatile content at the
+        // tail, so their cacheable prefix is unaffected.
+        let mut prompt_seed_fingerprint = self.loop_context.stable_prompt_plan().map_or_else(
+            PromptSeedFingerprint::empty,
+            PromptSeedFingerprint::from_plan,
+        );
+        let mut stable_prefix = self.loop_context.stable_prompt_messages();
+        if self.conversation_state.store()
+            && let Some(content) = managed_developer_context.as_ref()
+        {
+            prompt_seed_fingerprint =
+                prompt_seed_fingerprint.with_operator_runtime_context(content);
+            stable_prefix.push(developer_message(content.clone()));
+        }
+        self.conversation_state.sync_stable_prefix(
+            &mut self.messages,
+            stable_prefix,
+            prompt_seed_fingerprint,
+        );
+        self.provider
+            .validate_replay(&self.conversation_state.request_messages(&self.messages))?;
+
+        let stateless_managed_tail = (!self.conversation_state.store())
+            .then(|| {
+                join_managed_context(
+                    managed_system_context.as_deref(),
+                    managed_developer_context.as_deref(),
+                )
+            })
+            .flatten();
+
+        // Request-local Responses instructions and the stateless tail remain out
+        // of `self.messages` during preflight, so account for their token cost
+        // explicitly. Threaded Developer context is already in the prefix and
+        // is counted by the ordinary message estimator.
+        let out_of_band_context = if self.conversation_state.store() {
+            managed_system_context.as_ref()
+        } else {
+            stateless_managed_tail.as_ref()
+        };
+        let managed_context_tokens = match (
             self.loop_context.token_estimator.as_ref(),
-            dev_tail_content.as_ref(),
+            out_of_band_context,
         ) {
             (Some(estimator), Some(content)) => estimator.estimate(content),
             _ => 0,
@@ -175,7 +216,7 @@ impl StepMachine<'_> {
                 prompt_event_id: self.prompt_event_id.clone(),
                 prompt_message_len: self.new_input_len,
             },
-            dev_tail_tokens,
+            managed_context_tokens,
             cancel: self.cancel.as_ref(),
             event_tx: self.event_tx,
         })
@@ -194,15 +235,16 @@ impl StepMachine<'_> {
             });
         }
 
-        // Provider-threaded Responses state uses top-level `instructions` for
-        // the managed context. The API does not inherit prior instructions
-        // through `previous_response_id`, so each request replaces the old
-        // dynamic context without dropping the provider-owned thread. The
-        // stateless Codex path retains the cache-friendly tail Developer item.
+        // Provider-threaded Responses projects only Norn-owned managed policy
+        // through top-level `instructions`; it does not inherit prior
+        // instructions through `previous_response_id`. Operator command output
+        // remains a seed-bound Developer prefix item. Stateless transports
+        // explicitly lower both channels into one cache-friendly Developer
+        // tail and preserve their order without promoting either channel.
         let managed_instructions = if self.conversation_state.store() {
-            dev_tail_content
+            managed_system_context
         } else {
-            if let Some(content) = dev_tail_content {
+            if let Some(content) = stateless_managed_tail {
                 self.dev_message.attach(content, &mut self.messages);
             }
             None
@@ -211,6 +253,7 @@ impl StepMachine<'_> {
         let request_messages = self
             .conversation_state
             .request_messages_with_managed_instructions(&self.messages, managed_instructions);
+        self.provider.validate_replay(&request_messages)?;
 
         let request = ProviderRequest {
             messages: request_messages,
@@ -227,5 +270,48 @@ impl StepMachine<'_> {
         };
 
         Ok(StepFlow::Next(StepState::CallProvider(Box::new(request))))
+    }
+
+    fn publish_parent_prompt_plan(&self) {
+        let mut inherited = ParentPromptPlan::from_loop_context(self.loop_context)
+            .plan()
+            .clone();
+        inherited.remove(PromptSource::ForkAgentPolicy);
+        let parent_prompt = ParentPromptPlan::new(inherited);
+
+        if let Some(shared) = self.executor.shared_context() {
+            shared.insert_extension(Arc::new(parent_prompt.clone()));
+        }
+        if let Some(shared) = self
+            .tool_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.executor.shared_context())
+        {
+            shared.insert_extension(Arc::new(parent_prompt));
+        }
+    }
+}
+
+pub(super) fn developer_message(content: String) -> Message {
+    Message {
+        response_items: Vec::new(),
+        role: MessageRole::Developer,
+        content: Some(content),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: Vec::new(),
+        tool_call_id: None,
+        tool_name: None,
+        tool_call_kind: None,
+        tool_call_caller: ToolCallCaller::Absent,
+    }
+}
+
+fn join_managed_context(system: Option<&str>, developer: Option<&str>) -> Option<String> {
+    match (system, developer) {
+        (Some(system), Some(developer)) => Some(format!("{system}\n\n{developer}")),
+        (Some(system), None) => Some(system.to_owned()),
+        (None, Some(developer)) => Some(developer.to_owned()),
+        (None, None) => None,
     }
 }

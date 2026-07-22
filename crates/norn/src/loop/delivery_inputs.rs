@@ -84,7 +84,9 @@ async fn inject_active_inputs(
 /// child's output cannot forge an `<agent_message>` or `<agent_result>` frame
 /// in the parent's conversation. Each drained batch is persisted as one
 /// `UserMessage` event and pushed as one user-role message, keeping the
-/// persisted event stream and live conversation in 1:1 correspondence.
+/// persisted event stream and live conversation in 1:1 correspondence. The
+/// harness framing identifies runtime-delivered child output without claiming
+/// System or Developer authority for that User-authority context.
 ///
 /// W3.6 usage rollup: every drained result's `subtree_usage` - seed included -
 /// is folded into `children_usage`. Because this function is the single

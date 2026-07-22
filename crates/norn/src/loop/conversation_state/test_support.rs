@@ -1,10 +1,13 @@
 use super::*;
+use crate::r#loop::config::{AgentLoopConfig, ConversationStateMode};
 use crate::provider::request::MessageRole;
 use crate::session::events::{EventBase, EventId, EventUsage};
 use crate::session::store::EventStore;
 use crate::session::{
-    ResponsePublicationFixture, committed_response_publication, response_publication_fixture,
+    ProviderStateProvenance, ResponsePublicationFixture, committed_response_publication,
+    response_publication_fixture, seal_response_publication_group,
 };
+use crate::system_prompt::PromptSeedFingerprint;
 
 pub(super) fn message(role: MessageRole, content: &str) -> Message {
     Message {
@@ -45,6 +48,39 @@ pub(super) fn append_stored_assistant(
         fixture.provenance,
         assistant_event(fixture.assistant_base, content, response_id),
     )?;
+    store.append_batch(&publication)?;
+    Ok(assistant_id)
+}
+
+pub(super) fn append_seed_bound_assistant(
+    store: &EventStore,
+    content: &str,
+    response_id: &str,
+    prompt_seed: PromptSeedFingerprint,
+) -> Result<EventId, crate::error::SessionError> {
+    let boundary_base = EventBase::new(store.last_event_id());
+    let provenance_base = EventBase::new(Some(boundary_base.id.clone()));
+    let assistant_base = EventBase::new(Some(provenance_base.id.clone()));
+    let assistant_id = assistant_base.id.clone();
+    let provenance =
+        ProviderStateProvenance::with_prompt_seed(assistant_id.clone(), true, prompt_seed)
+            .into_custom_event(provenance_base)
+            .map_err(|_source| crate::error::SessionError::StorageError {
+                reason: "failed to encode seed-bound provenance fixture".to_owned(),
+            })?;
+    let mut publication = vec![
+        SessionEvent::ProviderEpochBoundary {
+            base: boundary_base,
+            reason: crate::session::events::ProviderEpochBoundaryReason::ResponseStatePublication,
+        },
+        provenance,
+        assistant_event(assistant_base, content, response_id),
+    ];
+    seal_response_publication_group(&mut publication).map_err(|_error| {
+        crate::error::SessionError::StorageError {
+            reason: "failed to seal seed-bound provenance fixture".to_owned(),
+        }
+    })?;
     store.append_batch(&publication)?;
     Ok(assistant_id)
 }

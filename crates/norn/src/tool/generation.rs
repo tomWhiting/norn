@@ -213,7 +213,11 @@ impl ToolGeneration {
         Arc::clone(&self.prompt_entries)
     }
 
-    /// Prompt metadata for runtime-dynamic tools only.
+    /// Prompt-shaped metadata identifying runtime-dynamic tools only.
+    ///
+    /// Child generation selection uses the names to replace the dynamic
+    /// subset. Provider requests use [`Self::definitions`] and do not
+    /// automatically copy these descriptions into prompt messages.
     #[must_use]
     pub fn dynamic_prompt_entries(&self) -> Arc<[ToolPromptEntry]> {
         Arc::clone(&self.dynamic_prompt_entries)

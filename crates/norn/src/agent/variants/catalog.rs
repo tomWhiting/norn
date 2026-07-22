@@ -20,6 +20,15 @@ use crate::util::{read_workspace_text_file, workspace_relative_path};
 
 use super::builtin::{BUILTIN_VARIANTS, BuiltinVariant};
 
+/// Provenance of one resolved variant's prompt field.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VariantPromptOrigin {
+    /// Prompt inherited from Norn's compiled built-in definition.
+    Builtin,
+    /// Prompt supplied inline or through `prompt_file` configuration.
+    Configured,
+}
+
 /// A fully resolved variant: built-in data overlaid by configured fields,
 /// prompt file loaded, reasoning effort parsed.
 #[derive(Clone, Debug)]
@@ -32,6 +41,9 @@ pub struct ResolvedVariant {
     /// configured variants that supplied neither `prompt` nor `prompt_file`
     /// and shadow no built-in.
     pub prompt: Option<String>,
+    /// Trust provenance of [`Self::prompt`], retained independently from
+    /// configuration of the variant's other fields.
+    pub prompt_origin: Option<VariantPromptOrigin>,
     /// Tool-name allowlist; `None` = inherit the parent's registry surface.
     /// Always intersected with the child's granted delegation policy at
     /// assembly (policy WINS — brief R6).
@@ -155,6 +167,7 @@ fn resolve_builtin(builtin: &BuiltinVariant) -> ResolvedVariant {
         name: builtin.name.to_owned(),
         description: Some(builtin.description.to_owned()),
         prompt: Some(builtin.prompt.to_owned()),
+        prompt_origin: Some(VariantPromptOrigin::Builtin),
         tools: builtin
             .tools
             .map(|tools| tools.iter().map(|&tool| tool.to_owned()).collect()),
@@ -174,13 +187,21 @@ fn overlay(
     base_dir: &Path,
 ) -> Result<ResolvedVariant, VariantCatalogError> {
     let configured_prompt = load_prompt(name, settings, base_dir)?;
+    let (prompt, prompt_origin) = match configured_prompt {
+        Some(prompt) => (Some(prompt), Some(VariantPromptOrigin::Configured)),
+        None => (
+            base.and_then(|variant| variant.prompt.clone()),
+            base.and_then(|variant| variant.prompt_origin),
+        ),
+    };
     Ok(ResolvedVariant {
         name: name.to_owned(),
         description: settings
             .description
             .clone()
             .or_else(|| base.and_then(|b| b.description.clone())),
-        prompt: configured_prompt.or_else(|| base.and_then(|b| b.prompt.clone())),
+        prompt,
+        prompt_origin,
         tools: settings
             .tools
             .clone()
@@ -331,6 +352,11 @@ mod tests {
                 .is_some_and(|p| p.contains("adversarial")),
             "built-in reviewer prompt survives a model-only override",
         );
+        assert_eq!(
+            reviewer.prompt_origin,
+            Some(VariantPromptOrigin::Builtin),
+            "overriding another field must not relabel an inherited prompt",
+        );
         assert!(
             reviewer.tools.is_some(),
             "built-in reviewer tool subset survives a model-only override",
@@ -357,6 +383,7 @@ mod tests {
         let catalog = VariantCatalog::build(Some(&configured), &empty_dir()).expect("build");
         let scout = catalog.get("scout").expect("scout exists");
         assert_eq!(scout.prompt.as_deref(), Some("Scout the area."));
+        assert_eq!(scout.prompt_origin, Some(VariantPromptOrigin::Configured));
         assert_eq!(scout.reasoning_effort, Some(ReasoningEffort::Low));
         assert!(!scout.model_required, "standalone default is not required");
         assert!(scout.model.is_none(), "no model configured, none invented");
@@ -413,6 +440,10 @@ mod tests {
         assert_eq!(
             catalog.get("scout").expect("scout").prompt.as_deref(),
             Some("From the file."),
+        );
+        assert_eq!(
+            catalog.get("scout").expect("scout").prompt_origin,
+            Some(VariantPromptOrigin::Configured),
         );
     }
 

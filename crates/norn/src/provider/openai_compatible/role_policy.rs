@@ -23,7 +23,7 @@ impl DeveloperRolePolicy {
     pub(super) fn from_provider_options(options: Option<&Value>) -> Result<Self, ProviderError> {
         if let Some(options) = options {
             let selected_scoped_path = options.as_object().and_then(selected_chat_policy_path);
-            validate_policy_locations(options, "", selected_scoped_path)?;
+            validate_policy_locations(options, &mut Vec::new(), selected_scoped_path)?;
         }
         let Some(object) = options.and_then(Value::as_object) else {
             return Ok(Self::Native);
@@ -64,37 +64,47 @@ impl DeveloperRolePolicy {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectedChatPolicyPath {
+    ApiOptions,
+    Direct,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum JsonPathSegment {
+    Key(String),
+    Index(usize),
+}
+
 fn validate_policy_locations(
     value: &Value,
-    path: &str,
-    selected_scoped_path: Option<&str>,
+    path: &mut Vec<JsonPathSegment>,
+    selected_scoped_path: Option<SelectedChatPolicyPath>,
 ) -> Result<(), ProviderError> {
     match value {
         Value::Object(object) => {
             for (key, nested) in object {
-                let nested_path = if path.is_empty() {
-                    key.clone()
-                } else {
-                    format!("{path}.{key}")
-                };
-                if key == OPTION_KEY
-                    && nested_path != OPTION_KEY
-                    && selected_scoped_path != Some(nested_path.as_str())
+                path.push(JsonPathSegment::Key(key.clone()));
+                let result = if key == OPTION_KEY
+                    && !policy_location_is_allowed(path, selected_scoped_path)
                 {
-                    return Err(invalid_policy(&format!(
-                        "is reserved and cannot be configured at {nested_path}"
-                    )));
-                }
-                validate_policy_locations(nested, &nested_path, selected_scoped_path)?;
+                    Err(invalid_policy(&format!(
+                        "is reserved and cannot be configured at {}",
+                        display_path(path)
+                    )))
+                } else {
+                    validate_policy_locations(nested, path, selected_scoped_path)
+                };
+                path.pop();
+                result?;
             }
         }
         Value::Array(values) => {
             for (index, nested) in values.iter().enumerate() {
-                validate_policy_locations(
-                    nested,
-                    &format!("{path}[{index}]"),
-                    selected_scoped_path,
-                )?;
+                path.push(JsonPathSegment::Index(index));
+                let result = validate_policy_locations(nested, path, selected_scoped_path);
+                path.pop();
+                result?;
             }
         }
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
@@ -102,15 +112,62 @@ fn validate_policy_locations(
     Ok(())
 }
 
-fn selected_chat_policy_path(options: &serde_json::Map<String, Value>) -> Option<&'static str> {
+fn policy_location_is_allowed(
+    path: &[JsonPathSegment],
+    selected: Option<SelectedChatPolicyPath>,
+) -> bool {
+    match path {
+        [JsonPathSegment::Key(option)] => option == OPTION_KEY,
+        [
+            JsonPathSegment::Key(api_options),
+            JsonPathSegment::Key(chat),
+            JsonPathSegment::Key(option),
+        ] => {
+            selected == Some(SelectedChatPolicyPath::ApiOptions)
+                && api_options == "api_options"
+                && chat == "openai_chat_completions"
+                && option == OPTION_KEY
+        }
+        [JsonPathSegment::Key(chat), JsonPathSegment::Key(option)] => {
+            selected == Some(SelectedChatPolicyPath::Direct)
+                && chat == "openai_chat_completions"
+                && option == OPTION_KEY
+        }
+        _ => false,
+    }
+}
+
+fn display_path(path: &[JsonPathSegment]) -> String {
+    let mut display = String::new();
+    for segment in path {
+        match segment {
+            JsonPathSegment::Key(key) => {
+                if !display.is_empty() {
+                    display.push('.');
+                }
+                display.push_str(key);
+            }
+            JsonPathSegment::Index(index) => {
+                display.push('[');
+                display.push_str(&index.to_string());
+                display.push(']');
+            }
+        }
+    }
+    display
+}
+
+fn selected_chat_policy_path(
+    options: &serde_json::Map<String, Value>,
+) -> Option<SelectedChatPolicyPath> {
     if options
         .get("api_options")
         .and_then(Value::as_object)
         .is_some_and(|api_options| api_options.contains_key("openai_chat_completions"))
     {
-        Some("api_options.openai_chat_completions.norn_developer_role_policy")
+        Some(SelectedChatPolicyPath::ApiOptions)
     } else if options.contains_key("openai_chat_completions") {
-        Some("openai_chat_completions.norn_developer_role_policy")
+        Some(SelectedChatPolicyPath::Direct)
     } else {
         None
     }
@@ -137,5 +194,4 @@ fn invalid_policy(reason: &str) -> ProviderError {
 }
 
 #[cfg(test)]
-#[path = "role_policy_tests.rs"]
 mod tests;

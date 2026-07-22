@@ -32,9 +32,9 @@ use crate::tool::context::{SharedWorkingDir, ToolContext};
 /// parent's `branch_child`), plus a fresh [`AgentHandles`] so the fork can
 /// spawn grandchildren in turn. Shared infrastructure is forwarded from the
 /// parent context so tasks and tool discovery stay reachable from inside
-/// the fork; the identity-free parent base the fork composed with (its
-/// `ParentSystemInstruction` for the NEXT fork level) is published by the
-/// fork tool after the fork's loop context is composed.
+/// the fork. The source-aware, identity-free
+/// [`ParentPromptPlan`](crate::agent::fork::ParentPromptPlan) for the next fork
+/// level is published by the fork tool after its loop context is composed.
 ///
 /// The consent-boundary [`PermissionPolicy`] and the scheduling
 /// [`ToolEffectIndex`] are likewise forwarded: the fork's agent loop
@@ -128,14 +128,11 @@ pub(super) fn build_fork_context(
     // The curated shared-infrastructure forwards — the SINGLE list every
     // child assembly site uses; see `forward_shared_extensions`.
     //
-    // NOTE (R5): `ParentSystemInstruction` is deliberately NOT part of
-    // that list — the fork tool publishes the identity-free base it
-    // COMPOSED WITH onto this context instead, right after the fork's
-    // loop context is composed. For a root parent that value happens to
-    // equal the root's own extension, but the publish stays the fork
-    // tool's responsibility so a fork-of-fork always inherits the
-    // ORIGINAL identity-free base (never a combined base carrying a
-    // stale "Fork identity" preamble).
+    // NOTE (R5): `ParentPromptPlan` is deliberately not forwarded here. The
+    // fork tool publishes the source-aware plan it inherited, minus its own
+    // ForkAgentPolicy, after composing the loop context. A fork-of-fork thus
+    // receives the original role-preserving plan, never a stale identity or a
+    // flattened compatibility string.
     forward_shared_extensions(parent_ctx, &mut child_ctx);
     // Per-agent action log + session log-tree registration: the fork's
     // log starts empty at the fork point (its seeded conversation is its

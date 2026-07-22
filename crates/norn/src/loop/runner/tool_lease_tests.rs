@@ -12,8 +12,9 @@ use super::{
 use crate::error::{ProviderError, ToolError};
 use crate::r#loop::loop_context::LoopContext;
 use crate::provider::events::{ProviderEvent, StopReason};
-use crate::provider::request::{MessageRole, ProviderRequest, ToolCallKind, ToolDefinition};
-use crate::provider::tools::ProviderToolDefinition;
+use crate::provider::mock::MockProvider;
+use crate::provider::request::{ProviderRequest, ToolCallKind, ToolDefinition};
+use crate::provider::tools::{ProviderCapabilities, ProviderToolDefinition};
 use crate::provider::traits::{Provider, ProviderStream};
 use crate::provider::usage::Usage;
 use crate::session::store::EventStore;
@@ -185,12 +186,67 @@ fn function_description(request: &ProviderRequest) -> Option<&str> {
     })
 }
 
-fn dynamic_prompt(request: &ProviderRequest) -> Option<&str> {
-    request.messages.iter().rev().find_map(|message| {
-        (message.role == MessageRole::Developer)
-            .then_some(message.content.as_deref())
-            .flatten()
+#[tokio::test]
+async fn runtime_tool_description_is_not_promoted_into_threaded_instructions()
+-> Result<(), Box<dyn std::error::Error>> {
+    const HOSTILE_DESCRIPTION: &str = "REMOTE-MCP-DESCRIPTION-MUST-NOT-BECOME-INSTRUCTIONS";
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let executor = SwappableExecutor {
+        current: Mutex::new(snapshot(1, HOSTILE_DESCRIPTION, calls)),
+    };
+    let provider = MockProvider::with_capabilities(
+        vec![vec![
+            ProviderEvent::TextDelta {
+                text: "complete".to_owned(),
+            },
+            ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                response_id: Some("resp_runtime_tool_prompt".to_owned()),
+            },
+        ]],
+        ProviderCapabilities::openai_responses(),
+    )
+    .with_state_identity(crate::provider::ProviderStateIdentity::derive(
+        "norn.test.runtime-tool-prompt",
+        b"runtime-tool-prompt",
+    ));
+    let store = EventStore::new();
+    store.validate_or_bind_provider_state_identity(provider.state_identity())?;
+    let mut loop_context = LoopContext::new("compiled product policy");
+    let config = AgentLoopConfig::default();
+
+    let result = run_agent_step(AgentStepRequest {
+        provider: &provider,
+        executor: &executor,
+        store: &store,
+        user_prompt: "use the live tool when needed",
+        tools: &[],
+        output_schema: None,
+        model: "test-model",
+        config: &config,
+        event_tx: None,
+        inbound: None,
+        loop_context: &mut loop_context,
+        cancel: None,
     })
+    .await?;
+    assert!(matches!(result, AgentStepResult::Completed { .. }));
+
+    let requests = provider.requests()?;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        function_description(&requests[0]),
+        Some(HOSTILE_DESCRIPTION),
+    );
+    assert!(requests[0].messages.iter().all(|message| {
+        message
+            .content
+            .as_deref()
+            .is_none_or(|content| !content.contains(HOSTILE_DESCRIPTION))
+    }));
+    Ok(())
 }
 
 #[tokio::test]
@@ -259,7 +315,13 @@ async fn blocked_provider_response_keeps_lease_and_next_request_refreshes()
     assert_eq!(requests.len(), 2);
     assert_eq!(function_description(&requests[0]), Some("generation one"));
     assert_eq!(function_description(&requests[1]), Some("generation two"));
-    assert!(dynamic_prompt(&requests[0]).is_some_and(|prompt| prompt.contains("generation one")));
-    assert!(dynamic_prompt(&requests[1]).is_some_and(|prompt| prompt.contains("generation two")));
+    for (request, description) in requests.iter().zip(["generation one", "generation two"]) {
+        assert!(request.messages.iter().all(|message| {
+            message
+                .content
+                .as_deref()
+                .is_none_or(|content| !content.contains(description))
+        }));
+    }
     Ok(())
 }

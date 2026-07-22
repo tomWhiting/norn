@@ -132,8 +132,8 @@ async fn threaded_state_uses_provider_compaction_without_local_summarization() -
     Ok(())
 }
 
-/// Public threading uses replaceable Responses instructions for dynamic
-/// context on both the first request and anchored continuations.
+/// Public threading uses replaceable Responses instructions for managed
+/// context while sourced rules remain durable origin-authorized input.
 #[tokio::test]
 async fn threaded_dynamic_context_is_replaceable_instructions_not_input() -> TestResult {
     use crate::rules::engine::RuleEngine;
@@ -235,12 +235,27 @@ async fn threaded_dynamic_context_is_replaceable_instructions_not_input() -> Tes
             Some(1),
             "request {index} must carry one current dynamic context"
         );
+        let Some(input) = payload["input"].as_array() else {
+            return Err(std::io::Error::other("Responses input was not an array").into());
+        };
         assert!(
-            payload["input"]
-                .as_array()
-                .is_some_and(|input| input.iter().all(|item| item["role"] != "developer")),
+            input.iter().all(|item| {
+                item["role"] != "developer"
+                    || !item["content"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("# Environment"))
+            }),
             "request {index} must not persist managed context as a Developer input item"
         );
+        let expected_rule_count = usize::from(index == 1);
+        let rule_count = input
+            .iter()
+            .filter(|item| {
+                item["role"] == "developer"
+                    && item["content"].as_str() == Some("Follow Rust conventions.")
+            })
+            .count();
+        assert_eq!(rule_count, expected_rule_count);
     }
     assert!(
         !payloads[0]["instructions"]
@@ -248,7 +263,7 @@ async fn threaded_dynamic_context_is_replaceable_instructions_not_input() -> Tes
             .is_some_and(|instructions| instructions.contains("Follow Rust conventions."))
     );
     assert!(
-        payloads[1]["instructions"]
+        !payloads[1]["instructions"]
             .as_str()
             .is_some_and(|instructions| instructions.contains("Follow Rust conventions."))
     );

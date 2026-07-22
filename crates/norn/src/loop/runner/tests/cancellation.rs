@@ -134,3 +134,55 @@ async fn no_cancellation_token_runs_to_completion_unchanged() -> TestResult {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn pre_cancelled_step_cannot_mutate_a_foreign_provider_store() -> TestResult {
+    let bound_identity = crate::provider::ProviderStateIdentity::derive(
+        "norn.runner.cancel-affinity",
+        b"bound-identity",
+    );
+    let other_identity = crate::provider::ProviderStateIdentity::derive(
+        "norn.runner.cancel-affinity",
+        b"other-identity",
+    );
+    let provider =
+        MockProvider::with_capabilities(Vec::new(), ProviderCapabilities::openai_responses())
+            .with_state_identity(other_identity);
+    let executor = MockToolExecutor::empty();
+    let store = EventStore::new();
+    store.validate_or_bind_provider_state_identity(Some(bound_identity))?;
+    let before = serde_json::to_vec(&store.events())?;
+    let token = CancellationToken::new();
+    token.cancel();
+    let mut loop_context = LoopContext::new("system");
+
+    let result = run_agent_step(AgentStepRequest {
+        provider: &provider,
+        executor: &executor,
+        store: &store,
+        user_prompt: "must not persist",
+        tools: &[],
+        output_schema: None,
+        model: "test-model",
+        config: &default_config(),
+        event_tx: None,
+        inbound: None,
+        loop_context: &mut loop_context,
+        cancel: Some(token),
+    })
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(NornError::Provider(
+            ProviderError::ProviderStateIdentityMismatch
+        ))
+    ));
+    assert_eq!(provider.call_count(), 0);
+    assert_eq!(
+        serde_json::to_vec(&store.events())?,
+        before,
+        "affinity rejection must precede the abnormal-stop append",
+    );
+    Ok(())
+}

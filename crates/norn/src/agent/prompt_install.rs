@@ -51,8 +51,9 @@ pub(crate) struct SystemPromptInstall<'a> {
 /// uses the typed plan so those fragments are not promoted to System.
 ///
 /// Runtime-dynamic tools are deliberately omitted from this cache-stable
-/// prefix. The request-boundary tool lease publishes their generation-bound
-/// guidance through the managed developer tail instead.
+/// prefix. Their generation-bound descriptions remain solely in the live tool
+/// definitions selected by the request-boundary lease; duplicating them into
+/// prompt prose would create a second, differently trusted authority channel.
 pub(crate) fn install_system_prompt(
     loop_context: &mut LoopContext,
     install: SystemPromptInstall<'_>,
@@ -281,11 +282,11 @@ mod tests {
             sources,
             [
                 PromptSource::ProductPolicy,
-                PromptSource::WorkspaceProfile,
-                PromptSource::UserContextFile,
-                PromptSource::ProjectContextFile,
                 PromptSource::SkillCatalogPolicy,
+                PromptSource::UserContextFile,
                 PromptSource::OperatorSkillCatalog,
+                PromptSource::WorkspaceProfile,
+                PromptSource::ProjectContextFile,
                 PromptSource::WorkspaceSkillCatalog,
             ]
         );
@@ -298,11 +299,11 @@ mod tests {
             authorities,
             [
                 PromptAuthority::System,
-                PromptAuthority::User,
-                PromptAuthority::Developer,
-                PromptAuthority::User,
                 PromptAuthority::System,
                 PromptAuthority::Developer,
+                PromptAuthority::Developer,
+                PromptAuthority::User,
+                PromptAuthority::User,
                 PromptAuthority::User,
             ]
         );

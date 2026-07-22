@@ -1,55 +1,101 @@
-//! Child base-instruction assembly for variant spawns (brief
-//! `agent-variants` R3).
-//!
-//! A spawned child launched through a variant gets a base system
-//! instruction built from the variant's prompt block followed by the
-//! task — the child-path counterpart of the profile path's
-//! `system_instructions`, and a drop-in replacement for the no-variant
-//! literal (`"You are a sub-agent. Task: …"`), keeping the same
-//! task-embedding and complete-and-stop framing so the two shapes cannot
-//! drift apart.
+//! Source-aware stable prompt assembly for freshly spawned children.
 
-/// Build a variant child's base system instruction: the variant's prompt
-/// block first, then the task, then the standing complete-and-stop
-/// instruction.
+use super::{PromptPlan, PromptSource};
+
+const CHILD_AGENT_POLICY: &str = "You are a sub-agent. Complete the task and stop.";
+
+/// One optional prompt fragment selected for a child launch.
 ///
-/// The variant prompt is trimmed of trailing whitespace (prompt files
-/// conventionally end with a newline) so the composed instruction has
-/// stable spacing regardless of the prompt's source (inline string,
-/// prompt file, or built-in).
+/// Each variant carries its provenance in the type so callers cannot attach
+/// an independent provider role to the text.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ChildPromptFragment<'a> {
+    /// Prompt compiled into a built-in Norn variant.
+    BuiltinVariant(&'a str),
+    /// Prompt supplied through merged variant configuration.
+    ConfiguredVariant(&'a str),
+    /// Profile discovered from a trusted user-level profile directory.
+    OperatorProfile(&'a str),
+    /// Profile discovered inside the active workspace.
+    WorkspaceProfile(&'a str),
+}
+
+impl ChildPromptFragment<'_> {
+    const fn source(self) -> PromptSource {
+        match self {
+            Self::BuiltinVariant(_) => PromptSource::BuiltinVariant,
+            Self::ConfiguredVariant(_) => PromptSource::ConfiguredVariant,
+            Self::OperatorProfile(_) => PromptSource::OperatorProfile,
+            Self::WorkspaceProfile(_) => PromptSource::WorkspaceProfile,
+        }
+    }
+
+    fn content(self) -> String {
+        match self {
+            Self::BuiltinVariant(content)
+            | Self::ConfiguredVariant(content)
+            | Self::OperatorProfile(content)
+            | Self::WorkspaceProfile(content) => content.trim_end().to_owned(),
+        }
+    }
+}
+
+/// Build a spawned child's stable prompt without embedding its task.
+///
+/// The task is deliberately absent from this API. Launchers pass it once as
+/// the run's ordinary User prompt, while the compiled child policy and any
+/// provenance-bearing variant/profile guidance stay in the stable plan.
 #[must_use]
-pub fn build_child_system_prompt(variant_prompt: &str, task: &str) -> String {
-    format!(
-        "{}\n\nTask: {task}\n\nComplete the task and stop.",
-        variant_prompt.trim_end(),
-    )
+pub(crate) fn build_child_prompt_plan(fragment: Option<ChildPromptFragment<'_>>) -> PromptPlan {
+    let mut plan = PromptPlan::new();
+    plan.set(PromptSource::ChildAgentPolicy, CHILD_AGENT_POLICY);
+    if let Some(fragment) = fragment {
+        plan.set(fragment.source(), fragment.content());
+    }
+    plan
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::system_prompt::PromptAuthority;
 
-    /// The variant prompt leads, the task follows, and the standing
-    /// complete-and-stop instruction closes — matching the no-variant
-    /// literal's framing.
     #[test]
-    fn variant_prompt_precedes_task_and_stop_instruction() {
-        let built = build_child_system_prompt("You explore code.", "map the crate");
-        assert_eq!(
-            built,
-            "You explore code.\n\nTask: map the crate\n\nComplete the task and stop.",
+    fn task_cannot_enter_stable_child_plan() {
+        let sentinel = "USER_TASK_SENTINEL";
+        let plan = build_child_prompt_plan(Some(ChildPromptFragment::BuiltinVariant(
+            "builtin guidance",
+        )));
+
+        assert!(
+            plan.fragments()
+                .iter()
+                .all(|fragment| !fragment.content().contains(sentinel))
+        );
+        assert_eq!(plan.fragments().len(), 2);
+        assert!(
+            plan.fragments()
+                .iter()
+                .all(|fragment| fragment.authority() == PromptAuthority::System)
         );
     }
 
-    /// Prompt-file text ends with a newline by convention; the composed
-    /// instruction normalises the seam instead of emitting a blank run.
     #[test]
-    fn trailing_prompt_whitespace_is_normalised() {
-        let built = build_child_system_prompt("You explore code.\n", "map the crate");
-        assert_eq!(
-            built,
-            "You explore code.\n\nTask: map the crate\n\nComplete the task and stop.",
-        );
+    fn configured_and_workspace_guidance_remain_user_authority() {
+        for fragment in [
+            ChildPromptFragment::ConfiguredVariant("configured"),
+            ChildPromptFragment::WorkspaceProfile("workspace"),
+        ] {
+            let plan = build_child_prompt_plan(Some(fragment));
+            assert_eq!(plan.fragments().len(), 2);
+            assert_eq!(plan.fragments()[1].authority(), PromptAuthority::User);
+        }
+    }
+
+    #[test]
+    fn operator_profile_guidance_is_developer_authority() {
+        let plan = build_child_prompt_plan(Some(ChildPromptFragment::OperatorProfile("operator")));
+        assert_eq!(plan.fragments().len(), 2);
+        assert_eq!(plan.fragments()[1].authority(), PromptAuthority::Developer);
     }
 }

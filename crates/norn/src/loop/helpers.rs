@@ -28,6 +28,7 @@ use crate::provider::traits::Provider;
 use crate::rules::types::{RuleInjection, RuntimeEvent};
 use crate::session::events::{EventBase, EventId, SessionEvent};
 use crate::session::store::EventStore;
+use crate::system_prompt::PromptSeedFingerprint;
 
 // Re-export tool-dispatch functions so runner.rs imports stay unchanged.
 pub(super) use super::tool_dispatch::{
@@ -44,11 +45,12 @@ pub(super) use crate::r#loop::rule_wiring::{
 pub(super) struct InitialMessages {
     /// Full local prompt view used for manual replay.
     pub(super) messages: Vec<Message>,
-    /// End of the live System prefix before persisted history. The managed
-    /// dynamic-context Developer message is no longer part of the prefix — it
-    /// is attached at the tail on the first `build_request` — so this is
-    /// exactly the System message (`1`).
+    /// End of the stable source-aware prefix before persisted history. Managed
+    /// request-local context is projected later as threaded Responses
+    /// instructions or a stateless Developer tail and is not part of this count.
     pub(super) prefix_len: usize,
+    /// Exact ordered commitment to the stable non-System prompt fragments.
+    pub(super) prompt_seed_fingerprint: PromptSeedFingerprint,
     /// Latest provider response anchor visible in the prompt history.
     pub(super) response_thread_anchor: Option<ResponseThreadAnchor>,
     /// Unmarked pre-D3 candidates, newest first. Setup may use one only when
@@ -61,11 +63,11 @@ pub(super) struct InitialMessages {
     pub(super) new_input_len: usize,
 }
 
-/// Build the initial conversation: system prompt, conversation history
+/// Build the initial conversation: stable prompt plan, conversation history
 /// from the event store, and the new user input (or slash expansion).
 ///
 /// History is read from `store` through its durable prompt projection and
-/// spliced between the system message and the new user message. This ensures
+/// spliced between the stable prefix and the new user message. This ensures
 /// stateless providers see the effective conversation while threaded providers
 /// can derive an exact post-anchor delta from the same view.
 ///
@@ -106,15 +108,18 @@ pub(super) fn build_initial_messages(
             construct_prompt(store, edits).events
         });
     let stable_prompt = loop_context.stable_prompt_messages();
+    let prompt_seed_fingerprint = loop_context.stable_prompt_plan().map_or_else(
+        PromptSeedFingerprint::empty,
+        PromptSeedFingerprint::from_plan,
+    );
     let mut messages =
         Vec::with_capacity(stable_prompt.len() + history_events.len() + new_msg_count);
     messages.extend(stable_prompt);
 
-    // The managed dynamic-context Developer message is NOT placed here: it is
-    // attached at the tail by the first `build_request` so the System message
-    // plus history form one stable, cacheable prefix. The prefix is therefore
-    // exactly the source-aware stable prompt plan (or the legacy single
-    // System message for a direct `LoopContext::new` caller).
+    // Managed request-local context is NOT placed here. `build_request`
+    // projects it after preflight as top-level threaded instructions or a
+    // stateless Developer tail, leaving this source-aware stable plan (or a
+    // direct caller's legacy System message) as the exact stable prefix.
     let prefix_len = messages.len();
     let response_thread_anchors =
         response_thread_anchors_for_prompt_view(&history_events, store, prefix_len, true)?;
@@ -145,6 +150,7 @@ pub(super) fn build_initial_messages(
     Ok(InitialMessages {
         messages,
         prefix_len,
+        prompt_seed_fingerprint,
         response_thread_anchor: response_thread_anchors.proven,
         legacy_response_thread_anchors: response_thread_anchors.legacy_candidates,
         new_input_len,

@@ -51,6 +51,7 @@ use crate::provider::tools::ProviderCapabilities;
 use crate::provider::usage::Usage;
 use crate::provider::{Provider, ProviderStateIdentity};
 use crate::rules::engine::RuleEngine;
+use crate::rules::source::RuleOrigin;
 use crate::rules::types::{
     DeliveryMode as RuleDelivery, Rule, RuleId, TriggerCondition, TriggerTiming,
 };
@@ -351,8 +352,8 @@ async fn provider_threaded_tool_continuation_sends_only_tool_result() {
         Some("resp_tool")
     );
     assert!(requests[1].store);
-    // The threaded delta is the tool result plus the current managed context,
-    // represented as a final System message for top-level instruction lifting.
+    // The threaded delta is the tool result plus current Norn-owned policy,
+    // represented by an internal System marker for adapter instruction lifting.
     assert_eq!(requests[1].messages.len(), 3);
     assert_eq!(
         requests[1].messages[0].role,
@@ -707,18 +708,18 @@ async fn test_agent_step_with_bash_and_search() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 3: rules fire and inject into system instruction on path-glob match
+// Test 3: rules fire and inject with source authority on path-glob match
 // ---------------------------------------------------------------------------
 
 /// A step with a RuleEngine containing a path-glob rule for `*.txt`.
 /// MockToolExecutor simulates a write to a .txt file (writes to a mock path).
 /// After the tool call, the rules engine fires and its content should appear in
-/// the system instruction injected into the next provider call.
+/// the next provider call with operator-derived Developer authority.
 ///
 /// Proves that:
 /// - RuleEngine is wired into the loop via LoopContext
 /// - PathGlob triggers fire when a write tool is called with a matching path
-/// - Rule content becomes a dynamic system section for the next iteration
+/// - Rule content becomes one origin-authorized conversation message
 /// - The session store records the rule injection as a typed
 ///   `SessionEvent::RuleInjection` carrying the rule id and delivery mode
 ///   (the durable presence/audit record), not as an untyped UserMessage
@@ -802,11 +803,13 @@ async fn test_rules_fire_on_file_write() {
     let rule_injected = events.iter().any(|e| match e {
         SessionEvent::RuleInjection {
             rule_id,
+            origin,
             delivery,
             content,
             ..
         } => {
             rule_id == "txt-rule"
+                && *origin == Some(RuleOrigin::Operator)
                 && *delivery == RuleDelivery::ContextInjection
                 && content == "RULE_CONTENT_INJECTED"
         }
@@ -1357,13 +1360,12 @@ async fn test_no_schema_mode_completes_on_text_stop() {
 // ---------------------------------------------------------------------------
 
 /// A step where the rules engine uses SystemContextAppend delivery for a
-/// path-glob rule. After the tool fires, the rule body must appear in the
-/// system_sections of LoopContext (visible as a dynamic section), not as
-/// a UserMessage.
+/// path-glob rule. After the tool fires, the rule body is persisted once with
+/// operator provenance and projected as a Developer conversation message.
 ///
 /// Proves that:
-/// - SystemContextAppend delivery wires into `LoopContext::system_sections`
-/// - The rule content is NOT recorded as a UserMessage
+/// - Delivery does not select authority; programmatic rules are Operator
+/// - The rule content is not duplicated as a UserMessage session event
 /// - The schema tool completes the step normally
 #[tokio::test]
 async fn test_rules_system_context_append_delivery() {
@@ -1449,17 +1451,18 @@ async fn test_rules_system_context_append_delivery() {
         "SystemContextAppend must not appear as a UserMessage in the session store",
     );
 
-    // It IS persisted as a typed RuleInjection event so the presence set can
-    // re-materialize its content each prompt-construction pass and re-fire
-    // it after compaction.
+    // It is persisted once with provenance so resume reconstructs the same
+    // message and compaction can make the rule eligible to fire again.
     let has_rule_event = events.iter().any(|e| match e {
         SessionEvent::RuleInjection {
             rule_id,
+            origin,
             delivery,
             content,
             ..
         } => {
             rule_id == "sys-append-rule"
+                && *origin == Some(RuleOrigin::Operator)
                 && *delivery == RuleDelivery::SystemContextAppend
                 && content == "SYS_APPEND_CONTENT"
         }

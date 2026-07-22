@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use tokio::process::Command;
 
 use crate::context::loader::ContextLoader;
+use crate::r#loop::expansion::expand_system_instruction;
 use crate::provider::request::ReasoningEffort;
 use crate::provider::request::{Message, MessageRole, ToolCallCaller};
 use crate::system_prompt::authority::PromptSource;
@@ -12,20 +13,19 @@ use crate::system_prompt::plan::PromptPlan;
 use super::{DEFAULT_PROMPT_COMMAND_TIMEOUT, LoopContext, PromptCommandCacheEntry};
 
 impl LoopContext {
-    /// Reassemble the base system instruction at `system_sections[0]`
-    /// from [`Self::base_prefix`], the current
-    /// [`ContextLoader::formatted_context`] (when a loader is wired),
-    /// and [`Self::base_suffix`].
+    /// Reassemble the flattened base compatibility view at
+    /// `system_sections[0]` from Norn's internal prefix/suffix caches and
+    /// the current [`ContextLoader::formatted_context`] (when wired).
     ///
-    /// Order is fixed: prefix, then always-on context, then suffix —
+    /// Legacy order is fixed: prefix, then always-on context, then suffix —
     /// matching DESIGN.md §D2's layering (Norn base + profile
     /// instructions, then user-level + project-root `NORN.md`, then the
     /// skill catalog listing). Empty parts are skipped so the join does
     /// not produce stray blank lines.
     ///
-    /// Pushes a new entry when `system_sections` is empty so callers
-    /// can invoke this on a freshly-defaulted [`LoopContext`] without a
-    /// separate seeding step.
+    /// Source-aware plans rebuild from their typed fragments and deliberately
+    /// ignore the private flattened caches. Pushes a new entry when
+    /// `system_sections` is empty.
     pub fn rebuild_base_section(&mut self) {
         if self.stable_prompt_plan.is_some() {
             self.rebuild_typed_base_section();
@@ -159,14 +159,28 @@ impl LoopContext {
         self.system_sections.first().cloned().unwrap_or_default()
     }
 
-    /// Collect dynamic sections (indices 1..) into a single string joined
-    /// by double newlines. Returns [`None`] when no dynamic sections exist.
+    /// Collect all volatile sections in wire order for the stateless
+    /// Developer-tail compatibility projection.
     #[must_use]
     pub fn dynamic_context(&self) -> Option<String> {
-        if self.system_sections.len() <= 1 {
-            return None;
-        }
-        Some(self.system_sections[1..].join("\n\n"))
+        join_sections(
+            self.system_sections[1..]
+                .iter()
+                .chain(&self.developer_sections),
+        )
+    }
+
+    /// Collect volatile Norn-owned sections for the request-local Responses
+    /// `instructions` channel.
+    #[must_use]
+    pub(crate) fn managed_system_context(&self) -> Option<String> {
+        join_sections(self.system_sections[1..].iter())
+    }
+
+    /// Collect volatile trusted-operator sections at Developer authority.
+    #[must_use]
+    pub(crate) fn managed_developer_context(&self) -> Option<String> {
+        join_sections(self.developer_sections.iter())
     }
 
     /// Append a dynamic section to the system instruction.
@@ -177,56 +191,16 @@ impl LoopContext {
         self.system_sections.push(content.into());
     }
 
+    fn append_developer_section(&mut self, content: impl Into<String>) {
+        self.developer_sections.push(content.into());
+    }
+
     /// Drop all dynamic sections, retaining only the base instruction at
     /// index 0. Called at the top of each loop iteration so rule injections
     /// re-fire fresh.
     pub fn clear_dynamic_sections(&mut self) {
         self.system_sections.truncate(1);
-    }
-
-    /// Build the current prompt view over `store`, honouring the active
-    /// [`ContextEdits`] when one is installed. Without a tracker, durable
-    /// context marks are projected transiently from the store.
-    /// Re-append every in-context [`DeliveryMode::SystemContextAppend`] rule's
-    /// content to the dynamic system sections from the persisted event
-    /// stream.
-    ///
-    /// Called at the top of each iteration after
-    /// [`Self::clear_dynamic_sections`] and before the managed developer
-    /// message is synced, so append-mode rule content survives the
-    /// per-iteration wipe "for the remainder of the session" — while still
-    /// vanishing the instant its
-    /// [`SessionEvent::RuleInjection`](crate::session::events::SessionEvent::RuleInjection)
-    /// event is compacted or suppressed out of the view (at which point the
-    /// rule re-fires on its next trigger). No-op when no rules engine is
-    /// installed.
-    pub fn materialize_system_context_rules(&mut self, store: &crate::session::store::EventStore) {
-        if self.rules.is_none() {
-            return;
-        }
-        let sections: Vec<String> = crate::r#loop::context::with_prompt_context_edits(
-            store,
-            self.context_edits.as_ref(),
-            |edits| {
-                store.with_events(|events| {
-                    let mut sections = Vec::new();
-                    crate::r#loop::context::for_each_visible_event(events, edits, |event, _tag| {
-                        if let crate::session::events::SessionEvent::RuleInjection {
-                            delivery: crate::rules::types::DeliveryMode::SystemContextAppend,
-                            content,
-                            ..
-                        } = event
-                        {
-                            sections.push(content.clone());
-                        }
-                    });
-                    sections
-                })
-            },
-        );
-        for section in sections {
-            self.append_system_section(section);
-        }
+        self.developer_sections.clear();
     }
 
     /// Rebuild the rules engine's presence set from the current prompt view.
@@ -320,8 +294,7 @@ impl LoopContext {
     }
 
     /// Evaluate every registered [`PromptCommand`](crate::profile::PromptCommand)
-    /// and append a dynamic
-    /// system section per success. Failures (non-zero exit, spawn error,
+    /// and append a volatile Developer section per success. Failures (non-zero exit, spawn error,
     /// timeout) are logged via `tracing::warn!` and skipped — the loop
     /// continues without that section.
     ///
@@ -333,9 +306,8 @@ impl LoopContext {
     /// command, not the sum. Sections append in registration order
     /// regardless of completion order.
     ///
-    /// Callers must invoke this method at the start of every iteration
-    /// after [`Self::clear_dynamic_sections`] so the dynamic sections live
-    /// for exactly the next provider call.
+    /// Callers must invoke this method after [`Self::clear_dynamic_sections`]
+    /// so the resulting sections live for exactly the next provider call.
     pub async fn evaluate_prompt_commands(&mut self, timeout: Option<Duration>) {
         if self.prompt_commands.is_empty() {
             return;
@@ -343,18 +315,23 @@ impl LoopContext {
         let timeout = timeout.unwrap_or(DEFAULT_PROMPT_COMMAND_TIMEOUT);
         let commands = self.prompt_commands.clone();
         let now = Instant::now();
+        let working_dir = self.working_dir.get();
         // Resolve cache hits up front; only misses spend a subprocess.
         let cached: Vec<Option<String>> = commands
             .iter()
             .map(|cmd| {
                 self.prompt_command_cache
                     .get(&cmd.name)
-                    .filter(|entry| entry.expires_at.is_some_and(|deadline| deadline > now))
+                    .filter(|entry| {
+                        entry.command == cmd.command
+                            && Some(entry.cache_ttl) == cmd.cache_ttl
+                            && entry.working_dir == working_dir
+                            && entry.expires_at.is_some_and(|deadline| deadline > now)
+                    })
                     .map(|entry| entry.value.clone())
             })
             .collect();
 
-        let working_dir = self.working_dir.get();
         let misses: Vec<_> = commands
             .iter()
             .zip(&cached)
@@ -364,31 +341,44 @@ impl LoopContext {
         let mut miss_results = futures_util::future::join_all(misses).await.into_iter();
 
         for (cmd, cached_value) in commands.iter().zip(cached) {
-            let outcome = match cached_value {
-                Some(value) => Ok(value),
-                None => match miss_results.next() {
-                    Some(result) => result,
-                    // Structurally unreachable: one future was created per
-                    // cache miss, in the same order this loop consumes.
-                    None => Err("concurrent evaluation produced no result".to_owned()),
-                },
-            };
+            if let Some(value) = cached_value {
+                self.append_developer_section(format_section(&cmd.name, &value));
+                continue;
+            }
+            let outcome = miss_results
+                .next()
+                // Structurally unreachable: one future was created per cache
+                // miss, in the same order this loop consumes.
+                .unwrap_or_else(|| Err("concurrent evaluation produced no result".to_owned()));
             match outcome {
                 Ok(stdout) => {
                     if let Some(ttl) = cmd.cache_ttl {
-                        self.prompt_command_cache.insert(
-                            cmd.name.clone(),
-                            PromptCommandCacheEntry {
-                                value: stdout.clone(),
-                                expires_at: Some(now + ttl),
-                            },
-                        );
+                        if let Some(expires_at) = Instant::now().checked_add(ttl) {
+                            self.prompt_command_cache.insert(
+                                cmd.name.clone(),
+                                PromptCommandCacheEntry {
+                                    command: cmd.command.clone(),
+                                    cache_ttl: ttl,
+                                    working_dir: working_dir.clone(),
+                                    value: stdout.clone(),
+                                    expires_at: Some(expires_at),
+                                },
+                            );
+                        } else {
+                            self.prompt_command_cache.remove(&cmd.name);
+                            tracing::warn!(
+                                command = %cmd.name,
+                                ?ttl,
+                                "prompt command cache TTL exceeds the platform clock range; \
+                                 skipping cache entry",
+                            );
+                        }
                     } else {
                         // No TTL means caching is disabled; drop any stale entry
                         // so we never accidentally hit it later.
                         self.prompt_command_cache.remove(&cmd.name);
                     }
-                    self.append_system_section(format_section(&cmd.name, &stdout));
+                    self.append_developer_section(format_section(&cmd.name, &stdout));
                 }
                 Err(err) => {
                     tracing::warn!(
@@ -400,6 +390,35 @@ impl LoopContext {
             }
         }
     }
+
+    /// Evaluate and variable-expand the trusted prompt-command context for one
+    /// provider request.
+    ///
+    /// The runner prepares the first request's value during setup, after the
+    /// no-request gate and before exact-seed replay validation and prompt
+    /// persistence.
+    /// Later iterations evaluate it at the request boundary. In both cases the
+    /// exact Developer content participates in prompt-seed reconciliation.
+    pub(crate) async fn prepare_prompt_command_context(
+        &mut self,
+        timeout: Option<Duration>,
+    ) -> Option<String> {
+        self.evaluate_prompt_commands(timeout).await;
+        let content = self.managed_developer_context()?;
+        match self.variables.as_ref() {
+            Some(variables) => Some(expand_system_instruction(&content, variables).await),
+            None => Some(content),
+        }
+    }
+}
+
+fn join_sections<'a>(sections: impl Iterator<Item = &'a String>) -> Option<String> {
+    let joined = sections
+        .filter(|section| !section.is_empty())
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    (!joined.is_empty()).then_some(joined)
 }
 
 fn format_section(name: &str, body: &str) -> String {

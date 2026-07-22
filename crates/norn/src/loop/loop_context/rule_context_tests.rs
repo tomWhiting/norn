@@ -19,6 +19,7 @@ fn append_rule_event(
     store.append(SessionEvent::RuleInjection {
         base: EventBase::new(store.last_event_id()),
         rule_id: rule_id.to_owned(),
+        origin: None,
         delivery,
         timing: TriggerTiming::After,
         content: content.to_owned(),
@@ -46,7 +47,7 @@ fn rs_rule(id: &str, body: &str, delivery: DeliveryMode) -> Rule {
 }
 
 #[test]
-fn materialize_system_context_rules_reappends_across_wipes()
+fn legacy_system_context_rule_projects_conservatively_as_user()
 -> Result<(), Box<dyn std::error::Error>> {
     let store = EventStore::new();
     append_rule_event(
@@ -56,25 +57,18 @@ fn materialize_system_context_rules_reappends_across_wipes()
         "APPEND_BODY",
     )?;
 
-    let mut ctx = LoopContext::new("base");
-    ctx.rules = Some(RuleEngine::new(vec![]));
-
-    // First prompt-construction pass: content re-materialized from the
-    // persisted event even though it was never in `system_sections`.
-    ctx.materialize_system_context_rules(&store);
-    assert!(ctx.system_instruction().contains("APPEND_BODY"));
-
-    // The per-iteration wipe removes it, but the next pass restores it
-    // from the durable event — "for the remainder of the session".
-    ctx.clear_dynamic_sections();
-    assert!(!ctx.system_instruction().contains("APPEND_BODY"));
-    ctx.materialize_system_context_rules(&store);
-    assert!(ctx.system_instruction().contains("APPEND_BODY"));
+    let messages = crate::session::conversion::events_to_messages(&store.events());
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages[0].role,
+        crate::provider::request::MessageRole::User
+    );
+    assert_eq!(messages[0].content.as_deref(), Some("APPEND_BODY"));
     Ok(())
 }
 
 #[test]
-fn materialize_without_tracker_projects_persisted_suppression()
+fn legacy_user_projection_respects_persisted_suppression_without_tracker()
 -> Result<(), Box<dyn std::error::Error>> {
     let store = EventStore::new();
     let id = append_rule_event(
@@ -84,17 +78,13 @@ fn materialize_without_tracker_projects_persisted_suppression()
         "APPEND_BODY",
     )?;
 
-    let mut ctx = LoopContext::new("base");
-    ctx.rules = Some(RuleEngine::new(vec![]));
     let mut persisted = ContextEdits::new();
     persisted.suppress(&store, id.clone())?;
-    assert!(ctx.context_edits.is_none());
-
-    ctx.clear_dynamic_sections();
-    ctx.materialize_system_context_rules(&store);
+    let visible = crate::r#loop::context::construct_prompt(&store, &persisted);
+    let messages = crate::session::conversion::events_to_messages(&visible.events);
     assert!(
-        !ctx.system_instruction().contains("APPEND_BODY"),
-        "a compacted/suppressed rule event must not re-materialize",
+        messages.is_empty(),
+        "a compacted/suppressed rule event must not reach the prompt",
     );
     assert!(
         store.events().iter().any(|event| event.base().id == id),
@@ -205,6 +195,10 @@ async fn scan_nested_norn_surfaces_nested_context_once() -> Result<(), Box<dyn s
         .await;
     assert_eq!(injections.len(), 1, "nested NORN.md surfaces exactly once");
     assert_eq!(injections[0].rule_id.as_str(), "norn-md:src/api");
+    assert_eq!(
+        injections[0].origin,
+        crate::rules::source::RuleOrigin::Workspace
+    );
     assert_eq!(injections[0].content, "API_CONVENTIONS");
     Ok(())
 }

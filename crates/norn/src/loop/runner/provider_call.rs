@@ -212,11 +212,15 @@ impl StepMachine<'_> {
         // prefix that discovery rejects rather than guessing whether the
         // absent response was stored.
         if let Some(base) = provenance_base {
-            let event = ProviderStateProvenance::new(assistant_base.id.clone(), response_is_stored)
-                .into_custom_event(base)
-                .map_err(|_source| SessionError::StorageError {
-                    reason: "failed to encode provider-state provenance".to_owned(),
-                })?;
+            let event = ProviderStateProvenance::with_prompt_seed(
+                assistant_base.id.clone(),
+                response_is_stored,
+                self.conversation_state.prompt_seed_fingerprint(),
+            )
+            .into_custom_event(base)
+            .map_err(|_source| SessionError::StorageError {
+                reason: "failed to encode provider-state provenance".to_owned(),
+            })?;
             publication.push(event);
         }
 

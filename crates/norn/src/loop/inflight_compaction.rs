@@ -26,11 +26,12 @@
 //! tool results, nudges, inbound injections, rule injections, child-agent
 //! results, stop blocks) is paired with exactly one persisted
 //! prompt-producing event, and events that produce no message (Custom, Label,
-//! forks, …) are never pushed locally. The managed dynamic-context Developer
-//! message is *not* in the live conversation while this walk runs: the
-//! request builder detaches it before the preflight and re-attaches it at the
-//! tail afterwards (its token cost is fed in separately via
-//! [`PreflightArgs::dev_tail_tokens`]), so it never perturbs the mapping.
+//! forks, …) are never pushed locally. Managed request-local context is *not*
+//! in the live conversation while this walk runs: stateless requests detach
+//! their prior Developer-tail projection before preflight, while threaded
+//! requests never insert their instructions into the durable view. Its token
+//! cost is fed in separately via [`PreflightArgs::managed_context_tokens`], so
+//! it never perturbs the mapping.
 
 use std::collections::HashSet;
 
@@ -57,9 +58,8 @@ use super::helpers::append_and_notify;
 /// Positional facts about the live conversation needed to map session
 /// events onto message indices (see module docs for the invariant).
 pub(super) struct InFlightPromptLayout {
-    /// Number of leading non-event messages: the System message. The managed
-    /// dynamic-context Developer message is detached before the preflight, so
-    /// it is not counted here.
+    /// Number of leading stable, non-event prompt messages. Managed request-local
+    /// context is projected after preflight and is not counted here.
     pub(super) prefix_len: usize,
     /// Event ID of this step's persisted user-prompt event.
     pub(super) prompt_event_id: EventId,
@@ -90,13 +90,12 @@ pub(super) struct PreflightArgs<'a> {
     pub(super) compaction_state: &'a mut CompactionState,
     /// Positional layout of the live conversation.
     pub(super) layout: InFlightPromptLayout,
-    /// Estimated token cost of the managed dynamic-context Developer message
-    /// that the request builder attaches at the tail *after* this preflight.
-    /// It is not present in `messages` while the estimate and compaction walk
-    /// run (see the mapping invariant), so its cost is added in explicitly:
-    /// the token warning and the auto-compaction trigger must account for the
-    /// message that actually goes over the wire.
-    pub(super) dev_tail_tokens: usize,
+    /// Estimated token cost of managed request-local context projected after
+    /// this preflight. It is not present in `messages` while the estimate and
+    /// compaction walk run (see the mapping invariant), so its cost is added
+    /// explicitly for both threaded instructions and the stateless Developer
+    /// tail.
+    pub(super) managed_context_tokens: usize,
     /// The step's cooperative cancellation token, raced against the
     /// compaction-summarization provider call.
     pub(super) cancel: Option<&'a tokio_util::sync::CancellationToken>,
@@ -151,7 +150,7 @@ pub(super) async fn run_context_preflight(
     // truthful lower bound for a request that has only grown since.
     // `ContextEdits` clears the floor whenever the prompt view shrinks.
     let estimated = estimate_prompt_tokens(estimator.as_ref(), args.messages, args.iteration_tools)
-        + args.dev_tail_tokens;
+        + args.managed_context_tokens;
     let usage_floor = args
         .loop_context
         .context_edits
@@ -240,7 +239,7 @@ pub(super) async fn run_context_preflight(
         ) {
             request_input_estimate =
                 estimate_prompt_tokens(estimator.as_ref(), args.messages, args.iteration_tools)
-                    + args.dev_tail_tokens;
+                    + args.managed_context_tokens;
         }
     } else {
         // Unreachable by construction: `maybe_auto_compact` only fires when

@@ -122,7 +122,7 @@ async fn spawn_agent_tool_subset_gates_disallowed_tools() -> TestResult {
 }
 
 /// R4: a named profile resolved from a temp `.md` file supplies the
-/// child's `LoopContext` system instruction.
+/// child's source-typed stable prompt fragment.
 #[test]
 fn build_child_loop_context_uses_profile_body() -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
@@ -141,11 +141,22 @@ fn build_child_loop_context_uses_profile_body() -> Result<(), Box<dyn std::error
     )?;
 
     let launch_root = dir.path().canonicalize()?;
-    let (loop_ctx, tools) =
-        build_child_loop_context(None, Some("researcher"), "find the bug", &launch_root)?;
+    let (loop_ctx, tools) = build_child_loop_context(None, Some("researcher"), &launch_root)?;
     assert!(
         loop_ctx.system_sections[0].contains("You are a focused researcher."),
-        "profile body must become the child's base system instruction",
+        "profile body must remain visible in the compatibility base view",
+    );
+    let plan = loop_ctx
+        .stable_prompt_plan()
+        .ok_or("profile child must carry a typed prompt plan")?;
+    let profile_fragment = plan
+        .fragments()
+        .iter()
+        .find(|fragment| fragment.source() == crate::system_prompt::PromptSource::WorkspaceProfile)
+        .ok_or("workspace profile fragment must retain its source")?;
+    assert_eq!(
+        profile_fragment.authority(),
+        crate::system_prompt::PromptAuthority::User,
     );
     assert_eq!(
         tools,
@@ -184,7 +195,7 @@ fn child_profile_resolution_stays_pinned_to_the_launch_root()
     ctx.set_working_dir(moved_root);
 
     let profile_root = resolve_profile_root(&ctx, true)?;
-    let (loop_ctx, _) = build_child_loop_context(None, Some("shared"), "task", &profile_root)?;
+    let (loop_ctx, _) = build_child_loop_context(None, Some("shared"), &profile_root)?;
     let prompt = loop_ctx.base_system_instruction();
 
     assert_eq!(profile_root, launch_root);
@@ -220,7 +231,7 @@ fn build_child_loop_context_rejects_workspace_profile_prompt_commands()
     )?;
 
     let launch_root = dir.path().canonicalize()?;
-    let result = build_child_loop_context(None, Some("hostile"), "task", &launch_root);
+    let result = build_child_loop_context(None, Some("hostile"), &launch_root);
     assert!(
         matches!(&result, Err(ToolError::ExecutionFailed { .. })),
         "workspace prompt command must be rejected as ExecutionFailed",
@@ -233,14 +244,20 @@ fn build_child_loop_context_rejects_workspace_profile_prompt_commands()
     Ok(())
 }
 
-/// R4: when no profile is given the child's system instruction embeds
-/// the task itself.
+/// With no profile or variant, the stable plan contains compiled child policy
+/// only. The task belongs exclusively to the run's User prompt.
 #[test]
-fn build_child_loop_context_default_embeds_task() -> Result<(), Box<dyn std::error::Error>> {
+fn build_child_loop_context_default_has_no_task() -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
-    let (loop_ctx, tools) =
-        build_child_loop_context(None, None, "summarise the report", dir.path())?;
-    assert!(loop_ctx.system_sections[0].contains("summarise the report"));
+    let (loop_ctx, tools) = build_child_loop_context(None, None, dir.path())?;
+    let plan = loop_ctx
+        .stable_prompt_plan()
+        .ok_or("plain child must carry a typed prompt plan")?;
+    assert_eq!(plan.fragments().len(), 1);
+    assert_eq!(
+        plan.fragments()[0].source(),
+        crate::system_prompt::PromptSource::ChildAgentPolicy,
+    );
     assert!(
         tools.is_none(),
         "no profile means no allow-list from a profile"
@@ -255,7 +272,7 @@ fn build_child_loop_context_unknown_profile_errors() -> Result<(), Box<dyn std::
     let dir = tempfile::tempdir()?;
     // `LoopContext` is not `Debug`, so the `Ok` arm cannot use
     // `expect_err`; match the result explicitly instead.
-    let result = build_child_loop_context(None, Some("missing"), "task", dir.path());
+    let result = build_child_loop_context(None, Some("missing"), dir.path());
     assert!(
         matches!(&result, Err(ToolError::ExecutionFailed { .. })),
         "unknown profile must return ExecutionFailed",
@@ -274,7 +291,7 @@ fn child_profile_errors_do_not_echo_control_characters() -> Result<(), Box<dyn s
         "sentinel\u{1b}[31m",
         "sentinel\u{7}bell",
     ] {
-        let result = build_child_loop_context(None, Some(name), "task", dir.path());
+        let result = build_child_loop_context(None, Some(name), dir.path());
         assert!(result.is_err(), "unsafe profile name must be rejected");
         if let Err(error) = result {
             let display = error.to_string();

@@ -227,10 +227,8 @@ mod tests {
         let old_log = Arc::new(ActionLog::new(Arc::clone(&old_store)));
         norn::agent::rebuild_action_log(&old_log, &old_store.events());
         ctx.insert_extension(Arc::clone(&old_log));
-        let mut loop_context = LoopContext {
-            action_log: Some(Arc::clone(&old_log)),
-            ..LoopContext::default()
-        };
+        let mut loop_context = LoopContext::default();
+        loop_context.action_log.replace(Arc::clone(&old_log));
 
         // Seeding the new store before rotation proves the rebuilt
         // ledger observed the NEW store's events, not the old one's.
@@ -295,10 +293,10 @@ mod tests {
             })
             .unwrap();
 
-        let mut loop_context = LoopContext {
-            context_edits: Some(norn::session::context_edit::ContextEdits::new()),
-            ..LoopContext::default()
-        };
+        let mut loop_context = LoopContext::default();
+        loop_context
+            .context_edits
+            .replace(norn::session::context_edit::ContextEdits::new());
         let mut store_slot = Arc::new(EventStore::new());
         rotate_store_dependents(
             None,
@@ -498,10 +496,8 @@ mod tests {
         // in the new conversation.
         let old_store = Arc::new(EventStore::new());
         let old_log = Arc::new(ActionLog::new(Arc::clone(&old_store)));
-        let mut loop_context = LoopContext {
-            action_log: Some(Arc::clone(&old_log)),
-            ..LoopContext::default()
-        };
+        let mut loop_context = LoopContext::default();
+        loop_context.action_log.replace(Arc::clone(&old_log));
         let new_store = Arc::new(EventStore::new());
         new_store.append(tool_result("new-call")).unwrap();
 

@@ -701,10 +701,8 @@ fn scenario_runtime(scenario: &str) -> Result<ScenarioRuntime, Box<dyn std::erro
                 };
                 let _ = tx.send(result).await;
             });
-            let loop_context = LoopContext {
-                child_result_rx: Some(rx),
-                ..LoopContext::default()
-            };
+            let mut loop_context = LoopContext::default();
+            loop_context.child_result_rx.replace(rx);
             Ok((
                 Arc::new(DelayedProvider {
                     events: vec![

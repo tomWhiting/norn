@@ -16,6 +16,7 @@ use parking_lot::RwLock;
 use uuid::Uuid;
 
 use crate::agent::registry::AgentRegistry;
+use crate::agent::variants::VariantPromptOrigin;
 use crate::agent::variants::{ResolvedVariant, VariantCatalog};
 use crate::error::ToolError;
 use crate::tool::context::ToolContext;
@@ -227,6 +228,8 @@ pub(crate) struct SpawnResolution {
     pub(crate) variant_name: Option<String>,
     /// The variant's loaded prompt text, if any.
     pub(crate) variant_prompt: Option<String>,
+    /// Provenance of [`Self::variant_prompt`].
+    pub(crate) variant_prompt_origin: Option<VariantPromptOrigin>,
     /// The variant's tool allowlist, if any.
     pub(crate) variant_tools: Option<Vec<String>>,
     /// The variant's MCP server subset, if any.
@@ -288,6 +291,7 @@ pub(crate) fn resolve_spawn(
         model,
         variant_name: variant.map(|v| v.name.clone()),
         variant_prompt: variant.and_then(|v| v.prompt.clone()),
+        variant_prompt_origin: variant.and_then(|v| v.prompt_origin),
         variant_tools: variant.and_then(|v| v.tools.clone()),
         variant_mcp_servers: variant.and_then(|v| v.mcp_servers.clone()),
         reasoning_effort: variant.and_then(|v| v.reasoning_effort),
@@ -501,6 +505,10 @@ mod tests {
         )
         .expect("resolves");
         assert_eq!(resolved.variant_prompt.as_deref(), Some("Scout the area."));
+        assert_eq!(
+            resolved.variant_prompt_origin,
+            Some(VariantPromptOrigin::Configured),
+        );
         assert_eq!(resolved.variant_tools, Some(vec!["read".to_owned()]));
         assert_eq!(resolved.variant_mcp_servers, Some(vec!["docs".to_owned()]));
         assert_eq!(resolved.reasoning_effort, Some(ReasoningEffort::Low));

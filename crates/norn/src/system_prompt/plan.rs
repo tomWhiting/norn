@@ -184,4 +184,87 @@ mod tests {
         forward.set(PromptSource::OperatorRule, "replacement");
         assert_eq!(ordered_sources(&forward), ordered_sources(&reverse));
     }
+
+    #[test]
+    fn materialization_never_emits_system_after_developer_or_user() {
+        let sources = [
+            PromptSource::UserRequest,
+            PromptSource::WorkspaceRule,
+            PromptSource::WorkspaceSkillCatalog,
+            PromptSource::ProjectContextFile,
+            PromptSource::ConfiguredVariant,
+            PromptSource::WorkspaceProfile,
+            PromptSource::OperatorRule,
+            PromptSource::OperatorSkillCatalog,
+            PromptSource::UserContextFile,
+            PromptSource::OperatorOverride,
+            PromptSource::OperatorProfile,
+            PromptSource::SkillCatalogPolicy,
+            PromptSource::BuiltinVariant,
+            PromptSource::ForkAgentPolicy,
+            PromptSource::ChildAgentPolicy,
+            PromptSource::EmbedderPolicy,
+            PromptSource::ProductPolicy,
+        ];
+        let mut plan = PromptPlan::new();
+        for source in sources {
+            plan.set(source, source.as_str());
+        }
+
+        let ordered_sources = plan
+            .fragments()
+            .iter()
+            .map(PromptFragment::source)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ordered_sources,
+            [
+                PromptSource::ProductPolicy,
+                PromptSource::EmbedderPolicy,
+                PromptSource::ChildAgentPolicy,
+                PromptSource::ForkAgentPolicy,
+                PromptSource::BuiltinVariant,
+                PromptSource::SkillCatalogPolicy,
+                PromptSource::OperatorProfile,
+                PromptSource::OperatorOverride,
+                PromptSource::UserContextFile,
+                PromptSource::OperatorSkillCatalog,
+                PromptSource::OperatorRule,
+                PromptSource::WorkspaceProfile,
+                PromptSource::ConfiguredVariant,
+                PromptSource::ProjectContextFile,
+                PromptSource::WorkspaceSkillCatalog,
+                PromptSource::WorkspaceRule,
+                PromptSource::UserRequest,
+            ],
+        );
+
+        let roles = plan
+            .materialize_messages()
+            .into_iter()
+            .map(|message| message.role)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            roles,
+            [
+                crate::provider::request::MessageRole::System,
+                crate::provider::request::MessageRole::System,
+                crate::provider::request::MessageRole::System,
+                crate::provider::request::MessageRole::System,
+                crate::provider::request::MessageRole::System,
+                crate::provider::request::MessageRole::System,
+                crate::provider::request::MessageRole::Developer,
+                crate::provider::request::MessageRole::Developer,
+                crate::provider::request::MessageRole::Developer,
+                crate::provider::request::MessageRole::Developer,
+                crate::provider::request::MessageRole::Developer,
+                crate::provider::request::MessageRole::User,
+                crate::provider::request::MessageRole::User,
+                crate::provider::request::MessageRole::User,
+                crate::provider::request::MessageRole::User,
+                crate::provider::request::MessageRole::User,
+                crate::provider::request::MessageRole::User,
+            ]
+        );
+    }
 }

@@ -48,29 +48,34 @@ pub const DEFAULT_PROMPT_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Cached output of a single [`PromptCommand`] resolve.
 ///
-/// Each cache entry records the verbatim stdout (already trimmed of trailing
-/// newlines) and the absolute expiry deadline. `expires_at == None` means
-/// the value never expires from the runtime's point of view — which only
-/// happens when `cache_ttl` was set; commands without a TTL bypass the cache
-/// entirely.
+/// Each cache entry binds the exact command text, configured TTL, and working
+/// directory to the verbatim stdout (already trimmed of trailing newlines).
+/// Commands without a TTL bypass the cache entirely; production entries
+/// therefore always carry an absolute expiry deadline.
 #[derive(Clone, Debug)]
 pub struct PromptCommandCacheEntry {
+    /// Exact shell command whose output this entry contains.
+    pub command: String,
+    /// Configured TTL that produced this entry.
+    pub cache_ttl: Duration,
+    /// Working directory in which the command produced this output.
+    pub working_dir: std::path::PathBuf,
     /// The trimmed stdout produced by the command.
     pub value: String,
-    /// Absolute expiry deadline. `None` when caching is disabled for this
-    /// command (no entry is ever stored in that case).
+    /// Absolute expiry deadline. Production entries are always `Some` because
+    /// commands without a TTL are never cached.
     pub expires_at: Option<Instant>,
 }
 
-/// Optional bundle of loop-wide components plus a composable system
-/// instruction.
+/// Optional bundle of loop-wide components plus typed stable and volatile
+/// prompt state.
 ///
-/// The flattened stable prompt is the first entry in
-/// [`Self::system_sections`].
-/// Dynamic sections appended via [`Self::append_system_section`] are joined
-/// onto the base instruction every iteration via [`Self::system_instruction`].
-/// Calling [`Self::clear_dynamic_sections`] truncates everything past the
-/// base instruction so rules re-fire fresh each iteration.
+/// The authoritative stable source plan is retained separately; its flattened
+/// compatibility view is the first entry in [`Self::system_sections`].
+/// Volatile sections appended via [`Self::append_system_section`] are rebuilt
+/// each iteration. Threaded Responses sends them as request-local System
+/// instructions, while stateless transports append one Developer tail.
+/// [`Self::clear_dynamic_sections`] truncates only those volatile sections.
 pub struct LoopContext {
     /// Optional rules engine. When present, the loop emits
     /// [`RuntimeEvent`](crate::rules::types::RuntimeEvent) values after tool
@@ -94,9 +99,14 @@ pub struct LoopContext {
     /// not hold a [`LoopContext`] reference.
     pub hooks: Option<Arc<HookRegistry>>,
     /// Composable compatibility prompt sections. Index 0 is the flattened
-    /// stable prompt; later entries are dynamic sections appended by rule
-    /// injections and cleared at the start of each iteration.
+    /// stable plan; later entries are volatile managed sections cleared at the
+    /// start of each iteration. Sourced rule injections travel as durable
+    /// Developer/User messages rather than entries in this vector.
     pub system_sections: Vec<String>,
+    /// Volatile trusted-operator sections that retain Developer authority.
+    /// Threaded Responses binds the current joined value into its prompt seed;
+    /// stateless transports fold it into the managed Developer tail.
+    pub(crate) developer_sections: Vec<String>,
     /// Optional per-event output schemas. When present, the loop validates
     /// the corresponding event types before recording them.
     pub event_schemas: Option<EventSchemaSet>,
@@ -118,7 +128,7 @@ pub struct LoopContext {
     /// before reaching the model.
     pub slash_commands: Option<SlashCommandRegistry>,
     /// Profile-supplied shell commands evaluated at the start of every
-    /// iteration; their stdout populates dynamic system sections.
+    /// iteration; their stdout populates volatile Developer sections.
     pub prompt_commands: Vec<PromptCommand>,
     /// Cache of prior prompt-command results keyed by command name. Entries
     /// only exist for commands with a `cache_ttl`. Commands without a TTL
@@ -299,7 +309,7 @@ pub struct LoopContext {
 
     /// Receiver for child-agent completion results (fork/spawn).
     /// When present, the runner drains pending results at iteration
-    /// boundaries and injects them as developer messages. This moves
+    /// boundaries and injects them as user-role messages. This moves
     /// child result delivery into the runner so drivers don't need to
     /// handle it individually.
     pub child_result_rx:
@@ -368,6 +378,7 @@ impl LoopContext {
             )),
             hooks: None,
             system_sections: vec![base.into()],
+            developer_sections: Vec::new(),
             event_schemas: None,
             iteration_monitor: None,
             reasoning_effort: None,

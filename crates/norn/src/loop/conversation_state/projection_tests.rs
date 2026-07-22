@@ -1,10 +1,15 @@
-use super::test_support::{append_stored_assistant, config, message, stored_assistant_events};
+use super::test_support::{
+    append_seed_bound_assistant, append_stored_assistant, config, message, stored_assistant_events,
+};
 use super::*;
+use crate::r#loop::config::ConversationStateMode;
 use crate::provider::request::MessageRole;
+use crate::provider::tools::ProviderCapabilities;
 use crate::rules::types::{DeliveryMode, TriggerTiming};
 use crate::session::ProviderStateProvenance;
 use crate::session::events::{EventBase, EventUsage, ProviderEpochBoundaryReason};
 use crate::session::store::EventStore;
+use crate::system_prompt::PromptSeedFingerprint;
 
 /// `event_produces_prompt_message` must agree exactly with the message
 /// projection in `session::conversion` for every delivery mode: a
@@ -24,6 +29,7 @@ fn rule_injection_prompt_message_predicate_mirrors_conversion() {
         let event = SessionEvent::RuleInjection {
             base: EventBase::new(None),
             rule_id: "rust-conventions".to_owned(),
+            origin: None,
             delivery,
             timing: TriggerTiming::After,
             content: "Follow conventions.".to_owned(),
@@ -79,6 +85,21 @@ fn response_ids_without_matching_durable_provenance_are_not_anchors()
     ));
     assert!(!event_produces_prompt_message(&orphan, false));
     assert!(crate::session::conversion::events_to_messages(&[orphan]).is_empty());
+    Ok(())
+}
+
+#[test]
+fn v2_provenance_carries_its_prompt_seed_into_the_thread_anchor()
+-> Result<(), Box<dyn std::error::Error>> {
+    let store = EventStore::new();
+    let prompt_seed = PromptSeedFingerprint::empty();
+    append_seed_bound_assistant(&store, "answer", "resp_v2", prompt_seed)?;
+
+    let Some(anchor) = latest_response_anchor(&store.events(), 1, false)? else {
+        return Err(std::io::Error::other("V2 response did not establish an anchor").into());
+    };
+    assert_eq!(anchor.response_id, "resp_v2");
+    assert_eq!(anchor.prompt_seed_fingerprint, Some(prompt_seed));
     Ok(())
 }
 

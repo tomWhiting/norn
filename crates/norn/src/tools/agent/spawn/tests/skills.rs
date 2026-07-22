@@ -180,8 +180,8 @@ async fn spawned_child_loads_a_skill_end_to_end() -> TestResult {
     Ok(())
 }
 
-/// Defect 1 regression: the spawned child's system prompt carries the
-/// "# Available Skills" section when the skill tool is on its surface.
+/// The spawned child carries compiled skill-use policy at System authority and
+/// the operator-owned discovered catalog at Developer authority.
 #[tokio::test]
 async fn spawned_child_system_prompt_lists_available_skills() -> TestResult {
     let captured = Arc::new(StdMutex::new(Vec::new()));
@@ -213,14 +213,24 @@ async fn spawned_child_system_prompt_lists_available_skills() -> TestResult {
     .await;
 
     let requests = captured.lock().clone();
-    let advertises = requests.iter().flat_map(|r| r.messages.iter()).any(|m| {
-        m.content.as_deref().is_some_and(|content| {
-            content.contains("# Available Skills") && content.contains("greet")
-        })
+    let messages = requests.iter().flat_map(|request| request.messages.iter());
+    let system_policy = messages.clone().any(|message| {
+        message.role == crate::provider::request::MessageRole::System
+            && message
+                .content
+                .as_deref()
+                .is_some_and(|content| content.contains("# Available Skills"))
+    });
+    let developer_catalog = messages.clone().any(|message| {
+        message.role == crate::provider::request::MessageRole::Developer
+            && message
+                .content
+                .as_deref()
+                .is_some_and(|content| content.contains("- greet: greet the user"))
     });
     assert!(
-        advertises,
-        "the child's system prompt must advertise the skill listing: {requests:?}",
+        system_policy && developer_catalog,
+        "child skill policy and catalog must retain their distinct authority: {requests:?}",
     );
     Ok(())
 }

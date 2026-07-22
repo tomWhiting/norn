@@ -444,14 +444,17 @@ pub enum SessionEvent {
         base: EventBase,
         /// Identifier of the rule that fired.
         rule_id: String,
+        /// Provenance-derived authority of the rule. Missing only on readable
+        /// pre-D8 rows, which reconstruct conservatively at User authority.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<crate::rules::source::RuleOrigin>,
         /// How the rule content was delivered to the model.
         delivery: crate::rules::types::DeliveryMode,
         /// Whether the rule fired before or after the matched action.
         timing: crate::rules::types::TriggerTiming,
         /// The raw (unformatted) rule content that was delivered. The
-        /// delivery-mode prefix is applied at render time via
-        /// [`DeliveryMode::format_conversation_content`](crate::rules::types::DeliveryMode::format_conversation_content)
-        /// so the stored content stays canonical.
+        /// delivery-mode formatting is applied by the canonical rule
+        /// projection so the stored content stays canonical.
         content: String,
     },
 }
@@ -802,6 +805,7 @@ mod tests {
         let event = SessionEvent::RuleInjection {
             base: EventBase::new(None),
             rule_id: "rust-conventions".to_owned(),
+            origin: Some(crate::rules::source::RuleOrigin::Operator),
             delivery: crate::rules::types::DeliveryMode::SystemContextAppend,
             timing: crate::rules::types::TriggerTiming::After,
             content: "Follow conventions.".to_owned(),
@@ -896,6 +900,7 @@ mod tests {
             SessionEvent::RuleInjection {
                 base: base(),
                 rule_id: String::new(),
+                origin: None,
                 delivery: crate::rules::types::DeliveryMode::ContextInjection,
                 timing: crate::rules::types::TriggerTiming::Before,
                 content: String::new(),

@@ -5,6 +5,8 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::rules::source::RuleOrigin;
+
 // ---------------------------------------------------------------------------
 // R1: RuleId, TriggerTiming, Rule
 // ---------------------------------------------------------------------------
@@ -107,38 +109,13 @@ pub enum TriggerCondition {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeliveryMode {
-    /// Add the rule to the system prompt for the remainder of the session.
+    /// Keep the rule active for the remainder of the visible session history.
+    /// Its origin, not this delivery mode, selects the message authority.
     SystemContextAppend,
     /// Deliver the rule at the next input boundary.
     ContextInjection,
     /// Send the rule as a conversation message.
     MessageDelivery,
-}
-
-impl DeliveryMode {
-    /// Format a fired rule's raw content for delivery as a conversation
-    /// message.
-    ///
-    /// Returns [`None`] for [`DeliveryMode::SystemContextAppend`], which is
-    /// delivered through the system prompt (re-materialized into the
-    /// dynamic system sections each prompt-construction pass) rather than
-    /// as a message. [`DeliveryMode::ContextInjection`] and
-    /// [`DeliveryMode::MessageDelivery`] each carry a distinguishing prefix
-    /// so the model can tell rule-sourced content apart from ordinary user
-    /// input.
-    ///
-    /// The same formatting is applied both when a rule fires live and when
-    /// a persisted [`RuleInjection`](crate::session::events::SessionEvent::RuleInjection)
-    /// event is replayed on resume, so the provider-facing text is byte-for-byte
-    /// identical across a restart.
-    #[must_use]
-    pub fn format_conversation_content(&self, rule_id: &str, content: &str) -> Option<String> {
-        match self {
-            Self::SystemContextAppend => None,
-            Self::ContextInjection => Some(format!("[Context: {rule_id}] {content}")),
-            Self::MessageDelivery => Some(format!("[Rule: {rule_id}] {content}")),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +168,8 @@ pub enum PathOperation {
 pub struct RuleInjection {
     /// ID of the rule that matched.
     pub rule_id: RuleId,
+    /// Provenance-derived authority of the rule.
+    pub origin: RuleOrigin,
     /// How to deliver the rule content.
     pub delivery: DeliveryMode,
     /// Whether this fires before or after the matched action.

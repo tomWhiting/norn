@@ -31,7 +31,9 @@ pub struct ToolExecutionSnapshot {
     pub executor: Arc<dyn ToolExecutor>,
     /// Function definitions advertised for this generation.
     pub definitions: Arc<[ToolDefinition]>,
-    /// Runtime-only tools whose guidance belongs in the managed prompt tail.
+    /// Runtime-only tool metadata retained for generation-aware child filtering.
+    /// The request advertises these tools through `definitions`; the loop does
+    /// not duplicate their descriptions into prompt messages.
     pub dynamic_prompt_entries: Arc<[ToolPromptEntry]>,
 }
 
@@ -247,22 +249,27 @@ pub struct AgentLoopConfig {
     /// Optional hard cap on total provider round-trips within a single step.
     pub max_iterations: Option<u32>,
 
-    /// Optional outer wall-clock cap on the entire `run_agent_step` call.
-    /// When set, the loop body is wrapped in [`tokio::time::timeout`] and
-    /// elapsing the duration produces [`AgentStepResult::TimedOut`] with
-    /// whatever partial output the model produced.
+    /// Optional execution budget for one `run_agent_step` call. Validated
+    /// setup durably commits the accepted prompt or wake inputs before the
+    /// provider loop starts; its elapsed time counts against this budget. If
+    /// setup exhausts it, the provider is not called and the step returns
+    /// [`AgentStepResult::TimedOut`]. Setup is cancellation-shielded at this
+    /// durability boundary and may finish after the nominal deadline.
     ///
     /// **Semantics differ from cancellation.** Cooperative cancellation
     /// (the step's `CancellationToken`) lets an in-flight tool batch
     /// finish in full before the loop returns `Cancelled`. Elapsing this
-    /// budget instead **drops the step future wherever it is suspended**
-    /// — including mid-tool-batch — so in-flight tools are aborted, not
-    /// completed. The event store is repaired afterwards (tool calls left
-    /// without results receive synthesized aborted-result records via
+    /// remaining budget instead **drops the provider/tool machine wherever it
+    /// is suspended** — including mid-tool-batch — so in-flight tools are
+    /// aborted, not completed. Prompt commands remain bounded separately and
+    /// are clamped to the remaining step budget. The event store is repaired
+    /// afterwards (tool calls left without results receive synthesized
+    /// aborted-result records via
     /// `ensure_tool_results_complete`), but external side effects a
     /// dropped tool had already begun are not undone. Choose this field
-    /// for a hard wall-clock guarantee; trigger the cancellation token
-    /// for a graceful stop.
+    /// for a hard provider/tool execution cut; trigger the cancellation token
+    /// for a graceful stop. This field is not a strict whole-call deadline
+    /// because durable setup and post-cut repair are allowed to finish.
     pub step_timeout: Option<Duration>,
 
     /// Optional client-side context-window budget used by the token

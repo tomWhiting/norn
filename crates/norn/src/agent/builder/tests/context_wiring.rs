@@ -102,13 +102,11 @@ async fn built_action_log_tool_runs_list_query() {
     assert_eq!(out.content["entries"][0]["id"], "tc-built");
 }
 
-/// R5 (root): after `build`, the root's shared tool context carries
-/// its OWN base system instruction under `ParentSystemInstruction`
-/// (the previously never-published extension the fork tool consumes)
-/// and its launch model under `AgentModel` (the parent-model ground
-/// truth for spawns that omit `model`).
+/// After `build`, the root's shared tool context carries its exact typed
+/// stable plan and launch model. The origin-erasing legacy
+/// `ParentSystemInstruction` remains input-only and is not published.
 #[test]
-fn build_publishes_own_base_instruction_and_model_on_shared_context() {
+fn build_publishes_typed_prompt_plan_and_model_on_shared_context() {
     let agent = AgentBuilder::new(provider_with(vec![]))
         .model("test-model")
         .context_window_limit(TEST_CONTEXT_WINDOW)
@@ -121,18 +119,26 @@ fn build_publishes_own_base_instruction_and_model_on_shared_context() {
         .registry
         .shared_context()
         .expect("registry exposes its shared tool context");
-    let base = shared
-        .get_extension::<crate::agent::fork::ParentSystemInstruction>()
-        .expect("the root context must publish ParentSystemInstruction");
+    assert!(
+        shared
+            .get_extension::<crate::agent::fork::ParentSystemInstruction>()
+            .is_none(),
+        "assembled roots must not publish the origin-erasing legacy bridge",
+    );
+    let parent_plan = shared
+        .get_extension::<crate::agent::fork::ParentPromptPlan>()
+        .expect("the root context must publish ParentPromptPlan");
     assert_eq!(
-        base.as_str(),
-        agent.loop_context.base_system_instruction(),
-        "the published value is exactly the root's installed base",
+        Some(parent_plan.plan()),
+        agent.loop_context.stable_prompt_plan(),
+        "the typed extension must be the root's exact stable prompt plan",
     );
     assert!(
-        base.as_str().contains("ROOT-BASE-MARKER"),
-        "the override flows into the published base: {}",
-        base.as_str(),
+        parent_plan
+            .plan()
+            .flattened_content()
+            .contains("ROOT-BASE-MARKER"),
+        "the operator override flows into the typed parent plan",
     );
     let live = shared
         .get_extension::<crate::tools::agent::AgentModel>()

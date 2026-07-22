@@ -27,15 +27,15 @@
 //! [`scan_rule_dirs`] is intentionally pure — it does not touch the
 //! running [`crate::rules::engine::RuleEngine`]. [`NestedScanner`] does
 //! mutate the engine, but only via the single public mutation method
-//! [`crate::rules::engine::RuleEngine::add_rule`]; the boundary
+//! [`crate::rules::engine::RuleEngine::add_workspace_rule`]; the boundary
 //! contract from NX-002 (no engine-internal access) is preserved.
 //!
 //! Out of scope: Claude Code frontmatter format compatibility (NX-003
 //! extends [`parse_rule_file`] for that — the scanner is
 //! format-agnostic and just forwards the file content) and the
 //! always-on `NORN.md` layer at `~/.norn/NORN.md` and `{cwd}/NORN.md`
-//! (NX-001 owns those — they are loaded into `system_sections[0]`
-//! once, not discovered through path events).
+//! (NX-001 owns those — they are loaded by `ContextLoader` and refreshed at
+//! request boundaries, not discovered through path events).
 
 use std::collections::HashSet;
 use std::ffi::OsStr;
@@ -43,6 +43,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::rules::engine::RuleEngine;
 use crate::rules::parser::parse_rule_file;
+use crate::rules::source::RuleOrigin;
 use crate::rules::types::{DeliveryMode, Rule, RuleId, TriggerCondition, TriggerTiming};
 use crate::util::{
     WorkspaceEntryKind, read_workspace_directory, read_workspace_text_file, workspace_relative_path,
@@ -99,6 +100,8 @@ pub(crate) struct ScannedRule {
     pub(crate) rule: Rule,
     /// Index into the directory slice passed to the scanner.
     pub(crate) directory_index: usize,
+    /// Authority derived from whether that exact directory index is trusted.
+    pub(crate) origin: RuleOrigin,
 }
 
 /// Scans rule directories while retaining source-directory provenance.
@@ -239,6 +242,9 @@ fn scan_rule_dirs_impl(
                     rules.push(ScannedRule {
                         rule,
                         directory_index,
+                        origin: workspace_policy.map_or(RuleOrigin::Operator, |(_, indexes)| {
+                            RuleOrigin::from_discovery_directory(directory_index, indexes)
+                        }),
                     });
                 }
                 Err(e) => {
@@ -301,9 +307,9 @@ fn read_rule_file(
 /// if the `NORN.md` did not exist at first-touch time (rationale:
 /// the brief's `O(1)` lookup acceptance — a re-stat per event in the
 /// same directory would defeat the point). Mid-session creation of a
-/// nested `NORN.md` is therefore *not* picked up; that is consistent
-/// with DESIGN.md's non-goal "file watchers" and matches the
-/// always-on layer's once-per-session contract.
+/// nested `NORN.md` is therefore *not* picked up. This is deliberately
+/// narrower than the two always-on layers, which are re-statted at every
+/// request boundary.
 ///
 /// The scanner does not stash a reference to the engine — `engine` is
 /// passed in on each call so the borrow lives only as long as the
@@ -384,7 +390,7 @@ impl NestedScanner {
     /// would be a regression).
     ///
     /// Mutation contract: `engine` is touched exclusively via
-    /// [`RuleEngine::add_rule`]. No other engine method is called and
+    /// [`RuleEngine::add_workspace_rule`]. No other engine method is called and
     /// no internal field is accessed.
     pub fn scan_on_path_change(&mut self, path: &str, engine: &mut RuleEngine) {
         let raw = PathBuf::from(path);
@@ -485,7 +491,7 @@ impl NestedScanner {
         };
 
         tracing::debug!("NestedScanner: registering synthetic rule norn-md:{rel_str}");
-        engine.add_rule(rule);
+        engine.add_workspace_rule(rule);
     }
 }
 

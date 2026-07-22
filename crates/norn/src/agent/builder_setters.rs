@@ -94,15 +94,16 @@ impl AgentBuilder {
         self
     }
 
-    /// Override the profile's system instructions.
+    /// Replace the profile with caller-trusted instructions at Developer authority.
+    /// The method name is retained for API compatibility.
     #[must_use]
     pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.system_prompt = Some(prompt.into());
         self
     }
 
-    /// Append additional instructions after the resolved profile instructions
-    /// or caller-supplied [`Self::system_prompt`] override.
+    /// Append caller-trusted instructions at Developer authority after the
+    /// resolved profile instructions or [`Self::system_prompt`] override.
     #[must_use]
     pub fn append_system_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.append_system_prompt = Some(prompt.into());
@@ -257,7 +258,7 @@ impl AgentBuilder {
         self
     }
 
-    /// Set an outer wall-clock cap on the whole step.
+    /// Set the step execution budget; durable setup is charged but shielded.
     #[must_use]
     pub fn step_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.agent_config.step_timeout = Some(timeout);

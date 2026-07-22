@@ -11,6 +11,7 @@ mod output_and_profiles;
 mod permissions;
 mod persistence;
 mod policy_validation;
+mod prompt_authority;
 mod reasoning;
 mod reclamation;
 mod runtime_model;

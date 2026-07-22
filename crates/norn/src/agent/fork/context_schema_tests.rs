@@ -120,12 +120,10 @@ fn combine_system_instruction_empty_parent_uses_preamble_only() {
 #[test]
 fn combine_system_instruction_prepends_preamble_to_parent_base() -> TestResult {
     let parent = "You are the parent agent. Be terse.";
-    let slugs = vec!["check_code".to_owned()];
     let policy = golden_identity_policy();
     let preamble = build_fork_preamble(&ForkIdentity {
         parent_agent_id: "5e1f0000-0000-0000-0000-000000000001",
         path_address: "root/fork-kestrel",
-        requirement_slugs: &slugs,
         granted: &policy,
     });
     let combined = combine_system_instruction(&preamble, parent);
@@ -151,21 +149,19 @@ fn combine_system_instruction_prepends_preamble_to_parent_base() -> TestResult {
 }
 
 /// R4 golden-file test: fixed inputs render byte-for-byte to the
-/// checked-in `testdata/fork_preamble.golden.md` — contract slugs,
-/// path address, parent id, and the delegation budget all present.
+/// checked-in `testdata/fork_preamble.golden.md` — path address, parent id,
+/// and the delegation budget all present, with no human task content.
 /// A plain file plus `assert_eq!`, no snapshot crate.
 #[test]
 fn fork_preamble_matches_golden_file() {
-    let slugs = vec!["check_code".to_owned(), "run_tests".to_owned()];
     let policy = golden_identity_policy();
     let rendered = build_fork_preamble(&ForkIdentity {
         parent_agent_id: "5e1f0000-0000-0000-0000-000000000001",
         path_address: "root/fork-kestrel",
-        requirement_slugs: &slugs,
         granted: &policy,
     });
     assert_eq!(
-        rendered,
+        format!("{rendered}\n"),
         include_str!("../testdata/fork_preamble.golden.md"),
         "the fork preamble rendering is pinned by the golden file; \
          update testdata/fork_preamble.golden.md deliberately when the \
@@ -191,7 +187,6 @@ fn fork_preamble_tells_a_leaf_it_is_a_leaf() {
     let rendered = build_fork_preamble(&ForkIdentity {
         parent_agent_id: "parent-id",
         path_address: "root/fork-a",
-        requirement_slugs: &[],
         granted: &policy,
     });
     assert!(
@@ -200,10 +195,6 @@ fn fork_preamble_tells_a_leaf_it_is_a_leaf() {
     );
     assert!(rendered.contains("you are a leaf"), "{rendered}");
     assert!(rendered.contains("Messaging scope: none"), "{rendered}");
-    assert!(
-        rendered.contains("none declared"),
-        "an empty contract is stated honestly: {rendered}",
-    );
 }
 
 #[test]

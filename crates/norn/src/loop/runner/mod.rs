@@ -26,6 +26,7 @@ mod setup;
 mod stop;
 #[cfg(test)]
 mod tests;
+mod timeout;
 #[cfg(test)]
 mod tool_lease_tests;
 #[cfg(test)]

@@ -109,11 +109,10 @@ fn estimate_event_tokens(
     let mut total: usize = 0;
     for event in events {
         let tokens = match event {
-            // A fired rule contributes its content to the prompt whether it
-            // renders as a message (ContextInjection/MessageDelivery) or as
-            // a re-materialized system section (SystemContextAppend), so it
-            // carries a real token cost the compaction planner must see —
-            // the same shape as a user message.
+            // Every fired rule contributes its content to the prompt: sourced
+            // rows render as conversation messages, while a legacy origin-less
+            // append row remains a managed section. Either carries a real token
+            // cost the compaction planner must see.
             SessionEvent::UserMessage { content, .. }
             | SessionEvent::RuleInjection { content, .. } => estimator.estimate(content),
             SessionEvent::AssistantMessage {

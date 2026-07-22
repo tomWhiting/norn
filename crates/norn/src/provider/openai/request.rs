@@ -125,7 +125,7 @@ pub(crate) fn build_payload(
         match msg.role {
             MessageRole::System => {
                 if !instructions.is_empty() {
-                    instructions.push('\n');
+                    instructions.push_str("\n\n");
                 }
                 if let Some(content) = &msg.content {
                     instructions.push_str(content);
@@ -486,6 +486,9 @@ mod caller_projection_tests;
 
 #[cfg(test)]
 mod opaque_lifecycle_tests;
+
+#[cfg(test)]
+mod system_instruction_tests;
 
 #[cfg(test)]
 #[allow(

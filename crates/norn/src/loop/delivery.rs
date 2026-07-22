@@ -18,7 +18,7 @@ use crate::provider::request::{Message, MessageRole};
 use crate::session::events::{EventBase, EventId, SessionEvent};
 use crate::session::store::EventStore;
 
-use super::helpers::append_and_notify;
+use super::helpers::{append_and_notify, append_off_executor};
 use super::loop_context::LoopContext;
 
 pub(super) use super::delivery_inputs::{drain_child_results, flush_active_inputs};
@@ -100,24 +100,26 @@ pub(super) async fn inject_inbound_messages(
         // this message count as delivered. On failure the message stays at
         // the front of `msgs` (with the rest of the batch) for the caller
         // to re-queue — nothing acknowledged is dropped.
-        let user_event_id = append_and_notify(
-            store,
-            SessionEvent::UserMessage {
-                base: EventBase::new(store.last_event_id()),
-                content: formatted.clone(),
-            },
-            hooks,
-        )
-        .await?;
+        let user_event = SessionEvent::UserMessage {
+            base: EventBase::new(store.last_event_id()),
+            content: formatted.clone(),
+        };
+        let user_event_id = append_off_executor(store, user_event.clone())?;
 
         // The content is durable; from here the message is delivered and
-        // must be consumed even if the secondary audit append fails. Every
+        // must be consumed before any await can let cancellation intervene.
+        // A slow event hook can therefore omit a secondary notification when
+        // its future is dropped, but it cannot cause the durable content to be
+        // re-queued and delivered twice. Every
         // injected message emits the Delivered dual-carrier — router traffic
         // (`seq: Some`) and unsequenced harness/embedder sources (`seq: None`)
         // alike — so an embedder transcript never shows a response to an
         // invisible stimulus. `from` preserves the injecting source's label
         // (nil `from_id` for the internal `norn:*` sources).
         let msg = msgs.remove(0);
+        if let Some(registry) = hooks {
+            registry.run_on_event(&user_event).await;
+        }
         let delivered = AgentMessageLifecycle::Delivered {
             message_id: msg.id,
             from_id: msg.sender_id,

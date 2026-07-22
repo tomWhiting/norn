@@ -531,22 +531,14 @@ fn merge_discovered_rules(
                 .to_owned(),
         ));
     }
-    let discovered = scanned
-        .into_iter()
-        .map(|entry| entry.rule)
-        .collect::<Vec<_>>();
-    if discovered.is_empty() {
+    if scanned.is_empty() {
         return Ok(existing);
     }
-    Ok(match existing {
-        Some(mut engine) => {
-            for rule in discovered {
-                engine.add_rule(rule);
-            }
-            Some(engine)
-        }
-        None => Some(RuleEngine::new(discovered)),
-    })
+    let mut engine = existing.unwrap_or_else(|| RuleEngine::new(Vec::new()));
+    for entry in scanned {
+        engine.add_rule_with_origin(entry.rule, entry.origin);
+    }
+    Ok(Some(engine))
 }
 
 fn build_shared_task_store(group_slug: Option<&str>) -> Result<Arc<SharedTaskStore>, NornError> {
@@ -629,6 +621,7 @@ pub(super) fn invalid_config(reason: String) -> NornError {
 mod tests {
     use super::*;
     use crate::config::types::ProviderSettings;
+    use crate::rules::source::RuleOrigin;
     use crate::rules::types::{PathOperation, RuntimeEvent};
     use crate::tool::context::ToolContext;
     use crate::tool::envelope::ToolEnvelope;
@@ -852,7 +845,7 @@ mod tests {
         )
     }
 
-    async fn injected_content(engine: &RuleEngine, path: &str) -> Option<String> {
+    async fn injected_rule(engine: &RuleEngine, path: &str) -> Option<(String, RuleOrigin)> {
         let event = RuntimeEvent::PathChanged {
             path: path.to_owned(),
             operation: PathOperation::Read,
@@ -862,7 +855,7 @@ mod tests {
             .await
             .into_iter()
             .next()
-            .map(|inj| inj.content.trim().to_owned())
+            .map(|injection| (injection.content.trim().to_owned(), injection.origin))
     }
 
     /// All four documented rule tiers are scanned: project `.norn/rules`,
@@ -902,18 +895,19 @@ mod tests {
         let launch_root = cwd.path().canonicalize()?;
         let engine = merge_discovered_rules(None, &launch_root)?
             .ok_or_else(|| std::io::Error::other("no rules were discovered"))?;
-        for (path, body) in [
-            ("src/a.proj", "project rule"),
-            ("src/a.user", "user rule"),
-            ("src/a.cc", "claude rule"),
-            ("src/a.mer", "meridian rule"),
+        for (path, body, origin) in [
+            ("src/a.proj", "project rule", RuleOrigin::Workspace),
+            ("src/a.user", "user rule", RuleOrigin::Operator),
+            ("src/a.cc", "claude rule", RuleOrigin::Workspace),
+            ("src/a.mer", "meridian rule", RuleOrigin::Workspace),
         ] {
-            let content = injected_content(&engine, path).await;
+            let injected = injected_rule(&engine, path).await;
             assert_eq!(
-                content.as_deref(),
+                injected.as_ref().map(|(content, _)| content.as_str()),
                 Some(body),
                 "tier rule for {path} must fire"
             );
+            assert_eq!(injected.map(|(_, observed)| observed), Some(origin));
         }
         Ok(())
     }
@@ -942,8 +936,15 @@ mod tests {
         let launch_root = cwd.path().canonicalize()?;
         let engine = merge_discovered_rules(None, &launch_root)?
             .ok_or_else(|| std::io::Error::other("no rules were discovered"))?;
-        let content = injected_content(&engine, "src/lib.rs").await;
-        assert_eq!(content.as_deref(), Some("from project"));
+        let injected = injected_rule(&engine, "src/lib.rs").await;
+        assert_eq!(
+            injected.as_ref().map(|(content, _)| content.as_str()),
+            Some("from project")
+        );
+        assert_eq!(
+            injected.map(|(_, origin)| origin),
+            Some(RuleOrigin::Workspace)
+        );
         Ok(())
     }
 
@@ -998,9 +999,14 @@ mod tests {
             .rules
             .as_ref()
             .ok_or_else(|| std::io::Error::other("trusted user rule was not loaded"))?;
+        let injected = injected_rule(engine, "src/lib.rs").await;
         assert_eq!(
-            injected_content(engine, "src/lib.rs").await.as_deref(),
+            injected.as_ref().map(|(content, _)| content.as_str()),
             Some("trusted-rule"),
+        );
+        assert_eq!(
+            injected.map(|(_, origin)| origin),
+            Some(RuleOrigin::Operator)
         );
 
         drop(norn_home_guard);

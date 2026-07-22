@@ -38,9 +38,9 @@ pub use child_policy::{
 };
 pub use fork::{
     ContextFilter, ContextFilterError, FORK_SYNTHETIC_RESULT_MESSAGE, FORK_SYSTEM_PREAMBLE,
-    ForkIdentity, ForkRequirement, ParentSystemInstruction, build_fork_output_schema,
-    build_fork_preamble, combine_system_instruction, format_fork_failure, format_fork_result,
-    format_spawn_failure, format_spawn_result, inject_synthetic_fork_result,
+    ForkIdentity, ForkRequirement, ParentPromptPlan, ParentSystemInstruction,
+    build_fork_output_schema, build_fork_preamble, combine_system_instruction, format_fork_failure,
+    format_fork_result, format_spawn_failure, format_spawn_result, inject_synthetic_fork_result,
     slugify_requirement_name, verify_no_orphan_tool_calls,
 };
 pub use goals::{ContinuationPolicy, Goal, GoalSignal, GoalTracker};

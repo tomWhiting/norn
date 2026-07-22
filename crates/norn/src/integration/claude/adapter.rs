@@ -215,7 +215,13 @@ impl Provider for ClaudeRunnerAdapter {
 fn render_prompt(messages: &[Message]) -> String {
     let mut buf = String::new();
     for msg in messages {
-        if !matches!(msg.role, MessageRole::User | MessageRole::ToolResult) {
+        // Claude Runner has no distinct Developer-message CLI surface. D8's
+        // compatibility policy explicitly downgrades Developer to the ordinary
+        // prompt rather than silently dropping it or promoting it to System.
+        if !matches!(
+            msg.role,
+            MessageRole::Developer | MessageRole::User | MessageRole::ToolResult
+        ) {
             continue;
         }
         if let Some(content) = msg.content.as_deref() {
@@ -236,7 +242,7 @@ fn render_system_prompt(messages: &[Message]) -> String {
         }
         if let Some(content) = msg.content.as_deref() {
             if !buf.is_empty() {
-                buf.push('\n');
+                buf.push_str("\n\n");
             }
             buf.push_str(content);
         }
@@ -496,6 +502,9 @@ pub(super) fn tool_data_pair(data: &ToolData) -> (String, Value) {
         })
         .unwrap_or_else(|| ("unknown".to_owned(), Value::Null))
 }
+
+#[cfg(test)]
+mod role_authority_tests;
 
 #[cfg(test)]
 #[allow(

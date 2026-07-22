@@ -285,6 +285,9 @@ fn service_tier_provider_value(request: &ProviderRequest) -> Result<Option<Strin
 }
 
 #[cfg(test)]
+mod prompt_authority_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::provider::request::{

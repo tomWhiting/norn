@@ -28,6 +28,7 @@ use crate::rules::types::RuleInjection;
 use crate::session::store::EventStore;
 
 use super::machine::StepMachine;
+use super::timeout::step_timeout_result;
 
 /// Inputs for [`run_agent_step`] — one complete agent loop step opened
 /// by an operator/user prompt. The behavioral contract lives on
@@ -116,10 +117,10 @@ pub(super) struct AgentStepRunRequest<'a> {
 
 /// Runs one complete agent loop step.
 ///
-/// Sends the system instruction (assembled from `loop_context.system_sections`)
-/// and user prompt to the provider, executes tool calls, enforces the output
-/// schema (if provided), and returns the final result. Events are appended
-/// to the store and optionally broadcast for real-time streaming.
+/// Sends the typed stable prompt, current managed context, and user prompt to
+/// the provider, executes tool calls, enforces the output schema (if provided),
+/// and returns the final result. Events are appended to the store and
+/// optionally broadcast for real-time streaming.
 ///
 /// Rules and hooks live on `loop_context` and fire at their respective
 /// points: pre/post tool around each tool execution, pre/post LLM around
@@ -127,18 +128,24 @@ pub(super) struct AgentStepRunRequest<'a> {
 ///
 /// # Timeout vs cancellation
 ///
-/// When `config.step_timeout` is set, the entire loop body is wrapped in
-/// [`tokio::time::timeout`] and elapsing the budget produces
-/// [`AgentStepResult::TimedOut`] with whatever partial output the model
-/// produced. Elapsing is a **hard cut**: the inner future is dropped
-/// wherever it is suspended, including mid-tool-batch — in-flight tools
-/// do *not* finish. Tool calls left without results are repaired in the
-/// event store afterwards
+/// When `config.step_timeout` is set, validated setup first commits the
+/// accepted prompt or wake inputs durably. Setup time is charged against the
+/// same budget; if it consumes the budget, no provider call occurs and the
+/// step returns [`AgentStepResult::TimedOut`]. Setup is cancellation-shielded
+/// so a timeout cannot strand an input between its durable append and the
+/// notification hooks; it may therefore finish after the nominal deadline.
+/// Prompt-command execution remains bounded and is clamped to the remaining
+/// step budget.
+///
+/// Once setup completes, elapsing the remaining provider/tool budget is a
+/// **hard cut**: the machine future is dropped wherever it is suspended,
+/// including mid-tool-batch, so in-flight tools do *not* finish. Tool calls
+/// left without results are repaired in the event store afterwards
 /// ([`ensure_tool_results_complete`](crate::r#loop::ensure_tool_results_complete)
 /// synthesizes aborted-result records), but any external side effect a
 /// dropped tool had already started is not undone. See
 /// [`AgentLoopConfig::step_timeout`] for the config-side statement of
-/// this contract.
+/// this contract. This is not a graceful timeout or grace period.
 ///
 /// When `cancel` is `Some`, the loop participates in *cooperative*
 /// cancellation: the token is checked at the top of each iteration and
@@ -156,12 +163,16 @@ pub(super) struct AgentStepRunRequest<'a> {
 /// schema-unreachable, truncation, cancellation, timeout, or a hard error),
 /// the buffered messages are re-queued into the loop's durable pending store
 /// ([`LoopContext::pending_agent_messages`]) with `agent_message.queued`
-/// audit events so an acknowledged delivery is never silently dropped.
+/// audit events when the loop participates in agent coordination.
 /// The same re-queue captures messages still sitting undrained in the
 /// step's inbound channel when the step ends — sends the router accepted
 /// (and acknowledged) after the loop's final drain — so the durable
-/// pending store, which wake eligibility reads, sees every accepted
-/// message.
+/// pending store, which wake eligibility reads, sees every accepted message.
+/// A coordination-less embedder has no agent identity or pending store to own
+/// an undelivered message; that pre-existing public-API limitation is logged at
+/// error level and means a seed consumed by an early setup error cannot be
+/// durably re-queued. Pre-cancelled and zero-iteration wake steps persist their
+/// accepted seeds directly and do not use this fallback.
 ///
 /// # Errors
 ///
@@ -283,6 +294,7 @@ async fn run_agent_step_common(
     // undrained when the step ends. Holding the channel out here lets the
     // exit path below sweep it into the durable pending store on every
     // exit, including the timeout branch dropping the inner future.
+    let mut initial_messages = std::mem::take(&mut request.initial_messages);
     let mut inbound = request.inbound.take();
     let mut follow_up_buffer: Vec<ChannelMessage> = Vec::new();
     // The fired-Before-injection buffer lives out here for the same reason
@@ -299,49 +311,40 @@ async fn run_agent_step_common(
     // timeout branch has dropped that future.
     let step_budget = request.config.step_timeout;
     let max_iterations = request.config.max_iterations;
-    let mut result = if let Some(budget) = step_budget {
-        let inner = run_agent_step_inner(
-            request,
-            Arc::clone(&timeout_state),
-            inbound.as_deref_mut(),
-            &mut follow_up_buffer,
-            &mut before_injection_buffer,
-        );
-        if let Ok(result) = tokio::time::timeout(budget, inner).await {
-            result
-        } else {
-            let snapshot = timeout_state.lock();
-            let in_flight_output = snapshot.in_flight_partial.as_ref().and_then(|partial| {
-                if !partial.text.is_empty() {
-                    return Some(Value::String(partial.text.clone()));
-                }
-                if let Some(refusal) = partial.refusal.clone() {
-                    return Some(Value::String(refusal));
-                }
-                partial
-                    .response_audio
-                    .map(|reference| serde_json::json!({"response_audio": reference}))
-            });
-            Ok(AgentStepResult::TimedOut {
-                elapsed: started.elapsed(),
-                iterations: snapshot.iterations,
-                partial_output: in_flight_output
-                    .or_else(|| snapshot.last_assistant_text.clone().map(Value::String)),
-                usage: snapshot.usage.clone(),
-                children_usage: children_usage.snapshot(),
-            })
+    // Initialization is a durability transaction: once it starts accepting
+    // the prompt or wake inputs, dropping it could strand or duplicate those
+    // inputs between a durable append and the following notification hooks.
+    // Complete setup first, charge its elapsed time to the same budget, then
+    // hard-cut only the remaining provider/tool execution.
+    let initialization = StepMachine::initialize(
+        request,
+        Arc::clone(&timeout_state),
+        &mut initial_messages,
+        inbound.as_deref_mut(),
+        &mut follow_up_buffer,
+        &mut before_injection_buffer,
+        started,
+    )
+    .await;
+    let mut result = match initialization {
+        Err(error) => Err(error),
+        Ok(super::machine::StepInitialization::Done(result)) => Ok(result),
+        Ok(super::machine::StepInitialization::Ready(machine)) => {
+            run_initialized_machine(
+                machine,
+                step_budget,
+                started,
+                &timeout_state,
+                &children_usage,
+            )
+            .await
         }
-    } else {
-        run_agent_step_inner(
-            request,
-            Arc::clone(&timeout_state),
-            inbound.as_deref_mut(),
-            &mut follow_up_buffer,
-            &mut before_injection_buffer,
-        )
-        .await
     };
 
+    // Successful seed injection drains this vector. Any remainder from an
+    // early setup error or timeout joins the same durable exit re-queue path
+    // as channel-drained messages.
+    follow_up_buffer.append(&mut initial_messages);
     ensure_tool_results_complete(store).await;
     // A Before-timing rule injection that fired in a tool batch but that no
     // `build_request` consumed is persisted by `StepMachine::run` on every
@@ -426,29 +429,31 @@ async fn run_agent_step_common(
     result
 }
 
-/// Initialize the step state machine and drive it to a result.
-async fn run_agent_step_inner(
-    request: AgentStepRunRequest<'_>,
-    timeout_state: SharedTimeoutState,
-    inbound: Option<&mut InboundChannel>,
-    follow_up_buffer: &mut Vec<ChannelMessage>,
-    before_injection_buffer: &mut Vec<RuleInjection>,
+/// Drive a validated machine under the provider/tool portion of the budget.
+async fn run_initialized_machine(
+    machine: Box<StepMachine<'_>>,
+    step_budget: Option<std::time::Duration>,
+    started: std::time::Instant,
+    timeout_state: &SharedTimeoutState,
+    children_usage: &crate::r#loop::ChildrenUsage,
 ) -> Result<AgentStepResult, NornError> {
-    // Two statements on purpose: chaining `.await?.run().await` keeps the
-    // (completed) `initialize` future alive as a temporary for the whole
-    // `run().await`, inflating every embedding future's size.
-    let machine = StepMachine::initialize(
-        request,
-        timeout_state,
-        inbound,
-        follow_up_buffer,
-        before_injection_buffer,
-    )
-    .await?;
     // The driver future carries the whole per-step state (conversation,
     // request build, tool dispatch); pinning it on the heap keeps every
     // embedder's future — spawned child steps, the TUI event loop, the
     // CLI drivers — small instead of inlining ~16 KiB of loop state into
     // each of them (`clippy::large_futures`). One allocation per step.
-    Box::pin(machine.run()).await
+    let run = Box::pin(machine.run());
+    let Some(budget) = step_budget else {
+        return run.await;
+    };
+    let Some(remaining) = budget.checked_sub(started.elapsed()) else {
+        return Ok(step_timeout_result(timeout_state, started, children_usage));
+    };
+    if remaining.is_zero() {
+        return Ok(step_timeout_result(timeout_state, started, children_usage));
+    }
+    match tokio::time::timeout(remaining, run).await {
+        Ok(result) => result,
+        Err(_) => Ok(step_timeout_result(timeout_state, started, children_usage)),
+    }
 }

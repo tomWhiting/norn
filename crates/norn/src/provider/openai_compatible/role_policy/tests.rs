@@ -1,3 +1,5 @@
+//! Developer-role policy tests.
+
 use super::*;
 use crate::provider::request::{
     Message, MessageRole, ProviderOptions, ProviderRequest, ToolCallCaller,
@@ -24,8 +26,8 @@ fn request() -> ProviderRequest {
     ProviderRequest {
         messages: vec![
             message(MessageRole::System, "system"),
-            message(MessageRole::Developer, "developer"),
             message(MessageRole::User, "user"),
+            message(MessageRole::Developer, "developer tail"),
         ],
         tools: Vec::new(),
         model: "local-model".to_owned(),
@@ -58,7 +60,7 @@ fn roles(payload: &Value) -> TestResult<Vec<&str>> {
 fn native_policy_preserves_developer_wire_role() -> TestResult {
     let payload = super::super::request::build_payload(&request(), DeveloperRolePolicy::Native)?;
 
-    assert_eq!(roles(&payload)?, ["system", "developer", "user"]);
+    assert_eq!(roles(&payload)?, ["system", "user", "developer"]);
     Ok(())
 }
 
@@ -138,6 +140,12 @@ fn reserved_policy_key_is_rejected_outside_supported_locations() {
         serde_json::json!({
             "api_options": {"openai_chat_completions": {"temperature": 0.25}},
             "openai_chat_completions": {(OPTION_KEY): "reject"}
+        }),
+        serde_json::json!({
+            "api_options.openai_chat_completions": {(OPTION_KEY): "reject"}
+        }),
+        serde_json::json!({
+            "openai_chat_completions.nested": {(OPTION_KEY): "reject"}
         }),
     ] {
         let result = DeveloperRolePolicy::from_provider_options(Some(&options));

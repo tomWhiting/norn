@@ -5,10 +5,18 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 use crate::session::events::{ContextMarkKind, EventId, ProviderEpochBoundaryReason, SessionEvent};
+use crate::system_prompt::PromptSeedFingerprint;
 
-use super::response_publication_commitment::{calculate, verify};
 use super::{
     PROVIDER_STATE_PROVENANCE_EVENT_TYPE, ProviderStateProvenance, ResponseAudioArtifactLink,
+};
+
+mod publication;
+use publication::validate_publication_frames;
+pub(crate) use publication::{
+    is_response_state_publication_boundary, response_publication_group_len,
+    seal_response_publication_group, validate_new_response_publication_batches,
+    validate_no_incomplete_legacy_response_publications, validate_response_publication_append,
 };
 
 /// Provider-state disposition of one response-bearing assistant event.
@@ -26,7 +34,13 @@ pub(crate) enum ResponseStateDisposition {
 
 /// Validated dispositions for response-bearing assistants in the active epoch.
 pub(crate) struct ActiveResponseProvenance {
-    dispositions: HashMap<EventId, ResponseStateDisposition>,
+    records: HashMap<EventId, ActiveResponseRecord>,
+}
+
+#[derive(Clone, Copy)]
+struct ActiveResponseRecord {
+    disposition: ResponseStateDisposition,
+    prompt_seed_fingerprint: Option<PromptSeedFingerprint>,
 }
 
 impl ActiveResponseProvenance {
@@ -34,7 +48,18 @@ impl ActiveResponseProvenance {
         &self,
         assistant_event_id: &EventId,
     ) -> Option<ResponseStateDisposition> {
-        self.dispositions.get(assistant_event_id).copied()
+        self.records
+            .get(assistant_event_id)
+            .map(|record| record.disposition)
+    }
+
+    pub(crate) fn prompt_seed_fingerprint(
+        &self,
+        assistant_event_id: &EventId,
+    ) -> Option<PromptSeedFingerprint> {
+        self.records
+            .get(assistant_event_id)
+            .and_then(|record| record.prompt_seed_fingerprint)
     }
 
     #[cfg(test)]
@@ -42,7 +67,18 @@ impl ActiveResponseProvenance {
         dispositions: impl IntoIterator<Item = (EventId, ResponseStateDisposition)>,
     ) -> Self {
         Self {
-            dispositions: dispositions.into_iter().collect(),
+            records: dispositions
+                .into_iter()
+                .map(|(event_id, disposition)| {
+                    (
+                        event_id,
+                        ActiveResponseRecord {
+                            disposition,
+                            prompt_seed_fingerprint: None,
+                        },
+                    )
+                })
+                .collect(),
         }
     }
 }
@@ -62,9 +98,8 @@ pub enum ProviderStateValidationError {
 struct ProvenanceRecord {
     event_index: usize,
     stored: bool,
+    prompt_seed_fingerprint: Option<PromptSeedFingerprint>,
 }
-
-const RESPONSE_PUBLICATION_MAX_GROUP_LEN: usize = 4;
 
 /// Validate every reserved provider-state record in a complete timeline.
 pub(crate) fn validate_provider_state_provenance(
@@ -122,218 +157,6 @@ pub(crate) fn event_cuts_response_anchor(event: &SessionEvent) -> bool {
     )
 }
 
-pub(crate) fn is_response_state_publication_boundary(event: &SessionEvent) -> bool {
-    matches!(
-        event,
-        SessionEvent::ProviderEpochBoundary {
-            reason: ProviderEpochBoundaryReason::ResponseStatePublication
-                | ProviderEpochBoundaryReason::ResponseStatePublicationV1(_),
-            ..
-        }
-    )
-}
-
-fn validate_publication_frames(
-    events: &[SessionEvent],
-) -> Result<(), ProviderStateValidationError> {
-    for boundary_index in 0..events.len() {
-        if is_response_state_publication_boundary(&events[boundary_index]) {
-            response_publication_group_len(events, boundary_index)?;
-        }
-    }
-    Ok(())
-}
-
-/// Return the complete framed response-group length at `boundary_index`.
-pub(crate) fn response_publication_group_len(
-    events: &[SessionEvent],
-    boundary_index: usize,
-) -> Result<Option<usize>, ProviderStateValidationError> {
-    let Some(group_len) = response_publication_group_shape_len(events, boundary_index)? else {
-        return Ok(None);
-    };
-    let group_end = boundary_index
-        .checked_add(group_len)
-        .ok_or(ProviderStateValidationError::Provenance)?;
-    let group = events
-        .get(boundary_index..group_end)
-        .ok_or(ProviderStateValidationError::Provenance)?;
-    validate_response_publication_commitment(group)?;
-    Ok(Some(group_len))
-}
-
-fn response_publication_group_shape_len(
-    events: &[SessionEvent],
-    boundary_index: usize,
-) -> Result<Option<usize>, ProviderStateValidationError> {
-    let Some(boundary) = events.get(boundary_index) else {
-        return Ok(None);
-    };
-    if !is_response_state_publication_boundary(boundary) {
-        return Ok(None);
-    }
-    let provenance_index = boundary_index.saturating_add(1);
-    let provenance_event = events
-        .get(provenance_index)
-        .ok_or(ProviderStateValidationError::Provenance)?;
-    if !is_provenance_family(provenance_event)
-        || provenance_event.base().parent_id.as_ref() != Some(&boundary.base().id)
-    {
-        return Err(ProviderStateValidationError::Provenance);
-    }
-    let provenance = ProviderStateProvenance::from_event(provenance_event)
-        .map_err(|_error| ProviderStateValidationError::Provenance)?
-        .ok_or(ProviderStateValidationError::Provenance)?;
-    let direct_target = boundary_index.saturating_add(2);
-    if let Some(target_event) = events.get(direct_target)
-        && valid_target_shape(
-            events,
-            provenance_index,
-            direct_target,
-            target_event,
-            provenance.assistant_event_id(),
-        )?
-    {
-        return Ok(Some(3));
-    }
-    let audio_target = boundary_index.saturating_add(3);
-    let target_event = events
-        .get(audio_target)
-        .ok_or(ProviderStateValidationError::Provenance)?;
-    if valid_target_shape(
-        events,
-        provenance_index,
-        audio_target,
-        target_event,
-        provenance.assistant_event_id(),
-    )? {
-        return Ok(Some(4));
-    }
-    Err(ProviderStateValidationError::Provenance)
-}
-
-fn validate_response_publication_commitment(
-    group: &[SessionEvent],
-) -> Result<(), ProviderStateValidationError> {
-    let SessionEvent::ProviderEpochBoundary { base, reason } = &group[0] else {
-        return Err(ProviderStateValidationError::Provenance);
-    };
-    match reason {
-        ProviderEpochBoundaryReason::ResponseStatePublication => Ok(()),
-        ProviderEpochBoundaryReason::ResponseStatePublicationV1(commitment) => {
-            verify(commitment, base, &group[1..])
-                .map_err(|_error| ProviderStateValidationError::PublicationCommitment)
-        }
-        _ => Err(ProviderStateValidationError::Provenance),
-    }
-}
-
-/// Seal one complete response-publication group with its V1 durable commitment.
-pub(crate) fn seal_response_publication_group(
-    group: &mut [SessionEvent],
-) -> Result<(), ProviderStateValidationError> {
-    let group_len = response_publication_group_shape_len(group, 0)?
-        .ok_or(ProviderStateValidationError::Provenance)?;
-    if group_len != group.len() {
-        return Err(ProviderStateValidationError::Provenance);
-    }
-    let boundary_base = group[0].base().clone();
-    let commitment = calculate(&boundary_base, &group[1..])
-        .map_err(|_error| ProviderStateValidationError::PublicationCommitment)?;
-    let SessionEvent::ProviderEpochBoundary { reason, .. } = &mut group[0] else {
-        return Err(ProviderStateValidationError::Provenance);
-    };
-    *reason = ProviderEpochBoundaryReason::ResponseStatePublicationV1(commitment);
-    Ok(())
-}
-
-/// Reject newly appended legacy response frames and validate every V1 group.
-pub(crate) fn validate_new_response_publication_batches(
-    events: &[SessionEvent],
-) -> Result<(), ProviderStateValidationError> {
-    let mut index = 0;
-    while index < events.len() {
-        if !is_response_state_publication_boundary(&events[index]) {
-            index = index.saturating_add(1);
-            continue;
-        }
-        if matches!(
-            events[index],
-            SessionEvent::ProviderEpochBoundary {
-                reason: ProviderEpochBoundaryReason::ResponseStatePublication,
-                ..
-            }
-        ) {
-            return Err(ProviderStateValidationError::PublicationCommitment);
-        }
-        let group_len = response_publication_group_len(events, index)?
-            .ok_or(ProviderStateValidationError::Provenance)?;
-        index = index
-            .checked_add(group_len)
-            .ok_or(ProviderStateValidationError::Provenance)?;
-    }
-    Ok(())
-}
-
-/// Validate one store transition without allowing row-wise response framing.
-pub(crate) fn validate_response_publication_append(
-    existing: &[SessionEvent],
-    requested: &[SessionEvent],
-) -> Result<(), ProviderStateValidationError> {
-    validate_new_response_publication_batches(requested)?;
-    let trailing_start = existing
-        .len()
-        .saturating_sub(RESPONSE_PUBLICATION_MAX_GROUP_LEN.saturating_sub(1));
-    let Some(relative_boundary_index) = existing[trailing_start..]
-        .iter()
-        .rposition(is_response_state_publication_boundary)
-    else {
-        return Ok(());
-    };
-    let boundary_index = trailing_start.saturating_add(relative_boundary_index);
-    if matches!(
-        response_publication_group_len(existing, boundary_index),
-        Ok(Some(_))
-    ) {
-        return Ok(());
-    }
-    if matches!(
-        existing[boundary_index],
-        SessionEvent::ProviderEpochBoundary {
-            reason: ProviderEpochBoundaryReason::ResponseStatePublication,
-            ..
-        }
-    ) {
-        return Err(ProviderStateValidationError::PublicationCommitment);
-    }
-
-    let mut candidate = existing[boundary_index..].to_vec();
-    let remaining = RESPONSE_PUBLICATION_MAX_GROUP_LEN.saturating_sub(candidate.len());
-    candidate.extend(requested.iter().take(remaining).cloned());
-    response_publication_group_len(&candidate, 0)?
-        .ok_or(ProviderStateValidationError::Provenance)?;
-    Ok(())
-}
-
-/// Reject a durable legacy response boundary whose complete group is absent.
-pub(crate) fn validate_no_incomplete_legacy_response_publications(
-    events: &[SessionEvent],
-) -> Result<(), ProviderStateValidationError> {
-    for (index, event) in events.iter().enumerate() {
-        if matches!(
-            event,
-            SessionEvent::ProviderEpochBoundary {
-                reason: ProviderEpochBoundaryReason::ResponseStatePublication,
-                ..
-            }
-        ) && !matches!(response_publication_group_len(events, index), Ok(Some(_)))
-        {
-            return Err(ProviderStateValidationError::PublicationCommitment);
-        }
-    }
-    Ok(())
-}
-
 fn discover_epoch(
     events: &[SessionEvent],
     legacy_closed_before_epoch: bool,
@@ -360,6 +183,7 @@ fn discover_epoch(
         let record = ProvenanceRecord {
             event_index,
             stored: provenance.stored(),
+            prompt_seed_fingerprint: provenance.prompt_seed_fingerprint(),
         };
         if records
             .insert(provenance.assistant_event_id().clone(), record)
@@ -371,7 +195,7 @@ fn discover_epoch(
 
     validate_targets(events, &records)?;
 
-    let mut dispositions = HashMap::new();
+    let mut active_records = HashMap::new();
     for (event_index, event) in events.iter().enumerate() {
         let SessionEvent::AssistantMessage {
             base, response_id, ..
@@ -382,7 +206,8 @@ fn discover_epoch(
         if response_id.as_ref().is_none_or(String::is_empty) {
             continue;
         }
-        let disposition = records.get(&base.id).map_or_else(
+        let provenance_record = records.get(&base.id);
+        let disposition = provenance_record.map_or_else(
             || {
                 if !legacy_closed_before_epoch
                     && first_provenance_index.is_none_or(|first| event_index < first)
@@ -400,12 +225,19 @@ fn discover_epoch(
                 }
             },
         );
-        if dispositions.insert(base.id.clone(), disposition).is_some() {
+        let record = ActiveResponseRecord {
+            disposition,
+            prompt_seed_fingerprint: provenance_record
+                .and_then(|record| record.prompt_seed_fingerprint),
+        };
+        if active_records.insert(base.id.clone(), record).is_some() {
             return Err(ProviderStateValidationError::Provenance);
         }
     }
 
-    Ok(ActiveResponseProvenance { dispositions })
+    Ok(ActiveResponseProvenance {
+        records: active_records,
+    })
 }
 
 fn is_provenance_family(event: &SessionEvent) -> bool {

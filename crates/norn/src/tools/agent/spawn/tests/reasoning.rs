@@ -237,22 +237,21 @@ async fn variant_reasoning_effort_reaches_child_provider_requests() -> TestResul
     Ok(())
 }
 
-/// R5 (spawn side): the spawned child's own context carries ITS OWN
-/// base system instruction under `ParentSystemInstruction` — proven
-/// from inside the child via a probe tool — so the child's own forks
-/// inherit the child's context, not the grandparent's.
+/// The spawned child publishes its source-aware prompt plan for descendants.
+/// The flattened legacy extension remains input-only and the task stays out
+/// of the stable plan.
 #[tokio::test]
-async fn spawned_child_context_carries_its_own_base_instruction() -> TestResult {
-    struct BaseProbe {
-        seen: Arc<StdMutex<Option<String>>>,
+async fn spawned_child_context_publishes_typed_prompt_plan_only() -> TestResult {
+    struct PromptProbe {
+        seen: Arc<StdMutex<Option<(crate::system_prompt::PromptPlan, bool)>>>,
     }
     #[async_trait]
-    impl TestTool for BaseProbe {
+    impl TestTool for PromptProbe {
         fn name(&self) -> &'static str {
             "base_probe"
         }
         fn description(&self) -> &'static str {
-            "records the ParentSystemInstruction it sees"
+            "records the parent prompt extensions it sees"
         }
         fn input_schema(&self) -> serde_json::Value {
             serde_json::json!({})
@@ -266,8 +265,14 @@ async fn spawned_child_context_carries_its_own_base_instruction() -> TestResult 
             ctx: &ToolContext,
         ) -> Result<TestToolOutput, ToolError> {
             *self.seen.lock() = ctx
-                .get_extension::<crate::agent::fork::ParentSystemInstruction>()
-                .map(|ext| ext.as_str().to_owned());
+                .get_extension::<crate::agent::fork::ParentPromptPlan>()
+                .map(|extension| {
+                    (
+                        extension.plan().clone(),
+                        ctx.get_extension::<crate::agent::fork::ParentSystemInstruction>()
+                            .is_some(),
+                    )
+                });
             Ok(TestToolOutput::success(serde_json::json!({"ok": true})))
         }
     }
@@ -292,7 +297,7 @@ async fn spawned_child_context_carries_its_own_base_instruction() -> TestResult 
     ]));
     let seen = Arc::new(StdMutex::new(None));
     let mut registry = ToolRegistry::new();
-    registry.register(Box::new(BaseProbe {
+    registry.register(Box::new(PromptProbe {
         seen: Arc::clone(&seen),
     }));
     let agent_registry = AgentRegistry::shared();
@@ -312,10 +317,21 @@ async fn spawned_child_context_carries_its_own_base_instruction() -> TestResult 
     )
     .await;
 
-    let base = seen.lock().clone().ok_or("required test value")?;
+    let (plan, legacy_published) = seen.lock().clone().ok_or("required test value")?;
     assert!(
-        base.contains("probe your base"),
-        "the published value is the CHILD's own task-derived base: {base}",
+        !legacy_published,
+        "new child contexts must not publish the legacy extension"
+    );
+    assert_eq!(plan.fragments().len(), 1);
+    assert_eq!(
+        plan.fragments()[0].source(),
+        crate::system_prompt::PromptSource::ChildAgentPolicy,
+    );
+    assert!(
+        plan.fragments()
+            .iter()
+            .all(|fragment| !fragment.content().contains("probe your base")),
+        "the human task must not enter the published stable plan: {plan:?}",
     );
     Ok(())
 }

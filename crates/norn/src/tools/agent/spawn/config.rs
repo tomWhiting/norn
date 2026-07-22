@@ -6,10 +6,12 @@ use serde::Deserialize;
 
 use super::super::spawn_context::validate_model_selected_profile;
 use crate::agent::child_policy::ChildPolicy;
+use crate::agent::variants::VariantPromptOrigin;
 use crate::error::ToolError;
 use crate::r#loop::loop_context::LoopContext;
 use crate::profile::from_profile;
-use crate::profile::loader::resolve_workspace_profile_at_launch_root;
+use crate::profile::loader::{ProfileOrigin, resolve_workspace_profile_at_launch_root};
+use crate::system_prompt::child::{ChildPromptFragment, build_child_prompt_plan};
 use crate::tool::registry::ToolRegistry;
 
 // deny_unknown_fields: a typo'd key (e.g. `child_polciy`) must fail
@@ -60,52 +62,67 @@ pub(super) struct SpawnAgentArgs {
 
 /// Build the child's [`LoopContext`] and the profile-derived tool list.
 ///
-/// When `variant_prompt` is `Some` (the spawn resolved a variant that
-/// carries a prompt), the child's base instruction is the variant prompt
-/// plus the task via
-/// [`build_child_system_prompt`](crate::system_prompt::build_child_system_prompt)
-/// — variants and profiles are mutually exclusive, so this branch never
-/// competes with profile resolution. Otherwise, when `profile_name` is
-/// `Some`, the named profile is resolved through the scanner over
-/// the parent working directory's standard profile tiers; its system
-/// instructions and reasoning config flow into the returned [`LoopContext`]
-/// via [`from_profile`]. Model-selected profiles that declare prompt commands
-/// are rejected before child construction because they cannot grant ambient
+/// The child's stable prompt always starts with compiled child policy. A
+/// variant prompt retains its field-level built-in/configured provenance; a
+/// profile retains whether discovery resolved it from a trusted user path or
+/// the workspace. The launch task is deliberately not accepted by this API:
+/// it is supplied exactly once as the run's User prompt.
+///
+/// When `profile_name` is `Some`, the named profile is resolved through the
+/// scanner over the parent working directory's standard profile tiers; its
+/// reasoning config flows into the returned [`LoopContext`] via
+/// [`from_profile`]. Model-selected profiles that declare prompt commands are
+/// rejected before child construction because they cannot grant ambient
 /// process authority.
 /// The gated [`ToolRegistry`] `from_profile` produces is discarded — the
 /// child shares the parent's registry — but the profile's resolved tool
 /// list is returned so the caller can use it as the per-child
-/// allow-list. With neither, a minimal context is built with the task
-/// embedded as the system instruction.
+/// allow-list. With neither, a minimal context carries only compiled child
+/// policy.
 ///
 /// # Errors
 ///
 /// Returns [`ToolError::ExecutionFailed`] when a named profile cannot be
 /// resolved — spawn never silently falls back to a default profile.
 pub(super) fn build_child_loop_context(
-    variant_prompt: Option<&str>,
+    variant_prompt: Option<(&str, VariantPromptOrigin)>,
     profile_name: Option<&str>,
-    task: &str,
     working_dir: &Path,
 ) -> Result<(LoopContext, Option<Vec<String>>), ToolError> {
-    if let Some(prompt) = variant_prompt {
-        let base = crate::system_prompt::build_child_system_prompt(prompt, task);
-        return Ok((LoopContext::new(base), None));
+    if let Some((prompt, origin)) = variant_prompt {
+        let fragment = match origin {
+            VariantPromptOrigin::Builtin => ChildPromptFragment::BuiltinVariant(prompt),
+            VariantPromptOrigin::Configured => ChildPromptFragment::ConfiguredVariant(prompt),
+        };
+        return Ok((loop_context_with_plan(Some(fragment)), None));
     }
     if let Some(name) = profile_name {
-        let profile = resolve_workspace_profile_at_launch_root(name, working_dir)
-            .map_err(|e| ToolError::ExecutionFailed {
-                reason: format!("spawn_agent: selected profile could not be resolved: {e}"),
-            })?
-            .profile;
+        let resolved =
+            resolve_workspace_profile_at_launch_root(name, working_dir).map_err(|e| {
+                ToolError::ExecutionFailed {
+                    reason: format!("spawn_agent: selected profile could not be resolved: {e}"),
+                }
+            })?;
+        let profile = resolved.profile;
         validate_model_selected_profile(&profile)?;
         let resolved_tools = profile.resolved_tools();
-        let (loop_ctx, _gated) = from_profile(&profile, ToolRegistry::new(), None, None);
+        let instructions = profile.resolved_instructions().join("\n\n");
+        let fragment = match resolved.origin {
+            ProfileOrigin::User => ChildPromptFragment::OperatorProfile(&instructions),
+            ProfileOrigin::WorkingDirectory => ChildPromptFragment::WorkspaceProfile(&instructions),
+        };
+        let (mut loop_ctx, _gated) = from_profile(&profile, ToolRegistry::new(), None, None);
+        loop_ctx.install_stable_prompt_plan(build_child_prompt_plan(Some(fragment)));
         Ok((loop_ctx, resolved_tools))
     } else {
-        let base = format!("You are a sub-agent. Task: {task}\n\nComplete the task and stop.");
-        Ok((LoopContext::new(base), None))
+        Ok((loop_context_with_plan(None), None))
     }
+}
+
+fn loop_context_with_plan(fragment: Option<ChildPromptFragment<'_>>) -> LoopContext {
+    let mut context = LoopContext::new("");
+    context.install_stable_prompt_plan(build_child_prompt_plan(fragment));
+    context
 }
 
 /// Build the [`ToolDefinition`] slice the child model sees.

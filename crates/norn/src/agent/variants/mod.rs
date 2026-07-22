@@ -8,4 +8,4 @@
 mod builtin;
 mod catalog;
 
-pub use catalog::{ResolvedVariant, VariantCatalog, VariantCatalogError};
+pub use catalog::{ResolvedVariant, VariantCatalog, VariantCatalogError, VariantPromptOrigin};

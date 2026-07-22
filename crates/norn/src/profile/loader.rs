@@ -2,7 +2,8 @@
 //!
 //! The format mirrors the existing Meridian profiles at `.meridian/profiles/`:
 //! a leading `---` line, a YAML block, a closing `---` line, and a markdown
-//! body that becomes the agent's base system instruction.
+//! body that becomes a source-typed stable prompt fragment (and remains in the
+//! flattened base only as a compatibility view).
 //!
 //! Self-contained: this module does NOT import any parsing helpers from
 //! `claude-runner` (per brief Boundary). The shape of

@@ -91,7 +91,6 @@ impl Drop for NornHomeGuard {
 #[allow(clippy::unwrap_used)]
 fn confined_read_exempt_set_excludes_settings_paths_and_sessions() {
     let norn_home = tempfile::tempdir().expect("norn_home");
-    let norn_home_guard = NornHomeGuard::set(norn_home.path());
 
     // The convention subdirs must exist on disk — the context setter
     // canonicalizes and drops non-existent exempt roots.
@@ -119,6 +118,11 @@ fn confined_read_exempt_set_excludes_settings_paths_and_sessions() {
         .to_string(),
     )
     .expect("write settings");
+
+    // Publish the process-global override only after its complete settings
+    // document exists. Non-serial builder tests can read NORN_HOME, so exposing
+    // a partially-written file here creates an unrelated parse race.
+    let norn_home_guard = NornHomeGuard::set(norn_home.path());
 
     let agent = AgentBuilder::new(provider_with(vec![]))
         .model("test-model")

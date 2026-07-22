@@ -47,13 +47,14 @@ fn append_stored_assistant(
 }
 
 fn threaded_state(initial: InitialMessages) -> Result<ConversationRequestState, NornError> {
-    Ok(ConversationRequestState::new(
+    Ok(ConversationRequestState::with_prompt_seed(
         &AgentLoopConfig {
             conversation_state: ConversationStateMode::ProviderThreaded,
             ..AgentLoopConfig::default()
         },
         ProviderCapabilities::openai_responses(),
         initial.prefix_len,
+        initial.prompt_seed_fingerprint,
         initial.response_thread_anchor,
     )?)
 }
@@ -64,7 +65,7 @@ fn initial_messages_materialize_the_ordered_stable_authority_plan() -> Result<()
     plan.set(PromptSource::ProductPolicy, "product");
     plan.set(PromptSource::OperatorProfile, "operator");
     plan.set(PromptSource::WorkspaceProfile, "repository");
-    plan.set(PromptSource::SkillCatalog, "skills");
+    plan.set(PromptSource::SkillCatalogPolicy, "skills");
     let mut loop_context = LoopContext::new("legacy compatibility view");
     loop_context.install_stable_prompt_plan(plan);
 
@@ -79,9 +80,9 @@ fn initial_messages_materialize_the_ordered_stable_authority_plan() -> Result<()
         roles,
         [
             MessageRole::System,
+            MessageRole::System,
             MessageRole::Developer,
             MessageRole::User,
-            MessageRole::Developer,
             MessageRole::User,
         ]
     );
@@ -92,7 +93,7 @@ fn initial_messages_materialize_the_ordered_stable_authority_plan() -> Result<()
         .collect::<Vec<_>>();
     assert_eq!(
         contents,
-        ["product", "operator", "repository", "skills", "task"]
+        ["product", "skills", "operator", "repository", "task"]
     );
     Ok(())
 }

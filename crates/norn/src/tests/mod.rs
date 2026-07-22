@@ -8,3 +8,4 @@
 #[cfg(unix)]
 mod descriptor_retention;
 pub mod integration;
+pub(crate) mod prompt_authority_support;

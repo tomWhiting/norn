@@ -7,17 +7,31 @@ use tokio::process::Command;
 
 use crate::integration::diagnostics::{DiagnosticCollector, DiagnosticSeverity, NornDiagnostic};
 use crate::rules::lifecycle::RulePresenceSet;
+use crate::rules::source::RuleOrigin;
 use crate::rules::triggers::evaluate_triggers;
 use crate::rules::types::{Rule, RuleInjection, RuntimeEvent};
 
 /// Default wall-clock budget for `shell_source` rule commands.
 const DEFAULT_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
 
+struct SourcedRule {
+    rule: Rule,
+    origin: RuleOrigin,
+}
+
+impl std::ops::Deref for SourcedRule {
+    type Target = Rule;
+
+    fn deref(&self) -> &Self::Target {
+        &self.rule
+    }
+}
+
 /// The rules engine: holds loaded rules and the presence set, evaluates
 /// triggers against runtime events, and produces [`RuleInjection`] values
 /// for rules that matched and are not already in context.
 pub struct RuleEngine {
-    rules: Vec<Rule>,
+    rules: Vec<SourcedRule>,
     presence: RulePresenceSet,
     shell_timeout: Duration,
     diagnostics: Option<Arc<DiagnosticCollector>>,
@@ -29,7 +43,13 @@ impl RuleEngine {
     #[must_use]
     pub fn new(rules: Vec<Rule>) -> Self {
         Self {
-            rules,
+            rules: rules
+                .into_iter()
+                .map(|rule| SourcedRule {
+                    rule,
+                    origin: RuleOrigin::Operator,
+                })
+                .collect(),
             presence: RulePresenceSet::new(),
             shell_timeout: DEFAULT_SHELL_TIMEOUT,
             diagnostics: None,
@@ -66,7 +86,17 @@ impl RuleEngine {
 
     /// Add a rule to the engine.
     pub fn add_rule(&mut self, rule: Rule) {
-        self.rules.push(rule);
+        self.add_rule_with_origin(rule, RuleOrigin::Operator);
+    }
+
+    /// Add a rule discovered inside the active workspace.
+    pub(crate) fn add_workspace_rule(&mut self, rule: Rule) {
+        self.add_rule_with_origin(rule, RuleOrigin::Workspace);
+    }
+
+    /// Add a rule with provenance derived by a trusted discovery boundary.
+    pub(crate) fn add_rule_with_origin(&mut self, rule: Rule, origin: RuleOrigin) {
+        self.rules.push(SourcedRule { rule, origin });
     }
 
     /// Fold every rule from `other` (the explicit `--rules` engine) into
@@ -140,6 +170,7 @@ impl RuleEngine {
 
             injections.push(RuleInjection {
                 rule_id: trigger_match.rule_id,
+                origin: rule.origin,
                 delivery: trigger_match.delivery,
                 timing: trigger_match.timing,
                 content,

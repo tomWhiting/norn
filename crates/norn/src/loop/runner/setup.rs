@@ -19,6 +19,7 @@ use crate::r#loop::helpers::{
 };
 use crate::r#loop::inbound::{ChannelMessage, InboundChannel};
 use crate::r#loop::iteration::IterationMonitorState;
+use crate::r#loop::loop_context::DEFAULT_PROMPT_COMMAND_TIMEOUT;
 use crate::r#loop::schema::{build_schema_tool, check_reserved_envelope_keys};
 use crate::provider::request::ToolDefinition;
 use crate::provider::turn::ProviderTurnContext;
@@ -28,7 +29,8 @@ use crate::session::SessionPersistError;
 use crate::session::events::{EventBase, EventId, SessionEvent};
 
 use super::entry::AgentStepRunRequest;
-use super::machine::StepMachine;
+use super::machine::{PromptCommandContextState, StepInitialization, StepMachine};
+use super::prompt::developer_message;
 
 impl<'a> StepMachine<'a> {
     /// Perform all pre-loop setup and construct the machine ready to run.
@@ -43,15 +45,16 @@ impl<'a> StepMachine<'a> {
     pub(super) async fn initialize(
         request: AgentStepRunRequest<'a>,
         timeout_state: SharedTimeoutState,
+        seed_messages: &mut Vec<ChannelMessage>,
         mut inbound: Option<&'a mut InboundChannel>,
         follow_up_buffer: &'a mut Vec<ChannelMessage>,
         pending_before_injections: &'a mut Vec<RuleInjection>,
-    ) -> Result<StepMachine<'a>, NornError> {
+        step_started: std::time::Instant,
+    ) -> Result<StepInitialization<'a>, NornError> {
         let provider = request.provider;
         let executor = request.executor;
         let store = request.store;
         let user_prompt = request.user_prompt;
-        let seed_messages = request.initial_messages;
         let wake_from_external = request.wake_from_external;
         let tools = request.tools;
         let output_schema = request.output_schema;
@@ -59,11 +62,30 @@ impl<'a> StepMachine<'a> {
         let event_tx = request.event_tx;
         let loop_context = request.loop_context;
         let provider_state_identity = provider.state_identity();
+        let provider_capabilities = provider.capabilities();
+        let provider_threaded = ConversationRequestState::validate_setup(
+            config,
+            provider_capabilities,
+            provider_state_identity,
+        )?;
 
         // Reserved provider-state records are untrusted durable input. Check
         // them before affinity adoption can stamp an otherwise-unbound store.
         validate_response_state_provenance(&store.events())?;
         validate_or_bind_store_identity(store, provider_state_identity)?;
+
+        if let Some(result) = no_request_result(config, request.cancel.as_ref(), loop_context) {
+            persist_accepted_messages_without_request(
+                store,
+                loop_context,
+                event_tx,
+                seed_messages,
+                inbound.as_deref_mut(),
+                follow_up_buffer,
+            )
+            .await?;
+            return Ok(StepInitialization::Done(result));
+        }
 
         // The embedder-installed ToolOutputBudget governs the model-facing
         // inline size of every tool result this step persists; resolved once
@@ -114,21 +136,75 @@ impl<'a> StepMachine<'a> {
             loop_context.context_marks_loaded = true;
         }
 
+        // Freeze the first request's stable prompt snapshot before command
+        // execution. File changes after this point are intentionally picked up
+        // at the next request boundary, so setup validation and first dispatch
+        // cannot observe different stable authority.
+        loop_context.clear_dynamic_sections();
+        if loop_context.refresh_context_if_stale() {
+            loop_context.rebuild_base_section();
+        }
+
         // Build the initial conversation, splicing in any slash-command
         // expansion in place of the literal user input. The raw user input is
-        // still recorded as a UserMessage session event for audit (CO7).
-        let initial_messages = build_initial_messages(user_prompt, loop_context, store)?;
+        // still recorded as a UserMessage session event for audit (CO7). This
+        // fallible expansion precedes prompt commands so an invalid slash
+        // invocation cannot trigger their side effects.
+        let mut initial_messages = build_initial_messages(user_prompt, loop_context, store)?;
+
+        // Narrow the cooperative-cancellation window before spawning a shell.
+        // Cancellation that arrives after this point may race an already-live
+        // command, but a token observed here still causes no command or prompt
+        // persistence.
+        if let Some(result) = no_request_result(config, request.cancel.as_ref(), loop_context) {
+            persist_accepted_messages_without_request(
+                store,
+                loop_context,
+                event_tx,
+                seed_messages,
+                inbound.as_deref_mut(),
+                follow_up_buffer,
+            )
+            .await?;
+            return Ok(StepInitialization::Done(result));
+        }
+
+        // The no-request gate and every provider-state/configuration check have
+        // passed. Prepare the first request's exact trusted Developer context
+        // once, then carry it into `build_request` rather than executing the
+        // command a second time.
+        let prompt_command_context = loop_context
+            .prepare_prompt_command_context(effective_prompt_command_timeout(config, step_started))
+            .await;
+        let mut initial_prompt_seed = initial_messages.prompt_seed_fingerprint;
+        if provider_threaded && let Some(content) = prompt_command_context.as_ref() {
+            initial_prompt_seed = initial_prompt_seed.with_operator_runtime_context(content);
+            initial_messages.messages.insert(
+                initial_messages.prefix_len,
+                developer_message(content.clone()),
+            );
+            initial_messages.prefix_len = initial_messages.prefix_len.saturating_add(1);
+            if let Some(anchor) = initial_messages.response_thread_anchor.as_mut() {
+                anchor.note_stable_prefix_insertion();
+            }
+            for anchor in &mut initial_messages.legacy_response_thread_anchors {
+                anchor.note_stable_prefix_insertion();
+            }
+        }
+
         let mut messages = initial_messages.messages;
-        let mut conversation_state = ConversationRequestState::new(
+        let mut conversation_state = ConversationRequestState::with_prompt_seed(
             config,
-            provider.capabilities(),
+            provider_capabilities,
             initial_messages.prefix_len,
+            initial_prompt_seed,
             initial_messages.response_thread_anchor,
         )?;
         conversation_state.require_state_identity(provider_state_identity)?;
-        // Validate the exact initial provider-facing view before the operator's
-        // new prompt becomes durable. The provider request builder repeats this
-        // check defensively for later tool continuations and library callers.
+        // Validate the exact stable-plus-command seed before the operator's
+        // new prompt becomes durable. A changed seed has already cut its V2
+        // anchor here, so provider-specific replay rejection cannot leave an
+        // unsent UserMessage behind.
         if let Err(error) =
             provider.validate_replay(&conversation_state.request_messages(&messages))
         {
@@ -163,8 +239,9 @@ impl<'a> StepMachine<'a> {
                 return Err(error.into());
             }
         }
-        // The managed dynamic-context Developer message is attached at the
-        // tail by the first `build_request`, so the tracker starts absent.
+        // A stateless request attaches its managed-context Developer projection
+        // at the tail during `build_request`; threaded requests use top-level
+        // instructions. The compatibility-tail tracker therefore starts absent.
         let dev_message = ManagedDevMessage::new();
         let mut new_input_len = initial_messages.new_input_len;
 
@@ -185,11 +262,10 @@ impl<'a> StepMachine<'a> {
         let mut injected_event_ids =
             flush_pending_agent_messages(store, &mut messages, loop_context, event_tx).await?;
 
-        let mut seed_messages = seed_messages;
         match inject_inbound_messages(
             store,
             &mut messages,
-            &mut seed_messages,
+            seed_messages,
             loop_context.hooks.as_deref(),
             event_tx,
         )
@@ -202,7 +278,7 @@ impl<'a> StepMachine<'a> {
                 // (`follow_up_buffer` is hoisted into `run_agent_step_common`
                 // and swept on every exit, including this setup error) so an
                 // acknowledged seed is never silently dropped.
-                follow_up_buffer.extend(seed_messages);
+                follow_up_buffer.append(seed_messages);
                 return Err(error.into());
             }
         }
@@ -254,7 +330,7 @@ impl<'a> StepMachine<'a> {
             provider_turn_context.bind_state_identity(identity)?;
         }
 
-        Ok(StepMachine {
+        Ok(StepInitialization::Ready(Box::new(StepMachine {
             provider,
             executor,
             store,
@@ -274,6 +350,7 @@ impl<'a> StepMachine<'a> {
             tool_snapshot: None,
             messages,
             conversation_state,
+            prompt_command_context: PromptCommandContextState::Prepared(prompt_command_context),
             dev_message,
             new_input_len,
             prompt_event_id,
@@ -286,8 +363,68 @@ impl<'a> StepMachine<'a> {
             pending_before_injections,
             compaction_state: CompactionState::new(),
             latest_failures: Vec::new(),
-        })
+        })))
     }
+}
+
+fn effective_prompt_command_timeout(
+    config: &crate::r#loop::config::AgentLoopConfig,
+    step_started: std::time::Instant,
+) -> Option<std::time::Duration> {
+    let command_timeout = config
+        .prompt_command_timeout
+        .unwrap_or(DEFAULT_PROMPT_COMMAND_TIMEOUT);
+    config
+        .step_timeout
+        .map_or(config.prompt_command_timeout, |budget| {
+            Some(command_timeout.min(budget.saturating_sub(step_started.elapsed())))
+        })
+}
+
+fn no_request_result(
+    config: &crate::r#loop::config::AgentLoopConfig,
+    cancel: Option<&tokio_util::sync::CancellationToken>,
+    loop_context: &crate::r#loop::loop_context::LoopContext,
+) -> Option<crate::r#loop::config::AgentStepResult> {
+    if cancel.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
+        return Some(crate::r#loop::config::AgentStepResult::Cancelled {
+            usage: Usage::default(),
+            children_usage: loop_context.children_usage.snapshot(),
+        });
+    }
+    (config.max_iterations == Some(0)).then(|| {
+        crate::r#loop::config::AgentStepResult::MaxIterationsReached {
+            usage: Usage::default(),
+            children_usage: loop_context.children_usage.snapshot(),
+        }
+    })
+}
+
+async fn persist_accepted_messages_without_request(
+    store: &crate::session::EventStore,
+    loop_context: &crate::r#loop::loop_context::LoopContext,
+    event_tx: Option<&crate::provider::agent_event::AgentEventSender>,
+    seed_messages: &mut Vec<ChannelMessage>,
+    inbound: Option<&mut InboundChannel>,
+    follow_up_buffer: &mut Vec<ChannelMessage>,
+) -> Result<(), NornError> {
+    if let Some(inbound) = inbound {
+        seed_messages.extend(inbound.drain());
+    }
+    let mut prompt_messages = Vec::new();
+    if let Err(error) = inject_inbound_messages(
+        store,
+        &mut prompt_messages,
+        seed_messages,
+        loop_context.hooks.as_deref(),
+        event_tx,
+    )
+    .await
+    {
+        follow_up_buffer.append(seed_messages);
+        return Err(error.into());
+    }
+    Ok(())
 }
 
 fn validate_or_bind_store_identity(

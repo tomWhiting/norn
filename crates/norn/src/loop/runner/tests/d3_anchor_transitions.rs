@@ -8,6 +8,7 @@ use crate::session::{
     ProviderFilteredForkBoundary, ProviderStateProvenance, committed_response_publication,
     response_publication_fixture,
 };
+use crate::system_prompt::{PromptPlan, PromptSeedFingerprint, PromptSource};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -111,6 +112,64 @@ fn message_contents(request: &ProviderRequest) -> Vec<&str> {
         .iter()
         .filter_map(|message| message.content.as_deref())
         .collect()
+}
+
+#[tokio::test]
+async fn response_publication_binds_the_exact_request_prompt_seed() -> TestResult {
+    let mut plan = PromptPlan::new();
+    plan.set(PromptSource::ProductPolicy, "product");
+    plan.set(PromptSource::OperatorProfile, "operator");
+    plan.set(PromptSource::WorkspaceProfile, "repository");
+    let expected_seed = PromptSeedFingerprint::from_plan(&plan);
+    let mut loop_context = LoopContext::new("legacy");
+    loop_context.install_stable_prompt_plan(plan);
+
+    let provider = MockProvider::with_capabilities(
+        vec![vec![
+            text_delta("answer"),
+            ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                response_id: Some("resp_seed_bound".to_owned()),
+            },
+        ]],
+        ProviderCapabilities::openai_responses(),
+    )
+    .with_state_identity(crate::provider::ProviderStateIdentity::derive(
+        "norn.runner.prompt-seed",
+        b"prompt-seed-fixture",
+    ));
+    let executor = MockToolExecutor::empty();
+    let store = EventStore::new();
+    let config = AgentLoopConfig {
+        conversation_state: crate::r#loop::config::ConversationStateMode::ProviderThreaded,
+        ..AgentLoopConfig::default()
+    };
+
+    let result = run_step_with(
+        StepArgs {
+            provider: &provider,
+            executor: &executor,
+            store: &store,
+            tools: &[],
+            schema: None,
+            config: &config,
+            event_tx: None,
+            inbound: None,
+        },
+        &mut loop_context,
+    )
+    .await;
+    assert_completed(result);
+
+    let records = store
+        .events()
+        .iter()
+        .filter_map(|event| ProviderStateProvenance::from_event(event).ok().flatten())
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].prompt_seed_fingerprint(), Some(expected_seed));
+    Ok(())
 }
 
 #[test]
@@ -331,6 +390,11 @@ async fn first_manual_replay_response_records_negative_provenance_and_is_not_ado
     assert!(
         !negative_provenance[0].stored(),
         "store:false response IDs must receive explicit negative provenance",
+    );
+    assert_eq!(
+        negative_provenance[0].prompt_seed_fingerprint(),
+        Some(PromptSeedFingerprint::empty()),
+        "new negative provenance must use the current V2 prompt-seed shape",
     );
 
     let second_provider = MockProvider::with_capabilities(

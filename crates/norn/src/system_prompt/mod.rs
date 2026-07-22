@@ -28,20 +28,28 @@
 //! - **Collaboration Mode** — autonomous, plan, or default mode guidance.
 //!
 //! Profile instructions and always-on context are assembled as stable typed
-//! fragments. Dynamic sections (prompt commands, rule injections,
-//! environment) remain a per-request managed Developer tail.
+//! fragments. Threaded Responses requests send Norn-owned runtime policy
+//! through the request-local `instructions` channel and bind trusted
+//! prompt-command output as Developer seed material. Stateless requests use an
+//! explicit cache-friendly Developer-tail compatibility projection.
+//! Provenance-bearing rule injections are durable conversation messages whose
+//! role follows their source.
 
 pub mod authority;
 pub mod builder;
 pub mod child;
 pub mod environment;
 pub mod plan;
+pub mod prompt_seed;
 pub mod sections;
 
-pub use authority::{PromptAuthority, PromptSource};
+pub use authority::{ManagedContextProjection, PromptAuthority, PromptSource};
 pub use builder::{
     CollaborationMode, ExecutionMode, SystemPromptInputs, ToolPromptEntry, build_system_prompt,
 };
-pub use child::build_child_system_prompt;
 pub use environment::{EnvironmentConfig, format_environment_section};
 pub use plan::{PromptFragment, PromptPlan};
+pub use prompt_seed::PromptSeedFingerprint;
+
+#[cfg(test)]
+mod prompt_seed_tests;

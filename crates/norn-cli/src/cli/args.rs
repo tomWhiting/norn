@@ -40,11 +40,12 @@ pub struct Cli {
     #[arg(long, value_name = "PATH|NAME")]
     pub profile: Option<String>,
 
-    /// System prompt — overrides the profile's system instructions.
+    /// Operator instructions that replace the profile at Developer authority.
+    /// The flag name is retained for CLI compatibility.
     #[arg(short = 'S', long, value_name = "TEXT")]
     pub system_prompt: Option<String>,
 
-    /// Append text to the profile's system instructions (additive).
+    /// Append operator instructions at Developer authority (additive).
     #[arg(long, value_name = "TEXT")]
     pub append_system_prompt: Option<String>,
 

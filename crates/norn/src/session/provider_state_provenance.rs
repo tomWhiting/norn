@@ -5,8 +5,10 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::session::events::{EventBase, EventId, SessionEvent};
+use crate::system_prompt::PromptSeedFingerprint;
 
-const PROVIDER_STATE_PROVENANCE_VERSION: u32 = 1;
+const LEGACY_PROVIDER_STATE_PROVENANCE_VERSION: u32 = 1;
+const PROMPT_SEED_PROVIDER_STATE_PROVENANCE_VERSION: u32 = 2;
 
 /// Custom-event discriminator for durable provider-state provenance.
 pub const PROVIDER_STATE_PROVENANCE_EVENT_TYPE: &str = "provider.state.provenance";
@@ -17,23 +19,40 @@ pub const PROVIDER_STATE_PROVENANCE_EVENT_TYPE: &str = "provider.state.provenanc
 /// duplicate, or conflicting record rather than guessing whether the target is
 /// safe to use for provider-side response threading.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "ProviderStateProvenanceWire")]
 pub struct ProviderStateProvenance {
-    #[serde(deserialize_with = "deserialize_provenance_version")]
     version: u32,
-    #[serde(deserialize_with = "deserialize_canonical_event_id")]
     assistant_event_id: EventId,
     stored: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_seed_sha256: Option<PromptSeedFingerprint>,
 }
 
 impl ProviderStateProvenance {
     /// Build a provenance record for an already-minted assistant event ID.
     #[must_use]
+    #[cfg(test)]
     pub(crate) const fn new(assistant_event_id: EventId, stored: bool) -> Self {
         Self {
-            version: PROVIDER_STATE_PROVENANCE_VERSION,
+            version: LEGACY_PROVIDER_STATE_PROVENANCE_VERSION,
             assistant_event_id,
             stored,
+            prompt_seed_sha256: None,
+        }
+    }
+
+    /// Build current provenance bound to the exact non-System prompt seed.
+    #[must_use]
+    pub(crate) const fn with_prompt_seed(
+        assistant_event_id: EventId,
+        stored: bool,
+        prompt_seed_sha256: PromptSeedFingerprint,
+    ) -> Self {
+        Self {
+            version: PROMPT_SEED_PROVIDER_STATE_PROVENANCE_VERSION,
+            assistant_event_id,
+            stored,
+            prompt_seed_sha256: Some(prompt_seed_sha256),
         }
     }
 
@@ -47,6 +66,14 @@ impl ProviderStateProvenance {
     #[must_use]
     pub const fn stored(&self) -> bool {
         self.stored
+    }
+
+    /// Prompt seed that was present on the request producing this response.
+    ///
+    /// `None` identifies a readable pre-D8 V1 record whose seed is unbound.
+    #[must_use]
+    pub const fn prompt_seed_fingerprint(&self) -> Option<PromptSeedFingerprint> {
+        self.prompt_seed_sha256
     }
 
     /// Wrap the typed payload in the format-2-compatible custom-event shape.
@@ -80,6 +107,41 @@ impl ProviderStateProvenance {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProviderStateProvenanceWire {
+    version: u32,
+    #[serde(deserialize_with = "deserialize_canonical_event_id")]
+    assistant_event_id: EventId,
+    stored: bool,
+    prompt_seed_sha256: Option<PromptSeedFingerprint>,
+}
+
+impl TryFrom<ProviderStateProvenanceWire> for ProviderStateProvenance {
+    type Error = &'static str;
+
+    fn try_from(wire: ProviderStateProvenanceWire) -> Result<Self, Self::Error> {
+        match (wire.version, wire.prompt_seed_sha256) {
+            (LEGACY_PROVIDER_STATE_PROVENANCE_VERSION, None) => Ok(Self {
+                version: LEGACY_PROVIDER_STATE_PROVENANCE_VERSION,
+                assistant_event_id: wire.assistant_event_id,
+                stored: wire.stored,
+                prompt_seed_sha256: None,
+            }),
+            (PROMPT_SEED_PROVIDER_STATE_PROVENANCE_VERSION, Some(prompt_seed)) => Ok(
+                Self::with_prompt_seed(wire.assistant_event_id, wire.stored, prompt_seed),
+            ),
+            (LEGACY_PROVIDER_STATE_PROVENANCE_VERSION, Some(_)) => {
+                Err("provider-state provenance V1 cannot carry a prompt seed")
+            }
+            (PROMPT_SEED_PROVIDER_STATE_PROVENANCE_VERSION, None) => {
+                Err("provider-state provenance V2 requires a prompt seed")
+            }
+            _ => Err("unsupported provider-state provenance version"),
+        }
+    }
+}
+
 /// A malformed provider-state provenance payload.
 #[derive(Debug, Error)]
 pub enum ProviderStateProvenanceError {
@@ -90,21 +152,6 @@ pub enum ProviderStateProvenanceError {
         #[source]
         source: serde_json::Error,
     },
-}
-
-fn deserialize_provenance_version<'de, Deserializer>(
-    deserializer: Deserializer,
-) -> Result<u32, Deserializer::Error>
-where
-    Deserializer: serde::Deserializer<'de>,
-{
-    let version = u32::deserialize(deserializer)?;
-    if version != PROVIDER_STATE_PROVENANCE_VERSION {
-        return Err(serde::de::Error::custom(
-            "unsupported provider-state provenance version",
-        ));
-    }
-    Ok(version)
 }
 
 fn deserialize_canonical_event_id<'de, Deserializer>(
@@ -124,76 +171,4 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-    #[test]
-    fn round_trips_exact_versioned_custom_family() -> TestResult {
-        for stored in [false, true] {
-            let assistant_event_id = EventId::new();
-            let event = ProviderStateProvenance::new(assistant_event_id.clone(), stored)
-                .into_custom_event(EventBase::new(None))?;
-
-            assert!(matches!(
-                &event,
-                SessionEvent::Custom { event_type, .. }
-                    if event_type == PROVIDER_STATE_PROVENANCE_EVENT_TYPE
-            ));
-            let encoded = serde_json::to_value(&event)?;
-            assert_eq!(encoded["type"], json!("Custom"));
-            assert_eq!(
-                encoded["event_type"],
-                json!(PROVIDER_STATE_PROVENANCE_EVENT_TYPE)
-            );
-            let Some(decoded) = ProviderStateProvenance::from_event(&event)? else {
-                return Err(std::io::Error::other("provenance family was not recognized").into());
-            };
-            assert_eq!(decoded.assistant_event_id(), &assistant_event_id);
-            assert_eq!(decoded.stored(), stored);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn rejects_future_versions_and_extended_payloads() {
-        for data in [
-            json!({
-                "version": 2,
-                "assistant_event_id": EventId::new(),
-                "stored": true,
-            }),
-            json!({
-                "version": 1,
-                "assistant_event_id": EventId::new(),
-                "stored": true,
-                "future": true,
-            }),
-            json!({"version": 1, "assistant_event_id": EventId::new()}),
-        ] {
-            let event = SessionEvent::Custom {
-                base: EventBase::new(None),
-                event_type: PROVIDER_STATE_PROVENANCE_EVENT_TYPE.to_owned(),
-                data,
-            };
-            assert!(matches!(
-                ProviderStateProvenance::from_event(&event),
-                Err(ProviderStateProvenanceError::InvalidPayload { .. })
-            ));
-        }
-    }
-
-    #[test]
-    fn ignores_unrelated_custom_events() -> TestResult {
-        let event = SessionEvent::Custom {
-            base: EventBase::new(None),
-            event_type: "application.note".to_owned(),
-            data: json!({"version": 1}),
-        };
-        assert!(ProviderStateProvenance::from_event(&event)?.is_none());
-        Ok(())
-    }
-}
+mod tests;

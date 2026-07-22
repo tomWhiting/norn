@@ -1,23 +1,23 @@
 //! Managed dynamic-context Developer message tracking.
 //!
 //! On stateless providers, the agent loop maintains at most one Developer-role
-//! message carrying the current dynamic context (environment section,
-//! collaboration mode, rule-injected sections, prompt-command output). Its
-//! content changes every iteration, so it is re-synced before every provider
-//! call. Provider-threaded Responses requests instead place the same content
-//! in top-level `instructions`, whose documented replacement semantics prevent
-//! stale dynamic context from accumulating in provider-owned history.
+//! compatibility message carrying current Norn-owned runtime policy followed by
+//! trusted prompt-command output. Its content changes every iteration, so it is
+//! re-synced before every provider call. Provider-threaded Responses requests
+//! instead place only the Norn-owned policy in top-level `instructions`.
+//! Prompt-command output remains an explicit Developer input, bound to the
+//! response-thread seed so a changed value cuts the anchor rather than leaving
+//! stale operator output in provider-owned history.
 //!
-//! # Placement: the tail, not the prefix
+//! # Stateless placement: the tail, not the prefix
 //!
-//! On stateless requests, the message is placed at the **tail** of the live conversation — after the
-//! System message, after all persisted history, after the new user input, and
-//! after any prior-iteration tool results — so it is the last message before
-//! the model responds. Placing it ahead of history (its former home at
-//! `messages[1]`) meant its per-turn byte change invalidated the provider's
-//! prefix cache for the *entire* growing history; at the tail, the System
-//! message plus history form one stable, fully-cacheable prefix and only the
-//! small trailing message changes each turn. See
+//! On stateless requests, the message is placed at the **tail** of the live
+//! conversation, after the typed stable prefix, persisted history, new user
+//! input, and prior-iteration tool results. Placing it ahead of history (its
+//! former home at `messages[1]`) meant its per-turn byte change invalidated the
+//! provider's cache for the entire growing history; at the tail, the stable
+//! prefix plus history remains cacheable and only the small trailing message
+//! changes each turn. See
 //! `docs/PROMPT-CACHE-INVALIDATION-FIX.md`.
 //!
 //! # Lifecycle: detach before preflight, attach after
@@ -27,7 +27,7 @@
 //!
 //! 1. [`Self::detach`] runs *before* the context preflight. It removes the
 //!    message the previous iteration attached, restoring the invariant that
-//!    every message past the System prefix corresponds 1:1 to a persisted
+//!    every message past the typed stable prefix corresponds 1:1 to a persisted
 //!    prompt-producing event — the invariant the in-flight compaction walk
 //!    relies on. The compaction summary (which is event-backed and lives in
 //!    history permanently) is therefore the only Developer message present
@@ -50,6 +50,7 @@
 
 use crate::r#loop::conversation_state::ConversationRequestState;
 use crate::provider::request::{Message, MessageRole};
+use crate::system_prompt::ManagedContextProjection;
 
 /// Tracker for the loop-managed dynamic-context Developer message.
 ///
@@ -72,7 +73,7 @@ impl ManagedDevMessage {
 
     /// Remove the message placed by the previous iteration.
     ///
-    /// Restores the 1:1 message-to-event mapping past the System prefix so the
+    /// Restores the 1:1 message-to-event mapping past the typed stable prefix so the
     /// preflight token estimate and in-flight compaction walk operate on a
     /// clean history. `conversation_state` is told about the removal so its
     /// threaded-delta cursor (`input_start`) tracks the messages that shift
@@ -115,18 +116,16 @@ impl ManagedDevMessage {
     /// *not* calling this at all — an empty Developer message would read to the
     /// model as a prompt — so a call always carries real content.
     ///
-    /// This is a pure tail append: it shifts no existing message, and the
-    /// appended message is part of the threaded delta (it must reach the
-    /// provider every turn because its content changes), so
+    /// This is a pure stateless tail append: it shifts no existing message and
+    /// must reach the provider every turn because its content changes.
     /// `conversation_state` needs no cursor adjustment and is deliberately not
-    /// consulted here. Adjusting the delta cursor as if this were an interior
-    /// insertion would push the cursor *past* the message on the turn the delta
-    /// is otherwise empty, dropping it from the request.
+    /// consulted here. Treating this as an interior insertion would push a
+    /// cursor past the message on an otherwise empty delta and drop it.
     pub(super) fn attach(&mut self, content: String, messages: &mut Vec<Message>) {
         let idx = messages.len();
         messages.push(Message {
             response_items: Vec::new(),
-            role: MessageRole::Developer,
+            role: ManagedContextProjection::StatelessDeveloperTail.role(),
             content: Some(content),
             thinking: String::new(),
             reasoning: Vec::new(),

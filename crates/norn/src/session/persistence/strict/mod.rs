@@ -27,4 +27,6 @@ mod index_relationship_tests;
 #[cfg(test)]
 mod reader_tests;
 #[cfg(test)]
+mod rule_origin_tests;
+#[cfg(test)]
 mod validation_tests;

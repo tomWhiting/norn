@@ -66,6 +66,25 @@ pub(super) enum StepFlow {
     Done(AgentStepResult),
 }
 
+/// Prompt-command output prepared for the first request or pending execution
+/// at a later request boundary.
+pub(super) enum PromptCommandContextState {
+    /// Exact expanded Developer content prepared before prompt persistence.
+    /// Threaded providers validate it as part of the seed at that boundary;
+    /// stateless providers validate their complete managed tail after preflight.
+    Prepared(Option<String>),
+    /// Later iterations evaluate the current command definition on demand.
+    Pending,
+}
+
+/// Result of validated step setup.
+pub(super) enum StepInitialization<'a> {
+    /// Setup completed and the provider loop may start.
+    Ready(Box<StepMachine<'a>>),
+    /// A pre-cancelled or zero-iteration-budget step cannot issue a request.
+    Done(AgentStepResult),
+}
+
 /// Mutable state of one in-flight agent step, threaded through every
 /// phase of the [`StepState`] machine.
 pub(super) struct StepMachine<'a> {
@@ -98,10 +117,11 @@ pub(super) struct StepMachine<'a> {
     // -- Conversation state --
     pub(super) messages: Vec<Message>,
     pub(super) conversation_state: ConversationRequestState,
-    /// Tracker for the managed dynamic-context Developer message
-    /// (REVIEW H2): addressed by explicit index, never located by
-    /// first-role matching, so resumed histories containing
-    /// Developer-role compaction summaries are safe.
+    pub(super) prompt_command_context: PromptCommandContextState,
+    /// Tracker for the stateless managed-context Developer projection
+    /// (REVIEW H2): addressed by explicit index, never located by first-role
+    /// matching, so resumed histories containing Developer-role compaction
+    /// summaries are safe. Threaded requests leave this tracker empty.
     pub(super) dev_message: ManagedDevMessage,
     /// Number of trailing messages the new user input occupies (1 for a
     /// literal prompt, N for a slash expansion, 1 for an external wake).
@@ -208,9 +228,9 @@ impl StepMachine<'_> {
     /// live step never delivered re-enters the conversation as reconstructed
     /// history, so "present" and "in context" agree — identical to
     /// After-timing. Persisting the audit event alone (not the live-delivery
-    /// message push / system-section append) is sufficient and correct here:
-    /// both of those live effects target buffers discarded on step exit and
-    /// re-materialized from this event next step — see
+    /// message push) is sufficient and correct here: that live effect targets
+    /// a buffer discarded on step exit and is reconstructed from this event
+    /// next step — see
     /// [`persist_before_injection_audit`] for the full rationale.
     ///
     /// Best-effort on the store-failure path: a persist failure here is

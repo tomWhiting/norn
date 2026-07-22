@@ -90,6 +90,7 @@ fn default_has_no_components() {
     assert_eq!(ctx.children_usage.snapshot().input_tokens, 0);
     assert_eq!(ctx.children_usage.snapshot().output_tokens, 0);
     assert!(ctx.system_sections.is_empty());
+    assert!(ctx.developer_sections.is_empty());
     assert_eq!(ctx.system_instruction(), "");
 }
 
