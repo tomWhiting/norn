@@ -29,12 +29,16 @@ pub fn generate() -> PkcePair {
     let mut bytes = [0_u8; 64];
     rand::rng().fill_bytes(&mut bytes);
     let verifier = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
-    let digest = sha2::Sha256::digest(verifier.as_bytes());
-    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest);
+    let challenge = challenge_for(&verifier);
     PkcePair {
         verifier,
         challenge,
     }
+}
+
+pub(super) fn challenge_for(verifier: &str) -> String {
+    let digest = sha2::Sha256::digest(verifier.as_bytes());
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
 }
 
 #[cfg(test)]

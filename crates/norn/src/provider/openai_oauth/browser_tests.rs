@@ -1,6 +1,4 @@
 use super::*;
-#[cfg(unix)]
-use std::path::PathBuf;
 
 #[test]
 fn rejects_non_https_authorization_targets() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,45 +41,19 @@ fn macos_launcher_keeps_authorization_url_out_of_argv_and_environment()
 
 #[cfg(unix)]
 #[test]
-fn desktop_launcher_discovery_uses_direct_absolute_execution()
+fn desktop_launcher_keeps_authorization_url_out_of_process_arguments()
 -> Result<(), Box<dyn std::error::Error>> {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    const SECRET: &str = "desktop-launcher-secret-must-not-escape-via-env";
-    let directory = tempfile::tempdir()?;
-    let launcher = directory.path().join("xdg-open");
-    std::fs::write(&launcher, b"")?;
-    let mut permissions = launcher.metadata()?.permissions();
-    permissions.set_mode(0o700);
-    std::fs::set_permissions(&launcher, permissions)?;
+    const SECRET: &str = "desktop-launcher-secret-must-not-escape-via-argv";
     let target = url::Url::parse(&format!("https://example.invalid/authorize?state={SECRET}"))?;
-    let spec = desktop::launch_spec_from(&target, &[directory.path().to_owned()])?;
+    let result = desktop::launch_spec(&target);
+    let Err(error) = result else {
+        return Err(std::io::Error::other("desktop launcher accepted a URL-bearing argv").into());
+    };
+    let rendered = error.to_string();
 
-    assert_eq!(spec.command.get_program(), launcher.as_os_str());
-    assert!(
-        spec.command
-            .get_args()
-            .any(|argument| argument == target.as_str())
-    );
-    assert!(
-        spec.command
-            .get_envs()
-            .all(|(name, _value)| name != "OPENAI_API_KEY")
-    );
-    assert!(!spec.ownership.terminate_on_drop);
+    assert!(!rendered.contains(SECRET));
+    assert!(rendered.contains("no-argv desktop integration"));
     Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn desktop_launcher_search_uses_only_fixed_system_directories() {
-    let directories = desktop::trusted_launcher_directories();
-    assert!(directories.iter().all(|entry| entry.is_absolute()));
-    assert!(!directories.contains(&PathBuf::from("relative")));
-    assert!(!directories.contains(&PathBuf::from("/custom/bin")));
-    assert_eq!(directories.len(), 4);
-    assert!(directories.contains(&PathBuf::from("/usr/bin")));
-    assert!(directories.contains(&PathBuf::from("/run/current-system/sw/bin")));
 }
 
 #[cfg(unix)]

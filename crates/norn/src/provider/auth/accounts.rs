@@ -3,14 +3,16 @@
 use std::path::PathBuf;
 
 use super::super::openai_oauth::{
-    AccountCatalogError, AccountSummary, AuthCredentialsStoreMode, CLIENT_ID, LoginError,
-    LoginStorageFailureKind, LogoutReport, NamedLoginPreparation, NornAuthRoot, NornAuthRootError,
-    OAuthHttpOptions, ServerOptions, complete_prepared_logout,
+    AccountCatalogError, AccountSummary, AuthCredentialsStoreMode, CLIENT_ID, DeviceLoginOptions,
+    LoginError, LoginStorageFailureKind, LogoutReport, NamedLoginPreparation, NornAuthRoot,
+    NornAuthRootError, OAuthHttpOptions, ServerOptions, complete_prepared_logout,
     list_accounts as list_account_catalog, prepare_all_account_logout, prepare_default_login,
     prepare_local_logout, prepare_named_account_logout, prepare_named_login, resolve_account_root,
-    resolve_norn_auth_root, run_login_server, use_account, validate_default_login_identity,
+    resolve_norn_auth_root, run_device_login_with_hooks, run_login_server, use_account,
+    validate_default_login_identity,
 };
-use super::{LoginConfig, command_norn_auth_root, map_login_error};
+use super::login::map_login_error;
+use super::{LoginConfig, command_norn_auth_root};
 use crate::error::{ConfigError, NornError, ProviderError};
 
 /// Run browser login for one Norn-owned named account.
@@ -22,27 +24,49 @@ pub(super) async fn login_account(
     config: LoginConfig,
     alias: Option<&str>,
 ) -> Result<(), NornError> {
-    if config.device_code {
-        return Err(NornError::Config(ConfigError::InvalidConfig {
-            reason: "device code login is not yet supported; use the browser PKCE flow".to_owned(),
-        }));
+    let LoginConfig {
+        auth_root,
+        device_code,
+        device_code_timeout,
+        prompt_presenter,
+    } = config;
+    let mut http = OAuthHttpOptions::default();
+    if let Some(timeout) = device_code_timeout {
+        if timeout.is_zero() {
+            return Err(NornError::Config(ConfigError::InvalidConfig {
+                reason: "device-code login requires a non-zero authorization deadline".to_owned(),
+            }));
+        }
+        http.device_code_timeout = timeout;
     }
-    let base_root = command_norn_auth_root(config.auth_root)?;
-    let http = OAuthHttpOptions::default();
+    let base_root = command_norn_auth_root(auth_root)?;
+    if device_code {
+        let presenter = prompt_presenter.ok_or_else(|| {
+            NornError::Config(ConfigError::InvalidConfig {
+                reason: "device-code login requires an explicit terminal prompt presenter"
+                    .to_owned(),
+            })
+        })?;
+        return match alias {
+            Some(alias) => login_named_device_at(&base_root, alias, http, presenter).await,
+            None => login_default_device_at(&base_root, http, presenter).await,
+        };
+    }
     match alias {
-        Some(alias) => login_named_at(&base_root, alias, http).await,
-        None => login_default_at(&base_root, http).await,
+        Some(alias) => login_named_at(&base_root, alias, http, prompt_presenter).await,
+        None => login_default_at(&base_root, http, prompt_presenter).await,
     }
 }
 
 async fn login_default_at(
     base_root: &NornAuthRoot,
     http: OAuthHttpOptions,
+    presenter: Option<std::sync::Arc<dyn super::super::openai_oauth::LoginPromptPresenter>>,
 ) -> Result<(), NornError> {
-    let _reservation =
+    let reservation =
         prepare_default_login(base_root, http).map_err(|error| catalog_error(&error))?;
-    let server =
-        run_login_server(server_options(base_root.clone(), http)).map_err(map_login_error)?;
+    let server = run_login_server(server_options(base_root.clone(), http, presenter))
+        .map_err(map_login_error)?;
     let validation_root = base_root.clone();
     server
         .block_until_done_with_hooks(
@@ -50,7 +74,10 @@ async fn login_default_at(
                 validate_default_login_identity(&validation_root, auth)
                     .map_err(|error| catalog_login_error(&error))
             },
-            || Ok(()),
+            move || {
+                drop(reservation);
+                Ok(())
+            },
         )
         .await
         .map_err(map_login_error)
@@ -60,41 +87,95 @@ async fn login_named_at(
     base_root: &NornAuthRoot,
     alias: &str,
     http: OAuthHttpOptions,
+    presenter: Option<std::sync::Arc<dyn super::super::openai_oauth::LoginPromptPresenter>>,
 ) -> Result<(), NornError> {
     let prepared =
         prepare_named_login(base_root, alias, http).map_err(|error| catalog_error(&error))?;
     let NamedLoginPreparation::Pending(pending) = prepared else {
         return Ok(());
     };
-    let server = match run_login_server(server_options(pending.auth_root().clone(), http)) {
-        Ok(server) => server,
-        Err(error) => {
-            abort_named_login(pending);
-            return Err(map_login_error(error));
-        }
-    };
-    let mut pending = Some(pending);
+    let pending = PendingNamedLogin::new(pending);
+    let server =
+        match run_login_server(server_options(pending.auth_root().clone(), http, presenter)) {
+            Ok(server) => server,
+            Err(error) => return Err(map_login_error(error)),
+        };
     let result = server
-        .block_until_done_with_commit(|| {
-            pending
-                .take()
-                .ok_or_else(named_commit_unavailable)?
-                .commit()
-                .map_err(|error| catalog_login_error(&error))
-        })
+        .block_until_done_with_commit(move || pending.commit())
         .await;
-    if let Some(pending) = pending {
-        abort_named_login(pending);
-    }
     result.map_err(map_login_error)
 }
 
-fn server_options(auth_root: NornAuthRoot, http: OAuthHttpOptions) -> ServerOptions {
-    ServerOptions::new(
+async fn login_default_device_at(
+    base_root: &NornAuthRoot,
+    http: OAuthHttpOptions,
+    presenter: std::sync::Arc<dyn super::super::openai_oauth::LoginPromptPresenter>,
+) -> Result<(), NornError> {
+    let reservation =
+        prepare_default_login(base_root, http).map_err(|error| catalog_error(&error))?;
+    let options = device_options(base_root.clone(), http, presenter);
+    let validation_root = base_root.clone();
+    run_device_login_with_hooks(
+        options,
+        move |auth| {
+            validate_default_login_identity(&validation_root, auth)
+                .map_err(|error| catalog_login_error(&error))
+        },
+        move || {
+            drop(reservation);
+            Ok(())
+        },
+    )
+    .await
+    .map_err(map_login_error)
+}
+
+async fn login_named_device_at(
+    base_root: &NornAuthRoot,
+    alias: &str,
+    http: OAuthHttpOptions,
+    presenter: std::sync::Arc<dyn super::super::openai_oauth::LoginPromptPresenter>,
+) -> Result<(), NornError> {
+    let prepared =
+        prepare_named_login(base_root, alias, http).map_err(|error| catalog_error(&error))?;
+    let NamedLoginPreparation::Pending(pending) = prepared else {
+        return Ok(());
+    };
+    let pending = PendingNamedLogin::new(pending);
+    let options = device_options(pending.auth_root().clone(), http, presenter);
+    run_device_login_with_hooks(options, |_| Ok(()), move || pending.commit())
+        .await
+        .map_err(map_login_error)
+}
+
+fn server_options(
+    auth_root: NornAuthRoot,
+    http: OAuthHttpOptions,
+    presenter: Option<std::sync::Arc<dyn super::super::openai_oauth::LoginPromptPresenter>>,
+) -> ServerOptions {
+    let options = ServerOptions::new(
         auth_root,
         CLIENT_ID.to_owned(),
         AuthCredentialsStoreMode::File,
         http,
+    );
+    match presenter {
+        Some(presenter) => options.with_prompt_presenter(presenter),
+        None => options,
+    }
+}
+
+fn device_options(
+    auth_root: NornAuthRoot,
+    http: OAuthHttpOptions,
+    presenter: std::sync::Arc<dyn super::super::openai_oauth::LoginPromptPresenter>,
+) -> DeviceLoginOptions {
+    DeviceLoginOptions::new(
+        auth_root,
+        CLIENT_ID.to_owned(),
+        AuthCredentialsStoreMode::File,
+        http,
+        presenter,
     )
 }
 
@@ -106,10 +187,42 @@ fn catalog_login_error(error: &AccountCatalogError) -> LoginError {
     }
 }
 
-fn named_commit_unavailable() -> LoginError {
-    LoginError::Storage {
-        kind: LoginStorageFailureKind::Coordination,
-        reason: "named-account publication state was unavailable".to_owned(),
+struct PendingNamedLogin {
+    auth_root: NornAuthRoot,
+    reservation: Option<Box<super::super::openai_oauth::NamedLoginReservation>>,
+}
+
+impl PendingNamedLogin {
+    fn new(reservation: Box<super::super::openai_oauth::NamedLoginReservation>) -> Self {
+        let auth_root = reservation.auth_root().clone();
+        Self {
+            auth_root,
+            reservation: Some(reservation),
+        }
+    }
+
+    fn auth_root(&self) -> &NornAuthRoot {
+        &self.auth_root
+    }
+
+    fn commit(mut self) -> Result<(), LoginError> {
+        let Some(reservation) = self.reservation.take() else {
+            return Err(LoginError::Storage {
+                kind: LoginStorageFailureKind::Coordination,
+                reason: "named-account publication state was unavailable".to_owned(),
+            });
+        };
+        reservation
+            .commit()
+            .map_err(|error| catalog_login_error(&error))
+    }
+}
+
+impl Drop for PendingNamedLogin {
+    fn drop(&mut self) {
+        if let Some(reservation) = self.reservation.take() {
+            abort_named_login(reservation);
+        }
     }
 }
 
@@ -225,6 +338,10 @@ fn norn_auth_root_error(error: NornAuthRootError) -> ProviderError {
         reason: error.to_string(),
     }
 }
+
+#[cfg(test)]
+#[path = "accounts_device_tests.rs"]
+mod device_tests;
 
 pub(super) fn catalog_error(error: &AccountCatalogError) -> NornError {
     NornError::Config(ConfigError::InvalidConfig {

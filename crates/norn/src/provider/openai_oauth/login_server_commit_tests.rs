@@ -319,6 +319,7 @@ async fn caller_commit_precedes_success_acknowledgement() -> Result<(), Box<dyn 
     let (finished_sender, finished) = oneshot::channel();
     let published = Arc::new(AtomicBool::new(false));
     let observed = Arc::clone(&published);
+    let publish = Arc::clone(&published);
     let server = LoginServer {
         prepared,
         acknowledgement: Some(acknowledgement),
@@ -347,8 +348,8 @@ async fn caller_commit_precedes_success_acknowledgement() -> Result<(), Box<dyn 
     });
 
     server
-        .block_until_done_with_commit(|| {
-            published.store(true, Ordering::Release);
+        .block_until_done_with_commit(move || {
+            publish.store(true, Ordering::Release);
             Ok(())
         })
         .await?;

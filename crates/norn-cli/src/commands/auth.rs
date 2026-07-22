@@ -11,10 +11,13 @@
 //! stdout or stderr output. `auth status` reports only side-effect-free local
 //! credential classification; it never claims remote validity.
 
+use std::sync::Arc;
+
 use chrono::Utc;
 use norn::provider::auth::{
-    LoginConfig, command_account_root, list_auth_accounts, login, login_named, logout,
-    logout_all_auth_accounts, logout_named, use_auth_account,
+    LoginConfig, LoginPrompt, LoginPromptError, LoginPromptPresenter, command_account_root,
+    list_auth_accounts, login, login_named, logout, logout_all_auth_accounts, logout_named,
+    use_auth_account,
 };
 use norn::provider::openai_oauth::{
     AuthCredentialsStoreMode, CredentialInspectionError, LocalCredentialState, LogoutReport,
@@ -28,7 +31,7 @@ use crate::cli::ExitCode;
 /// Top-level dispatcher for `norn auth`.
 pub fn run_auth(cmd: &AuthCmd) -> ExitCode {
     match cmd {
-        AuthCmd::Login { name } => run_login(name.as_deref()),
+        AuthCmd::Login { name, device_auth } => run_login(name.as_deref(), *device_auth),
         AuthCmd::Logout { name, all } => run_logout(name.as_deref(), *all),
         AuthCmd::Status { name } => run_status(name.as_deref()),
         AuthCmd::List => run_list(),
@@ -40,7 +43,7 @@ pub fn run_auth(cmd: &AuthCmd) -> ExitCode {
 // R8: login
 // ---------------------------------------------------------------------------
 
-fn run_login(name: Option<&str>) -> ExitCode {
+fn run_login(name: Option<&str>, device_auth: bool) -> ExitCode {
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(err) => {
@@ -48,10 +51,13 @@ fn run_login(name: Option<&str>) -> ExitCode {
             return ExitCode::AuthError;
         }
     };
-    let result = name.map_or_else(
-        || rt.block_on(login(LoginConfig::default())),
-        |name| rt.block_on(login_named(LoginConfig::default(), name)),
-    );
+    let mut config = LoginConfig::default();
+    config.device_code = device_auth;
+    let config = config.with_prompt_presenter(Arc::new(TerminalLoginPromptPresenter));
+    let result = match name {
+        Some(name) => rt.block_on(login_named(config, name)),
+        None => rt.block_on(login(config)),
+    };
     match result {
         Ok(()) => {
             eprintln!("Login successful.");
@@ -61,6 +67,51 @@ fn run_login(name: Option<&str>) -> ExitCode {
             eprintln!("norn: login failed: {err}");
             ExitCode::AuthError
         }
+    }
+}
+
+struct TerminalLoginPromptPresenter;
+
+impl LoginPromptPresenter for TerminalLoginPromptPresenter {
+    fn present(&self, prompt: LoginPrompt<'_>) -> Result<(), LoginPromptError> {
+        let stderr = std::io::stderr();
+        write_login_prompt(&mut stderr.lock(), &prompt)
+            .map_err(|_error| LoginPromptError::terminal_output_unavailable())
+    }
+}
+
+fn write_login_prompt(
+    writer: &mut dyn std::io::Write,
+    prompt: &LoginPrompt<'_>,
+) -> std::io::Result<()> {
+    match prompt {
+        LoginPrompt::Browser { authorization_url } => writeln!(
+            writer,
+            "If your browser did not open, visit this URL on this machine:\n\n{authorization_url}\n\nOn a remote or headless machine, cancel and run `norn auth login --device-auth` instead."
+        ),
+        LoginPrompt::DeviceCode {
+            verification_url,
+            user_code,
+            expires_after,
+        } => {
+            writeln!(
+                writer,
+                "Open this URL in any browser:\n\n{verification_url}\n\nEnter this one-time code:\n\n{user_code}\n\nNorn will wait up to {} for authorization. Never share a device code. Press Ctrl-C to cancel.",
+                format_duration(*expires_after)
+            )
+        }
+    }
+}
+
+fn format_duration(duration: std::time::Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds > 0 && seconds.is_multiple_of(60) {
+        let minutes = seconds / 60;
+        let unit = if minutes == 1 { "minute" } else { "minutes" };
+        format!("{minutes} {unit}")
+    } else {
+        let unit = if seconds == 1 { "second" } else { "seconds" };
+        format!("{seconds} {unit}")
     }
 }
 
@@ -313,6 +364,34 @@ mod tests {
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn terminal_prompts_show_only_intended_interactive_values() -> TestResult {
+        let mut output = Vec::new();
+        write_login_prompt(
+            &mut output,
+            &LoginPrompt::Browser {
+                authorization_url: "https://auth.example/authorize?state=terminal-only",
+            },
+        )?;
+        write_login_prompt(
+            &mut output,
+            &LoginPrompt::DeviceCode {
+                verification_url: "https://auth.example/device",
+                user_code: "CODE-1234",
+                expires_after: std::time::Duration::from_secs(900),
+            },
+        )?;
+        let output = String::from_utf8(output)?;
+
+        assert!(output.contains("terminal-only"));
+        assert!(output.contains("--device-auth"));
+        assert!(output.contains("CODE-1234"));
+        assert!(output.contains("15 minutes"));
+        assert!(!output.contains("access_token"));
+        assert!(!output.contains("refresh_token"));
+        Ok(())
+    }
 
     #[test]
     fn status_with_no_auth_file_succeeds() -> TestResult {

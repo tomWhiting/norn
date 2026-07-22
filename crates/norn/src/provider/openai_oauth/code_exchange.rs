@@ -35,8 +35,10 @@ pub(super) fn exchange_code_blocking(
     let _permit = governor
         .try_acquire(crate::resource::HTTP_REQUEST_PEAK)
         .map_err(|error| LoginError::DescriptorAdmission(Box::new(error)))?;
-    let client = crate::provider::http_client::build_blocking_bounded_client(timeout)
-        .map_err(|error| LoginError::TokenExchange(error.to_string()))?;
+    let client =
+        crate::provider::http_client::build_blocking_bounded_client(timeout).map_err(|_error| {
+            LoginError::TokenExchange("token authority client could not be constructed".to_owned())
+        })?;
     let response = client
         .post(TOKEN_URL)
         .header("Content-Type", "application/x-www-form-urlencoded")
@@ -48,16 +50,20 @@ pub(super) fn exchange_code_blocking(
             ("code_verifier", verifier),
         ])
         .send()
-        .map_err(|error| LoginError::TokenExchange(error.to_string()))?;
+        .map_err(|_error| {
+            LoginError::TokenExchange(
+                "token authority request failed before a response was available".to_owned(),
+            )
+        })?;
     if !response.status().is_success() {
         return Err(LoginError::TokenExchange(format!(
             "token endpoint returned {}",
             response.status()
         )));
     }
-    let token_response = response
-        .json::<CodeExchangeResponse>()
-        .map_err(|error| LoginError::TokenExchange(error.to_string()))?;
+    let token_response = response.json::<CodeExchangeResponse>().map_err(|_error| {
+        LoginError::TokenExchange("token endpoint returned a malformed success response".to_owned())
+    })?;
     auth_from_response(token_response)
 }
 
@@ -75,6 +81,53 @@ fn auth_from_response(token_response: CodeExchangeResponse) -> Result<AuthDotJso
     )
     .map_err(map_credential_error)?;
     Ok(AuthDotJson::from_tokens(tokens))
+}
+
+pub(super) async fn exchange_code_async(
+    client: &reqwest::Client,
+    token_url: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    verifier: &str,
+    code: &str,
+) -> Result<AuthDotJson, LoginError> {
+    let governor = crate::resource::DescriptorGovernor::global()
+        .map_err(|error| LoginError::DescriptorAdmission(Box::new(error)))?;
+    let _permit = governor
+        .try_acquire(crate::resource::HTTP_REQUEST_PEAK)
+        .map_err(|error| LoginError::DescriptorAdmission(Box::new(error)))?;
+    let response = client
+        .post(token_url)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", redirect_uri),
+            ("client_id", client_id),
+            ("code_verifier", verifier),
+        ])
+        .send()
+        .await
+        .map_err(|_error| {
+            LoginError::TokenExchange(
+                "token authority request failed before a response was available".to_owned(),
+            )
+        })?;
+    if !response.status().is_success() {
+        return Err(LoginError::TokenExchange(format!(
+            "token endpoint returned {}",
+            response.status()
+        )));
+    }
+    let token_response = response
+        .json::<CodeExchangeResponse>()
+        .await
+        .map_err(|_error| {
+            LoginError::TokenExchange(
+                "token endpoint returned a malformed success response".to_owned(),
+            )
+        })?;
+    auth_from_response(token_response)
 }
 
 #[cfg(test)]
