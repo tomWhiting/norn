@@ -259,8 +259,8 @@ pub struct LoopContext {
     /// their distinct authorities without changing that compatibility view.
     pub stable_prompt_plan: Option<PromptPlan>,
 
-    /// Static prefix layered into `system_sections[0]` ahead of the
-    /// always-on `NORN.md` content.
+    /// Internal flattened compatibility prefix layered into
+    /// `system_sections[0]` ahead of the always-on `NORN.md` content.
     ///
     /// Populated by `build_runtime` (NX-005) with the Norn base prompt
     /// produced by `build_system_prompt` concatenated with the profile's
@@ -268,16 +268,23 @@ pub struct LoopContext {
     /// [`LoopContext::default`] / [`LoopContext::new`] shapes still
     /// produce a single-element `system_sections` containing only the
     /// caller-supplied base.
-    pub base_prefix: String,
+    ///
+    /// Embedders that need source-aware prompt changes install a
+    /// [`PromptPlan`] through [`Self::install_stable_prompt_plan`]; this
+    /// compatibility cache is deliberately not a public mutation surface.
+    pub(crate) base_prefix: String,
 
-    /// Static suffix layered into `system_sections[0]` after the
-    /// always-on `NORN.md` content.
+    /// Internal flattened compatibility suffix layered into
+    /// `system_sections[0]` after the always-on `NORN.md` content.
     ///
     /// Populated by `build_runtime` (NX-005) with the skill catalog
     /// `# Available Skills` listing when at least one skill is
     /// discovered. Empty by default so callers that do not surface a
     /// skill catalog see no trailing separator.
-    pub base_suffix: String,
+    ///
+    /// Embedders must use a source-addressed [`PromptPlan`] rather than
+    /// appending untyped text whose authority cannot be derived safely.
+    pub(crate) base_suffix: String,
 
     /// Optional environment configuration for the dynamic `# Environment`
     /// section. When present, [`Self::inject_environment_section`] appends
