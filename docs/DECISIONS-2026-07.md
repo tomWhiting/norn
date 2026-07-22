@@ -1798,3 +1798,53 @@ This ruling is implemented by frozen source
 pending focused Gate D. It does not complete the broader
 volatile/concurrent-agent matrices, authenticated D7/P9 live-wire conformance,
 or whole-P5 acceptance.
+
+## 25. P2 browser and headless device login direction (2026-07-23)
+
+**Owner ruling:** Browser PKCE remains the default interactive login. The CLI
+must present the exact authorization URL before attempting a desktop launch.
+Remote or headless login uses OAuth device authorization, not a path that asks
+the operator to copy a reusable bearer token, refresh token, or localhost
+callback code between machines.
+
+- Production device authorization uses compiled OpenAI authority endpoints for
+  user-code creation, polling, verification, token exchange, and redirect
+  identity. Authority overrides remain test-only.
+- The CLI's trusted terminal presenter is the only intentional textual
+  disclosure sink for the browser authorization URL or the device verification
+  URL and one-time code. The macOS launcher receives its target over stdin,
+  never argv. Those values do not enter tracing, debug dumps, session history,
+  provider events, or error payloads. Tokens and account identity remain
+  undisclosed.
+- Browser presentation occurs before launch, so launcher failure retains a
+  usable manual path. Linux/BSD argv-based launchers are disabled rather than
+  placing the state-bearing authorization URL in a child process argument. A
+  presenter-less library caller on those targets receives a typed unsupported
+  result.
+- Device polling treats only `403` and `404` as pending. Every other non-success
+  status fails typed. The returned authorization response must carry matching
+  PKCE verifier and challenge material before exchange.
+- One positive deadline covers user-code acquisition, operator authorization,
+  polling sleeps, and token exchange. The default is 15 minutes, matching the
+  current provider/Codex device-code lifetime; library callers may override it,
+  and zero fails before auth-root access.
+- Default and named device logins publish through the same Norn-owned durable
+  credential transaction and named-account catalog as browser login. Failure or
+  cancellation attempts to retire an uncommitted named reservation. A cleanup
+  filesystem/catalog failure can leave a recoverable pending reservation and is
+  a disclosed liveness residual; it cannot publish the credential.
+
+The cancellation boundary is acquire-only blocking work followed by a
+synchronous no-yield commit: `CredentialTransaction::acquire` may run on a
+blocking worker, but validation, credential save, and named-catalog publication
+execute after the await without another cancellation point. This avoids a
+detached worker committing credentials after the login future was canceled.
+Blocking a current-thread runtime during that bounded final commit is an
+owner-accepted ergonomics residual; it is preferable to detached publication
+complexity and does not weaken the durability contract.
+
+Source `dc908f378185ec5568f54e38209b61c2a9a9f124` (tree
+`b763308c866d929fa6d7dbf1bf1907480d350493`) implements this direction as a
+focused P2 follow-up. Deterministic tests and local gates do not prove the live
+production authority. No authenticated device login was run, independent
+review remains pending, and this ruling does not accept P2.

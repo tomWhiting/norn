@@ -467,7 +467,7 @@
         {
           "id": "C82",
           "text": "norn auth login triggers OAuth PKCE flow via norn::provider::auth::login()",
-          "done": false
+          "done": true
         },
         {
           "id": "C83",
@@ -483,6 +483,11 @@
           "id": "C85",
           "text": "all auth surfaces use Norn-owned $NORN_HOME/auth/auth.json; login exposes no path override",
           "done": false
+        },
+        {
+          "id": "C124",
+          "text": "norn auth login --device-auth supports default and --name accounts, presents URL/code only through the terminal presenter, and reports success only after durable credential/catalog publication",
+          "done": true
         }
       ]
     },
