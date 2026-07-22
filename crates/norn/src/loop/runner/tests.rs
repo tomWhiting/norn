@@ -47,6 +47,7 @@ mod llm_event_hooks;
 mod local_compaction;
 mod managed_context;
 mod pending_inbound;
+mod pending_mailbox_api;
 mod persisted_compaction;
 mod post_batch_steer;
 mod provider_tool_surface;
@@ -370,15 +371,12 @@ fn handlers_sending_inbound(
 
 fn requeue_loop_ctx(
     agent_id: uuid::Uuid,
-) -> (
-    LoopContext,
-    std::sync::Arc<crate::agent::PendingAgentMessages>,
-) {
-    let pending = std::sync::Arc::new(crate::agent::PendingAgentMessages::new());
+    store: &Arc<EventStore>,
+) -> Result<(LoopContext, Arc<crate::agent::PendingAgentMessages>), crate::error::SessionError> {
     let mut loop_ctx = LoopContext::new("system");
-    loop_ctx.agent_id = Some(agent_id);
-    loop_ctx.pending_agent_messages = Some(std::sync::Arc::clone(&pending));
-    (loop_ctx, pending)
+    let binding = crate::session::SessionBinding::ephemeral_root();
+    let pending = loop_ctx.install_pending_mailbox(agent_id, &binding, store)?;
+    Ok((loop_ctx, pending))
 }
 
 #[track_caller]

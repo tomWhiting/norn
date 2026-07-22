@@ -13,6 +13,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use uuid::Uuid;
 
+use crate::agent::PendingMailboxLease;
 use crate::agent::pending_messages::PendingAgentMessages;
 use crate::agent::process_delivery::ProcessMessageDelivery;
 use crate::agent::registry::AgentRegistry;
@@ -22,6 +23,7 @@ use crate::r#loop::inbound::InboundSender;
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::tokens::SimpleTokenEstimator;
 use crate::process::{ProcessManager, ProcessManagerGuard};
+use crate::session::MailboxId;
 use crate::session::context_edit::ContextEdits;
 use crate::session::store::EventStore;
 use crate::tool::context::{SessionId, ToolContext};
@@ -307,6 +309,24 @@ pub(crate) fn arm_child_reasoning_effort(
     }
 }
 
+/// Inputs that bind the root schedule executor to its session and mailbox.
+pub(crate) struct RootScheduleExecutorParts<'a> {
+    /// Shared tool context where the schedule handle is installed.
+    pub(crate) shared: &'a ToolContext,
+    /// Durable event store used to rebuild schedules and pending messages.
+    pub(crate) event_store: &'a Arc<EventStore>,
+    /// Runtime identifier for the root agent.
+    pub(crate) agent_id: Uuid,
+    /// Stable mailbox identity for this session generation.
+    pub(crate) mailbox_id: MailboxId,
+    /// Controller-liveness proof retained by the root loop context.
+    pub(crate) mailbox_lease: &'a Arc<PendingMailboxLease>,
+    /// Live inbound route, when the root has one.
+    pub(crate) inbound_tx: Option<InboundSender>,
+    /// Agent registry consulted by schedule delivery, when coordination exists.
+    pub(crate) agent_registry: Option<Arc<RwLock<AgentRegistry>>>,
+}
+
 /// Arm the root agent's in-session schedule executor (N-026) — the root
 /// half of the shared mechanism the spawn/fork launch paths mirror at
 /// their own construction sites, exactly like [`arm_auto_compaction`].
@@ -331,34 +351,43 @@ pub(crate) fn arm_child_reasoning_effort(
 /// and no `cron` tool — the same discoverable contract as
 /// [`arm_auto_compaction`]'s.
 pub(crate) fn arm_root_schedule_executor(
-    shared: &ToolContext,
     loop_context: &mut LoopContext,
-    event_store: &Arc<EventStore>,
-    agent_id: Uuid,
-    inbound_tx: Option<crate::r#loop::inbound::InboundSender>,
-    agent_registry: Option<Arc<RwLock<AgentRegistry>>>,
-) {
+    parts: RootScheduleExecutorParts<'_>,
+) -> Result<(), crate::error::SessionError> {
     if loop_context.pending_agent_messages.is_none() {
         loop_context.pending_agent_messages = Some(Arc::new(PendingAgentMessages::from_events(
-            &event_store.events(),
-        )));
+            parts.agent_id,
+            parts.mailbox_id,
+            &parts.event_store.events(),
+        )?));
+    }
+    if let Some(pending) = loop_context.pending_agent_messages.as_ref() {
+        pending.register_root_mailbox(
+            parts.agent_id,
+            parts.mailbox_id,
+            parts.event_store,
+            parts.mailbox_lease,
+        )?;
     }
     let schedule_store = Arc::new(crate::schedule::ScheduleStore::from_events(
-        &event_store.events(),
+        &parts.event_store.events(),
         chrono::Utc::now(),
     ));
     loop_context.schedule_executor = Some(crate::schedule::arm_schedule_executor(
-        shared,
+        parts.shared,
         schedule_store,
         crate::schedule::ScheduleDelivery {
-            agent_id,
-            inbound: inbound_tx,
+            agent_id: parts.agent_id,
+            inbound: parts.inbound_tx,
             pending: loop_context.pending_agent_messages.clone(),
-            event_store: Arc::clone(event_store),
-            registry: agent_registry,
-            wake_registry: shared.get_extension::<crate::tools::agent::AgentWakeRegistry>(),
+            event_store: Arc::clone(parts.event_store),
+            registry: parts.agent_registry,
+            wake_registry: parts
+                .shared
+                .get_extension::<crate::tools::agent::AgentWakeRegistry>(),
         },
     ));
+    Ok(())
 }
 
 /// Arm an agent's background-process manager (NP-001) — the single shared

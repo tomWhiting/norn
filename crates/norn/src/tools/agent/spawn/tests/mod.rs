@@ -18,6 +18,7 @@ mod runtime_model;
 mod signal_resume;
 mod skills;
 mod started_audit;
+mod terminal_mailbox;
 mod usage_rollup;
 mod variants;
 

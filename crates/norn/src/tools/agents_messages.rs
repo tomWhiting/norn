@@ -487,8 +487,12 @@ mod tests {
             to_id,
             to: to.to_owned(),
             kind,
+            seq: None,
             content: "payload".to_owned(),
             queued_at: DateTime::parse_from_rfc3339(queued_at).unwrap().to_utc(),
+            message_timestamp: Some(DateTime::parse_from_rfc3339(queued_at).unwrap().to_utc()),
+            authoritative: Some(true),
+            mailbox_id: Some(crate::session::SessionBinding::ephemeral_root().mailbox_id()),
         };
         SessionEvent::Custom {
             base: EventBase::new(None),

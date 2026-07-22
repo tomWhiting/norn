@@ -25,6 +25,8 @@ pub(crate) struct AgentInfraParts {
     pub(crate) session: Arc<crate::session::SessionBinding>,
     /// The parent agent's id.
     pub(crate) id: Uuid,
+    /// Root-controller liveness proof retained by the root loop context.
+    pub(crate) mailbox_lease: Arc<crate::agent::PendingMailboxLease>,
     /// The validated child policy and child-result channel capacity. Both
     /// capacities are explicit and non-zero before installation.
     pub(crate) envelope: CoordinationEnvelope,

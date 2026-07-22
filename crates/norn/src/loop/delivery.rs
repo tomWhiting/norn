@@ -7,7 +7,7 @@
 //! exactly these functions, so a message or child result is formatted,
 //! persisted, and audited identically no matter when it arrives.
 
-use crate::agent::{PendingAgentMessage, PendingAgentMessages, append_pending_message_audit};
+use crate::agent::{PendingAgentMessage, PendingAgentMessages};
 use crate::error::SessionError;
 use crate::integration::hooks::HookRegistry;
 use crate::r#loop::inbound::{ChannelMessage, InboundChannel, MessageKind, frame_message};
@@ -19,9 +19,9 @@ use crate::session::events::{EventBase, EventId, SessionEvent};
 use crate::session::store::EventStore;
 
 use super::helpers::{append_and_notify, append_off_executor};
-use super::loop_context::LoopContext;
 
 pub(super) use super::delivery_inputs::{drain_child_results, flush_active_inputs};
+pub(super) use super::delivery_pending::flush_pending_agent_messages;
 
 /// Drain the inbound channel (if present) and partition messages by
 /// [`MessageKind`]. Returns `(steer, update)` — steers inject at the next
@@ -190,55 +190,6 @@ pub(super) async fn inject_inbound_messages(
     Ok(user_event_ids)
 }
 
-/// Drain durable queued messages for the current loop agent.
-///
-/// This is the resume/wake handoff for `signal_agent` sends accepted while a
-/// recipient had no live router route. The messages still enter the
-/// conversation through [`inject_inbound_messages`], so framing, hooks, and
-/// session persistence stay identical to live-routed inbound delivery. The
-/// pending store emits `agent_message.dequeued` only after the framed
-/// `UserMessage` delivery has persisted; if persistence fails before that
-/// point, the pending messages remain replayable on the next resume.
-pub(super) async fn flush_pending_agent_messages(
-    store: &EventStore,
-    messages: &mut Vec<Message>,
-    loop_context: &LoopContext,
-    event_tx: Option<&AgentEventSender>,
-) -> Result<Vec<EventId>, SessionError> {
-    let (Some(agent_id), Some(pending)) = (
-        loop_context.agent_id,
-        loop_context.pending_agent_messages.as_ref(),
-    ) else {
-        return Ok(Vec::new());
-    };
-    let mut queued_messages = pending.messages_for_delivery(agent_id);
-    if queued_messages.is_empty() {
-        return Ok(Vec::new());
-    }
-    let dequeued_events = PendingAgentMessages::dequeued_events_for(agent_id, &queued_messages);
-    let message_ids = queued_messages
-        .iter()
-        .map(|message| message.id)
-        .collect::<Vec<_>>();
-    // The durable pending store is the authoritative copy here: on a
-    // mid-batch append failure the error propagates before `mark_dequeued`,
-    // so every queued message — injected or not — stays pending and is
-    // replayed on the next resume/wake rather than lost.
-    let injected = inject_inbound_messages(
-        store,
-        messages,
-        &mut queued_messages,
-        loop_context.hooks.as_deref(),
-        event_tx,
-    )
-    .await?;
-    for event in &dequeued_events {
-        append_pending_message_audit(store, event)?;
-    }
-    pending.mark_dequeued(message_ids);
-    Ok(injected)
-}
-
 /// Drain the inbound channel immediately after a completed tool batch:
 /// steer messages inject now (the inbound contract's "immediately after
 /// the current tool batch, before the next provider request"), updates
@@ -333,7 +284,7 @@ pub(crate) enum UndeliveredWindow {
 
 impl UndeliveredWindow {
     /// Stable label used in log records.
-    const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::StepExit => "step_exit",
             Self::Deregistration => "deregistration",
@@ -409,36 +360,36 @@ pub(crate) fn requeue_undelivered_inbound(
         msg.to_id = agent_id;
         let message_id = msg.id;
         let kind = msg.kind;
-        let pending_record =
+        let mut pending_record =
             PendingAgentMessage::new(msg, agent_id.to_string(), chrono::Utc::now());
-        let Some(queued_event) = pending.queue(pending_record) else {
-            // Already pending under the same id (a redelivered copy the
-            // step drained but did not consume) — the durable record is
-            // intact, nothing to add.
-            tracing::debug!(
-                message_id = %message_id,
-                "undelivered inbound message already pending; skipping duplicate re-queue",
-            );
-            continue;
-        };
-        tracing::warn!(
-            message_id = %message_id,
-            recipient = %agent_id,
-            kind = kind.as_str(),
-            window = window.as_str(),
-            "accepted inbound message left live delivery; \
-             re-queued into the durable pending store",
-        );
-        if let Err(error) = append_pending_message_audit(store, &queued_event) {
-            tracing::error!(
-                message_id = %message_id,
-                %error,
-                "failed to persist the queued audit event for a re-queued \
-                 inbound message; the in-memory pending record is still held \
-                 but the message will NOT survive a restart",
-            );
-            if first_error.is_none() {
-                first_error = Some(error);
+        match pending.persist_for_registered_store(store, &mut pending_record) {
+            Ok(result) if result.published => {
+                tracing::warn!(
+                    message_id = %message_id,
+                    recipient = %agent_id,
+                    kind = kind.as_str(),
+                    window = window.as_str(),
+                    "accepted inbound message left live delivery; \
+                     re-queued into the durable pending store",
+                );
+            }
+            Ok(_) => {
+                tracing::debug!(
+                    message_id = %message_id,
+                    "undelivered inbound message already pending; skipping duplicate re-queue",
+                );
+            }
+            Err(error) => {
+                tracing::error!(
+                    message_id = %message_id,
+                    %error,
+                    "failed to persist the queued authority for a re-queued \
+                     inbound message; delivery is retained but blocked until \
+                     its recipient timeline accepts the queue row",
+                );
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
             }
         }
     }

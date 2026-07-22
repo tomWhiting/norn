@@ -9,13 +9,13 @@ type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 /// `MaxIterations` exit never reaches one, so the message must land in
 /// the durable pending store instead of vanishing.
 #[tokio::test]
-async fn max_iterations_exit_requeues_buffered_updates() {
+async fn max_iterations_exit_requeues_buffered_updates() -> TestResult {
     let turn1 = vec![
         tool_call_delta("tc_read", Some("read_file"), r#"{"path":"f"}"#),
         done_event(StopReason::ToolUse),
     ];
     let provider = MockProvider::new(vec![turn1]);
-    let store = EventStore::new();
+    let store = Arc::new(EventStore::new());
     let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
     let executor = MockToolExecutor::new(handlers_sending_inbound(
         tx,
@@ -23,7 +23,7 @@ async fn max_iterations_exit_requeues_buffered_updates() {
         crate::r#loop::inbound::MessageKind::Update,
     ));
     let agent_id = uuid::Uuid::new_v4();
-    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id);
+    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id, &store)?;
     let config = AgentLoopConfig {
         max_iterations: Some(1),
         ..AgentLoopConfig::default()
@@ -48,6 +48,7 @@ async fn max_iterations_exit_requeues_buffered_updates() {
         AgentStepResult::MaxIterationsReached { .. }
     ));
     assert_update_requeued(&pending, agent_id, &store, "fyi from mid-batch");
+    Ok(())
 }
 
 /// Regression: a hard provider error (here an in-band typed Error
@@ -64,7 +65,7 @@ async fn provider_error_exit_requeues_buffered_updates() -> TestResult {
         error: ProviderError::QuotaExceeded,
     }];
     let provider = MockProvider::new(vec![turn1, turn2]);
-    let store = EventStore::new();
+    let store = Arc::new(EventStore::new());
     let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
     let executor = MockToolExecutor::new(handlers_sending_inbound(
         tx,
@@ -72,7 +73,7 @@ async fn provider_error_exit_requeues_buffered_updates() -> TestResult {
         crate::r#loop::inbound::MessageKind::Update,
     ));
     let agent_id = uuid::Uuid::new_v4();
-    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id);
+    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id, &store)?;
 
     let err = match run_agent_step(AgentStepRequest {
         provider: &provider,
@@ -122,7 +123,7 @@ async fn step_timeout_exit_requeues_buffered_updates() -> TestResult {
     // 100ms before each turn's first event: turn 1 completes inside
     // the 150ms budget, turn 2 cannot.
     let provider = DelayedProvider::new(vec![turn1, turn2], Duration::from_millis(100));
-    let store = EventStore::new();
+    let store = Arc::new(EventStore::new());
     let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
     let executor = MockToolExecutor::new(handlers_sending_inbound(
         tx,
@@ -130,7 +131,7 @@ async fn step_timeout_exit_requeues_buffered_updates() -> TestResult {
         crate::r#loop::inbound::MessageKind::Update,
     ));
     let agent_id = uuid::Uuid::new_v4();
-    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id);
+    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id, &store)?;
     let config = AgentLoopConfig {
         step_timeout: Some(Duration::from_millis(150)),
         ..AgentLoopConfig::default()
@@ -190,7 +191,7 @@ async fn queued_audit_sink_failure_fails_an_otherwise_successful_step() -> TestR
         done_event(StopReason::ToolUse),
     ];
     let provider = MockProvider::new(vec![turn1]);
-    let store = EventStore::with_sink(Box::new(QueuedAuditFailingSink));
+    let store = Arc::new(EventStore::with_sink(Box::new(QueuedAuditFailingSink)));
     let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
     let executor = MockToolExecutor::new(handlers_sending_inbound(
         tx,
@@ -198,7 +199,7 @@ async fn queued_audit_sink_failure_fails_an_otherwise_successful_step() -> TestR
         crate::r#loop::inbound::MessageKind::Update,
     ));
     let agent_id = uuid::Uuid::new_v4();
-    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id);
+    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id, &store)?;
     let config = AgentLoopConfig {
         max_iterations: Some(1),
         ..AgentLoopConfig::default()

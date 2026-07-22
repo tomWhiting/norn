@@ -10,7 +10,8 @@ use crate::agent::assembly::{
     restore_session_state, validate_workspace_root,
 };
 use crate::agent::build_support::{
-    compute_read_exempt_roots, resolve_coordination, resolve_root_agent_id, validate_build_inputs,
+    assemble_root_event_channel, compute_read_exempt_roots, resolve_coordination,
+    resolve_root_agent_id, validate_build_inputs,
 };
 use crate::agent::handle::ResolvedAgentInfo;
 use crate::agent::instance::Agent;
@@ -19,7 +20,6 @@ use crate::agent_loop::config::ToolExecutor;
 use crate::error::{ConfigError, NornError};
 use crate::integration::variables::{SessionVariable, VariableSource};
 use crate::profile::from_profile;
-use crate::provider::{AgentEvent, AgentEventSender, SharedAgentEventChannel};
 use crate::session::manager::ReplaySummary;
 use crate::tool::context::SharedWorkingDir;
 
@@ -365,26 +365,17 @@ impl AgentBuilder {
         // Root registry registration (D2): opt-in and effective only
         // alongside `.agent_registry(..)`; the reservation mints the id so
         // the registered root entry and the running agent share one id.
-        let agent_id = resolve_root_agent_id(
+        let (agent_id, root_registration) = resolve_root_agent_id(
             self.register_root.take(),
             coordination.as_ref(),
             &model,
             self.agent_id,
         )?;
+        let root_mailbox_lease = Arc::new(crate::agent::PendingMailboxLease::new());
+        loop_context.pending_mailbox_lease = Some(Arc::clone(&root_mailbox_lease));
 
-        // Event channel: the builder owns the broadcast channel and the
-        // root sender, and publishes the raw channel on the tool context
-        // so fork/spawn children stream their events through the same
-        // channel the embedder subscribes to.
-        let (events_tx, event_sender) = match self.event_channel_capacity {
-            Some(capacity) => {
-                let (tx, _rx) = tokio::sync::broadcast::channel::<AgentEvent>(capacity);
-                shared.insert_extension(Arc::new(SharedAgentEventChannel(tx.clone())));
-                let sender = AgentEventSender::new(tx.clone(), agent_id, "root".to_string());
-                (Some(tx), Some(sender))
-            }
-            None => (None, None),
-        };
+        let (events_tx, event_sender) =
+            assemble_root_event_channel(self.event_channel_capacity, shared.as_ref(), agent_id);
 
         // The root's run-cancellation token is resolved once — the
         // builder's explicit `cancel_token`, or a fresh token — and used
@@ -412,6 +403,7 @@ impl AgentBuilder {
                     event_store: Arc::clone(&event_store),
                     session: Arc::clone(&session_binding),
                     id: agent_id,
+                    mailbox_lease: Arc::clone(&root_mailbox_lease),
                     envelope,
                     // Children address "parent" through the router even at
                     // the top level: the root's inbound sender (when the
@@ -422,7 +414,7 @@ impl AgentBuilder {
                     cancel: cancel.clone(),
                     terminal_reclamation: self.terminal_reclamation,
                 },
-            );
+            )?;
             // The runner drains child fork/spawn results at iteration
             // boundaries through this receiver; without it, spawned children
             // would complete into a channel nothing reads.
@@ -437,13 +429,17 @@ impl AgentBuilder {
         // the cron tool resolves, arm the live executor, and bind its guard
         // to the loop context so dropping the agent aborts the timer task.
         crate::agent::arming::arm_root_schedule_executor(
-            shared.as_ref(),
             &mut loop_context,
-            &event_store,
-            agent_id,
-            self.inbound_tx.clone(),
-            agent_registry_for_schedule.clone(),
-        );
+            crate::agent::arming::RootScheduleExecutorParts {
+                shared: shared.as_ref(),
+                event_store: &event_store,
+                agent_id,
+                mailbox_id: session_binding.mailbox_id(),
+                mailbox_lease: &root_mailbox_lease,
+                inbound_tx: self.inbound_tx.clone(),
+                agent_registry: agent_registry_for_schedule.clone(),
+            },
+        )?;
         // NP-001 background-process manager: install it on the shared context
         // (the `process` tool resolves it) and bind its shutdown guard to the
         // loop context. Ordered after scheduling so the durable pending store
@@ -470,6 +466,10 @@ impl AgentBuilder {
             working_dir,
             output_schema: config_override.output_schema.clone(),
         });
+
+        if let Some(registration) = root_registration {
+            registration.confirm()?;
+        }
 
         Ok(Agent {
             provider: self.provider,

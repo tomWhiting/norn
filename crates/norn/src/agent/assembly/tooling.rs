@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 use crate::agent::message_router::MessageRouter;
 use crate::agent::pending_messages::PendingAgentMessages;
 use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
+use crate::error::SessionError;
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
 use crate::internal::extraction::SharedProvider;
@@ -130,17 +131,27 @@ pub(crate) fn install_agent_infra(
     tool_registry: &Arc<ToolRegistry>,
     shared: &ToolContext,
     parts: AgentInfraParts,
-) -> mpsc::Receiver<ChildAgentResult> {
+) -> Result<mpsc::Receiver<ChildAgentResult>, SessionError> {
     let router = Arc::new(MessageRouter::new());
     if let Some(root_inbound) = parts.root_inbound {
         router.register(parts.id, root_inbound);
     }
+    let mailbox_id = parts.session.mailbox_id();
+    let pending_messages = Arc::new(PendingAgentMessages::from_events(
+        parts.id,
+        mailbox_id,
+        &parts.event_store.events(),
+    )?);
+    pending_messages.register_root_mailbox(
+        parts.id,
+        mailbox_id,
+        &parts.event_store,
+        &parts.mailbox_lease,
+    )?;
     let infra = AgentToolInfra {
         registry: parts.registry,
         router,
-        pending_messages: Arc::new(PendingAgentMessages::from_events(
-            &parts.event_store.events(),
-        )),
+        pending_messages,
         provider: parts.provider,
         event_store: parts.event_store,
         agent_id: parts.id,
@@ -175,5 +186,5 @@ pub(crate) fn install_agent_infra(
 
     let (child_tx, child_rx) = mpsc::channel::<ChildAgentResult>(child_result_capacity);
     shared.insert_extension(Arc::new(ChildResultSender(Arc::new(child_tx))));
-    child_rx
+    Ok(child_rx)
 }

@@ -287,13 +287,6 @@ impl Tool for ForkTool {
                 ),
             })?;
 
-        // All fallible setup is done — confirm the reservation. From here
-        // the launch is unconditional and the completion wrapper owns the
-        // entry's terminal transition.
-        guard.confirm().map_err(|e| ToolError::ExecutionFailed {
-            reason: format!("fork confirm failed: {e}"),
-        })?;
-
         // Hierarchical cancellation (W3.5): the fork's run token is a
         // child of the forker's published token, so cancelling the forker
         // — or any ancestor above it — cascades to this fork and its
@@ -402,6 +395,27 @@ impl Tool for ForkTool {
                 .await;
         }
 
+        // The recipient timeline and controller lease are installed before
+        // the reservation becomes Active. There is no await or fallible
+        // assembly after confirmation and before the synchronous launch.
+        let mailbox_lease = Arc::new(crate::agent::PendingMailboxLease::new());
+        infra
+            .pending_messages
+            .register_child_mailbox(
+                fork_id,
+                branched.binding.mailbox_id(),
+                &child_store,
+                &mailbox_lease,
+            )
+            .map_err(|error| ToolError::ExecutionFailed {
+                reason: format!("fork mailbox registration failed: {error}"),
+            })?;
+        guard
+            .confirm()
+            .map_err(|error| ToolError::ExecutionFailed {
+                reason: format!("fork confirm failed: {error}"),
+            })?;
+
         let handle = launch_fork(
             ForkLaunch {
                 provider: Arc::clone(&infra.provider),
@@ -427,6 +441,8 @@ impl Tool for ForkTool {
                 router: Arc::clone(&infra.router),
                 cancel: fork_cancel,
                 config: fork_config,
+                pending_messages: Arc::clone(&infra.pending_messages),
+                mailbox_lease,
             },
             inbound_tx,
         );

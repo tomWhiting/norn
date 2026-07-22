@@ -38,8 +38,8 @@ pub use action_log_scope::{ActionLogFilter, LabeledEntry, ScopedLog};
 pub use action_log_tree::ActionLogTree;
 pub use artifacts::SessionArtifactStore;
 pub use branch::{
-    BranchedChild, ChildBranchRequest, ChildDurability, ROOT_PATH_ADDRESS, SessionBinding,
-    SessionBrancher, child_path_slug, slugify_name_stem,
+    BranchedChild, ChildBranchRequest, ChildDurability, MailboxId, ROOT_PATH_ADDRESS,
+    SessionBinding, SessionBrancher, child_path_slug, slugify_name_stem,
 };
 pub(crate) use event_projection::{
     apply_local_tool_event, atomic_local_tool_projection, unresolved_effective_local_tool_calls,

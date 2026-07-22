@@ -77,6 +77,7 @@ impl SessionBinding {
                 store: Arc::new(EventStore::new()),
                 binding: Arc::new(Self {
                     path_address: path_address.clone(),
+                    mailbox_id: super::MailboxId(Uuid::new_v4()),
                     persistence: Persistence::Ephemeral,
                     used_names: Mutex::new(HashSet::new()),
                 }),

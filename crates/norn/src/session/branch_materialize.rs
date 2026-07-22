@@ -78,6 +78,7 @@ pub(super) fn materialize_child(
     ));
     let binding = SessionBinding {
         path_address: path_address.to_owned(),
+        mailbox_id: super::MailboxId::from_generation(entry.generation),
         persistence: Persistence::Persistent {
             brancher: Arc::clone(brancher),
             registered: Box::new(entry),

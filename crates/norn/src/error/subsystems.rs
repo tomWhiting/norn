@@ -276,6 +276,19 @@ pub enum SessionError {
         reason: String,
     },
 
+    /// Durable pending-message authority is malformed or contradictory.
+    #[error("pending-message replay is invalid: {reason}")]
+    PendingMessageReplayInvalid {
+        /// Payload-free description of the violated durable invariant.
+        reason: String,
+    },
+
+    /// A pre-D8 queue row cannot be assigned to this durable mailbox.
+    #[error(
+        "session resume requires operator action: an unresolved pre-D8 pending agent-message record has no durable mailbox ownership"
+    )]
+    PreD8PendingMessageOwnershipUnknown,
+
     /// Credential-scoped session state has no stable provider identity.
     #[error("credential-scoped session state requires a stable provider identity")]
     ProviderStateIdentityRequired,

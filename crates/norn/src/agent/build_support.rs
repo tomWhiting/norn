@@ -15,6 +15,8 @@ use uuid::Uuid;
 use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope};
 use crate::agent::registry::AgentRegistry;
 use crate::error::{ConfigError, NornError};
+use crate::provider::{AgentEvent, AgentEventSender, SharedAgentEventChannel};
+use crate::tool::context::ToolContext;
 
 fn invalid(reason: String) -> NornError {
     NornError::Config(ConfigError::InvalidConfig { reason })
@@ -238,13 +240,14 @@ pub(crate) fn resolve_coordination(
 ///
 /// [`NornError::Config`] when `.register_root(..)` is set without
 /// coordination, and any registry-reservation error surfaced by
-/// [`AgentRegistry::reserve`] / [`SpawnGuard::confirm`](crate::agent::registry::SpawnGuard::confirm).
+/// [`AgentRegistry::reserve`]. The caller retains the returned guard until
+/// all fallible runtime and mailbox assembly is complete, then confirms it.
 pub(crate) fn resolve_root_agent_id(
     register_root: Option<(String, String)>,
     coordination: Option<&Coordination>,
     model: &str,
     explicit_agent_id: Option<Uuid>,
-) -> Result<Uuid, NornError> {
+) -> Result<(Uuid, Option<crate::agent::SpawnGuard>), NornError> {
     match (register_root, coordination) {
         (Some((path, role)), Some((agent_registry, envelope))) => {
             let guard = AgentRegistry::reserve(
@@ -257,8 +260,7 @@ pub(crate) fn resolve_root_agent_id(
                 None,
             )?;
             let id = guard.id();
-            guard.confirm()?;
-            Ok(id)
+            Ok((id, Some(guard)))
         }
         (Some(_), None) => Err(invalid(
             "register_root is set but agent coordination is not wired — the \
@@ -266,6 +268,24 @@ pub(crate) fn resolve_root_agent_id(
              or remove .register_root(..)"
                 .to_string(),
         )),
-        (None, _) => Ok(explicit_agent_id.unwrap_or_else(Uuid::new_v4)),
+        (None, _) => Ok((explicit_agent_id.unwrap_or_else(Uuid::new_v4), None)),
     }
+}
+
+/// Build and publish the root event channel once its runtime identity is known.
+pub(crate) fn assemble_root_event_channel(
+    capacity: Option<usize>,
+    shared: &ToolContext,
+    agent_id: Uuid,
+) -> (
+    Option<tokio::sync::broadcast::Sender<AgentEvent>>,
+    Option<AgentEventSender>,
+) {
+    let Some(capacity) = capacity else {
+        return (None, None);
+    };
+    let (tx, _rx) = tokio::sync::broadcast::channel(capacity);
+    shared.insert_extension(Arc::new(SharedAgentEventChannel(tx.clone())));
+    let sender = AgentEventSender::new(tx.clone(), agent_id, "root".to_owned());
+    (Some(tx), Some(sender))
 }

@@ -36,9 +36,7 @@ use parking_lot::RwLock;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use crate::agent::pending_messages::{
-    PendingAgentMessage, PendingAgentMessages, append_pending_message_audit,
-};
+use crate::agent::pending_messages::{PendingAgentMessage, PendingAgentMessages};
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::error::SessionError;
 use crate::r#loop::inbound::{ChannelMessage, InboundSender, InboundTrySendError, MessageKind};
@@ -444,11 +442,9 @@ fn queue_durable(
             ),
         });
     };
-    let record =
+    let mut record =
         PendingAgentMessage::new(message.clone(), delivery.agent_id.to_string(), Utc::now());
-    if let Some(event) = pending.queue(record) {
-        append_pending_message_audit(&delivery.event_store, &event)?;
-    }
+    pending.persist_for_registered_store(&delivery.event_store, &mut record)?;
     Ok(())
 }
 
@@ -458,9 +454,11 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::agent::PendingMailboxLease;
     use crate::agent::registry::AgentRegistry;
     use crate::r#loop::inbound::inbound_channel;
     use crate::schedule::entry::ScheduleSpec;
+    use crate::session::SessionBinding;
     use crate::session::events::SessionEvent;
 
     // Anchor test records at the current wall clock, NOT a hardcoded
@@ -513,6 +511,25 @@ mod tests {
         }
     }
 
+    fn register_pending_mailbox(
+        pending: &PendingAgentMessages,
+        agent_id: Uuid,
+        event_store: &Arc<EventStore>,
+    ) -> Arc<PendingMailboxLease> {
+        let lease = Arc::new(PendingMailboxLease::new());
+        let result = pending.register_child_mailbox(
+            agent_id,
+            SessionBinding::ephemeral_root().mailbox_id(),
+            event_store,
+            &lease,
+        );
+        assert!(
+            result.is_ok(),
+            "test mailbox registration failed: {result:?}"
+        );
+        lease
+    }
+
     fn cron_frame_count(store: &EventStore) -> usize {
         store
             .events()
@@ -558,6 +575,7 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let store = Arc::new(EventStore::new());
         let pending = Arc::new(PendingAgentMessages::new());
+        let _mailbox_lease = register_pending_mailbox(&pending, agent_id, &store);
         let delivery = delivery_with(
             agent_id,
             None,
@@ -622,6 +640,7 @@ mod tests {
 
         let store = Arc::new(EventStore::new());
         let pending = Arc::new(PendingAgentMessages::new());
+        let _mailbox_lease = register_pending_mailbox(&pending, child, &store);
         let delivery = delivery_with(
             child,
             None,
@@ -661,6 +680,7 @@ mod tests {
         let wake = Arc::new(AgentWakeRegistry::new());
         let store = Arc::new(EventStore::new());
         let pending = Arc::new(PendingAgentMessages::new());
+        let _mailbox_lease = register_pending_mailbox(&pending, child, &store);
         let delivery = delivery_with(
             child,
             None,
@@ -1131,6 +1151,7 @@ mod tests {
         let store = ScheduleStore::new();
         let event_store = Arc::new(EventStore::new());
         let pending = Arc::new(PendingAgentMessages::new());
+        let _mailbox_lease = register_pending_mailbox(&pending, agent_id, &event_store);
         let record = one_shot(agent_id);
         let fire = record.next_fire;
         store.insert(record);
@@ -1181,20 +1202,21 @@ mod tests {
         use crate::provider::usage::Usage;
 
         let agent_id = Uuid::new_v4();
-        let session_store = EventStore::new();
+        let session_store = Arc::new(EventStore::new());
         let pending = Arc::new(PendingAgentMessages::new());
+        let _mailbox_lease = register_pending_mailbox(&pending, agent_id, &session_store);
         let store = ScheduleStore::new();
         let record = one_shot(agent_id);
         let fire = record.next_fire;
         store.insert(record);
-        let delivery = ScheduleDelivery {
+        let delivery = delivery_with(
             agent_id,
-            inbound: None,
-            pending: Some(Arc::clone(&pending)),
-            event_store: Arc::new(EventStore::new()),
-            registry: None,
-            wake_registry: None,
-        };
+            None,
+            Arc::clone(&pending),
+            Arc::clone(&session_store),
+            None,
+            None,
+        );
         fire_due(&store, fire, &delivery);
         assert_eq!(pending.pending_for(agent_id), 1, "queued, not delivered");
 
@@ -1217,7 +1239,7 @@ mod tests {
         let result = run_agent_step(AgentStepRequest {
             provider: &provider,
             executor: &executor,
-            store: &session_store,
+            store: session_store.as_ref(),
             user_prompt: "prompt",
             tools: &[],
             output_schema: None,

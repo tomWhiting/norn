@@ -17,7 +17,13 @@ pub mod instance;
 mod mcp;
 pub mod message_router;
 pub mod output;
+mod pending_delivery;
+mod pending_mailbox;
 pub mod pending_messages;
+mod pending_queue;
+mod pending_record;
+mod pending_replay;
+mod pending_transition;
 pub mod process_delivery;
 pub(crate) mod prompt_install;
 pub mod registry;
@@ -30,7 +36,9 @@ mod skill_prompt;
 pub mod variants;
 
 pub use crate::r#loop::config::TruncationKind;
-pub use crate::r#loop::inbound::{ChannelMessage, InboundSender, MessageKind};
+pub use crate::r#loop::inbound::{
+    ChannelMessage, InboundPermit, InboundPermitSendError, InboundSender, MessageKind,
+};
 pub use assembly::validate_workspace_root;
 pub use builder::AgentBuilder;
 pub use child_policy::{
@@ -48,10 +56,12 @@ pub use handle::{AgentHandle, ResolvedAgentInfo};
 pub use instance::{Agent, AgentParts};
 pub use message_router::{MessageRouter, RouteError};
 pub use output::{AgentOutput, AgentStopReason, RunOutcome};
+pub(crate) use pending_mailbox::PendingMailboxLease;
 pub use pending_messages::{
     AGENT_MESSAGE_DEQUEUED_EVENT_TYPE, AGENT_MESSAGE_QUEUED_EVENT_TYPE, PendingAgentMessage,
     PendingAgentMessageLifecycle, PendingAgentMessages, append_pending_message_audit,
 };
+pub(crate) use pending_queue::ClosedPendingMailbox;
 pub use registry::{AgentEntry, AgentRegistry, AgentStatus, AgentTombstone, SpawnGuard};
 pub use result_channel::{ChildAgentResult, ChildResultSender, frame_child_result};
 pub use resume::rebuild_action_log;
@@ -67,3 +77,9 @@ mod fork_context_filter_error_tests;
 mod fork_d3_projection_tests;
 #[cfg(test)]
 mod fork_provider_compaction_tests;
+#[cfg(test)]
+mod pending_messages_tests;
+#[cfg(test)]
+mod pending_replay_tests;
+#[cfg(test)]
+mod pending_transition_tests;

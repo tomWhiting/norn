@@ -165,10 +165,18 @@ async fn pending_agent_message_reaches_next_request() -> TestResult {
         text_delta("handled"),
         done_event(StopReason::EndTurn),
     ]]);
-    let store = EventStore::new();
+    let store = Arc::new(EventStore::new());
     let executor = MockToolExecutor::empty();
     let agent_id = uuid::Uuid::new_v4();
     let pending = std::sync::Arc::new(crate::agent::PendingAgentMessages::new());
+    let session_binding = crate::session::SessionBinding::ephemeral_root();
+    let mailbox_lease = Arc::new(crate::agent::PendingMailboxLease::new());
+    pending.register_root_mailbox(
+        agent_id,
+        session_binding.mailbox_id(),
+        &store,
+        &mailbox_lease,
+    )?;
     let queued = make_channel_message(
         "spawn/worker",
         "durable push",
@@ -181,15 +189,18 @@ async fn pending_agent_message_reaches_next_request() -> TestResult {
     let to_label = "/root".to_owned();
     let mut queued = queued;
     queued.to_id = agent_id;
-    pending
-        .queue(crate::agent::PendingAgentMessage::new(
-            queued, to_label, queued_at,
-        ))
-        .ok_or_else(|| std::io::Error::other("pending message was not queued"))?;
+    let mut pending_message = crate::agent::PendingAgentMessage::new(queued, to_label, queued_at);
+    let queued_message =
+        pending.persist_for_registered_store(store.as_ref(), &mut pending_message)?;
+    assert!(
+        queued_message.published,
+        "new pending message must be durably published",
+    );
 
     let mut loop_ctx = LoopContext::new("system");
     loop_ctx.agent_id = Some(agent_id);
     loop_ctx.pending_agent_messages = Some(std::sync::Arc::clone(&pending));
+    loop_ctx.pending_mailbox_lease = Some(mailbox_lease);
 
     let result = run_step_with(
         StepArgs {
@@ -241,10 +252,18 @@ async fn pending_message_seeded_step_resumes_without_empty_prompt() -> TestResul
         text_delta("resumed"),
         done_event(StopReason::EndTurn),
     ]]);
-    let store = EventStore::new();
+    let store = Arc::new(EventStore::new());
     let executor = MockToolExecutor::empty();
     let agent_id = uuid::Uuid::new_v4();
     let pending = std::sync::Arc::new(crate::agent::PendingAgentMessages::new());
+    let session_binding = crate::session::SessionBinding::ephemeral_root();
+    let mailbox_lease = Arc::new(crate::agent::PendingMailboxLease::new());
+    pending.register_root_mailbox(
+        agent_id,
+        session_binding.mailbox_id(),
+        &store,
+        &mailbox_lease,
+    )?;
     let mut queued = make_channel_message(
         "spawn/worker",
         "durable resume",
@@ -254,17 +273,19 @@ async fn pending_message_seeded_step_resumes_without_empty_prompt() -> TestResul
     queued.to_id = agent_id;
     let message_id = queued.id;
     let queued_at = queued.timestamp;
-    pending
-        .queue(crate::agent::PendingAgentMessage::new(
-            queued,
-            "/root".to_owned(),
-            queued_at,
-        ))
-        .ok_or_else(|| std::io::Error::other("pending resume message was not queued"))?;
+    let mut pending_message =
+        crate::agent::PendingAgentMessage::new(queued, "/root".to_owned(), queued_at);
+    let queued_message =
+        pending.persist_for_registered_store(store.as_ref(), &mut pending_message)?;
+    assert!(
+        queued_message.published,
+        "new pending resume message must be durably published",
+    );
 
     let mut loop_ctx = LoopContext::new("system");
     loop_ctx.agent_id = Some(agent_id);
     loop_ctx.pending_agent_messages = Some(std::sync::Arc::clone(&pending));
+    loop_ctx.pending_mailbox_lease = Some(mailbox_lease);
 
     let result = run_agent_step_from_messages(AgentMessageStepRequest {
         provider: &provider,

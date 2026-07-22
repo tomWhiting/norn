@@ -1,6 +1,7 @@
 //! Append-only event storage with optional write-through persistence.
 
 mod append_batch;
+mod idempotent_append;
 #[cfg(test)]
 mod test_support;
 

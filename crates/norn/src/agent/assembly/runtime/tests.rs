@@ -167,6 +167,7 @@ fn install_agent_infra_publishes_action_log_tree_with_root_log() -> Result<(), B
             event_store: Arc::new(EventStore::new()),
             session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
             id: agent_id,
+            mailbox_lease: Arc::new(crate::agent::PendingMailboxLease::new()),
             envelope: envelope.clone(),
             root_inbound: None,
             cancel: root_cancel.clone(),

@@ -237,6 +237,7 @@ pub async fn run_agent_step_from_messages(
 async fn run_agent_step_common(
     mut request: AgentStepRunRequest<'_>,
 ) -> Result<AgentStepResult, NornError> {
+    validate_pending_mailbox_wiring(&request)?;
     // Refresh the agent's `AgentModel` extension with the model AND the
     // reasoning effort THIS step's provider requests actually use (the
     // request builder reads both from the same inputs: `request.model`
@@ -427,6 +428,19 @@ async fn run_agent_step_common(
         );
     }
     result
+}
+
+fn validate_pending_mailbox_wiring(request: &AgentStepRunRequest<'_>) -> Result<(), NornError> {
+    let Some(pending) = request.loop_context.pending_agent_messages.as_ref() else {
+        return Ok(());
+    };
+    let agent_id = request.loop_context.agent_id.ok_or_else(|| {
+        NornError::Session(crate::error::SessionError::StorageError {
+            reason: "pending-message coordination has no runtime agent identity".to_owned(),
+        })
+    })?;
+    pending.validate_registered_store(agent_id, request.store)?;
+    Ok(())
 }
 
 /// Drive a validated machine under the provider/tool portion of the budget.

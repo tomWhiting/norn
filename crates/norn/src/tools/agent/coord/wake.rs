@@ -308,8 +308,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::agent::PendingAgentMessage;
+    use crate::agent::{PendingAgentMessage, PendingAgentMessages, PendingMailboxLease};
     use crate::r#loop::inbound::{ChannelMessage, MessageKind, inbound_channel};
+    use crate::session::SessionBinding;
     use crate::tools::agent::coord::test_support::{build_infra, envelope_for, register_agent};
     use crate::tools::agent::handle::{AgentHandle, ChildBranchMetadata};
 
@@ -325,12 +326,27 @@ mod tests {
 
     fn register_wake_handle(
         wake_registry: &AgentWakeRegistry,
+        pending_messages: &PendingAgentMessages,
         agent_id: Uuid,
         status: AgentStatus,
-    ) -> mpsc::Receiver<()> {
+    ) -> (
+        mpsc::Receiver<()>,
+        Arc<crate::session::store::EventStore>,
+        Arc<PendingMailboxLease>,
+    ) {
         let (_status_tx, status_rx) = watch::channel(status);
         let (inbound_tx, _inbound_rx) = inbound_channel(8);
         let (wake_tx, wake_rx) = mpsc::channel(1);
+        let event_store = Arc::new(crate::session::store::EventStore::new());
+        let mailbox_lease = Arc::new(PendingMailboxLease::new());
+        pending_messages
+            .register_child_mailbox(
+                agent_id,
+                SessionBinding::ephemeral_root().mailbox_id(),
+                &event_store,
+                &mailbox_lease,
+            )
+            .expect("register pending mailbox");
         let handle = AgentHandle {
             agent_id,
             status_rx,
@@ -339,7 +355,7 @@ mod tests {
             wake_pending: Arc::new(AtomicBool::new(false)),
             cancel: CancellationToken::new(),
             join_handle: tokio::spawn(async {}),
-            event_store: Arc::new(crate::session::store::EventStore::new()),
+            event_store: Arc::clone(&event_store),
             branch_metadata: ChildBranchMetadata {
                 child_agent_id: agent_id,
                 parent_agent_id: Uuid::nil(),
@@ -348,10 +364,14 @@ mod tests {
             },
         };
         wake_registry.insert(handle.wake_handle());
-        wake_rx
+        (wake_rx, event_store, mailbox_lease)
     }
 
-    fn queue_pending_message(infra: &crate::tools::agent::infra::AgentToolInfra, recipient: Uuid) {
+    fn queue_pending_message(
+        infra: &crate::tools::agent::infra::AgentToolInfra,
+        recipient: Uuid,
+        store: &crate::session::store::EventStore,
+    ) {
         let message = ChannelMessage {
             id: Uuid::new_v4(),
             sender_id: infra.agent_id,
@@ -363,10 +383,12 @@ mod tests {
             seq: None,
             timestamp: Utc::now(),
         };
-        let pending = PendingAgentMessage::new(message, "/root/child".to_owned(), Utc::now());
+        let mut pending = PendingAgentMessage::new(message, "/root/child".to_owned(), Utc::now());
         assert!(
-            infra.pending_messages.queue(pending).is_some(),
-            "test message id must be fresh",
+            infra
+                .pending_messages
+                .persist_for_registered_store(store, &mut pending)
+                .is_ok()
         );
     }
 
@@ -377,7 +399,12 @@ mod tests {
         let child = register_agent(&registry, "/root/child", Some(sender));
         registry.write().mark_idle(child).expect("mark idle");
         let wake_registry = Arc::new(AgentWakeRegistry::new());
-        let _wake_rx = register_wake_handle(&wake_registry, child, AgentStatus::Idle);
+        let (_wake_rx, _store, _mailbox_lease) = register_wake_handle(
+            &wake_registry,
+            &infra.pending_messages,
+            child,
+            AgentStatus::Idle,
+        );
         let ctx = ctx_with(Arc::clone(&infra), wake_registry);
 
         let out = WakeAgentTool::new()
@@ -402,6 +429,13 @@ mod tests {
         let (infra, registry, _router) = build_infra(sender);
         let child = register_agent(&registry, "/root/child", Some(sender));
         registry.write().mark_idle(child).expect("mark idle");
+        let wake_registry = Arc::new(AgentWakeRegistry::new());
+        let (mut wake_rx, store, _mailbox_lease) = register_wake_handle(
+            &wake_registry,
+            &infra.pending_messages,
+            child,
+            AgentStatus::Idle,
+        );
 
         // A message sits undrained in the child's inbound channel — the
         // deregistration window. The controller's sweep queues it durably.
@@ -420,9 +454,8 @@ mod tests {
             })
             .await
             .expect("send");
-        let store = crate::session::store::EventStore::new();
         crate::tools::agent::spawn_launch::requeue_stranded_inbound(
-            &store,
+            store.as_ref(),
             child,
             Some(&infra.pending_messages),
             &mut inbound_rx,
@@ -435,8 +468,6 @@ mod tests {
             "the sweep must persist one agent_message.queued audit",
         );
 
-        let wake_registry = Arc::new(AgentWakeRegistry::new());
-        let mut wake_rx = register_wake_handle(&wake_registry, child, AgentStatus::Idle);
         let ctx = ctx_with(Arc::clone(&infra), wake_registry);
 
         let out = WakeAgentTool::new()
@@ -459,9 +490,14 @@ mod tests {
         let (infra, registry, _router) = build_infra(sender);
         let child = register_agent(&registry, "/root/child", Some(sender));
         registry.write().mark_idle(child).expect("mark idle");
-        queue_pending_message(&infra, child);
         let wake_registry = Arc::new(AgentWakeRegistry::new());
-        let mut wake_rx = register_wake_handle(&wake_registry, child, AgentStatus::Idle);
+        let (mut wake_rx, store, _mailbox_lease) = register_wake_handle(
+            &wake_registry,
+            &infra.pending_messages,
+            child,
+            AgentStatus::Idle,
+        );
+        queue_pending_message(&infra, child, &store);
         let ctx = ctx_with(Arc::clone(&infra), wake_registry);
 
         let out = WakeAgentTool::new()

@@ -192,10 +192,10 @@ impl MessageRouter {
                 }
             };
 
-            // Mint the sequence number and enqueue under one lock: the
-            // permit send is synchronous and infallible, so channel
-            // order always matches sequence order (module docs,
-            // "Ordering").
+            // Mint the sequence number and enqueue under one lock. The
+            // receiver's admission gate may reject a permit that terminal
+            // closure revoked after reservation; commit the sequence only
+            // after publication succeeds.
             let mut inner = self.inner.lock();
             let Some(entry) = inner.get_mut(&to) else {
                 // Deregistered while we awaited capacity — the terminal
@@ -215,11 +215,18 @@ impl MessageRouter {
                 continue;
             }
             let seq = entry.last_seq.saturating_add(1);
-            entry.last_seq = seq;
             msg.to_id = to;
             msg.seq = Some(seq);
-            permit.send(msg);
-            return Ok(seq);
+            match permit.send(msg) {
+                Ok(()) => {
+                    entry.last_seq = seq;
+                    return Ok(seq);
+                }
+                Err(_closed) => {
+                    inner.remove(&to);
+                    return Err(RouteError::ChannelClosed { agent_id: to });
+                }
+            }
         }
     }
 

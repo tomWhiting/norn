@@ -40,7 +40,9 @@ pub mod config;
 pub mod context;
 mod conversation_state;
 mod delivery;
+mod delivery_closed;
 mod delivery_inputs;
+mod delivery_pending;
 mod dev_context;
 pub mod event_schemas;
 
@@ -49,6 +51,8 @@ mod failure_tracking;
 mod helpers;
 mod inflight_compaction;
 pub(crate) use delivery::{UndeliveredWindow, requeue_undelivered_inbound};
+pub(crate) use delivery_closed::persist_undelivered_after_close;
+pub(crate) use delivery_pending::append_idempotent_off_executor;
 pub(crate) use helpers::append_off_executor;
 pub use tool_result_repair::ensure_tool_results_complete;
 pub mod inbound;
@@ -84,6 +88,9 @@ mod classify_audio_tests;
 
 #[cfg(test)]
 mod delivery_cancellation_tests;
+
+#[cfg(test)]
+mod delivery_pending_tests;
 
 #[cfg(test)]
 mod response_audio_end_to_end_tests;

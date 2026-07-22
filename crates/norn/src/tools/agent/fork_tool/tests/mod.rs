@@ -235,4 +235,5 @@ mod persistence;
 mod prompt_authority;
 mod recursive_delegation;
 mod shutdown_logging;
+mod terminal_mailbox;
 mod tool_surface;

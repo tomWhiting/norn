@@ -15,6 +15,8 @@
 mod close;
 mod helpers;
 mod signal_agent;
+mod signal_queue;
+mod signal_recipient;
 mod wake;
 
 #[cfg(test)]

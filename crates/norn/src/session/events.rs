@@ -23,6 +23,15 @@ impl EventId {
     pub fn new() -> Self {
         Self(uuid::Uuid::now_v7().to_string())
     }
+
+    /// Build an ID from a caller-owned stable namespace.
+    ///
+    /// The caller must ensure the value cannot collide with ordinary event
+    /// IDs or another stable namespace. This is crate-private because stable
+    /// IDs are persistence protocol, not an embedder-selected label.
+    pub(crate) fn from_stable_namespace(value: String) -> Self {
+        Self(value)
+    }
 }
 
 impl Default for EventId {

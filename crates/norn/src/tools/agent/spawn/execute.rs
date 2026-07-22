@@ -288,13 +288,6 @@ pub(super) async fn execute(
             ),
         })?;
 
-    // All fallible setup is done — confirm the reservation. From here
-    // the launch is unconditional and the completion wrapper owns the
-    // entry's terminal transition.
-    guard.confirm().map_err(|e| ToolError::ExecutionFailed {
-        reason: format!("spawn confirm failed: {e}"),
-    })?;
-
     // Provenance recorded on the child's AgentHandle so the parent can
     // attribute the child's audit trail (NA-008 R3).
     let branch_metadata = ChildBranchMetadata {
@@ -425,6 +418,28 @@ pub(super) async fn execute(
     // loop changes, results bubble one hop per level.
     child_loop_ctx.child_result_rx = child_result_rx;
 
+    // Mailbox registration is the final fallible setup step. It precedes
+    // confirmation, so every Active child has a durable recipient timeline;
+    // no blocking hook or other await exists between confirmation and the
+    // synchronous controller launch.
+    let mailbox_lease = Arc::new(crate::agent::PendingMailboxLease::new());
+    infra
+        .pending_messages
+        .register_child_mailbox(
+            child_id,
+            branched.binding.mailbox_id(),
+            &child_store,
+            &mailbox_lease,
+        )
+        .map_err(|error| ToolError::ExecutionFailed {
+            reason: format!("spawn mailbox registration failed: {error}"),
+        })?;
+    guard
+        .confirm()
+        .map_err(|error| ToolError::ExecutionFailed {
+            reason: format!("spawn confirm failed: {error}"),
+        })?;
+
     let handle = launch_child(ChildLaunch {
         provider: Arc::clone(&infra.provider),
         executor: child_executor,
@@ -449,6 +464,8 @@ pub(super) async fn execute(
         cancel: child_cancel,
         wake_registry: persistent.then(|| Arc::clone(&wake_registry)),
         persistent,
+        pending_messages: Arc::clone(&infra.pending_messages),
+        mailbox_lease,
     });
     handles.insert(handle);
     if persistent && let Some(handle) = handles.wake_handle(child_id) {

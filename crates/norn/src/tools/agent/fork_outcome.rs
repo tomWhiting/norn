@@ -130,8 +130,18 @@ pub(super) fn mark_fork_terminal(
 /// [`ChildrenUsage`](crate::agent_loop::children_usage::ChildrenUsage)
 /// accumulator, which survives the unwound task — still carries every
 /// grandchild subtree the fork's loop delivered before the panic (W3.6).
+#[cfg(test)]
 pub(super) fn panicked_fork_outcome(
     join_error: &tokio::task::JoinError,
+    duration: std::time::Duration,
+    delivered_children_usage: Usage,
+) -> ForkOutcome {
+    let panic_message = join_error.to_string();
+    panicked_fork_outcome_message(&panic_message, duration, delivered_children_usage)
+}
+
+pub(super) fn panicked_fork_outcome_message(
+    panic_message: &str,
     duration: std::time::Duration,
     delivered_children_usage: Usage,
 ) -> ForkOutcome {
@@ -142,7 +152,7 @@ pub(super) fn panicked_fork_outcome(
         children_usage: delivered_children_usage,
         duration,
         error_message: Some(format!(
-            "fork task terminated without an outcome (panicked or aborted): {join_error}"
+            "fork task terminated without an outcome (panicked or aborted): {panic_message}"
         )),
         stop: None,
     }

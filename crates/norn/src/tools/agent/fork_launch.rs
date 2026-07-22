@@ -12,12 +12,13 @@ use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use chrono::Utc;
+use futures_util::FutureExt;
 use parking_lot::RwLock;
 use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
 use super::fork_outcome::{
-    append_fork_complete, mark_fork_terminal, panicked_fork_outcome, project_fork_outcome,
+    append_fork_complete, mark_fork_terminal, panicked_fork_outcome_message, project_fork_outcome,
 };
 use super::handle::{AgentHandle, ChildBranchMetadata};
 use super::infra::SubAgentExecutor;
@@ -26,11 +27,13 @@ use super::reclaim::{ReclaimHandshake, reclaim_delivered_child};
 use crate::agent::message_router::MessageRouter;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
+use crate::agent::{PendingAgentMessages, PendingMailboxLease};
 use crate::integration::hooks::{HookOutcome, HookRegistry};
 use crate::r#loop::config::{AgentLoopConfig, ToolExecutor};
 use crate::r#loop::inbound::{InboundChannel, InboundSender};
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::runner::{AgentStepRequest, run_agent_step};
+use crate::r#loop::{UndeliveredWindow, persist_undelivered_after_close};
 use crate::provider::agent_event::AgentEventSender;
 use crate::provider::request::ToolDefinition;
 use crate::provider::traits::Provider;
@@ -101,6 +104,8 @@ pub(super) struct ForkLaunch {
     /// (`arm_child_window`) before the launch committed. Mirrors the
     /// spawn launch.
     pub(super) config: AgentLoopConfig,
+    pub(super) pending_messages: Arc<PendingAgentMessages>,
+    pub(super) mailbox_lease: Arc<PendingMailboxLease>,
 }
 
 /// Launch the fork on its own `tokio::spawn` task and build the parent-side
@@ -130,6 +135,8 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         router,
         cancel,
         config,
+        pending_messages,
+        mailbox_lease,
     } = launch;
 
     let handle_store = Arc::clone(&child_store);
@@ -202,43 +209,25 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         // panic and hard-error paths, where no `AgentStepResult` exists
         // to carry the delivered grandchild subtrees out of the loop.
         let delivered_children = loop_ctx.children_usage.clone();
-        // Panic isolation: the agent step runs on its own inner task so a
-        // panic inside a tool or provider (workspace code denies panics,
-        // but a dependency inside the fork's task can still unwind)
-        // surfaces here as a `JoinError` instead of killing the wrapper.
-        // The wrapper then completes every obligation of the normal
-        // failure path — stop hook, `ForkComplete`, lifecycle
-        // `Completed`, result delivery, status broadcast, registry
-        // transition, reclamation — so observers never see a dangling
-        // `Started`. Mirrors the spawn wrapper.
-        let inner = tokio::spawn(async move {
-            let mut fork_config = config;
-            // Arm auto-compaction on the fork exactly as the root builder
-            // does (the one shared mechanism): install the token estimator
-            // and the context-edit tracker on the fork's loop context. The
-            // context window was already filled from the catalog for the
-            // fork's own model AND validated by the fork tool before the
-            // launch committed (`arm_child_window`, the 2026-07-05
-            // incident guard extended to children), so the fill here is a
-            // no-op.
-            crate::agent::arming::arm_auto_compaction(&mut loop_ctx, &mut fork_config, &model);
-            run_agent_step(AgentStepRequest {
-                provider: provider.as_ref(),
-                executor: &executor,
-                store: child_store.as_ref(),
-                user_prompt: &user_task,
-                tools: &tool_defs,
-                output_schema: Some(&output_schema),
-                model: &model,
-                config: &fork_config,
-                event_tx: event_sender.as_ref(),
-                inbound: Some(&mut inbound_rx),
-                loop_context: &mut loop_ctx,
-                cancel: Some(run_cancel),
-            })
-            .await
-        });
-        let outcome = match inner.await {
+        let mut fork_config = config;
+        crate::agent::arming::arm_auto_compaction(&mut loop_ctx, &mut fork_config, &model);
+        let step = std::panic::AssertUnwindSafe(run_agent_step(AgentStepRequest {
+            provider: provider.as_ref(),
+            executor: &executor,
+            store: child_store.as_ref(),
+            user_prompt: &user_task,
+            tools: &tool_defs,
+            output_schema: Some(&output_schema),
+            model: &model,
+            config: &fork_config,
+            event_tx: event_sender.as_ref(),
+            inbound: Some(&mut inbound_rx),
+            loop_context: &mut loop_ctx,
+            cancel: Some(run_cancel),
+        }))
+        .catch_unwind()
+        .await;
+        let outcome = match step {
             Ok(step_result) => {
                 if let Err(ref e) = step_result {
                     tracing::error!(
@@ -252,15 +241,24 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
                 }
                 project_fork_outcome(step_result, started, delivered_children.snapshot())
             }
-            Err(join_error) => {
+            Err(payload) => {
+                let panic_message = payload.downcast_ref::<&str>().map_or_else(
+                    || {
+                        payload
+                            .downcast_ref::<String>()
+                            .cloned()
+                            .unwrap_or_else(|| "non-string panic payload".to_owned())
+                    },
+                    |message| (*message).to_owned(),
+                );
                 tracing::error!(
                     fork_id = %fork_id,
                     role = %agent_role,
-                    error = %join_error,
+                    error = %panic_message,
                     "fork: child task panicked or was aborted before completing",
                 );
-                panicked_fork_outcome(
-                    &join_error,
+                panicked_fork_outcome_message(
+                    &panic_message,
                     started.elapsed(),
                     delivered_children.snapshot(),
                 )
@@ -278,7 +276,33 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         // transition (route ownership follows the loop's life; the
         // registry entry tracks observability). Later sends fail fast as
         // NotRouted instead of enqueueing into a buffer nothing reads.
-        router.deregister(fork_id);
+        let closed_mailbox = match pending_messages.transition_live_route(
+            fork_id,
+            child_store.as_ref(),
+            router.as_ref(),
+            &mut inbound_rx,
+            Some(&mailbox_lease),
+        ) {
+            Ok(transition) => {
+                if let Some(error) = transition.first_error {
+                    tracing::error!(
+                        fork_id = %fork_id,
+                        %error,
+                        "failed to persist one or more fork messages during route closure",
+                    );
+                }
+                transition.closed
+            }
+            Err(error) => {
+                tracing::error!(
+                    fork_id = %fork_id,
+                    %error,
+                    "failed to linearize fork route and mailbox closure",
+                );
+                router.deregister(fork_id);
+                pending_messages.close_child_mailbox(fork_id, &mailbox_lease)
+            }
+        };
 
         // NH-006 R5 parity with spawn: fire SubagentHook::on_subagent_stop
         // before the registry's terminal transition. A Block suppresses
@@ -405,6 +429,26 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
                 );
             }
             reclaim_delivered_child(&agent_registry, &handshake.handles, fork_id);
+        }
+
+        // Hooks, result delivery, and reclamation are await points after the
+        // first terminal sweep. The mailbox is already closed, so no new
+        // direct send can succeed, but drain once more before dropping the
+        // controller to preserve any buffer item accepted before closure.
+        let mut stranded = inbound_rx.drain();
+        if let Some(closed) = closed_mailbox.as_ref()
+            && let Err(error) = persist_undelivered_after_close(
+                pending_messages.as_ref(),
+                closed,
+                &mut stranded,
+                UndeliveredWindow::Deregistration,
+            )
+        {
+            tracing::error!(
+                fork_id = %fork_id,
+                %error,
+                "failed to persist fork messages accepted before terminal mailbox closure",
+            );
         }
     });
 

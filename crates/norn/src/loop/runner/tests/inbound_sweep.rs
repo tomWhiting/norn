@@ -79,10 +79,10 @@ async fn exit_sweeps_undrained_channel_messages_into_pending_store() -> TestResu
         content: "steer accepted mid-call",
         kind: crate::r#loop::inbound::MessageKind::Steer,
     };
-    let store = EventStore::new();
+    let store = Arc::new(EventStore::new());
     let executor = MockToolExecutor::empty();
     let agent_id = uuid::Uuid::new_v4();
-    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id);
+    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id, &store)?;
 
     let err = match run_agent_step(AgentStepRequest {
         provider: &provider,
@@ -147,10 +147,10 @@ async fn timeout_arm_sweeps_undrained_channel_messages_into_pending_store() -> R
         tx,
         content: "accepted before timeout",
     };
-    let store = EventStore::new();
+    let store = Arc::new(EventStore::new());
     let executor = MockToolExecutor::empty();
     let agent_id = uuid::Uuid::new_v4();
-    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id);
+    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id, &store)?;
     let config = AgentLoopConfig {
         step_timeout: Some(Duration::from_millis(100)),
         ..AgentLoopConfig::default()
@@ -248,7 +248,7 @@ async fn full_try_send_hands_retained_message_to_awaited_send_losslessly()
 /// A step that ends through a stop boundary has already flushed its
 /// follow-ups into the conversation; nothing may be re-queued.
 #[tokio::test]
-async fn boundary_exit_leaves_nothing_to_requeue() {
+async fn boundary_exit_leaves_nothing_to_requeue() -> TestResult {
     let turn1 = vec![
         tool_call_delta("tc_read", Some("read_file"), r#"{"path":"f"}"#),
         done_event(StopReason::ToolUse),
@@ -257,7 +257,7 @@ async fn boundary_exit_leaves_nothing_to_requeue() {
     let turn2 = vec![text_delta("done"), done_event(StopReason::EndTurn)];
     let turn3 = vec![text_delta("final"), done_event(StopReason::EndTurn)];
     let provider = MockProvider::new(vec![turn1, turn2, turn3]);
-    let store = EventStore::new();
+    let store = Arc::new(EventStore::new());
     let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
     let executor = MockToolExecutor::new(handlers_sending_inbound(
         tx,
@@ -265,7 +265,7 @@ async fn boundary_exit_leaves_nothing_to_requeue() {
         crate::r#loop::inbound::MessageKind::Update,
     ));
     let agent_id = uuid::Uuid::new_v4();
-    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id);
+    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id, &store)?;
 
     let result = run_step_with(
         StepArgs {
@@ -298,6 +298,7 @@ async fn boundary_exit_leaves_nothing_to_requeue() {
         delivered,
         "the boundary flush must have injected the update"
     );
+    Ok(())
 }
 
 /// Regression (partial inbound-injection failure dropped acknowledged
@@ -360,17 +361,17 @@ async fn inbound_injection_sink_failure_requeues_undelivered_remainder() -> Test
     let executor = MockToolExecutor::new(handlers);
 
     let tripped = Arc::new(AtomicBool::new(false));
-    let store = EventStore::with_sink(Box::new(FailOnMarkerSink {
+    let store = Arc::new(EventStore::with_sink(Box::new(FailOnMarkerSink {
         marker: "steer-2",
         tripped: Arc::clone(&tripped),
-    }));
+    })));
 
     let provider = MockProvider::new(vec![vec![
         tool_call_delta("tc_read", Some("read_file"), r#"{"path":"f"}"#),
         done_event(StopReason::ToolUse),
     ]]);
     let agent_id = uuid::Uuid::new_v4();
-    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id);
+    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id, &store)?;
 
     let err = match run_agent_step(AgentStepRequest {
         provider: &provider,

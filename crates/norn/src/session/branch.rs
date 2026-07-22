@@ -60,7 +60,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-#[cfg(test)]
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -87,6 +87,23 @@ use materialize::materialize_child;
 /// The canonical path address of a primary line (a root session). Child
 /// addresses nest under it: `root/fork-1a2b3c4d/spawn-9e8f7a6b`.
 pub const ROOT_PATH_ADDRESS: &str = "root";
+
+/// Stable identity of one session mailbox.
+///
+/// Runtime agent ids are deliberately not used for durable mailbox ownership:
+/// a resumed session receives a fresh runtime id, while a fork inherits a
+/// prefix of its parent's timeline. Persistent bindings therefore use the
+/// immutable session-index generation; ephemeral bindings mint one identity
+/// for their in-process lifetime.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct MailboxId(Uuid);
+
+impl MailboxId {
+    const fn from_generation(generation: Uuid) -> Self {
+        Self(generation)
+    }
+}
 
 /// Persist-vs-ephemeral axis for child timelines.
 ///
@@ -264,6 +281,7 @@ enum Persistence {
 /// parent-log append, index insert, and child-file creation (review §8).
 pub struct SessionBinding {
     path_address: String,
+    mailbox_id: MailboxId,
     persistence: Persistence,
     /// Ever-used child names (last path segments) minted by THIS agent —
     /// seeded from replayed `ChildBranch` events whose
@@ -292,6 +310,7 @@ impl SessionBinding {
     pub fn ephemeral_root() -> Self {
         Self {
             path_address: ROOT_PATH_ADDRESS.to_owned(),
+            mailbox_id: MailboxId(Uuid::new_v4()),
             persistence: Persistence::Ephemeral,
             used_names: Mutex::new(HashSet::new()),
         }
@@ -336,6 +355,7 @@ impl SessionBinding {
         }
         Self {
             path_address,
+            mailbox_id: MailboxId::from_generation(registered.generation),
             persistence: Persistence::Persistent {
                 brancher,
                 registered: Box::new(registered.clone()),
@@ -348,6 +368,12 @@ impl SessionBinding {
     #[must_use]
     pub fn path_address(&self) -> &str {
         &self.path_address
+    }
+
+    /// Stable durable-mailbox identity for this exact session generation.
+    #[must_use]
+    pub const fn mailbox_id(&self) -> MailboxId {
+        self.mailbox_id
     }
 
     /// This agent's own session id (`None` = ephemeral).
@@ -463,6 +489,49 @@ mod tests {
             child_path_slug("root/fork-1a2b3c4d/spawn-9e8f7a6b"),
             "fork-1a2b3c4d--spawn-9e8f7a6b",
         );
+    }
+
+    #[test]
+    fn mailbox_identity_is_stable_only_for_one_persistent_generation() {
+        let root = persistent_root();
+        let same_generation = SessionBinding::persistent_root(
+            Arc::new(SessionBrancher::new(
+                root.manager.clone(),
+                root.id.clone(),
+                DurabilityPolicy::Flush,
+            )),
+            &root.entry,
+            &[],
+        );
+        assert_eq!(root.binding.mailbox_id(), same_generation.mailbox_id());
+
+        let mut replacement = root.entry.clone();
+        replacement.generation = Uuid::new_v4();
+        let replacement_binding = SessionBinding::persistent_root(
+            Arc::new(SessionBrancher::new(
+                root.manager.clone(),
+                root.id.clone(),
+                DurabilityPolicy::Flush,
+            )),
+            &replacement,
+            &[],
+        );
+        assert_ne!(root.binding.mailbox_id(), replacement_binding.mailbox_id());
+    }
+
+    #[test]
+    fn ephemeral_roots_and_children_mint_distinct_mailboxes() {
+        let first = SessionBinding::ephemeral_root();
+        let second = SessionBinding::ephemeral_root();
+        assert_ne!(first.mailbox_id(), second.mailbox_id());
+
+        let child = first
+            .branch_child(
+                &EventStore::new(),
+                &request("worker", ChildDurability::Ephemeral),
+            )
+            .unwrap();
+        assert_ne!(first.mailbox_id(), child.binding.mailbox_id());
     }
 
     #[test]

@@ -229,8 +229,17 @@ pub struct LoopContext {
     /// `signal_agent` writes here when a resolved, in-scope recipient has no
     /// live router route but can still have a future consumer. The runner
     /// drains the current agent's queue at step start and injects those
-    /// messages through the normal `<agent_message>` path.
+    /// messages through the normal `<agent_message>` path. Coordination-aware
+    /// embedders should install this through [`Self::install_pending_mailbox`]
+    /// instead of assigning the field directly, so the durable store, mailbox
+    /// identity, and controller lifetime remain one validated unit.
     pub pending_agent_messages: Option<Arc<crate::agent::PendingAgentMessages>>,
+
+    /// Root-controller proof keeping its durable mailbox registration live.
+    /// The mailbox registry itself stores only a weak reference, so a root
+    /// that is dropped cannot remain an apparently deliverable recipient just
+    /// because another handle still retains its event store.
+    pub(crate) pending_mailbox_lease: Option<Arc<crate::agent::PendingMailboxLease>>,
 
     /// Guard binding the agent's in-session schedule executor
     /// ([`crate::schedule::executor`]) to this loop's lifetime.
@@ -396,6 +405,7 @@ impl LoopContext {
             action_log: None,
             agent_id: None,
             pending_agent_messages: None,
+            pending_mailbox_lease: None,
             schedule_executor: None,
             process_manager: None,
             context_loader: None,
@@ -424,6 +434,49 @@ impl LoopContext {
         ));
         ctx.working_dir = working_dir;
         ctx
+    }
+
+    /// Install the durable pending-message mailbox used by public step runners.
+    ///
+    /// The mailbox identity comes from the session binding rather than the
+    /// runtime agent id, so resume can safely use a fresh runtime id while a
+    /// fork cannot claim its parent's queued messages. Existing queue rows are
+    /// rebuilt from the exact store before any context field is published.
+    /// The retained controller lease keeps the registration live for this
+    /// context's lifetime.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed session error when the context already carries a
+    /// conflicting coordination identity or the durable queue history is
+    /// malformed.
+    pub fn install_pending_mailbox(
+        &mut self,
+        agent_id: Uuid,
+        binding: &crate::session::SessionBinding,
+        store: &Arc<crate::session::store::EventStore>,
+    ) -> Result<Arc<crate::agent::PendingAgentMessages>, crate::error::SessionError> {
+        if self.pending_agent_messages.is_some()
+            || self.pending_mailbox_lease.is_some()
+            || self.agent_id.is_some_and(|current| current != agent_id)
+        {
+            return Err(crate::error::SessionError::StorageError {
+                reason: "loop context already has a different pending-message mailbox".to_owned(),
+            });
+        }
+
+        let pending = Arc::new(crate::agent::PendingAgentMessages::from_events(
+            agent_id,
+            binding.mailbox_id(),
+            &store.events(),
+        )?);
+        let lease = Arc::new(crate::agent::PendingMailboxLease::new());
+        pending.register_root_mailbox(agent_id, binding.mailbox_id(), store, &lease)?;
+
+        self.agent_id = Some(agent_id);
+        self.pending_agent_messages = Some(Arc::clone(&pending));
+        self.pending_mailbox_lease = Some(lease);
+        Ok(pending)
     }
 }
 
