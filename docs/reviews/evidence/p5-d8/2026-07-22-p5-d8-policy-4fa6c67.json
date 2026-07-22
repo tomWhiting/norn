@@ -1,0 +1,5697 @@
+{
+  "added_line_audit": {
+    "permitted_cfg_test_matches": {
+      "expect": [
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 229,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect_err(\"a zero deadline must be rejected\");"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 254,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect_err(\"a zero deadline must be rejected\");"
+        },
+        {
+          "file": "crates/norn-cli/tests/assembly_flag_wiring.rs",
+          "line": 53,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "resolve_profile_with_origin(cli.profile.as_deref()).expect(\"resolve profile\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 10,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 29,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 39,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 44,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 93,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let norn_home = tempfile::tempdir().expect(\"norn_home\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 98,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "std::fs::create_dir(norn_home.path().join(sub)).expect(\"mk norn subdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 104,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let outside = tempfile::tempdir().expect(\"outside\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 106,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "std::fs::create_dir(&outside_skills).expect(\"mk outside skills\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 112,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let workspace = tempfile::tempdir().expect(\"workspace\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 120,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"write settings\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 134,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 139,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 142,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let canon = |p: &std::path::Path| p.canonicalize().expect(\"canonicalize\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 185,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 210,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 231,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 245,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 250,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"root build installs a typed prompt plan\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 266,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 275,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 281,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"diagnostic infra installs hook registry\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 287,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 294,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 301,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 313,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 319,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"hooks installed\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 15,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 19,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 22,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"SharedAgentEventChannel must be installed for child streaming\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 23,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let mut handle_rx = agent.handle().subscribe().expect(\"subscribe\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 33,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"handle subscription keeps the channel open\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 34,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let received = handle_rx.try_recv().expect(\"event arrives\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 50,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"sender available as soon as the capacity is set\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 51,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let agent = builder.build().expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 55,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"sender available on the handle\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 107,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 120,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 127,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"cancelled run returns Ok(Stopped)\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 168,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 183,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 206,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 221,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"cancelled run returns Ok(Stopped) with a Cancelled reason\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 241,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"first run succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 245,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"event store returned\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 256,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"resumed run succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+          "line": 260,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"event store returned\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 10,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 22,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 52,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 70,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 80,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 103,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 108,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 135,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 144,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 159,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 179,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 185,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"explicit window arms an uncatalogued model\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 194,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 224,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 229,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 234,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 259,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 260,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "std::fs::create_dir_all(temp.path().join(\".norn\")).expect(\"mkdir .norn\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 265,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"write settings\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 273,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 278,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 281,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"settings.permissions must be installed on the embedded path\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 299,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 300,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "std::fs::create_dir_all(temp.path().join(\".norn\")).expect(\"mkdir .norn\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 305,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"write settings\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 323,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"one scripted turn\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 332,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"run completes\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 337,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"event store returned\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 389,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"append assistant message\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 399,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"append tool result\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 407,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 413,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"action log installed\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 416,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"resumed tool call must be queryable again\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 7,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 14,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 19,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 21,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"runtime base task store is installed on the active tool context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 33,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 39,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"loop context action log is populated after build\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 44,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 46,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"tool context publishes the ActionLog extension\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 64,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 69,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 72,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"tool context publishes the ActionLog extension\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 88,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let tool = agent.registry.get(\"action_log\").expect(\"action_log tool\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 98,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"action_log list query runs through the built context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 116,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 121,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 130,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"the root context must publish ParentPromptPlan\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 145,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"the root context must publish AgentModel\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 167,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 172,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 174,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"custom extension is retrievable through the builder hook\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 186,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+          "line": 227,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"a fully-excluded tool set must still build\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 13,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 37,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 51,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"a shared hook Arc must not fail the build\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 57,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"merged hook registry installed\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 90,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 102,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 107,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 109,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"the merged hook registry must be published on the tool context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 114,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"loop context carries the merged registry\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 131,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 141,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 147,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"loop context diagnostics populated\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 155,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 157,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"tool context publishes a diagnostic collector\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 182,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 187,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 231,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 245,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"spawn_agent dispatches through the built context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 246,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let child_id = Uuid::parse_str(out[\"agent_id\"].as_str().expect(\"agent_id string\"))"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 247,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"agent_id is a uuid\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 253,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"loop holds the child result receiver\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 256,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"child result must arrive without timing out\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 257,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"channel open\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 272,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 275,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"AgentHandles installed\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 15,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 27,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"run succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 53,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 77,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 81,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"event channel configured \u2014 subscribe must succeed\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 82,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let output = agent.run(\"go\").await.expect(\"run succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 99,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 250,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 255,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 257,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"CoordinationEnvelope published on the shared context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 283,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 288,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"shared tool context\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 290,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"AgentCancellation published on the shared context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 318,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 322,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"shared tool context\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 324,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"AgentToolInfra installed\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 340,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 344,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"shared tool context\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 346,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"AgentToolInfra installed\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 11,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let outer = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 13,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "std::fs::create_dir(&root).expect(\"mkdir ws\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 15,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "std::fs::write(&secret, \"outside the workspace\").expect(\"write secret\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 17,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "std::fs::write(&inside, \"inside the workspace\").expect(\"write inside\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 25,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 29,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 30,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let tool = agent.registry.get(\"read\").expect(\"read tool present\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 42,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"confinement refusal is a structured tool error\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 59,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"in-root read executes\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 69,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let outer = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 71,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "std::fs::create_dir(&root).expect(\"mkdir ws\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 73,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "std::fs::write(&elsewhere, \"reachable\").expect(\"write file\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 80,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 84,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 89,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let tool = agent.registry.get(\"read\").expect(\"read tool present\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 103,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"unconfined read executes\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 111,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 131,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 133,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "std::fs::write(&file, \"not a dir\").expect(\"write file\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 160,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 171,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"bash executes\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 11,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 12,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let sessions = tempfile::tempdir().expect(\"session dir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 22,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"first build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 24,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let outcome = first.run(\"attempt one\").await.expect(\"first run succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 33,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"retry build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 34,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let replay = retry.session_replay().expect(\"resume surfaced replay\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 40,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "manager.list().expect(\"index readable\").len(),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 48,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let sessions = tempfile::tempdir().expect(\"session dir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 72,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let sessions = tempfile::tempdir().expect(\"session dir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 101,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let sessions = tempfile::tempdir().expect(\"session dir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 124,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 125,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let sessions = tempfile::tempdir().expect(\"session dir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 140,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"source build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 141,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let source_id = source.session_entry().expect(\"source entry\").id.clone();"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 142,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let outcome = source.run(\"seed history\").await.expect(\"source run\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 144,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let (_, source_read) = manager.read_events(&source_id).expect(\"source readable\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 157,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"fork build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 158,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let fork_entry = fork.session_entry().expect(\"fork entry\").clone();"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 160,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let replay = fork.session_replay().expect(\"fork replay\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 166,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let outcome = fork.run(\"continue on fork\").await.expect(\"fork run\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 169,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let (_, source_after) = manager.read_events(&source_id).expect(\"source readable\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/provider_surface.rs",
+          "line": 11,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"registry exposes its shared tool context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/provider_surface.rs",
+          "line": 15,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"tool_search registered\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/provider_surface.rs",
+          "line": 25,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"tool_search runs through the built context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/provider_surface.rs",
+          "line": 28,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"results array\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/provider_surface.rs",
+          "line": 31,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"web_search entry present in catalog dump\")[\"description\"]"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/provider_surface.rs",
+          "line": 33,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"description is a string\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/provider_surface.rs",
+          "line": 64,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"hosted build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/provider_surface.rs",
+          "line": 82,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let outcome = agent.run(\"go\").await.expect(\"hosted run succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/provider_surface.rs",
+          "line": 83,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let requests = hosted_provider.requests().expect(\"requests recorded\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/provider_surface.rs",
+          "line": 105,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"event store returned\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/provider_surface.rs",
+          "line": 113,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"resumed build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/provider_surface.rs",
+          "line": 132,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let outcome = agent.run(\"again\").await.expect(\"resumed run succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/provider_surface.rs",
+          "line": 134,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let requests = plain_provider.requests().expect(\"requests recorded\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 16,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"a zero-tool agent must build\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 27,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"system prompt section assembled\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 45,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 53,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"shared tool context\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 55,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"ScheduleHandle installed at assembly\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 74,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 94,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"record\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 100,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"persist created\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 109,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"resume build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 113,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"shared tool context\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 115,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"ScheduleHandle installed\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 116,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let restored = handle.store.get(id).expect(\"pending schedule restored\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 137,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 141,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"shared tool context\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 143,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"ScheduleHandle installed\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 153,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"record\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+          "line": 164,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let frozen = handle.store.get(id).expect(\"record still pending\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/schema_and_model.rs",
+          "line": 34,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/schema_and_model.rs",
+          "line": 41,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let json = serde_json::to_string(agent.loop_config()).expect(\"config serializes\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/schema_and_model.rs",
+          "line": 42,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let back: AgentLoopConfig = serde_json::from_str(&json).expect(\"config deserializes\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/schema_and_model.rs",
+          "line": 48,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"partial config deserializes\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/schema_and_model.rs",
+          "line": 63,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/schema_and_model.rs",
+          "line": 72,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/schema_and_model.rs",
+          "line": 88,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/schema_and_model.rs",
+          "line": 96,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/schema_and_model.rs",
+          "line": 106,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/schema_and_model.rs",
+          "line": 114,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 128,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 129,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let sessions = tempfile::tempdir().expect(\"session dir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 145,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 146,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let entry_id = agent.session_entry().expect(\"entry\").id.clone();"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 150,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"shared tool context\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 152,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"coordination infra installed\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 173,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 177,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"shared tool context\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 179,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"coordination infra installed\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 215,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 219,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"shared tool context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 237,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"spawn under an ephemeral root succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 257,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"the no-session root's store carries the ChildBranch reservation\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 282,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 283,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let sessions = tempfile::tempdir().expect(\"session dir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 302,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"run succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 306,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"event store returned\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 314,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"post-run append accepted\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 316,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let index = crate::session::read_index(sessions.path()).expect(\"index\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+          "line": 319,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "crate::session::read_session_events(sessions.path(), &entry.id).expect(\"session readable\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/setters.rs",
+          "line": 16,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/setters.rs",
+          "line": 21,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"event schemas installed on the loop context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/setters.rs",
+          "line": 42,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/setters.rs",
+          "line": 47,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"variable store installed on the loop context\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/setters.rs",
+          "line": 65,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": "let temp = tempfile::tempdir().expect(\"tempdir\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/setters.rs",
+          "line": 96,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/setters.rs",
+          "line": 118,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/setters.rs",
+          "line": 123,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"shared tool context\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/setters.rs",
+          "line": 138,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/setters.rs",
+          "line": 143,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"shared tool context\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/setters.rs",
+          "line": 164,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"build succeeds\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/setters.rs",
+          "line": 168,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(\"root entry reserved and confirmed\");"
+        },
+        {
+          "file": "crates/norn/src/agent/prompt_install.rs",
+          "line": 221,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": "let root = tempfile::tempdir().expect(\"temporary skill root\");"
+        },
+        {
+          "file": "crates/norn/src/agent/prompt_install.rs",
+          "line": 225,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": "fs::create_dir_all(operator_skills.join(\"trusted\")).expect(\"operator skill directory\");"
+        },
+        {
+          "file": "crates/norn/src/agent/prompt_install.rs",
+          "line": 226,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": "fs::create_dir_all(workspace_skills.join(\"repository\")).expect(\"workspace skill directory\");"
+        },
+        {
+          "file": "crates/norn/src/agent/prompt_install.rs",
+          "line": 231,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": ".expect(\"operator skill\");"
+        },
+        {
+          "file": "crates/norn/src/agent/prompt_install.rs",
+          "line": 236,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": ".expect(\"workspace skill\");"
+        },
+        {
+          "file": "crates/norn/src/agent/prompt_install.rs",
+          "line": 237,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": "let workspace_root = workspace.canonicalize().expect(\"canonical workspace root\");"
+        },
+        {
+          "file": "crates/norn/src/agent/prompt_install.rs",
+          "line": 275,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": ".expect(\"root prompt installation must publish a typed plan\");"
+        },
+        {
+          "file": "crates/norn/src/agent/prompt_install.rs",
+          "line": 323,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": ".expect(\"workspace catalog fragment must be retained\");"
+        },
+        {
+          "file": "crates/norn/src/agent/prompt_install.rs",
+          "line": 333,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": ".expect(\"operator skill remains in compatibility view\");"
+        },
+        {
+          "file": "crates/norn/src/agent/prompt_install.rs",
+          "line": 337,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": ".expect(\"workspace skill remains in compatibility view\");"
+        },
+        {
+          "file": "crates/norn/src/agent/prompt_install.rs",
+          "line": 347,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": ".expect(\"root typed plan remains installed after gating\");"
+        },
+        {
+          "file": "crates/norn/src/agent/prompt_install.rs",
+          "line": 378,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": ".expect(\"root prompt installation must publish a typed plan\");"
+        },
+        {
+          "file": "crates/norn/src/agent/prompt_install.rs",
+          "line": 388,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": ".expect(\"operator override must be present\");"
+        },
+        {
+          "file": "crates/norn/src/agent/variants/catalog.rs",
+          "line": 445,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": "catalog.get(\"scout\").expect(\"scout\").prompt_origin,"
+        },
+        {
+          "file": "crates/norn/src/loop/runner/tests/d8_prompt_seed.rs",
+          "line": 108,
+          "scanner_category": "expect",
+          "scope": "test_only_file",
+          "text": ".expect(response_count)"
+        },
+        {
+          "file": "crates/norn/src/skill/loader.rs",
+          "line": 658,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": ".expect(\"canonical workspace root\");"
+        },
+        {
+          "file": "crates/norn/src/skill/loader.rs",
+          "line": 660,
+          "scanner_category": "expect",
+          "scope": "cfg_test_item",
+          "text": "let skill = load_workspace_skill_from_path(&workspace_root, &path).expect(\"loads\");"
+        }
+      ],
+      "lint_suppression": [
+        {
+          "file": "crates/norn/src/agent/builder.rs",
+          "line": 159,
+          "scanner_category": "allow_or_expect_attr",
+          "scope": "cfg_test_item",
+          "text": "#[allow(clippy::expect_used, clippy::panic)]"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 54,
+          "scanner_category": "allow_or_expect_attr",
+          "scope": "test_only_file",
+          "text": "#[allow(unsafe_code)]"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 59,
+          "scanner_category": "allow_or_expect_attr",
+          "scope": "test_only_file",
+          "text": "#[allow(unsafe_code)]"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 70,
+          "scanner_category": "allow_or_expect_attr",
+          "scope": "test_only_file",
+          "text": "#[allow(unsafe_code)]"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 91,
+          "scanner_category": "allow_or_expect_attr",
+          "scope": "test_only_file",
+          "text": "#[allow(clippy::unwrap_used)]"
+        }
+      ],
+      "panic": [
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 121,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "other @ BuildError::Auth(_) => panic!(\"expected Argument, got {other:?}\"),"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 241,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "other @ BuildError::Auth(_) => panic!(\"expected Argument, got {other:?}\"),"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 266,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "other @ BuildError::Auth(_) => panic!(\"expected Argument, got {other:?}\"),"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 104,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "other @ BuildError::Auth(_) => panic!(\"expected Argument, got {other:?}\"),"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 127,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "other @ BuildError::Auth(_) => panic!(\"expected Argument, got {other:?}\"),"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 305,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "other @ BuildError::Auth(_) => panic!(\"expected Argument, got {other:?}\"),"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/provider.rs",
+          "line": 154,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "other @ BuildError::Auth(_) => panic!(\"expected Argument, got {other:?}\"),"
+        },
+        {
+          "file": "crates/norn-cli/src/config/profile_loader.rs",
+          "line": 208,
+          "scanner_category": "panic",
+          "scope": "cfg_test_item",
+          "text": "panic!(\"missing explicit profile path must fail\");"
+        },
+        {
+          "file": "crates/norn-cli/src/config/profile_loader.rs",
+          "line": 288,
+          "scanner_category": "panic",
+          "scope": "cfg_test_item",
+          "text": "panic!(\"missing named profile must fail\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "line": 326,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "panic!(\"user hook should block first\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 165,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "panic!(\"uncatalogued model with no window must be rejected\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+          "line": 201,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "panic!(\"explicit window above the catalog maximum must be rejected\");"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+          "line": 65,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "panic!(\"the forwarded user stop hook must still block\")"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 58,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Err(other) => panic!(\"expected a typed config error, got: {other}\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/execution.rs",
+          "line": 59,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Ok(_) => panic!(\"prompt {prompt:?} must be rejected\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 122,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Err(other) => panic!(\"expected a config error, got: {other}\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 123,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Ok(_) => panic!(\"a missing workspace_root must fail the build\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 144,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Err(other) => panic!(\"expected a config error, got: {other}\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 145,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Ok(_) => panic!(\"a non-directory workspace_root must fail the build\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 200,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Err(other) => panic!(\"expected a config error, got: {other}\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+          "line": 201,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Ok(_) => panic!(\"bash_drain_grace without bash must fail the build\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 65,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Err(other) => panic!(\"expected a typed config error, got: {other}\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 66,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Ok(_) => panic!(\"session + open_session must fail the build\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 92,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Err(other) => panic!(\"expected a typed config error, got: {other}\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 93,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Ok(_) => panic!(\"open_session + explicit cache_key must fail the build\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 115,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Err(other) => panic!(\"expected a session error, got: {other}\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "line": 116,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Ok(_) => panic!(\"resuming a missing session must fail the build\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/mod.rs",
+          "line": 69,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Err(other) => panic!(\"expected a typed config error, got: {other}\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/mod.rs",
+          "line": 70,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Ok(_) => panic!(\"build must fail\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/schema_and_model.rs",
+          "line": 17,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Err(other) => panic!(\"expected a typed config error, got: {other}\"),"
+        },
+        {
+          "file": "crates/norn/src/agent/builder/tests/schema_and_model.rs",
+          "line": 18,
+          "scanner_category": "panic",
+          "scope": "test_only_file",
+          "text": "Ok(_) => panic!(\"a build with no model must fail, not assume one\"),"
+        }
+      ],
+      "unwrap": [
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests.rs",
+          "line": 9,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "Cli::try_parse_from(args).unwrap()"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 14,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_loop_config_overrides(&cli, &mut config).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 22,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_loop_config_overrides(&cli, &mut config).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 30,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_loop_config_overrides(&cli, &mut config).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 38,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let err = apply_loop_config_overrides(&cli, &mut config).unwrap_err();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 57,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": ".unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 62,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_loop_config_overrides(&cli, &mut config).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 90,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_settings_to_agent_config(&settings, &mut config).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 115,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let err = apply_settings_to_agent_config(&settings, &mut config).unwrap_err();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 140,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let policy = retry_policy_from_settings_and_overrides(&settings, &cli).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 158,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let policy = retry_policy_from_settings_and_overrides(&settings, &cli).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 170,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": ".unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 179,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "resolve_index_lock_deadline(&NornSettings::default(), &ConfigOverrides::default()).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 196,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let deadline = resolve_index_lock_deadline(&settings, &ConfigOverrides::default()).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+          "line": 214,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let deadline = resolve_index_lock_deadline(&settings, &overrides).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 14,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_cli_profile_overrides(&cli, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 25,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let applied = apply_cli_profile_overrides(&cli, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 41,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let applied = apply_cli_profile_overrides(&cli, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 59,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let applied = apply_cli_profile_overrides(&cli, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 75,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_cli_profile_overrides(&cli, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 86,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_cli_profile_overrides(&cli, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 97,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let err = apply_cli_profile_overrides(&cli, &mut profile).unwrap_err();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 115,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let err = apply_cli_profile_overrides(&cli, &mut profile).unwrap_err();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 142,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let applied = apply_cli_profile_overrides(&cli, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 157,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let applied = apply_cli_profile_overrides(&cli, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 167,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let applied = apply_cli_profile_overrides(&cli, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 180,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_cli_profile_overrides(&cli, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 189,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_cli_profile_overrides(&cli_low, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 191,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_cli_profile_overrides(&cli_medium, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 200,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_cli_profile_overrides(&cli_xhigh, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 202,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_cli_profile_overrides(&cli_max, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 210,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_cli_profile_overrides(&cli, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 215,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_cli_profile_overrides(&cli, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 229,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_cli_profile_overrides(&cli, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 247,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_settings_reasoning_to_profile(&settings, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 263,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_settings_reasoning_to_profile(&settings, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 281,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "apply_settings_reasoning_to_profile(&settings, &mut profile).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "line": 296,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let err = apply_settings_reasoning_to_profile(&settings, &mut profile).unwrap_err();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/provider.rs",
+          "line": 28,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let overrides = provider_overrides_from_settings(&settings).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/provider.rs",
+          "line": 149,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let err = provider_overrides_from_settings(&settings).unwrap_err();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/provider.rs",
+          "line": 173,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let mut overrides = provider_overrides_from_settings(&settings).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/provider.rs",
+          "line": 198,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let mut overrides = provider_overrides_from_settings(&settings).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/overrides/tests/provider.rs",
+          "line": 212,
+          "scanner_category": "unwrap",
+          "scope": "test_only_file",
+          "text": "let overrides = provider_overrides_from_settings(&settings).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/profile_loader.rs",
+          "line": 170,
+          "scanner_category": "unwrap",
+          "scope": "cfg_test_item",
+          "text": "let resolved = resolve_profile_with_origin(None).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/profile_loader.rs",
+          "line": 195,
+          "scanner_category": "unwrap",
+          "scope": "cfg_test_item",
+          "text": "let resolved = resolve_profile_with_origin(Some(path.to_str().unwrap())).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/profile_loader.rs",
+          "line": 231,
+          "scanner_category": "unwrap",
+          "scope": "cfg_test_item",
+          "text": "let resolved = resolve_profile_with_origin(Some(\"coding\")).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/profile_loader.rs",
+          "line": 253,
+          "scanner_category": "unwrap",
+          "scope": "cfg_test_item",
+          "text": "let resolved = resolve_profile_with_origin(Some(\"review\")).unwrap();"
+        },
+        {
+          "file": "crates/norn-cli/src/config/profile_loader.rs",
+          "line": 270,
+          "scanner_category": "unwrap",
+          "scope": "cfg_test_item",
+          "text": "let resolved = resolve_profile_with_origin(Some(\"dev\")).unwrap();"
+        },
+        {
+          "file": "crates/norn/src/skill/loader.rs",
+          "line": 652,
+          "scanner_category": "unwrap",
+          "scope": "cfg_test_item",
+          "text": "let root = tempdir().unwrap();"
+        }
+      ]
+    },
+    "production_matches": {
+      "expect": [],
+      "lint_suppression": [],
+      "panic": [],
+      "unwrap": []
+    },
+    "split_bypass_matches": {
+      "include_macro": [],
+      "path_attribute": []
+    },
+    "summary": {
+      "permitted_test_expect": 279,
+      "permitted_test_lint_suppression": 5,
+      "permitted_test_panic": 31,
+      "permitted_test_unwrap": 49,
+      "production_matches": 0,
+      "split_bypass_matches_any_scope": 0
+    },
+    "supplemental_scanner_matches": {
+      "cfg_attr_lint_suppression": [],
+      "include_macro": [],
+      "path_attribute": [],
+      "ufcs_expect": [],
+      "ufcs_unwrap": []
+    }
+  },
+  "boundary": {
+    "base": "05be10c40981460c00fed9acc306938ff93b40b2",
+    "base_tree": "266a3b5543c50cbe8d32dca9e6397f2fad86a3a4",
+    "diff": "05be10c40981460c00fed9acc306938ff93b40b2...4fa6c6756ed497a002b4281f51cbb14f7bd7a3eb",
+    "merge_base": "05be10c40981460c00fed9acc306938ff93b40b2",
+    "source": "4fa6c6756ed497a002b4281f51cbb14f7bd7a3eb",
+    "source_tree": "c0d9f69bb5283184432862016c1212644f7088c2"
+  },
+  "file_records": [
+    {
+      "base_physical_lines": 992,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn-cli/src/cli/args.rs",
+      "physical_lines": 993,
+      "production_code_lines": 217,
+      "removed_test_ranges": [
+        {
+          "end": 33825,
+          "start": 15669
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 31,
+      "classification": "production",
+      "file": "crates/norn-cli/src/config/mod.rs",
+      "physical_lines": 31,
+      "production_code_lines": 27,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 1523,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn-cli/src/config/overrides.rs",
+      "physical_lines": 64,
+      "production_code_lines": 22,
+      "removed_test_ranges": [
+        {
+          "end": 3261,
+          "start": 3172
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn-cli/src/config/overrides/loop_config.rs",
+      "physical_lines": 192,
+      "production_code_lines": 154,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn-cli/src/config/overrides/process.rs",
+      "physical_lines": 18,
+      "production_code_lines": 12,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn-cli/src/config/overrides/profile.rs",
+      "physical_lines": 159,
+      "production_code_lines": 128,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn-cli/src/config/overrides/provider.rs",
+      "physical_lines": 138,
+      "production_code_lines": 120,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn-cli/src/config/overrides/tests.rs",
+      "physical_lines": 10,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 162,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+      "physical_lines": 268,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 9870,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+      "physical_lines": 307,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 10879,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn-cli/src/config/overrides/tests/provider.rs",
+      "physical_lines": 319,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 12065,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 288,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn-cli/src/config/profile_loader.rs",
+      "physical_lines": 301,
+      "production_code_lines": 54,
+      "removed_test_ranges": [
+        {
+          "end": 11280,
+          "start": 4797
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 1124,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn-cli/src/print/orchestrator.rs",
+      "physical_lines": 1125,
+      "production_code_lines": 438,
+      "removed_test_ranges": [
+        {
+          "end": 46994,
+          "start": 34626
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 374,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn-cli/src/runtime/from_cli.rs",
+      "physical_lines": 389,
+      "production_code_lines": 133,
+      "removed_test_ranges": [
+        {
+          "end": 16292,
+          "start": 11427
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 711,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn-cli/src/runtime/resolve.rs",
+      "physical_lines": 774,
+      "production_code_lines": 157,
+      "removed_test_ranges": [
+        {
+          "end": 30789,
+          "start": 11511
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 350,
+      "classification": "test_only",
+      "file": "crates/norn-cli/src/runtime/wiring/inline_tests.rs",
+      "physical_lines": 351,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 13795,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 357,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn-cli/src/tui/driver.rs",
+      "physical_lines": 358,
+      "production_code_lines": 211,
+      "removed_test_ranges": [
+        {
+          "end": 14420,
+          "start": 11585
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 157,
+      "classification": "test_only",
+      "file": "crates/norn-cli/tests/assembly_acceptance.rs",
+      "physical_lines": 159,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 6216,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 348,
+      "classification": "test_only",
+      "file": "crates/norn-cli/tests/assembly_conformance.rs",
+      "physical_lines": 357,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 13848,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 751,
+      "classification": "test_only",
+      "file": "crates/norn-cli/tests/assembly_flag_wiring.rs",
+      "physical_lines": 762,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 28369,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 115,
+      "classification": "test_only",
+      "file": "crates/norn-cli/tests/session_resume_working_dir.rs",
+      "physical_lines": 124,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 5039,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 559,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn-tui/src/app/rotation.rs",
+      "physical_lines": 555,
+      "production_code_lines": 65,
+      "removed_test_ranges": [
+        {
+          "end": 24601,
+          "start": 9160
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 397,
+      "classification": "production",
+      "file": "crates/norn-tui/src/app/turn/run.rs",
+      "physical_lines": 395,
+      "production_code_lines": 348,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 1618,
+      "classification": "test_only",
+      "file": "crates/norn-tui/tests/pty_smoke.rs",
+      "physical_lines": 1616,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 53046,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 1171,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/agent/arming.rs",
+      "physical_lines": 403,
+      "production_code_lines": 224,
+      "removed_test_ranges": [
+        {
+          "end": 18905,
+          "start": 18882
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/arming/tests.rs",
+      "physical_lines": 4,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 86,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/arming/tests/auto_compaction.rs",
+      "physical_lines": 201,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 7469,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/arming/tests/child_configuration.rs",
+      "physical_lines": 287,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 10071,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/arming/tests/process_manager.rs",
+      "physical_lines": 109,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 4576,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/arming/tests/skill_listing.rs",
+      "physical_lines": 191,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 7149,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 1117,
+      "classification": "production",
+      "file": "crates/norn/src/agent/assembly.rs",
+      "physical_lines": 17,
+      "production_code_lines": 14,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/agent/assembly/paths.rs",
+      "physical_lines": 129,
+      "production_code_lines": 91,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/agent/assembly/runtime.rs",
+      "physical_lines": 22,
+      "production_code_lines": 11,
+      "removed_test_ranges": [
+        {
+          "end": 748,
+          "start": 725
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/agent/assembly/runtime/base.rs",
+      "physical_lines": 214,
+      "production_code_lines": 126,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/agent/assembly/runtime/config.rs",
+      "physical_lines": 152,
+      "production_code_lines": 115,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/agent/assembly/runtime/infra.rs",
+      "physical_lines": 40,
+      "production_code_lines": 18,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/agent/assembly/runtime/session.rs",
+      "physical_lines": 38,
+      "production_code_lines": 27,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/assembly/runtime/tests.rs",
+      "physical_lines": 242,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 9265,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/agent/assembly/tooling.rs",
+      "physical_lines": 179,
+      "production_code_lines": 140,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 3983,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/agent/builder.rs",
+      "physical_lines": 160,
+      "production_code_lines": 88,
+      "removed_test_ranges": [
+        {
+          "end": 6324,
+          "start": 6277
+        },
+        {
+          "end": 6382,
+          "start": 6325
+        },
+        {
+          "end": 6426,
+          "start": 6383
+        },
+        {
+          "end": 6485,
+          "start": 6427
+        },
+        {
+          "end": 6555,
+          "start": 6487
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/agent/builder/build.rs",
+      "physical_lines": 494,
+      "production_code_lines": 359,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/agent/builder/init.rs",
+      "physical_lines": 68,
+      "production_code_lines": 62,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/agent/builder/prompt.rs",
+      "physical_lines": 71,
+      "production_code_lines": 55,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+      "physical_lines": 329,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 11454,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+      "physical_lines": 265,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 9512,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/builder/tests/compaction.rs",
+      "physical_lines": 422,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 15583,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+      "physical_lines": 233,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 7666,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/builder/tests/coordination.rs",
+      "physical_lines": 278,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 10371,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/builder/tests/execution.rs",
+      "physical_lines": 351,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 12764,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+      "physical_lines": 203,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 7690,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+      "physical_lines": 175,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 6612,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/builder/tests/mod.rs",
+      "physical_lines": 86,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 2727,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/builder/tests/provider_surface.rs",
+      "physical_lines": 150,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 5706,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/builder/tests/scheduling.rs",
+      "physical_lines": 177,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 6532,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/builder/tests/schema_and_model.rs",
+      "physical_lines": 120,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 4894,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/builder/tests/session_creation.rs",
+      "physical_lines": 329,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 12189,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/builder/tests/setters.rs",
+      "physical_lines": 192,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 6620,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 660,
+      "classification": "production",
+      "file": "crates/norn/src/agent/builder_setters.rs",
+      "physical_lines": 675,
+      "production_code_lines": 304,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 445,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/agent/fork.rs",
+      "physical_lines": 455,
+      "production_code_lines": 283,
+      "removed_test_ranges": [
+        {
+          "end": 17182,
+          "start": 17144
+        },
+        {
+          "end": 17220,
+          "start": 17183
+        },
+        {
+          "end": 17251,
+          "start": 17221
+        },
+        {
+          "end": 17282,
+          "start": 17252
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 337,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/fork/context_schema_tests.rs",
+      "physical_lines": 328,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 11654,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/fork/parent_prompt_tests.rs",
+      "physical_lines": 32,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 1192,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 209,
+      "classification": "test_only",
+      "file": "crates/norn/src/agent/fork/result_tests.rs",
+      "physical_lines": 224,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 7622,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 68,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/agent/mod.rs",
+      "physical_lines": 69,
+      "production_code_lines": 54,
+      "removed_test_ranges": [
+        {
+          "end": 2179,
+          "start": 2136
+        },
+        {
+          "end": 2229,
+          "start": 2180
+        },
+        {
+          "end": 2279,
+          "start": 2230
+        },
+        {
+          "end": 2322,
+          "start": 2280
+        },
+        {
+          "end": 2371,
+          "start": 2323
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 243,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/agent/prompt_install.rs",
+      "physical_lines": 451,
+      "production_code_lines": 90,
+      "removed_test_ranges": [
+        {
+          "end": 16960,
+          "start": 5737
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/agent/skill_prompt.rs",
+      "physical_lines": 126,
+      "production_code_lines": 109,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 525,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/agent/variants/catalog.rs",
+      "physical_lines": 556,
+      "production_code_lines": 186,
+      "removed_test_ranges": [
+        {
+          "end": 21052,
+          "start": 10555
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 11,
+      "classification": "production",
+      "file": "crates/norn/src/agent/variants/mod.rs",
+      "physical_lines": 11,
+      "production_code_lines": 3,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 847,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/context/loader.rs",
+      "physical_lines": 881,
+      "production_code_lines": 251,
+      "removed_test_ranges": [
+        {
+          "end": 34574,
+          "start": 16693
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 38,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/context/mod.rs",
+      "physical_lines": 40,
+      "production_code_lines": 6,
+      "removed_test_ranges": [
+        {
+          "end": 1865,
+          "start": 1830
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/context/rule_origin_tests.rs",
+      "physical_lines": 50,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 1932,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 1226,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/context/scanner.rs",
+      "physical_lines": 1232,
+      "production_code_lines": 295,
+      "removed_test_ranges": [
+        {
+          "end": 51235,
+          "start": 21053
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 728,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/integration/claude/adapter.rs",
+      "physical_lines": 737,
+      "production_code_lines": 407,
+      "removed_test_ranges": [
+        {
+          "end": 18976,
+          "start": 18938
+        },
+        {
+          "end": 27436,
+          "start": 18978
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/integration/claude/adapter/role_authority_tests.rs",
+      "physical_lines": 148,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 5153,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 1644,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/integration/rhai/agent_ops.rs",
+      "physical_lines": 16,
+      "production_code_lines": 8,
+      "removed_test_ranges": [
+        {
+          "end": 319,
+          "start": 296
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/integration/rhai/agent_ops/signal.rs",
+      "physical_lines": 192,
+      "production_code_lines": 181,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/integration/rhai/agent_ops/spawn.rs",
+      "physical_lines": 293,
+      "production_code_lines": 274,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/integration/rhai/agent_ops/tests/mod.rs",
+      "physical_lines": 7,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 132,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/integration/rhai/agent_ops/tests/prompt_authority.rs",
+      "physical_lines": 239,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 8192,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/integration/rhai/agent_ops/tests/signal.rs",
+      "physical_lines": 195,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 7272,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/integration/rhai/agent_ops/tests/spawn_compaction.rs",
+      "physical_lines": 163,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 5808,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/integration/rhai/agent_ops/tests/spawn_persistence.rs",
+      "physical_lines": 114,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 4197,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/integration/rhai/agent_ops/tests/spawn_policy.rs",
+      "physical_lines": 94,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 3192,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/integration/rhai/agent_ops/tests/spawn_resolution.rs",
+      "physical_lines": 165,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 6008,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/integration/rhai/agent_ops/tests/support.rs",
+      "physical_lines": 80,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 2639,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 1497,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/loop/compaction.rs",
+      "physical_lines": 1496,
+      "production_code_lines": 278,
+      "removed_test_ranges": [
+        {
+          "end": 54760,
+          "start": 17495
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 686,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/loop/config.rs",
+      "physical_lines": 693,
+      "production_code_lines": 233,
+      "removed_test_ranges": [
+        {
+          "end": 29463,
+          "start": 24941
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 463,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/loop/conversation_state.rs",
+      "physical_lines": 280,
+      "production_code_lines": 144,
+      "removed_test_ranges": [
+        {
+          "end": 2323,
+          "start": 1620
+        },
+        {
+          "end": 2850,
+          "start": 2386
+        },
+        {
+          "end": 3324,
+          "start": 2926
+        },
+        {
+          "end": 10094,
+          "start": 8578
+        },
+        {
+          "end": 10130,
+          "start": 10096
+        },
+        {
+          "end": 10168,
+          "start": 10131
+        },
+        {
+          "end": 10205,
+          "start": 10169
+        },
+        {
+          "end": 10236,
+          "start": 10206
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 320,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/conversation_state/projection_tests.rs",
+      "physical_lines": 341,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 13247,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/loop/conversation_state/request_state.rs",
+      "physical_lines": 323,
+      "production_code_lines": 258,
+      "removed_test_ranges": [
+        {
+          "end": 1932,
+          "start": 1511
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 318,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/conversation_state/request_state_tests.rs",
+      "physical_lines": 315,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 10624,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/conversation_state/seed_binding_tests.rs",
+      "physical_lines": 182,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 6410,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 81,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/conversation_state/test_support.rs",
+      "physical_lines": 117,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 4156,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 447,
+      "classification": "production",
+      "file": "crates/norn/src/loop/delivery.rs",
+      "physical_lines": 449,
+      "production_code_lines": 274,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/delivery_cancellation_tests.rs",
+      "physical_lines": 77,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 2298,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 146,
+      "classification": "production",
+      "file": "crates/norn/src/loop/delivery_inputs.rs",
+      "physical_lines": 148,
+      "production_code_lines": 111,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 358,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/loop/dev_context.rs",
+      "physical_lines": 357,
+      "production_code_lines": 52,
+      "removed_test_ranges": [
+        {
+          "end": 15644,
+          "start": 6872
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 494,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/loop/helpers.rs",
+      "physical_lines": 492,
+      "production_code_lines": 356,
+      "removed_test_ranges": [
+        {
+          "end": 19971,
+          "start": 19948
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 218,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/helpers/tests.rs",
+      "physical_lines": 259,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 9909,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 671,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/loop/inflight_compaction.rs",
+      "physical_lines": 670,
+      "production_code_lines": 256,
+      "removed_test_ranges": [
+        {
+          "end": 28443,
+          "start": 19204
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 407,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/loop/loop_context.rs",
+      "physical_lines": 435,
+      "production_code_lines": 131,
+      "removed_test_ranges": [
+        {
+          "end": 21201,
+          "start": 21163
+        },
+        {
+          "end": 21238,
+          "start": 21202
+        },
+        {
+          "end": 21268,
+          "start": 21239
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 376,
+      "classification": "production",
+      "file": "crates/norn/src/loop/loop_context/prompt_context.rs",
+      "physical_lines": 468,
+      "production_code_lines": 314,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 222,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/loop_context/prompt_runtime_tests.rs",
+      "physical_lines": 356,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 12261,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 274,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/loop_context/rule_context_tests.rs",
+      "physical_lines": 268,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 9241,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 293,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/loop_context/state_tests.rs",
+      "physical_lines": 361,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 12220,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 92,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/loop/mod.rs",
+      "physical_lines": 98,
+      "production_code_lines": 64,
+      "removed_test_ranges": [
+        {
+          "end": 2405,
+          "start": 2356
+        },
+        {
+          "end": 2449,
+          "start": 2407
+        },
+        {
+          "end": 2489,
+          "start": 2451
+        },
+        {
+          "end": 2536,
+          "start": 2491
+        },
+        {
+          "end": 2587,
+          "start": 2538
+        },
+        {
+          "end": 2642,
+          "start": 2589
+        },
+        {
+          "end": 2682,
+          "start": 2644
+        },
+        {
+          "end": 2733,
+          "start": 2684
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/rule_authority_tests.rs",
+      "physical_lines": 129,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 4233,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 271,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/loop/rule_wiring.rs",
+      "physical_lines": 269,
+      "production_code_lines": 130,
+      "removed_test_ranges": [
+        {
+          "end": 10202,
+          "start": 8719
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 454,
+      "classification": "production",
+      "file": "crates/norn/src/loop/runner/entry.rs",
+      "physical_lines": 459,
+      "production_code_lines": 226,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 305,
+      "classification": "production",
+      "file": "crates/norn/src/loop/runner/machine.rs",
+      "physical_lines": 325,
+      "production_code_lines": 170,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 44,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/loop/runner/mod.rs",
+      "physical_lines": 45,
+      "production_code_lines": 17,
+      "removed_test_ranges": [
+        {
+          "end": 1054,
+          "start": 1031
+        },
+        {
+          "end": 1102,
+          "start": 1068
+        },
+        {
+          "end": 1139,
+          "start": 1103
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 231,
+      "classification": "production",
+      "file": "crates/norn/src/loop/runner/prompt.rs",
+      "physical_lines": 317,
+      "production_code_lines": 214,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 331,
+      "classification": "production",
+      "file": "crates/norn/src/loop/runner/provider_call.rs",
+      "physical_lines": 335,
+      "production_code_lines": 252,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 312,
+      "classification": "production",
+      "file": "crates/norn/src/loop/runner/setup.rs",
+      "physical_lines": 449,
+      "production_code_lines": 359,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 405,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/runner/tests.rs",
+      "physical_lines": 409,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 11960,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 136,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/runner/tests/cancellation.rs",
+      "physical_lines": 188,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 6039,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 409,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/runner/tests/d3_anchor_transitions.rs",
+      "physical_lines": 473,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 16135,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 256,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/runner/tests/d3_state.rs",
+      "physical_lines": 271,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 9896,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/runner/tests/d8_nested_norn_authority.rs",
+      "physical_lines": 128,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 4182,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/runner/tests/d8_parent_prompt_hot_reload.rs",
+      "physical_lines": 293,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 10053,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/runner/tests/d8_prompt_seed.rs",
+      "physical_lines": 438,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 15714,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/runner/tests/d8_prompt_seed/legacy_rule_cut.rs",
+      "physical_lines": 48,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 2017,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/runner/tests/d8_prompt_seed/prompt_command.rs",
+      "physical_lines": 448,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 15096,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/runner/tests/d8_prompt_seed/reasoning_cut.rs",
+      "physical_lines": 150,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 5565,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/runner/tests/d8_setup_timeout.rs",
+      "physical_lines": 70,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 2202,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 317,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/runner/tests/managed_context.rs",
+      "physical_lines": 326,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 11922,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 310,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/runner/tests/rule_tool_hooks.rs",
+      "physical_lines": 320,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 10877,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/loop/runner/timeout.rs",
+      "physical_lines": 37,
+      "production_code_lines": 31,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 265,
+      "classification": "test_only",
+      "file": "crates/norn/src/loop/runner/tool_lease_tests.rs",
+      "physical_lines": 327,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 10972,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 1400,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/profile/loader.rs",
+      "physical_lines": 1401,
+      "production_code_lines": 444,
+      "removed_test_ranges": [
+        {
+          "end": 53739,
+          "start": 24235
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 1459,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/provider/openai/request.rs",
+      "physical_lines": 1462,
+      "production_code_lines": 320,
+      "removed_test_ranges": [
+        {
+          "end": 19225,
+          "start": 19185
+        },
+        {
+          "end": 19268,
+          "start": 19227
+        },
+        {
+          "end": 19310,
+          "start": 19270
+        },
+        {
+          "end": 19354,
+          "start": 19312
+        },
+        {
+          "end": 58895,
+          "start": 19356
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/provider/openai/request/system_instruction_tests.rs",
+      "physical_lines": 87,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 2650,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 449,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/provider/openai_compatible/execute.rs",
+      "physical_lines": 452,
+      "production_code_lines": 32,
+      "removed_test_ranges": [
+        {
+          "end": 17735,
+          "start": 2027
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 8,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/provider/openai_compatible/mod.rs",
+      "physical_lines": 12,
+      "production_code_lines": 6,
+      "removed_test_ranges": [
+        {
+          "end": 209,
+          "start": 162
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 257,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/provider/openai_compatible/provider.rs",
+      "physical_lines": 263,
+      "production_code_lines": 146,
+      "removed_test_ranges": [
+        {
+          "end": 3475,
+          "start": 3116
+        },
+        {
+          "end": 10606,
+          "start": 7732
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 647,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/provider/openai_compatible/request.rs",
+      "physical_lines": 662,
+      "production_code_lines": 251,
+      "removed_test_ranges": [
+        {
+          "end": 9861,
+          "start": 9821
+        },
+        {
+          "end": 24439,
+          "start": 9863
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/provider/openai_compatible/request/prompt_authority_tests.rs",
+      "physical_lines": 57,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 1911,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/provider/openai_compatible/role_policy.rs",
+      "physical_lines": 197,
+      "production_code_lines": 172,
+      "removed_test_ranges": [
+        {
+          "end": 6589,
+          "start": 6566
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/provider/openai_compatible/role_policy/tests.rs",
+      "physical_lines": 154,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 4657,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/provider/openai_compatible/role_policy_integration_tests.rs",
+      "physical_lines": 86,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 2829,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/rules/authority_tests.rs",
+      "physical_lines": 119,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 3571,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 537,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/rules/engine.rs",
+      "physical_lines": 568,
+      "production_code_lines": 181,
+      "removed_test_ranges": [
+        {
+          "end": 21390,
+          "start": 9859
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 9,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/rules/mod.rs",
+      "physical_lines": 14,
+      "production_code_lines": 8,
+      "removed_test_ranges": [
+        {
+          "end": 276,
+          "start": 243
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/rules/projection.rs",
+      "physical_lines": 57,
+      "production_code_lines": 41,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/rules/source.rs",
+      "physical_lines": 43,
+      "production_code_lines": 28,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 300,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/rules/types.rs",
+      "physical_lines": 279,
+      "production_code_lines": 98,
+      "removed_test_ranges": [
+        {
+          "end": 9135,
+          "start": 6125
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 1280,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/runtime_init/base.rs",
+      "physical_lines": 1286,
+      "production_code_lines": 453,
+      "removed_test_ranges": [
+        {
+          "end": 50752,
+          "start": 24566
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 652,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/session/conversion.rs",
+      "physical_lines": 674,
+      "production_code_lines": 147,
+      "removed_test_ranges": [
+        {
+          "end": 26662,
+          "start": 8469
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 1008,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/session/events.rs",
+      "physical_lines": 1013,
+      "production_code_lines": 212,
+      "removed_test_ranges": [
+        {
+          "end": 39682,
+          "start": 20322
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 30,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/session/persistence/strict/mod.rs",
+      "physical_lines": 32,
+      "production_code_lines": 16,
+      "removed_test_ranges": [
+        {
+          "end": 889,
+          "start": 807
+        },
+        {
+          "end": 920,
+          "start": 890
+        },
+        {
+          "end": 956,
+          "start": 921
+        },
+        {
+          "end": 991,
+          "start": 957
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 356,
+      "classification": "production",
+      "file": "crates/norn/src/session/persistence/strict/reader.rs",
+      "physical_lines": 358,
+      "production_code_lines": 334,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/session/persistence/strict/rule_origin_tests.rs",
+      "physical_lines": 85,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 2758,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 199,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/session/provider_state_provenance.rs",
+      "physical_lines": 174,
+      "production_code_lines": 125,
+      "removed_test_ranges": [
+        {
+          "end": 1558,
+          "start": 1281
+        },
+        {
+          "end": 5997,
+          "start": 5974
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/session/provider_state_provenance/tests.rs",
+      "physical_lines": 107,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 3783,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 494,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/session/provider_state_validation.rs",
+      "physical_lines": 326,
+      "production_code_lines": 264,
+      "removed_test_ranges": [
+        {
+          "end": 2707,
+          "start": 2124
+        },
+        {
+          "end": 10795,
+          "start": 10772
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/session/provider_state_validation/publication.rs",
+      "physical_lines": 232,
+      "production_code_lines": 212,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 793,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/skill/catalog.rs",
+      "physical_lines": 375,
+      "production_code_lines": 234,
+      "removed_test_ranges": [
+        {
+          "end": 14005,
+          "start": 13982
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/skill/catalog/tests.rs",
+      "physical_lines": 27,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 602,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/skill/catalog/tests/basics.rs",
+      "physical_lines": 148,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 4703,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/skill/catalog/tests/diagnostics.rs",
+      "physical_lines": 79,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 2469,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/skill/catalog/tests/prompt_listing.rs",
+      "physical_lines": 156,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 5255,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/skill/catalog/tests/slash_commands.rs",
+      "physical_lines": 170,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 5787,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 790,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/skill/loader.rs",
+      "physical_lines": 822,
+      "production_code_lines": 348,
+      "removed_test_ranges": [
+        {
+          "end": 30082,
+          "start": 18472
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 25,
+      "classification": "production",
+      "file": "crates/norn/src/skill/mod.rs",
+      "physical_lines": 27,
+      "production_code_lines": 14,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/skill/origin.rs",
+      "physical_lines": 10,
+      "production_code_lines": 5,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/system_prompt/authority.rs",
+      "physical_lines": 223,
+      "production_code_lines": 127,
+      "removed_test_ranges": [
+        {
+          "end": 8684,
+          "start": 6699
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 626,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/system_prompt/builder.rs",
+      "physical_lines": 587,
+      "production_code_lines": 192,
+      "removed_test_ranges": [
+        {
+          "end": 21090,
+          "start": 9239
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 55,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/system_prompt/child.rs",
+      "physical_lines": 101,
+      "production_code_lines": 35,
+      "removed_test_ranges": [
+        {
+          "end": 3618,
+          "start": 2157
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 41,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/system_prompt/mod.rs",
+      "physical_lines": 55,
+      "production_code_lines": 14,
+      "removed_test_ranges": [
+        {
+          "end": 2553,
+          "start": 2518
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/system_prompt/plan.rs",
+      "physical_lines": 270,
+      "production_code_lines": 91,
+      "removed_test_ranges": [
+        {
+          "end": 9029,
+          "start": 3714
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/system_prompt/prompt_seed.rs",
+      "physical_lines": 142,
+      "production_code_lines": 111,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/system_prompt/prompt_seed_tests.rs",
+      "physical_lines": 100,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 3431,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 250,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/system_prompt/sections.rs",
+      "physical_lines": 262,
+      "production_code_lines": 157,
+      "removed_test_ranges": [
+        {
+          "end": 12657,
+          "start": 11268
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 1772,
+      "classification": "test_only",
+      "file": "crates/norn/src/tests/integration.rs",
+      "physical_lines": 1775,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 58109,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 10,
+      "classification": "test_only",
+      "file": "crates/norn/src/tests/mod.rs",
+      "physical_lines": 11,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 417,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/tests/prompt_authority_support.rs",
+      "physical_lines": 33,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 1241,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 452,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/tool/generation.rs",
+      "physical_lines": 456,
+      "production_code_lines": 356,
+      "removed_test_ranges": [
+        {
+          "end": 15658,
+          "start": 15603
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 559,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/tools/agent/fork_context.rs",
+      "physical_lines": 556,
+      "production_code_lines": 56,
+      "removed_test_ranges": [
+        {
+          "end": 24717,
+          "start": 7470
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 426,
+      "classification": "production",
+      "file": "crates/norn/src/tools/agent/fork_launch.rs",
+      "physical_lines": 427,
+      "production_code_lines": 255,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 4370,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/tools/agent/fork_tool.rs",
+      "physical_lines": 464,
+      "production_code_lines": 289,
+      "removed_test_ranges": [
+        {
+          "end": 19398,
+          "start": 19375
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/tools/agent/fork_tool/args.rs",
+      "physical_lines": 106,
+      "production_code_lines": 100,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/tools/agent/fork_tool/prompt.rs",
+      "physical_lines": 255,
+      "production_code_lines": 52,
+      "removed_test_ranges": [
+        {
+          "end": 9154,
+          "start": 2342
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "production",
+      "file": "crates/norn/src/tools/agent/fork_tool/runtime.rs",
+      "physical_lines": 141,
+      "production_code_lines": 116,
+      "removed_test_ranges": [],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/fork_tool/tests/child_runtime.rs",
+      "physical_lines": 352,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 12307,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/fork_tool/tests/compaction_tools.rs",
+      "physical_lines": 354,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 12730,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/fork_tool/tests/coordination.rs",
+      "physical_lines": 330,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 12130,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/fork_tool/tests/coordination_policy.rs",
+      "physical_lines": 302,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 10599,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/fork_tool/tests/execution.rs",
+      "physical_lines": 269,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 9761,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/fork_tool/tests/hooks_lifecycle.rs",
+      "physical_lines": 383,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 14429,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/fork_tool/tests/mod.rs",
+      "physical_lines": 238,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 7727,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/fork_tool/tests/persistence.rs",
+      "physical_lines": 304,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 12114,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/fork_tool/tests/prompt_authority.rs",
+      "physical_lines": 449,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 16481,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/fork_tool/tests/recursive_delegation.rs",
+      "physical_lines": 313,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 12159,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/fork_tool/tests/shutdown_logging.rs",
+      "physical_lines": 354,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 13598,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/fork_tool/tests/tool_surface.rs",
+      "physical_lines": 87,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 3229,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 117,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/tools/agent/spawn.rs",
+      "physical_lines": 117,
+      "production_code_lines": 73,
+      "removed_test_ranges": [
+        {
+          "end": 1037,
+          "start": 989
+        },
+        {
+          "end": 1474,
+          "start": 1417
+        },
+        {
+          "end": 1862,
+          "start": 1804
+        },
+        {
+          "end": 2233,
+          "start": 2180
+        },
+        {
+          "end": 2415,
+          "start": 2361
+        },
+        {
+          "end": 3734,
+          "start": 3680
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 133,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/tools/agent/spawn/config.rs",
+      "physical_lines": 150,
+      "production_code_lines": 73,
+      "removed_test_ranges": [
+        {
+          "end": 6996,
+          "start": 6570
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 471,
+      "classification": "production",
+      "file": "crates/norn/src/tools/agent/spawn/execute.rs",
+      "physical_lines": 472,
+      "production_code_lines": 297,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 386,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/spawn/tests/mod.rs",
+      "physical_lines": 387,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 12846,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 332,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/spawn/tests/output_and_profiles.rs",
+      "physical_lines": 349,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 12287,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": null,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/spawn/tests/prompt_authority.rs",
+      "physical_lines": 199,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 6339,
+          "start": 0
+        }
+      ],
+      "status": "A"
+    },
+    {
+      "base_physical_lines": 321,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/spawn/tests/reasoning.rs",
+      "physical_lines": 337,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 11727,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 279,
+      "classification": "test_only",
+      "file": "crates/norn/src/tools/agent/spawn/tests/skills.rs",
+      "physical_lines": 289,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 10228,
+          "start": 0
+        }
+      ],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 108,
+      "classification": "production",
+      "file": "crates/norn/src/tools/agent/spawn_schema.rs",
+      "physical_lines": 108,
+      "production_code_lines": 105,
+      "removed_test_ranges": [],
+      "status": "M"
+    },
+    {
+      "base_physical_lines": 572,
+      "classification": "mixed_production_and_test",
+      "file": "crates/norn/src/tools/agent/variant_resolve.rs",
+      "physical_lines": 580,
+      "production_code_lines": 179,
+      "removed_test_ranges": [
+        {
+          "end": 22365,
+          "start": 12522
+        }
+      ],
+      "status": "M"
+    }
+  ],
+  "loc_audit": {
+    "changed_rust_file_count": 204,
+    "max_current_production_code_file": {
+      "file": "crates/norn/src/runtime_init/base.rs",
+      "production_code_lines": 453
+    },
+    "max_new_rust_file": {
+      "file": "crates/norn/src/agent/builder/build.rs",
+      "physical_lines": 494
+    },
+    "new_rust_file_count": 102,
+    "new_rust_file_limit": {
+      "limit": 500,
+      "operator": "<"
+    },
+    "preexisting_physical_oversize": {
+      "count": 26,
+      "files": [
+        {
+          "base_physical_lines": 992,
+          "classification": "mixed_production_and_test",
+          "delta": 1,
+          "file": "crates/norn-cli/src/cli/args.rs",
+          "head_physical_lines": 993,
+          "production_code_lines": 217
+        },
+        {
+          "base_physical_lines": 1124,
+          "classification": "mixed_production_and_test",
+          "delta": 1,
+          "file": "crates/norn-cli/src/print/orchestrator.rs",
+          "head_physical_lines": 1125,
+          "production_code_lines": 438
+        },
+        {
+          "base_physical_lines": 711,
+          "classification": "mixed_production_and_test",
+          "delta": 63,
+          "file": "crates/norn-cli/src/runtime/resolve.rs",
+          "head_physical_lines": 774,
+          "production_code_lines": 157
+        },
+        {
+          "base_physical_lines": 751,
+          "classification": "test_only",
+          "delta": 11,
+          "file": "crates/norn-cli/tests/assembly_flag_wiring.rs",
+          "head_physical_lines": 762,
+          "production_code_lines": 0
+        },
+        {
+          "base_physical_lines": 559,
+          "classification": "mixed_production_and_test",
+          "delta": -4,
+          "file": "crates/norn-tui/src/app/rotation.rs",
+          "head_physical_lines": 555,
+          "production_code_lines": 65
+        },
+        {
+          "base_physical_lines": 1618,
+          "classification": "test_only",
+          "delta": -2,
+          "file": "crates/norn-tui/tests/pty_smoke.rs",
+          "head_physical_lines": 1616,
+          "production_code_lines": 0
+        },
+        {
+          "base_physical_lines": 660,
+          "classification": "production",
+          "delta": 15,
+          "file": "crates/norn/src/agent/builder_setters.rs",
+          "head_physical_lines": 675,
+          "production_code_lines": 304
+        },
+        {
+          "base_physical_lines": 525,
+          "classification": "mixed_production_and_test",
+          "delta": 31,
+          "file": "crates/norn/src/agent/variants/catalog.rs",
+          "head_physical_lines": 556,
+          "production_code_lines": 186
+        },
+        {
+          "base_physical_lines": 847,
+          "classification": "mixed_production_and_test",
+          "delta": 34,
+          "file": "crates/norn/src/context/loader.rs",
+          "head_physical_lines": 881,
+          "production_code_lines": 251
+        },
+        {
+          "base_physical_lines": 1226,
+          "classification": "mixed_production_and_test",
+          "delta": 6,
+          "file": "crates/norn/src/context/scanner.rs",
+          "head_physical_lines": 1232,
+          "production_code_lines": 295
+        },
+        {
+          "base_physical_lines": 728,
+          "classification": "mixed_production_and_test",
+          "delta": 9,
+          "file": "crates/norn/src/integration/claude/adapter.rs",
+          "head_physical_lines": 737,
+          "production_code_lines": 407
+        },
+        {
+          "base_physical_lines": 1497,
+          "classification": "mixed_production_and_test",
+          "delta": -1,
+          "file": "crates/norn/src/loop/compaction.rs",
+          "head_physical_lines": 1496,
+          "production_code_lines": 278
+        },
+        {
+          "base_physical_lines": 686,
+          "classification": "mixed_production_and_test",
+          "delta": 7,
+          "file": "crates/norn/src/loop/config.rs",
+          "head_physical_lines": 693,
+          "production_code_lines": 233
+        },
+        {
+          "base_physical_lines": 671,
+          "classification": "mixed_production_and_test",
+          "delta": -1,
+          "file": "crates/norn/src/loop/inflight_compaction.rs",
+          "head_physical_lines": 670,
+          "production_code_lines": 256
+        },
+        {
+          "base_physical_lines": 1400,
+          "classification": "mixed_production_and_test",
+          "delta": 1,
+          "file": "crates/norn/src/profile/loader.rs",
+          "head_physical_lines": 1401,
+          "production_code_lines": 444
+        },
+        {
+          "base_physical_lines": 1459,
+          "classification": "mixed_production_and_test",
+          "delta": 3,
+          "file": "crates/norn/src/provider/openai/request.rs",
+          "head_physical_lines": 1462,
+          "production_code_lines": 320
+        },
+        {
+          "base_physical_lines": 647,
+          "classification": "mixed_production_and_test",
+          "delta": 15,
+          "file": "crates/norn/src/provider/openai_compatible/request.rs",
+          "head_physical_lines": 662,
+          "production_code_lines": 251
+        },
+        {
+          "base_physical_lines": 537,
+          "classification": "mixed_production_and_test",
+          "delta": 31,
+          "file": "crates/norn/src/rules/engine.rs",
+          "head_physical_lines": 568,
+          "production_code_lines": 181
+        },
+        {
+          "base_physical_lines": 1280,
+          "classification": "mixed_production_and_test",
+          "delta": 6,
+          "file": "crates/norn/src/runtime_init/base.rs",
+          "head_physical_lines": 1286,
+          "production_code_lines": 453
+        },
+        {
+          "base_physical_lines": 652,
+          "classification": "mixed_production_and_test",
+          "delta": 22,
+          "file": "crates/norn/src/session/conversion.rs",
+          "head_physical_lines": 674,
+          "production_code_lines": 147
+        },
+        {
+          "base_physical_lines": 1008,
+          "classification": "mixed_production_and_test",
+          "delta": 5,
+          "file": "crates/norn/src/session/events.rs",
+          "head_physical_lines": 1013,
+          "production_code_lines": 212
+        },
+        {
+          "base_physical_lines": 790,
+          "classification": "mixed_production_and_test",
+          "delta": 32,
+          "file": "crates/norn/src/skill/loader.rs",
+          "head_physical_lines": 822,
+          "production_code_lines": 348
+        },
+        {
+          "base_physical_lines": 626,
+          "classification": "mixed_production_and_test",
+          "delta": -39,
+          "file": "crates/norn/src/system_prompt/builder.rs",
+          "head_physical_lines": 587,
+          "production_code_lines": 192
+        },
+        {
+          "base_physical_lines": 1772,
+          "classification": "test_only",
+          "delta": 3,
+          "file": "crates/norn/src/tests/integration.rs",
+          "head_physical_lines": 1775,
+          "production_code_lines": 0
+        },
+        {
+          "base_physical_lines": 559,
+          "classification": "mixed_production_and_test",
+          "delta": -3,
+          "file": "crates/norn/src/tools/agent/fork_context.rs",
+          "head_physical_lines": 556,
+          "production_code_lines": 56
+        },
+        {
+          "base_physical_lines": 572,
+          "classification": "mixed_production_and_test",
+          "delta": 8,
+          "file": "crates/norn/src/tools/agent/variant_resolve.rs",
+          "head_physical_lines": 580,
+          "production_code_lines": 179
+        }
+      ],
+      "grew_in_range_count": 20,
+      "status": "disclosed residual; these files were already at or above the physical limit at the exact base, while their current AST-stripped production code remains below the limit"
+    },
+    "production_code_limit": {
+      "limit": 500,
+      "operator": "<"
+    },
+    "test_only_file_count": 100
+  },
+  "method": {
+    "added_line_scope": "scan added Rust lines after Rust-literal masking; line byte offsets are classified against AST-proven cfg(test) ranges, retaining test matches as permitted evidence instead of silently dropping them; supplemental rules cover UFCS unwrap/expect calls and cfg_attr lint suppressions",
+    "cfg_test": "remove AST items whose cfg cannot be true with test=false",
+    "counter": "tokei 14.0.0 compiled with serialization support: json, cbor, yaml",
+    "helper_sha256": {
+      "docs/reviews/evidence/p0-rust-items.yml": "fcbc226d662b8ae1a63e03db2dfc34edd2bc1a2c74af3d57cae19b10be178606",
+      "docs/reviews/evidence/p0_module_references.py": "9ee691b35b512be96c02a6624d944baf74b4c042c8ad555210935fc8cc20e488",
+      "docs/reviews/evidence/p0_policy_rust.py": "2302514f3043435743ca9a2e8f184f0a5d139de9ecf11f213a63b4c3a117b710",
+      "docs/reviews/evidence/run_p0_policy_evidence.py": "ca4a0402609570f3dedb312b7f33116ec79744c2d199d0a100e383016d5c075d"
+    },
+    "new_file_loc": "every Rust file added in the exact diff is measured by physical lines and must remain strictly below 500, including test-only files",
+    "parser": "ast-grep 0.44.1",
+    "preexisting_oversize": "compare final physical lines with the exact base blob; pre-existing oversized files are disclosed separately and do not weaken the strict new-file or AST-stripped production-code limits",
+    "production_loc": "ast-grep removes items whose cfg cannot be true with test=false; tokei counts the remaining Rust code and every changed file must be <500",
+    "split_bypass": "all added Rust lines, including tests, are scanned for include! and #[path = ...]; neither is accepted as a file-size split"
+  },
+  "policy_passed": true,
+  "schema_version": 1,
+  "source_cleanliness": {
+    "dirty_rust_paths": [],
+    "untracked_rust_paths": [],
+    "working_tree_note": "non-Rust documentation edits may be present; this source-bound policy reads committed Rust at SOURCE and rejects any dirty/untracked Rust"
+  },
+  "violations": {
+    "added_production_expect": [],
+    "added_production_lint_suppression": [],
+    "added_production_panic": [],
+    "added_production_unwrap": [],
+    "added_split_bypass_any_scope": [],
+    "module_shape": [],
+    "new_rust_file_physical_loc": [],
+    "production_code_loc": [],
+    "thin_entrypoint": []
+  }
+}

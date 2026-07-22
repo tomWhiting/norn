@@ -1,0 +1,1676 @@
+{
+  "boundary": {
+    "base": "05be10c40981460c00fed9acc306938ff93b40b2",
+    "base_tree": "266a3b5543c50cbe8d32dca9e6397f2fad86a3a4",
+    "diff": "05be10c40981460c00fed9acc306938ff93b40b2...4fa6c6756ed497a002b4281f51cbb14f7bd7a3eb",
+    "merge_base": "05be10c40981460c00fed9acc306938ff93b40b2",
+    "source": "4fa6c6756ed497a002b4281f51cbb14f7bd7a3eb",
+    "source_tree": "c0d9f69bb5283184432862016c1212644f7088c2"
+  },
+  "classification_counts": {
+    "documentation": 0,
+    "mixed_production_and_test": 62,
+    "production": 42,
+    "test_only": 101
+  },
+  "method": {
+    "classification": "Rust paths use the checked-in ast-grep cfg(test) item/reference classifier and tokei production-code count; production files with removed test ranges are mixed, zero-production files are test-only, and the sole non-Rust golden under testdata is test-only",
+    "inventory_command": "git diff --name-only -z 05be10c40981460c00fed9acc306938ff93b40b2...4fa6c6756ed497a002b4281f51cbb14f7bd7a3eb",
+    "inventory_encoding": "exact stdout bytes, UTF-8 paths separated and terminated by NUL; decode errors fail generation",
+    "inventory_hash": "SHA-256 over exact command stdout including trailing NUL",
+    "status_command": "git diff --name-status --no-renames -z 05be10c40981460c00fed9acc306938ff93b40b2...4fa6c6756ed497a002b4281f51cbb14f7bd7a3eb"
+  },
+  "path_inventory": {
+    "byte_count": 9809,
+    "duplicate_paths": [],
+    "path_count": 205,
+    "records": [
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn-cli/src/cli/args.rs",
+        "physical_lines": 993,
+        "production_code_lines": 217,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn-cli/src/config/mod.rs",
+        "physical_lines": 31,
+        "production_code_lines": 27,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn-cli/src/config/overrides.rs",
+        "physical_lines": 64,
+        "production_code_lines": 22,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn-cli/src/config/overrides/loop_config.rs",
+        "physical_lines": 192,
+        "production_code_lines": 154,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn-cli/src/config/overrides/process.rs",
+        "physical_lines": 18,
+        "production_code_lines": 12,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn-cli/src/config/overrides/profile.rs",
+        "physical_lines": 159,
+        "production_code_lines": 128,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn-cli/src/config/overrides/provider.rs",
+        "physical_lines": 138,
+        "production_code_lines": 120,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn-cli/src/config/overrides/tests.rs",
+        "physical_lines": 10,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn-cli/src/config/overrides/tests/loop_config.rs",
+        "physical_lines": 268,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn-cli/src/config/overrides/tests/profile.rs",
+        "physical_lines": 307,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn-cli/src/config/overrides/tests/provider.rs",
+        "physical_lines": 319,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn-cli/src/config/profile_loader.rs",
+        "physical_lines": 301,
+        "production_code_lines": 54,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn-cli/src/print/orchestrator.rs",
+        "physical_lines": 1125,
+        "production_code_lines": 438,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn-cli/src/runtime/from_cli.rs",
+        "physical_lines": 389,
+        "production_code_lines": 133,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn-cli/src/runtime/resolve.rs",
+        "physical_lines": 774,
+        "production_code_lines": 157,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn-cli/src/runtime/wiring/inline_tests.rs",
+        "physical_lines": 351,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn-cli/src/tui/driver.rs",
+        "physical_lines": 358,
+        "production_code_lines": 211,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn-cli/tests/assembly_acceptance.rs",
+        "physical_lines": 159,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn-cli/tests/assembly_conformance.rs",
+        "physical_lines": 357,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn-cli/tests/assembly_flag_wiring.rs",
+        "physical_lines": 762,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn-cli/tests/session_resume_working_dir.rs",
+        "physical_lines": 124,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn-tui/src/app/rotation.rs",
+        "physical_lines": 555,
+        "production_code_lines": 65,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn-tui/src/app/turn/run.rs",
+        "physical_lines": 395,
+        "production_code_lines": 348,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn-tui/tests/pty_smoke.rs",
+        "physical_lines": 1616,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/agent/arming.rs",
+        "physical_lines": 403,
+        "production_code_lines": 224,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/arming/tests.rs",
+        "physical_lines": 4,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/arming/tests/auto_compaction.rs",
+        "physical_lines": 201,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/arming/tests/child_configuration.rs",
+        "physical_lines": 287,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/arming/tests/process_manager.rs",
+        "physical_lines": 109,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/arming/tests/skill_listing.rs",
+        "physical_lines": 191,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/agent/assembly.rs",
+        "physical_lines": 17,
+        "production_code_lines": 14,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/agent/assembly/paths.rs",
+        "physical_lines": 129,
+        "production_code_lines": 91,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/agent/assembly/runtime.rs",
+        "physical_lines": 22,
+        "production_code_lines": 11,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/agent/assembly/runtime/base.rs",
+        "physical_lines": 214,
+        "production_code_lines": 126,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/agent/assembly/runtime/config.rs",
+        "physical_lines": 152,
+        "production_code_lines": 115,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/agent/assembly/runtime/infra.rs",
+        "physical_lines": 40,
+        "production_code_lines": 18,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/agent/assembly/runtime/session.rs",
+        "physical_lines": 38,
+        "production_code_lines": 27,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/assembly/runtime/tests.rs",
+        "physical_lines": 242,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/agent/assembly/tooling.rs",
+        "physical_lines": 179,
+        "production_code_lines": 140,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/agent/builder.rs",
+        "physical_lines": 160,
+        "production_code_lines": 88,
+        "status": "M",
+        "test_only_range_count": 5
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/agent/builder/build.rs",
+        "physical_lines": 494,
+        "production_code_lines": 359,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/agent/builder/init.rs",
+        "physical_lines": 68,
+        "production_code_lines": 62,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/agent/builder/prompt.rs",
+        "physical_lines": 71,
+        "production_code_lines": 55,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/builder/tests/base_runtime.rs",
+        "physical_lines": 329,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/builder/tests/channels_and_resume.rs",
+        "physical_lines": 265,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/builder/tests/compaction.rs",
+        "physical_lines": 422,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/builder/tests/context_wiring.rs",
+        "physical_lines": 233,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/builder/tests/coordination.rs",
+        "physical_lines": 278,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/builder/tests/execution.rs",
+        "physical_lines": 351,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/builder/tests/filesystem_tools.rs",
+        "physical_lines": 203,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+        "physical_lines": 175,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/builder/tests/mod.rs",
+        "physical_lines": 86,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/builder/tests/provider_surface.rs",
+        "physical_lines": 150,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/builder/tests/scheduling.rs",
+        "physical_lines": 177,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/builder/tests/schema_and_model.rs",
+        "physical_lines": 120,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/builder/tests/session_creation.rs",
+        "physical_lines": 329,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/builder/tests/setters.rs",
+        "physical_lines": 192,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/agent/builder_setters.rs",
+        "physical_lines": 675,
+        "production_code_lines": 304,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/agent/fork.rs",
+        "physical_lines": 455,
+        "production_code_lines": 283,
+        "status": "M",
+        "test_only_range_count": 4
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/fork/context_schema_tests.rs",
+        "physical_lines": 328,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/fork/parent_prompt_tests.rs",
+        "physical_lines": 32,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/fork/result_tests.rs",
+        "physical_lines": 224,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/agent/mod.rs",
+        "physical_lines": 69,
+        "production_code_lines": 54,
+        "status": "M",
+        "test_only_range_count": 5
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/agent/prompt_install.rs",
+        "physical_lines": 451,
+        "production_code_lines": 90,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/agent/skill_prompt.rs",
+        "physical_lines": 126,
+        "production_code_lines": 109,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/agent/testdata/fork_preamble.golden.md",
+        "physical_lines": 12,
+        "status": "M"
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/agent/variants/catalog.rs",
+        "physical_lines": 556,
+        "production_code_lines": 186,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/agent/variants/mod.rs",
+        "physical_lines": 11,
+        "production_code_lines": 3,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/context/loader.rs",
+        "physical_lines": 881,
+        "production_code_lines": 251,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/context/mod.rs",
+        "physical_lines": 40,
+        "production_code_lines": 6,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/context/rule_origin_tests.rs",
+        "physical_lines": 50,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/context/scanner.rs",
+        "physical_lines": 1232,
+        "production_code_lines": 295,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/integration/claude/adapter.rs",
+        "physical_lines": 737,
+        "production_code_lines": 407,
+        "status": "M",
+        "test_only_range_count": 2
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/integration/claude/adapter/role_authority_tests.rs",
+        "physical_lines": 148,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/integration/rhai/agent_ops.rs",
+        "physical_lines": 16,
+        "production_code_lines": 8,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/integration/rhai/agent_ops/signal.rs",
+        "physical_lines": 192,
+        "production_code_lines": 181,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/integration/rhai/agent_ops/spawn.rs",
+        "physical_lines": 293,
+        "production_code_lines": 274,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/integration/rhai/agent_ops/tests/mod.rs",
+        "physical_lines": 7,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/integration/rhai/agent_ops/tests/prompt_authority.rs",
+        "physical_lines": 239,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/integration/rhai/agent_ops/tests/signal.rs",
+        "physical_lines": 195,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/integration/rhai/agent_ops/tests/spawn_compaction.rs",
+        "physical_lines": 163,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/integration/rhai/agent_ops/tests/spawn_persistence.rs",
+        "physical_lines": 114,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/integration/rhai/agent_ops/tests/spawn_policy.rs",
+        "physical_lines": 94,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/integration/rhai/agent_ops/tests/spawn_resolution.rs",
+        "physical_lines": 165,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/integration/rhai/agent_ops/tests/support.rs",
+        "physical_lines": 80,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/loop/compaction.rs",
+        "physical_lines": 1496,
+        "production_code_lines": 278,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/loop/config.rs",
+        "physical_lines": 693,
+        "production_code_lines": 233,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/loop/conversation_state.rs",
+        "physical_lines": 280,
+        "production_code_lines": 144,
+        "status": "M",
+        "test_only_range_count": 8
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/conversation_state/projection_tests.rs",
+        "physical_lines": 341,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/loop/conversation_state/request_state.rs",
+        "physical_lines": 323,
+        "production_code_lines": 258,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/conversation_state/request_state_tests.rs",
+        "physical_lines": 315,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/conversation_state/seed_binding_tests.rs",
+        "physical_lines": 182,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/conversation_state/test_support.rs",
+        "physical_lines": 117,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/loop/delivery.rs",
+        "physical_lines": 449,
+        "production_code_lines": 274,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/delivery_cancellation_tests.rs",
+        "physical_lines": 77,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/loop/delivery_inputs.rs",
+        "physical_lines": 148,
+        "production_code_lines": 111,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/loop/dev_context.rs",
+        "physical_lines": 357,
+        "production_code_lines": 52,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/loop/helpers.rs",
+        "physical_lines": 492,
+        "production_code_lines": 356,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/helpers/tests.rs",
+        "physical_lines": 259,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/loop/inflight_compaction.rs",
+        "physical_lines": 670,
+        "production_code_lines": 256,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/loop/loop_context.rs",
+        "physical_lines": 435,
+        "production_code_lines": 131,
+        "status": "M",
+        "test_only_range_count": 3
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/loop/loop_context/prompt_context.rs",
+        "physical_lines": 468,
+        "production_code_lines": 314,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/loop_context/prompt_runtime_tests.rs",
+        "physical_lines": 356,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/loop_context/rule_context_tests.rs",
+        "physical_lines": 268,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/loop_context/state_tests.rs",
+        "physical_lines": 361,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/loop/mod.rs",
+        "physical_lines": 98,
+        "production_code_lines": 64,
+        "status": "M",
+        "test_only_range_count": 8
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/rule_authority_tests.rs",
+        "physical_lines": 129,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/loop/rule_wiring.rs",
+        "physical_lines": 269,
+        "production_code_lines": 130,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/loop/runner/entry.rs",
+        "physical_lines": 459,
+        "production_code_lines": 226,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/loop/runner/machine.rs",
+        "physical_lines": 325,
+        "production_code_lines": 170,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/loop/runner/mod.rs",
+        "physical_lines": 45,
+        "production_code_lines": 17,
+        "status": "M",
+        "test_only_range_count": 3
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/loop/runner/prompt.rs",
+        "physical_lines": 317,
+        "production_code_lines": 214,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/loop/runner/provider_call.rs",
+        "physical_lines": 335,
+        "production_code_lines": 252,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/loop/runner/setup.rs",
+        "physical_lines": 449,
+        "production_code_lines": 359,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/runner/tests.rs",
+        "physical_lines": 409,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/runner/tests/cancellation.rs",
+        "physical_lines": 188,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/runner/tests/d3_anchor_transitions.rs",
+        "physical_lines": 473,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/runner/tests/d3_state.rs",
+        "physical_lines": 271,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/runner/tests/d8_nested_norn_authority.rs",
+        "physical_lines": 128,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/runner/tests/d8_parent_prompt_hot_reload.rs",
+        "physical_lines": 293,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/runner/tests/d8_prompt_seed.rs",
+        "physical_lines": 438,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/runner/tests/d8_prompt_seed/legacy_rule_cut.rs",
+        "physical_lines": 48,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/runner/tests/d8_prompt_seed/prompt_command.rs",
+        "physical_lines": 448,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/runner/tests/d8_prompt_seed/reasoning_cut.rs",
+        "physical_lines": 150,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/runner/tests/d8_setup_timeout.rs",
+        "physical_lines": 70,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/runner/tests/managed_context.rs",
+        "physical_lines": 326,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/runner/tests/rule_tool_hooks.rs",
+        "physical_lines": 320,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/loop/runner/timeout.rs",
+        "physical_lines": 37,
+        "production_code_lines": 31,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/loop/runner/tool_lease_tests.rs",
+        "physical_lines": 327,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/profile/loader.rs",
+        "physical_lines": 1401,
+        "production_code_lines": 444,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/provider/openai/request.rs",
+        "physical_lines": 1462,
+        "production_code_lines": 320,
+        "status": "M",
+        "test_only_range_count": 5
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/provider/openai/request/system_instruction_tests.rs",
+        "physical_lines": 87,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/provider/openai_compatible/execute.rs",
+        "physical_lines": 452,
+        "production_code_lines": 32,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/provider/openai_compatible/mod.rs",
+        "physical_lines": 12,
+        "production_code_lines": 6,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/provider/openai_compatible/provider.rs",
+        "physical_lines": 263,
+        "production_code_lines": 146,
+        "status": "M",
+        "test_only_range_count": 2
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/provider/openai_compatible/request.rs",
+        "physical_lines": 662,
+        "production_code_lines": 251,
+        "status": "M",
+        "test_only_range_count": 2
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/provider/openai_compatible/request/prompt_authority_tests.rs",
+        "physical_lines": 57,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/provider/openai_compatible/role_policy.rs",
+        "physical_lines": 197,
+        "production_code_lines": 172,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/provider/openai_compatible/role_policy/tests.rs",
+        "physical_lines": 154,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/provider/openai_compatible/role_policy_integration_tests.rs",
+        "physical_lines": 86,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/rules/authority_tests.rs",
+        "physical_lines": 119,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/rules/engine.rs",
+        "physical_lines": 568,
+        "production_code_lines": 181,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/rules/mod.rs",
+        "physical_lines": 14,
+        "production_code_lines": 8,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/rules/projection.rs",
+        "physical_lines": 57,
+        "production_code_lines": 41,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/rules/source.rs",
+        "physical_lines": 43,
+        "production_code_lines": 28,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/rules/types.rs",
+        "physical_lines": 279,
+        "production_code_lines": 98,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/runtime_init/base.rs",
+        "physical_lines": 1286,
+        "production_code_lines": 453,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/session/conversion.rs",
+        "physical_lines": 674,
+        "production_code_lines": 147,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/session/events.rs",
+        "physical_lines": 1013,
+        "production_code_lines": 212,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/session/persistence/strict/mod.rs",
+        "physical_lines": 32,
+        "production_code_lines": 16,
+        "status": "M",
+        "test_only_range_count": 4
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/session/persistence/strict/reader.rs",
+        "physical_lines": 358,
+        "production_code_lines": 334,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/session/persistence/strict/rule_origin_tests.rs",
+        "physical_lines": 85,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/session/provider_state_provenance.rs",
+        "physical_lines": 174,
+        "production_code_lines": 125,
+        "status": "M",
+        "test_only_range_count": 2
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/session/provider_state_provenance/tests.rs",
+        "physical_lines": 107,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/session/provider_state_validation.rs",
+        "physical_lines": 326,
+        "production_code_lines": 264,
+        "status": "M",
+        "test_only_range_count": 2
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/session/provider_state_validation/publication.rs",
+        "physical_lines": 232,
+        "production_code_lines": 212,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/skill/catalog.rs",
+        "physical_lines": 375,
+        "production_code_lines": 234,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/skill/catalog/tests.rs",
+        "physical_lines": 27,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/skill/catalog/tests/basics.rs",
+        "physical_lines": 148,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/skill/catalog/tests/diagnostics.rs",
+        "physical_lines": 79,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/skill/catalog/tests/prompt_listing.rs",
+        "physical_lines": 156,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/skill/catalog/tests/slash_commands.rs",
+        "physical_lines": 170,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/skill/loader.rs",
+        "physical_lines": 822,
+        "production_code_lines": 348,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/skill/mod.rs",
+        "physical_lines": 27,
+        "production_code_lines": 14,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/skill/origin.rs",
+        "physical_lines": 10,
+        "production_code_lines": 5,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/system_prompt/authority.rs",
+        "physical_lines": 223,
+        "production_code_lines": 127,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/system_prompt/builder.rs",
+        "physical_lines": 587,
+        "production_code_lines": 192,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/system_prompt/child.rs",
+        "physical_lines": 101,
+        "production_code_lines": 35,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/system_prompt/mod.rs",
+        "physical_lines": 55,
+        "production_code_lines": 14,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/system_prompt/plan.rs",
+        "physical_lines": 270,
+        "production_code_lines": 91,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/system_prompt/prompt_seed.rs",
+        "physical_lines": 142,
+        "production_code_lines": 111,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/system_prompt/prompt_seed_tests.rs",
+        "physical_lines": 100,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/system_prompt/sections.rs",
+        "physical_lines": 262,
+        "production_code_lines": 157,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tests/integration.rs",
+        "physical_lines": 1775,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tests/mod.rs",
+        "physical_lines": 11,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tests/prompt_authority_support.rs",
+        "physical_lines": 33,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/tool/generation.rs",
+        "physical_lines": 456,
+        "production_code_lines": 356,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/tools/agent/fork_context.rs",
+        "physical_lines": 556,
+        "production_code_lines": 56,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/tools/agent/fork_launch.rs",
+        "physical_lines": 427,
+        "production_code_lines": 255,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/tools/agent/fork_tool.rs",
+        "physical_lines": 464,
+        "production_code_lines": 289,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/tools/agent/fork_tool/args.rs",
+        "physical_lines": 106,
+        "production_code_lines": 100,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/tools/agent/fork_tool/prompt.rs",
+        "physical_lines": 255,
+        "production_code_lines": 52,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/tools/agent/fork_tool/runtime.rs",
+        "physical_lines": 141,
+        "production_code_lines": 116,
+        "status": "A",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/fork_tool/tests/child_runtime.rs",
+        "physical_lines": 352,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/fork_tool/tests/compaction_tools.rs",
+        "physical_lines": 354,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/fork_tool/tests/coordination.rs",
+        "physical_lines": 330,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/fork_tool/tests/coordination_policy.rs",
+        "physical_lines": 302,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/fork_tool/tests/execution.rs",
+        "physical_lines": 269,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/fork_tool/tests/hooks_lifecycle.rs",
+        "physical_lines": 383,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/fork_tool/tests/mod.rs",
+        "physical_lines": 238,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/fork_tool/tests/persistence.rs",
+        "physical_lines": 304,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/fork_tool/tests/prompt_authority.rs",
+        "physical_lines": 449,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/fork_tool/tests/recursive_delegation.rs",
+        "physical_lines": 313,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/fork_tool/tests/shutdown_logging.rs",
+        "physical_lines": 354,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/fork_tool/tests/tool_surface.rs",
+        "physical_lines": 87,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/tools/agent/spawn.rs",
+        "physical_lines": 117,
+        "production_code_lines": 73,
+        "status": "M",
+        "test_only_range_count": 6
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/tools/agent/spawn/config.rs",
+        "physical_lines": 150,
+        "production_code_lines": 73,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/tools/agent/spawn/execute.rs",
+        "physical_lines": 472,
+        "production_code_lines": 297,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/spawn/tests/mod.rs",
+        "physical_lines": 387,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/spawn/tests/output_and_profiles.rs",
+        "physical_lines": 349,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/spawn/tests/prompt_authority.rs",
+        "physical_lines": 199,
+        "production_code_lines": 0,
+        "status": "A",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/spawn/tests/reasoning.rs",
+        "physical_lines": 337,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "test_only",
+        "path": "crates/norn/src/tools/agent/spawn/tests/skills.rs",
+        "physical_lines": 289,
+        "production_code_lines": 0,
+        "status": "M",
+        "test_only_range_count": 1
+      },
+      {
+        "classification": "production",
+        "path": "crates/norn/src/tools/agent/spawn_schema.rs",
+        "physical_lines": 108,
+        "production_code_lines": 105,
+        "status": "M",
+        "test_only_range_count": 0
+      },
+      {
+        "classification": "mixed_production_and_test",
+        "path": "crates/norn/src/tools/agent/variant_resolve.rs",
+        "physical_lines": 580,
+        "production_code_lines": 179,
+        "status": "M",
+        "test_only_range_count": 1
+      }
+    ],
+    "records_canonical_json_sha256": "ac2fe318065dfe3029c9a49ef9e62601934f08a2161004c69aeb33c05b921ecb",
+    "sha256": "72bc3637e393bda812c29e55cab426563386670081bd6771cdc58b5ab0428526",
+    "trailing_nul": true
+  },
+  "schema_version": 1,
+  "status_counts": {
+    "A": 102,
+    "M": 103
+  }
+}
