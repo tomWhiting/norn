@@ -33,7 +33,7 @@ use norn::provider::traits::Provider;
 use norn_cli::cli::Cli;
 use norn_cli::config::{
     apply_cli_profile_overrides, apply_settings_reasoning_to_profile, resolve_model_selection,
-    resolve_profile,
+    resolve_profile_with_origin,
 };
 use norn_cli::runtime::builder_from_cli;
 
@@ -50,14 +50,16 @@ fn build_parts_with(
     provider: Arc<dyn Provider>,
 ) -> Result<AgentParts, Box<dyn std::error::Error>> {
     let settings = merged_settings()?;
-    let mut profile = resolve_profile(cli.profile.as_deref())?;
+    let resolved_profile = resolve_profile_with_origin(cli.profile.as_deref())?;
+    let profile_source = resolved_profile.profile_source;
+    let mut profile = resolved_profile.profile;
     apply_settings_reasoning_to_profile(&settings, &mut profile)?;
     let applied = apply_cli_profile_overrides(cli, &mut profile)?;
     let model_selection = resolve_model_selection(&profile.model, &settings)?;
     profile.model = model_selection.model;
 
     Ok(
-        builder_from_cli(cli, provider, profile, &settings, &applied)?
+        builder_from_cli(cli, provider, profile, profile_source, &settings, &applied)?
             .build()?
             .into_parts(),
     )

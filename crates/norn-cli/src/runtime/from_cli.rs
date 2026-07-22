@@ -5,8 +5,8 @@
 //! profile resolution + CLI overrides have already happened in the caller
 //! (they are CLI config surface, not assembly, and provider construction
 //! sits between model resolution and this call). This function only
-//! translates the resolved state — the resolved [`Profile`] and its retained
-//! prompt origin, the merged
+//! translates the resolved state — the resolved [`Profile`], its mandatory
+//! [`CliProfileSource`], the merged
 //! [`NornSettings`], the [`AppliedOverrides`] side-channel, and the raw
 //! [`Cli`] flags — into [`AgentBuilder`] setter calls.
 //!
@@ -31,9 +31,10 @@ use norn::tool::context::SharedWorkingDir;
 
 use crate::cli::{BuildError, Cli};
 use crate::config::{
-    AppliedOverrides, ConfigOverrides, apply_config_overrides_to_loop, apply_loop_config_overrides,
-    apply_settings_to_agent_config, default_agent_loop_config, load_rule_engine,
-    merge_event_schemas, parse_inline_or_file, parse_kv, resolve_index_lock_deadline,
+    AppliedOverrides, CliProfileSource, ConfigOverrides, apply_config_overrides_to_loop,
+    apply_loop_config_overrides, apply_settings_to_agent_config, default_agent_loop_config,
+    load_rule_engine, merge_event_schemas, parse_inline_or_file, parse_kv,
+    resolve_index_lock_deadline,
 };
 use crate::runtime::build_write_tool;
 
@@ -43,7 +44,7 @@ use crate::runtime::build_write_tool;
 /// (the caller ran `apply_cli_profile_overrides`, which produced
 /// `applied`); the allow-list therefore rides on `profile.tools` and is
 /// not re-applied here. Prompt overrides remain on `applied` so they retain
-/// operator authority independently of the profile's origin. `settings` is
+/// operator authority independently of `profile_source`. `settings` is
 /// the merged settings the caller
 /// loaded. The returned builder has `.load_runtime_base()` set, so
 /// `build()` re-derives the settings-backed agent-loop config, rules,
@@ -60,6 +61,7 @@ pub fn builder_from_cli(
     cli: &Cli,
     provider: Arc<dyn Provider>,
     profile: Profile,
+    profile_source: CliProfileSource,
     settings: &NornSettings,
     applied: &AppliedOverrides,
 ) -> Result<AgentBuilder, BuildError> {
@@ -81,9 +83,9 @@ pub fn builder_from_cli(
     let write_tool = build_write_tool(&profile, &config_overrides)?;
 
     let builder = AgentBuilder::new(provider);
-    let mut builder = match applied.profile_origin {
-        Some(origin) => builder.profile_with_origin(profile, origin),
-        None => builder.profile(profile),
+    let mut builder = match profile_source {
+        CliProfileSource::Operator => builder.profile(profile),
+        CliProfileSource::Discovered(origin) => builder.profile_with_origin(profile, origin),
     }
     .working_dir(cwd.clone())
     .load_runtime_base()

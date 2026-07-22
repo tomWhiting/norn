@@ -71,7 +71,6 @@ pub fn apply_cli_profile_overrides(
         allowed_tools,
         system_prompt: cli.system_prompt.clone(),
         append_system_prompt: cli.append_system_prompt.clone(),
-        profile_origin: None,
     })
 }
 

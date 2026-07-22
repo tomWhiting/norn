@@ -22,9 +22,9 @@ use norn::runtime_init::load_resolved_settings;
 
 use crate::cli::{BuildError, Cli, ProviderKind};
 use crate::config::{
-    AppliedOverrides, ConfigOverrides, ProviderConfigOverrides, apply_cli_profile_overrides,
-    apply_settings_reasoning_to_profile, apply_working_dir, collect_extension_servers,
-    overlay_cli_provider_overrides, overlay_provider_profile_overrides,
+    AppliedOverrides, CliProfileSource, ConfigOverrides, ProviderConfigOverrides,
+    apply_cli_profile_overrides, apply_settings_reasoning_to_profile, apply_working_dir,
+    collect_extension_servers, overlay_cli_provider_overrides, overlay_provider_profile_overrides,
     provider_overrides_from_settings, resolve_index_lock_deadline, resolve_model_selection,
     resolve_profile_with_origin, resolve_provider_auth, resolve_provider_selection,
 };
@@ -51,6 +51,8 @@ pub struct ResolvedInvocation {
     /// The resolved profile with model / tool / reasoning overrides
     /// applied, ready to move into `builder_from_cli`.
     pub profile: Profile,
+    /// Mandatory source classification for the profile prompt.
+    pub profile_source: CliProfileSource,
     /// The applied-overrides side channel (disallowed tools, unmatched
     /// tool flag names) `builder_from_cli` consumes.
     pub applied: AppliedOverrides,
@@ -111,7 +113,7 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
 
     let resolved_profile = resolve_profile_with_origin(cli.profile.as_deref())?;
     let profile_is_working_directory_controlled = resolved_profile.working_directory_controlled;
-    let profile_origin = resolved_profile.profile_origin;
+    let profile_source = resolved_profile.profile_source;
     let mut profile = resolved_profile.profile;
     if cli.profile.is_none()
         && cli.model.is_none()
@@ -120,8 +122,7 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         model.clone_into(&mut profile.model);
     }
     apply_settings_reasoning_to_profile(&settings, &mut profile)?;
-    let mut applied = apply_cli_profile_overrides(cli, &mut profile)?;
-    applied.profile_origin = profile_origin;
+    let applied = apply_cli_profile_overrides(cli, &mut profile)?;
     let model_selection = resolve_model_selection(&profile.model, &settings)?;
     if profile_is_working_directory_controlled
         && cli.model.is_none()
@@ -199,6 +200,7 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         mcp_servers: resolved_settings.mcp_servers,
         mcp_state,
         profile,
+        profile_source,
         applied,
         provider_kind: provider_selection.kind,
         provider_overrides,
@@ -253,11 +255,14 @@ fn resolve_debug_api_dir(value: &str) -> Result<std::path::PathBuf, BuildError> 
 mod tests {
     use std::ffi::OsString;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use clap::Parser;
     use serial_test::serial;
 
     use super::*;
+    use norn::provider::mock::MockProvider;
+    use norn::system_prompt::{PromptAuthority, PromptSource};
 
     struct IsolatedResolutionEnvironment {
         previous_dir: PathBuf,
@@ -597,6 +602,62 @@ mod tests {
                 .join("profile-command-secret")
                 .exists()
         );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn workspace_profile_stays_user_authority_through_cli_assembly()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let environment = IsolatedResolutionEnvironment::new();
+        let profiles = environment.working_dir().join(".norn").join("profiles");
+        std::fs::create_dir_all(&profiles)?;
+        std::fs::write(
+            profiles.join("workspace.json"),
+            serde_json::json!({
+                "name": "workspace",
+                "model": "gpt-5.6-sol",
+                "system_instructions": ["WORKSPACE_PROFILE_AUTHORITY_SENTINEL"]
+            })
+            .to_string(),
+        )?;
+        let cli = Cli::try_parse_from(["norn", "--profile", "workspace", "--no-session"])?;
+        let resolved = resolve_invocation(&cli)?;
+        assert_eq!(
+            resolved.profile_source,
+            CliProfileSource::Discovered(norn::profile::ProfileOrigin::WorkingDirectory)
+        );
+
+        let parts = crate::runtime::builder_from_cli(
+            &cli,
+            Arc::new(MockProvider::new(Vec::new())),
+            resolved.profile,
+            resolved.profile_source,
+            &resolved.settings,
+            &resolved.applied,
+        )?
+        .build()?
+        .into_parts();
+        let plan = parts
+            .loop_context
+            .stable_prompt_plan()
+            .ok_or_else(|| std::io::Error::other("CLI assembly omitted the typed prompt plan"))?;
+        let workspace_fragment = plan
+            .fragments()
+            .iter()
+            .find(|fragment| fragment.source() == PromptSource::WorkspaceProfile)
+            .ok_or_else(|| std::io::Error::other("workspace profile fragment was not preserved"))?;
+        assert_eq!(workspace_fragment.authority(), PromptAuthority::User);
+        assert_eq!(
+            workspace_fragment.content(),
+            "WORKSPACE_PROFILE_AUTHORITY_SENTINEL"
+        );
+        assert!(plan.fragments().iter().all(|fragment| {
+            fragment.authority() == PromptAuthority::User
+                || !fragment
+                    .content()
+                    .contains("WORKSPACE_PROFILE_AUTHORITY_SENTINEL")
+        }));
         Ok(())
     }
 

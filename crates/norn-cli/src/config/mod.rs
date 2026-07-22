@@ -25,7 +25,7 @@ pub use overrides::{
     resolve_index_lock_deadline, retry_policy_from_settings_and_overrides,
 };
 pub use paths::session_data_dir;
-pub use profile_loader::{resolve_profile, resolve_profile_with_origin};
+pub use profile_loader::{CliProfileSource, resolve_profile_with_origin};
 pub(crate) use provider_auth::{ResolvedProviderAuth, resolve_provider_auth};
 pub use provider_selection::{ProviderSelection, resolve_provider_selection};
 pub use rules::load_rule_engine;

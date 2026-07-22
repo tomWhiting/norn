@@ -142,6 +142,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         cli,
         built_provider.as_arc(),
         resolved.profile,
+        resolved.profile_source,
         &resolved.settings,
         &resolved.applied,
     )?;

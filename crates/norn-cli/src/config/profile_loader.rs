@@ -1,6 +1,7 @@
 //! Profile resolution for the Norn CLI (NC-004 R1, NA-002 R4).
 //!
-//! Translates a `--profile` argument into a fully-loaded [`Profile`]:
+//! Translates a `--profile` argument into a fully-loaded [`Profile`] plus a
+//! mandatory source classification used to derive prompt authority:
 //!
 //! - A value containing `/` or `.` is treated as a filesystem path and
 //!   loaded directly via [`Profile::from_file`].
@@ -25,16 +26,23 @@ use norn::profile::{self, Profile};
 
 use crate::cli::BuildError;
 
-/// Loaded CLI profile plus whether its file came from the working directory.
+/// Loaded CLI profile plus its filesystem trust classification.
 pub struct ResolvedCliProfile {
     /// Parsed profile.
     pub profile: Profile,
     /// True only for a bare name resolved from a workspace profile directory.
     pub working_directory_controlled: bool,
-    /// Filesystem origin for prompt-authority preservation. Explicit paths and
-    /// the built-in default are operator-selected and therefore carry no
-    /// discovered origin.
-    pub profile_origin: Option<profile::ProfileOrigin>,
+    /// Required source classification for prompt-authority preservation.
+    pub profile_source: CliProfileSource,
+}
+
+/// Source classification every CLI-to-library assembly call must provide.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CliProfileSource {
+    /// Built-in defaults, explicit paths, and programmatic operator choices.
+    Operator,
+    /// A bare-name profile found by provenance-aware discovery.
+    Discovered(profile::ProfileOrigin),
 }
 
 /// Default model identifier used when no `--profile` is supplied and no
@@ -45,22 +53,6 @@ pub const DEFAULT_MODEL: &str = norn::model_catalog::DEFAULT_MODEL;
 /// and the profile has no `system_instructions`. The `OpenAI` Responses API
 /// requires a non-empty instructions field.
 pub const DEFAULT_SYSTEM_INSTRUCTION: &str = "You are a helpful assistant.";
-
-/// Resolve the `--profile` argument into a loaded [`Profile`].
-///
-/// `spec` is the raw value of `--profile` (i.e. `cli.profile.as_deref()`).
-/// When `None`, the function returns [`default_profile`]; otherwise it
-/// dispatches on the presence of path separators or extensions and loads
-/// the file from disk.
-///
-/// # Errors
-///
-/// Returns [`BuildError::Argument`] when a bare name cannot be located as
-/// `.md`, `.toml`, or `.json` in any of the configured scan directories, or
-/// when the underlying profile file cannot be read or parsed.
-pub fn resolve_profile(spec: Option<&str>) -> Result<Profile, BuildError> {
-    Ok(resolve_profile_with_origin(spec)?.profile)
-}
 
 /// Resolves a CLI profile while retaining whether a bare name came from the
 /// working directory.
@@ -74,7 +66,7 @@ pub fn resolve_profile_with_origin(spec: Option<&str>) -> Result<ResolvedCliProf
         return Ok(ResolvedCliProfile {
             profile: default_profile(),
             working_directory_controlled: false,
-            profile_origin: None,
+            profile_source: CliProfileSource::Operator,
         });
     };
 
@@ -82,7 +74,7 @@ pub fn resolve_profile_with_origin(spec: Option<&str>) -> Result<ResolvedCliProf
         return Ok(ResolvedCliProfile {
             profile: load_from_path(Path::new(value))?,
             working_directory_controlled: false,
-            profile_origin: None,
+            profile_source: CliProfileSource::Operator,
         });
     }
 
@@ -92,7 +84,7 @@ pub fn resolve_profile_with_origin(spec: Option<&str>) -> Result<ResolvedCliProf
     Ok(ResolvedCliProfile {
         profile: resolved.profile,
         working_directory_controlled,
-        profile_origin: Some(resolved.origin),
+        profile_source: CliProfileSource::Discovered(resolved.origin),
     })
 }
 
@@ -175,8 +167,9 @@ mod tests {
 
     #[test]
     fn no_profile_argument_returns_default() {
-        let profile = resolve_profile(None).unwrap();
-        assert_eq!(profile.model, DEFAULT_MODEL);
+        let resolved = resolve_profile_with_origin(None).unwrap();
+        assert_eq!(resolved.profile.model, DEFAULT_MODEL);
+        assert_eq!(resolved.profile_source, CliProfileSource::Operator);
     }
 
     #[test]
@@ -204,14 +197,16 @@ mod tests {
         assert_eq!(resolved.profile.model, "gpt-5");
         assert_eq!(resolved.profile.prompt_commands.len(), 1);
         assert!(
-            resolved.profile_origin.is_none(),
+            resolved.profile_source == CliProfileSource::Operator,
             "an explicit path is an operator selection, not repository discovery"
         );
     }
 
     #[test]
     fn explicit_path_missing_returns_argument_error() {
-        let err = resolve_profile(Some("./does-not-exist.toml")).unwrap_err();
+        let Err(err) = resolve_profile_with_origin(Some("./does-not-exist.toml")) else {
+            panic!("missing explicit profile path must fail");
+        };
         match err {
             BuildError::Argument(reason) => {
                 assert!(reason.contains("./does-not-exist.toml"));
@@ -236,7 +231,10 @@ mod tests {
         let resolved = resolve_profile_with_origin(Some("coding")).unwrap();
         assert_eq!(resolved.profile.name, "coding");
         assert_eq!(resolved.profile.model, "gpt-5");
-        assert_eq!(resolved.profile_origin, Some(profile::ProfileOrigin::User));
+        assert_eq!(
+            resolved.profile_source,
+            CliProfileSource::Discovered(profile::ProfileOrigin::User)
+        );
     }
 
     #[test]
@@ -252,8 +250,8 @@ mod tests {
         .unwrap();
         let _guard = TempNornHome::new(dir);
 
-        let profile = resolve_profile(Some("review")).unwrap();
-        assert_eq!(profile.name, "review");
+        let resolved = resolve_profile_with_origin(Some("review")).unwrap();
+        assert_eq!(resolved.profile.name, "review");
     }
 
     #[test]
@@ -269,11 +267,11 @@ mod tests {
         .unwrap();
         let _guard = TempNornHome::new(dir);
 
-        let profile = resolve_profile(Some("dev")).unwrap();
-        assert_eq!(profile.name, "dev");
-        assert_eq!(profile.model, "gpt-5");
+        let resolved = resolve_profile_with_origin(Some("dev")).unwrap();
+        assert_eq!(resolved.profile.name, "dev");
+        assert_eq!(resolved.profile.model, "gpt-5");
         assert_eq!(
-            profile.system_instructions,
+            resolved.profile.system_instructions,
             vec!["You are a developer.".to_owned()]
         );
     }
@@ -286,7 +284,9 @@ mod tests {
         let user_profiles = dir.path().join("profiles");
         let _guard = TempNornHome::new(dir);
 
-        let err = resolve_profile(Some("nonexistent")).unwrap_err();
+        let Err(err) = resolve_profile_with_origin(Some("nonexistent")) else {
+            panic!("missing named profile must fail");
+        };
         match err {
             BuildError::Argument(reason) => {
                 assert!(reason.contains("nonexistent"), "reason: {reason}");

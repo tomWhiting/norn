@@ -19,8 +19,6 @@ mod process;
 mod profile;
 mod provider;
 
-use norn::profile::ProfileOrigin;
-
 pub use loop_config::{
     DEFAULT_INDEX_LOCK_DEADLINE_MS, apply_config_overrides_to_loop, apply_loop_config_overrides,
     apply_settings_to_agent_config, default_agent_loop_config, effective_step_timeout,
@@ -48,7 +46,7 @@ pub struct AppliedOverrides {
     pub disallowed_tools: Vec<String>,
     /// Tool names supplied via the `--allowed-tools` flag specifically
     /// (empty when the flag is absent). The allow-list itself rides on
-    /// [`Profile::tools`](norn::profile::Profile) (also populatable by the
+    /// [`Profile::tools`](norn::profile::Profile::tools) (also populatable by the
     /// profile file); this flag-only copy is kept separately so
     /// [`warn_unmatched_tool_flag_names`](crate::runtime::warn_unmatched_tool_flag_names)
     /// can warn about a flag-supplied name that matches no registered tool
@@ -59,8 +57,6 @@ pub struct AppliedOverrides {
     pub system_prompt: Option<String>,
     /// Explicit operator fragment appended after resolved profile instructions.
     pub append_system_prompt: Option<String>,
-    /// Filesystem origin retained for source-derived profile authority.
-    pub profile_origin: Option<ProfileOrigin>,
 }
 
 #[cfg(test)]

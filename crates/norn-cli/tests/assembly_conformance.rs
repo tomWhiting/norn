@@ -39,7 +39,7 @@ use norn::tools::diagnostics::DiagnosticInfra;
 use norn_cli::cli::Cli;
 use norn_cli::config::{
     apply_cli_profile_overrides, apply_settings_reasoning_to_profile, resolve_model_selection,
-    resolve_profile,
+    resolve_profile_with_origin,
 };
 use norn_cli::runtime::{DEFAULT_DELEGATION_DEPTH, builder_from_cli, cli_coordination_envelope};
 
@@ -62,13 +62,22 @@ fn merged_settings() -> Result<NornSettings, norn_cli::cli::BuildError> {
 /// envelope before `build()`.
 fn builder_for(cli: &Cli) -> Result<AgentBuilder, norn_cli::cli::BuildError> {
     let settings = merged_settings()?;
-    let mut profile = resolve_profile(cli.profile.as_deref())?;
+    let resolved_profile = resolve_profile_with_origin(cli.profile.as_deref())?;
+    let profile_source = resolved_profile.profile_source;
+    let mut profile = resolved_profile.profile;
     apply_settings_reasoning_to_profile(&settings, &mut profile)?;
     let applied = apply_cli_profile_overrides(cli, &mut profile)?;
     let model_selection = resolve_model_selection(&profile.model, &settings)?;
     profile.model = model_selection.model;
 
-    builder_from_cli(cli, mock_provider(), profile, &settings, &applied)
+    builder_from_cli(
+        cli,
+        mock_provider(),
+        profile,
+        profile_source,
+        &settings,
+        &applied,
+    )
 }
 
 /// The unified library assembler's parts for a fixed CLI invocation.

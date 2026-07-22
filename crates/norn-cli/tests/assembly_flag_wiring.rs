@@ -27,7 +27,7 @@ use norn::provider::traits::Provider;
 use norn_cli::cli::{BuildError, Cli};
 use norn_cli::config::{
     apply_cli_profile_overrides, apply_settings_reasoning_to_profile, resolve_model_selection,
-    resolve_profile,
+    resolve_profile_with_origin,
 };
 use norn_cli::runtime::{
     DEFAULT_DELEGATION_DEPTH, builder_from_cli, cli_coordination_envelope, resolve_invocation,
@@ -49,13 +49,23 @@ fn merged_settings() -> Result<NornSettings, BuildError> {
 /// Resolve the profile pipeline and return the un-built builder.
 fn resolve_builder(cli: &Cli) -> Result<AgentBuilder, BuildError> {
     let settings = merged_settings()?;
-    let mut profile = resolve_profile(cli.profile.as_deref()).expect("resolve profile");
+    let resolved_profile =
+        resolve_profile_with_origin(cli.profile.as_deref()).expect("resolve profile");
+    let profile_source = resolved_profile.profile_source;
+    let mut profile = resolved_profile.profile;
     apply_settings_reasoning_to_profile(&settings, &mut profile).expect("settings reasoning");
     let applied = apply_cli_profile_overrides(cli, &mut profile).expect("cli overrides");
     let model_selection =
         resolve_model_selection(&profile.model, &settings).expect("model selection");
     profile.model = model_selection.model;
-    builder_from_cli(cli, mock_provider(), profile, &settings, &applied)
+    builder_from_cli(
+        cli,
+        mock_provider(),
+        profile,
+        profile_source,
+        &settings,
+        &applied,
+    )
 }
 
 /// Build to parts (asserting both `builder_from_cli` and `build` succeed).
@@ -413,6 +423,7 @@ fn valid_extension_uri_passes_validation() {
             &cli,
             mock_provider(),
             resolved.profile,
+            resolved.profile_source,
             &resolved.settings,
             &resolved.applied,
         );

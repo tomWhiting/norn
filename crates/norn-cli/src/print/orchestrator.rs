@@ -253,6 +253,7 @@ pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<PrintAssembly, Pri
         cli,
         built_provider.as_arc(),
         resolved.profile,
+        resolved.profile_source,
         &resolved.settings,
         &resolved.applied,
     )?;
