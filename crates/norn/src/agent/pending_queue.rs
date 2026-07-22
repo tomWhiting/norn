@@ -13,7 +13,8 @@ use super::pending_delivery::{pending_delivery_event_id, pending_queue_event_id}
 use super::pending_mailbox::PendingMailboxLease;
 use super::pending_messages::{
     AGENT_MESSAGE_QUEUED_EVENT_TYPE, PendingAgentMessage, PendingAgentMessageLifecycle,
-    PendingAgentMessages, exact_frame, exact_pending, find_pending, publish_pending,
+    PendingAgentMessages, exact_frame, exact_pending, find_pending, find_pending_mut,
+    publish_pending, remove_message,
 };
 
 pub(crate) struct QueuedPendingMessage {
@@ -36,6 +37,11 @@ impl ClosedPendingMailbox {
 }
 
 impl PendingAgentMessages {
+    pub(super) fn exact_record_is_retained(&self, proposed: &PendingAgentMessage) -> bool {
+        find_pending(&self.inner.lock(), proposed.message.id)
+            .is_some_and(|existing| exact_pending(existing, proposed).is_ok())
+    }
+
     /// Register the root mailbox before the root registry entry becomes live.
     pub(crate) fn register_root_mailbox(
         &self,
@@ -88,8 +94,8 @@ impl PendingAgentMessages {
             })
     }
 
-    /// Persist a route-accepted message after terminal mailbox closure.
-    pub(crate) fn persist_after_close(
+    /// Stage a route-accepted message after terminal mailbox closure.
+    pub(crate) fn stage_after_close(
         &self,
         closed: &ClosedPendingMailbox,
         pending: &mut PendingAgentMessage,
@@ -97,17 +103,24 @@ impl PendingAgentMessages {
         let enqueue_lock = self.enqueue_locks.for_recipient(closed.recipient_id);
         let _enqueue_guard = enqueue_lock.lock();
         pending.bind_mailbox(closed.recipient_id, closed.mailbox_id)?;
-        self.persist_closed_locked(&closed.store, pending)
+        self.stage_terminal_locked(pending)
     }
 
-    pub(super) fn persist_closed_locked(
+    pub(super) fn stage_terminal_locked(
         &self,
-        store: &EventStore,
         pending: &mut PendingAgentMessage,
     ) -> Result<(), SessionError> {
-        self.ensure_recipient_prefix_durable_locked(pending.mailbox_owner, store)?;
-        let event = pending.prepare_queue_event(store)?;
-        crate::r#loop::append_idempotent_off_executor(store, event)?;
+        let message_id = pending.message.id;
+        let mut inner = self.inner.lock();
+        if let Some(existing) = find_pending(&inner, message_id) {
+            exact_pending(existing, pending)?;
+            if let Some(existing) = find_pending_mut(&mut inner, message_id) {
+                existing.terminal_recovery = true;
+            }
+            return Ok(());
+        }
+        pending.terminal_recovery = true;
+        publish_pending(&mut inner, pending.clone(), false);
         Ok(())
     }
 
@@ -279,6 +292,26 @@ impl PendingAgentMessages {
             };
             pending_record.queue_durable = true;
         }
+    }
+}
+
+pub(super) fn retire_durable_terminal_records(
+    inner: &mut super::pending_messages::PendingInner,
+    recipient_id: Uuid,
+    mailbox_id: Option<crate::session::MailboxId>,
+) {
+    let retired: Vec<Uuid> = inner
+        .by_recipient
+        .get(&recipient_id)
+        .into_iter()
+        .flatten()
+        .filter(|pending| {
+            pending.terminal_recovery && pending.queue_durable && pending.mailbox_id == mailbox_id
+        })
+        .map(|pending| pending.message.id)
+        .collect();
+    for message_id in retired {
+        remove_message(inner, message_id);
     }
 }
 

@@ -17,33 +17,37 @@ pub(crate) fn persist_undelivered_after_close(
     window: UndeliveredWindow,
 ) -> Result<(), SessionError> {
     let agent_id = closed.recipient_id();
-    let mut first_error = None;
+    let mut hard_error = None;
     for mut message in std::mem::take(messages) {
         message.to_id = agent_id;
         let message_id = message.id;
         let kind = message.kind;
         let mut record =
             PendingAgentMessage::new(message, agent_id.to_string(), chrono::Utc::now());
-        match pending.persist_after_close(closed, &mut record) {
-            Ok(()) => tracing::warn!(
+        match pending.stage_after_close(closed, &mut record) {
+            Ok(()) => tracing::debug!(
                 %message_id,
                 recipient = %agent_id,
                 kind = kind.as_str(),
                 window = window.as_str(),
-                "accepted inbound message reached a closing controller; persisted for direct resume",
+                "accepted inbound message reached a closing controller; staged for terminal persistence",
             ),
             Err(error) => {
                 tracing::error!(
                     %message_id,
                     %error,
                     window = window.as_str(),
-                    "failed to persist a message accepted before terminal mailbox closure",
+                    "failed to stage a message accepted before terminal mailbox closure",
                 );
-                if first_error.is_none() {
-                    first_error = Some(error);
+                if hard_error.is_none() {
+                    hard_error = Some(error);
                 }
             }
         }
     }
-    first_error.map_or(Ok(()), Err)
+    let finalization = pending.finalize_closed_pending(closed);
+    if let Some(error) = hard_error {
+        return Err(error);
+    }
+    finalization
 }

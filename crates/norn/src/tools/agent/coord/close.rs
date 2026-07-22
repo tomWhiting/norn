@@ -6,7 +6,11 @@ use chrono::Utc;
 use serde::Deserialize;
 use uuid::Uuid;
 
+mod recovery;
+
+use self::recovery::{reclaim_observed_terminal, recover_terminal_pending_before_reclamation};
 use super::helpers::sender_attribution;
+use crate::agent::PendingAgentMessages;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::error::ToolError;
 use crate::r#loop::inbound::{ChannelMessage, MessageKind};
@@ -55,6 +59,14 @@ use crate::tools::agent::infra::{ResolvedAgent, infra_from, resolve_agent};
 /// recorded terminal status and timestamp instead of an error — an error
 /// would only push the model into pointless retries against an agent
 /// that no longer exists.
+///
+/// Before cancellation begins, close retries every retained terminal pending-
+/// message record in the target subtree. It checks again after joining each
+/// wrapper, because cancellation can create new recovery work in that wrapper's
+/// final drain. A retry failure is a hard, payload-free error. Preflight
+/// failures leave tokens, handles, and registry entries untouched; post-join
+/// failures leave the terminal registry entry and shared recovery authority
+/// observable for a later exact retry.
 pub struct CloseAgentTool;
 
 /// Stable `snake_case` label for a status embedded in human-readable
@@ -201,11 +213,12 @@ fn collect_subtree(registry: &AgentRegistry, root: Uuid) -> Vec<Uuid> {
 async fn shutdown_one(
     registry: &parking_lot::RwLock<AgentRegistry>,
     handles: Option<&AgentHandles>,
+    pending_messages: &PendingAgentMessages,
     id: Uuid,
     reason: Option<&str>,
     closer: &CloserAttribution,
     cascade_cancelled: bool,
-) -> &'static str {
+) -> Result<&'static str, ToolError> {
     let held = handles.and_then(|h| h.remove(id));
     let had_handle = held.is_some();
     if let Some(handle) = held {
@@ -256,6 +269,13 @@ async fn shutdown_one(
         }
     }
 
+    // The wrapper's final route transition can create recovery authority after
+    // the subtree preflight. Retry it before taking the registry write lock or
+    // reclaiming the now-terminal entry. The handle has already been joined
+    // and consumed, but the registry entry and shared recovery authority remain
+    // intact if this hard error returns.
+    recover_terminal_pending_before_reclamation(pending_messages, id)?;
+
     let mut reg = registry.write();
     let Some(entry) = reg.get(id) else {
         // Gone from the registry: reclaimed by its own completion
@@ -263,21 +283,29 @@ async fn shutdown_one(
         // tombstone proves it finished; its absence would mean an entry
         // vanished without a terminal record — an invariant violation.
         if reg.tombstone(id).is_some() {
-            return "already_completed";
+            // A no-handle wrapper can publish terminal and be reclaimed by an
+            // external observer after the postflight above. Drain-before-
+            // terminal ordering makes the tombstone another decisive terminal
+            // observation, so route it through the same final recovery gate.
+            drop(reg);
+            return reclaim_observed_terminal(registry, pending_messages, id);
         }
         tracing::error!(
             agent_id = %id,
             "close_agent: invariant violation: target vanished from the registry \
              without a completion record",
         );
-        return "missing";
+        return Ok("missing");
     };
     if entry.status.is_terminal() {
         // Terminal — either it finished on its own earlier, or the
-        // cancellation above let the wrapper record the run's real
-        // outcome. Reclaim without rewriting it.
-        reg.remove_terminal(id);
-        return "reclaimed";
+        // cancellation above let the wrapper record the run's real outcome.
+        // Drop the registry lock and check recovery again *after observing the
+        // terminal state*: a no-handle cascade can finish its drain between the
+        // earlier postflight and this read. Drain-before-terminal ordering makes
+        // this second observation decisive before reclamation.
+        drop(reg);
+        return reclaim_observed_terminal(registry, pending_messages, id);
     }
     if !had_handle {
         if cascade_cancelled {
@@ -287,11 +315,11 @@ async fn shutdown_one(
             // token, W3.5). Its run is ending with the real `Cancelled`
             // outcome and its own wrapper owns the terminal sequence;
             // the closer reports the truth and leaves the entry to it.
-            return "cancelling";
+            return Ok("cancelling");
         }
         // Live, and the closer cannot stop its task: leave the entry to
         // its lifecycle owner and say so.
-        return "unreachable";
+        return Ok("unreachable");
     }
     // The wrapper was joined above and ended without its terminal mark
     // (see the function docs). The closer owns this lifecycle end but
@@ -305,10 +333,10 @@ async fn shutdown_one(
     );
     if let Err(e) = reg.mark_failed(id) {
         tracing::warn!(agent_id = %id, error = %e, "close_agent: mark_failed failed");
-        return "failed";
+        return Ok("failed");
     }
     reg.remove_terminal(id);
-    "force_failed"
+    Ok("force_failed")
 }
 
 #[async_trait]
@@ -373,6 +401,7 @@ impl Tool for CloseAgentTool {
             // that nothing was actually shut down. So: success, with the
             // recorded completion spelled out.
             ResolvedAgent::Reclaimed(tombstone) => {
+                recover_terminal_pending_before_reclamation(&infra.pending_messages, tombstone.id)?;
                 let completed_at = tombstone.completed_at.to_rfc3339();
                 return Ok(ToolOutput::success(serde_json::json!({
                     "agent_id": tombstone.id.to_string(),
@@ -399,6 +428,14 @@ impl Tool for CloseAgentTool {
             let reg = infra.registry.read();
             collect_subtree(&reg, target_id)
         };
+
+        // Recovery is a subtree-wide preflight. It must finish before the
+        // token-first cascade below, because every later stage can consume a
+        // handle or reclaim a terminal registry entry. On failure the hard
+        // error returns with both observability surfaces byte-for-byte intact.
+        for id in &order {
+            recover_terminal_pending_before_reclamation(&infra.pending_messages, *id)?;
+        }
         order.reverse();
 
         // Token-first cascade (W3.5): fire the target's cancellation
@@ -427,6 +464,7 @@ impl Tool for CloseAgentTool {
             let status = shutdown_one(
                 &infra.registry,
                 handles_ref,
+                &infra.pending_messages,
                 id,
                 args.reason.as_deref(),
                 &closer,
@@ -435,7 +473,7 @@ impl Tool for CloseAgentTool {
                 // cascade-report path.
                 cascade_triggered && id != target_id,
             )
-            .await;
+            .await?;
             shut_down.push(serde_json::json!({
                 "agent_id": id.to_string(),
                 "status": status,
@@ -450,6 +488,9 @@ impl Tool for CloseAgentTool {
         Ok(ToolOutput::success(payload))
     }
 }
+
+#[cfg(test)]
+mod recovery_tests;
 
 #[cfg(test)]
 #[allow(

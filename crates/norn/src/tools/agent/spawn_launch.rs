@@ -16,7 +16,6 @@ use super::infra::SubAgentExecutor;
 use super::lifecycle::LifecycleEmitter;
 use super::reclaim::ReclaimHandshake;
 #[cfg(test)]
-#[cfg(test)]
 pub(crate) use super::spawn_completion::requeue_stranded_inbound;
 use super::spawn_controller::SpawnController;
 use crate::agent::message_router::MessageRouter;
@@ -63,6 +62,8 @@ pub(super) struct ChildLaunch {
     pub(super) pending_messages: Arc<PendingAgentMessages>,
     /// Controller-owned proof that this mailbox remains live.
     pub(super) mailbox_lease: Arc<PendingMailboxLease>,
+    #[cfg(test)]
+    pub(super) terminal_transition_gate: Option<Arc<super::TestTerminalTransitionGate>>,
 }
 
 /// Launch the child controller and return the handle retained by its parent.
@@ -93,6 +94,8 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
         persistent,
         pending_messages,
         mailbox_lease,
+        #[cfg(test)]
+        terminal_transition_gate,
     } = launch;
 
     let handle_store = Arc::clone(&store);
@@ -165,6 +168,8 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
         inbound_rx,
         wake_rx,
         wake_pending: Arc::clone(&wake_pending),
+        #[cfg(test)]
+        terminal_transition_gate,
     };
     let join_handle = tokio::spawn(controller.run());
 

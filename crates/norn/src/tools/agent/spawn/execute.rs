@@ -254,6 +254,10 @@ pub(super) async fn execute(
         reason: format!("spawn_agent: session branch failed: {e}"),
     })?;
     let child_store = Arc::clone(&branched.store);
+    #[cfg(test)]
+    let child_store = ctx
+        .get_extension::<super::super::TestChildEventStore>()
+        .map_or(child_store, |override_store| Arc::clone(&override_store.0));
 
     let child_event_sender = ctx
         .get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
@@ -466,6 +470,8 @@ pub(super) async fn execute(
         persistent,
         pending_messages: Arc::clone(&infra.pending_messages),
         mailbox_lease,
+        #[cfg(test)]
+        terminal_transition_gate: ctx.get_extension::<super::super::TestTerminalTransitionGate>(),
     });
     handles.insert(handle);
     if persistent && let Some(handle) = handles.wake_handle(child_id) {

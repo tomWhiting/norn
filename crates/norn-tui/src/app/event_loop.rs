@@ -138,6 +138,7 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
     guard.reset_scroll_cursor(1);
 
     let caps = guard.caps().clone();
+    let pending_messages = inputs.loop_context.pending_agent_messages.clone();
     let mut state = AppState::new(
         caps,
         inputs.history,
@@ -145,6 +146,7 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         inputs.root_id,
         inputs.status_bar,
     );
+    state.agent_panel.set_pending_messages(pending_messages);
 
     replay_visible_session_history(&state, &inputs.store, &mut guard)?;
     guard.save_scroll_cursor()?;

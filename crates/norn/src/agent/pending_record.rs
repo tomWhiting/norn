@@ -110,6 +110,7 @@ pub struct PendingAgentMessage {
     pub(super) mailbox_id: Option<MailboxId>,
     pub(super) exact_message_timestamp: Option<DateTime<Utc>>,
     pub(super) queue_durable: bool,
+    pub(super) terminal_recovery: bool,
     pub(super) queue_event: Option<SessionEvent>,
     pub(super) delivery_attempt: Option<PendingDeliveryAttempt>,
 }
@@ -128,6 +129,7 @@ impl PendingAgentMessage {
             mailbox_id: None,
             exact_message_timestamp,
             queue_durable: false,
+            terminal_recovery: false,
             queue_event: None,
             delivery_attempt: None,
         }
@@ -202,6 +204,7 @@ impl PendingAgentMessage {
                 mailbox_id,
                 exact_message_timestamp: message_timestamp,
                 queue_durable: true,
+                terminal_recovery: false,
                 queue_event: None,
                 delivery_attempt: None,
             },

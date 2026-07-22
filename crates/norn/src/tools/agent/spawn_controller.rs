@@ -72,6 +72,8 @@ pub(super) struct SpawnController {
     pub(super) inbound_rx: InboundChannel,
     pub(super) wake_rx: mpsc::Receiver<()>,
     pub(super) wake_pending: Arc<AtomicBool>,
+    #[cfg(test)]
+    pub(super) terminal_transition_gate: Option<Arc<super::TestTerminalTransitionGate>>,
 }
 
 impl SpawnController {
@@ -105,6 +107,8 @@ impl SpawnController {
             mut inbound_rx,
             mut wake_rx,
             wake_pending,
+            #[cfg(test)]
+            terminal_transition_gate,
         } = self;
 
         crate::agent::arming::arm_auto_compaction(&mut loop_ctx, &mut child_config, &model);
@@ -150,7 +154,7 @@ impl SpawnController {
                 .await
             };
 
-            let summary = match outcome {
+            let mut summary = match outcome {
                 Ok(step_outcome) => {
                     extract_outcome_summary(step_outcome, delivered_children.snapshot())
                 }
@@ -163,35 +167,93 @@ impl SpawnController {
                     panic_outcome_summary(message, delivered_children.snapshot())
                 }
             };
-            let will_terminate = !persistent
+            #[cfg(test)]
+            if let Some(gate) = terminal_transition_gate.as_ref() {
+                gate.hold().await;
+            }
+            let base_will_terminate = !persistent
                 || run_cancel.is_cancelled()
                 || (summary.status == AgentStatus::Failed && summary.stop.is_none());
-            match pending_messages.transition_live_route(
+            let mut persistence_errors = Vec::new();
+            let transition_hard_failure = match pending_messages.transition_live_route(
                 child_id,
                 store.as_ref(),
                 router.as_ref(),
                 &mut inbound_rx,
-                will_terminate.then_some(&mailbox_lease),
+                base_will_terminate.then_some(&mailbox_lease),
             ) {
                 Ok(transition) => {
+                    let hard_failure = transition.hard_failure;
                     if let Some(closed) = transition.closed {
                         closed_mailbox = Some(closed);
                     }
                     if let Some(error) = transition.first_error {
-                        tracing::error!(
-                            child_id = %child_id,
-                            %error,
-                            "failed to persist one or more messages during route transition",
-                        );
+                        persistence_errors.push(("route transition", error));
                     }
+                    hard_failure
                 }
                 Err(error) => {
+                    persistence_errors.push(("route transition", error));
+                    router.deregister(child_id);
+                    true
+                }
+            };
+
+            let will_terminate = base_will_terminate || transition_hard_failure;
+            let mut finalizer_failed = false;
+            let mut terminal_recovery_pending = false;
+            if will_terminate {
+                // Close admission before the last authoritative drain. The
+                // finalizer runs even for an empty buffer so it can reconcile
+                // records retained by the first transition attempt.
+                inbound_rx.close();
+                if closed_mailbox.is_none() {
+                    closed_mailbox = pending_messages.close_child_mailbox(child_id, &mailbox_lease);
+                }
+                router.deregister(child_id);
+                let mut stranded = inbound_rx.drain();
+                if let Some(closed) = closed_mailbox.as_ref()
+                    && let Err(error) = persist_undelivered_after_close(
+                        pending_messages.as_ref(),
+                        closed,
+                        &mut stranded,
+                        UndeliveredWindow::Deregistration,
+                    )
+                {
+                    finalizer_failed = true;
+                    persistence_errors.push(("final closed-mailbox drain", error));
+                }
+                terminal_recovery_pending = pending_messages
+                    .terminal_pending_recovery_status(child_id)
+                    .is_some();
+            }
+            let persistence_failed = will_terminate
+                && (transition_hard_failure || finalizer_failed || terminal_recovery_pending);
+            if persistence_failed {
+                summary.downgrade_terminal_persistence();
+            }
+            for (phase, error) in persistence_errors {
+                if !will_terminate {
                     tracing::error!(
                         child_id = %child_id,
+                        phase,
                         %error,
-                        "failed to linearize child route and mailbox transition",
+                        "spawn_agent route-transition message persistence failed; retained state remains retryable",
                     );
-                    router.deregister(child_id);
+                } else if persistence_failed {
+                    tracing::error!(
+                        child_id = %child_id,
+                        phase,
+                        %error,
+                        "spawn_agent terminal message persistence failed",
+                    );
+                } else {
+                    tracing::warn!(
+                        child_id = %child_id,
+                        phase,
+                        %error,
+                        "spawn_agent terminal message persistence recovered before completion",
+                    );
                 }
             }
 
@@ -229,7 +291,7 @@ impl SpawnController {
                     mark_terminal_in_registry(&agent_registry, child_id, summary.status);
                 }
                 let _ = status_tx.send_replace(summary.status);
-                if !stop_blocked {
+                if !stop_blocked && !persistence_failed {
                     reclaim_after_result_delivery(&mut reclaim, &agent_registry, child_id).await;
                 }
                 break;
@@ -263,35 +325,38 @@ impl SpawnController {
             {
                 inbound_rx.close();
                 closed_mailbox = pending_messages.close_child_mailbox(child_id, &mailbox_lease);
-                mark_closed(&agent_registry, child_id);
-                let _ = status_tx.send_replace(AgentStatus::Closed);
+                router.deregister(child_id);
+                let mut stranded = inbound_rx.drain();
+                let mut persistence_error = None;
+                if let Some(closed) = closed_mailbox.as_ref()
+                    && let Err(error) = persist_undelivered_after_close(
+                        pending_messages.as_ref(),
+                        closed,
+                        &mut stranded,
+                        UndeliveredWindow::Deregistration,
+                    )
+                {
+                    persistence_error = Some(error);
+                }
+                let recovery_pending = pending_messages
+                    .terminal_pending_recovery_status(child_id)
+                    .is_some();
+                if let Some(error) = persistence_error.as_ref() {
+                    tracing::error!(
+                        child_id = %child_id,
+                        %error,
+                        "spawn_agent idle-close message persistence failed",
+                    );
+                }
+                if persistence_error.is_some() || recovery_pending {
+                    mark_terminal_in_registry(&agent_registry, child_id, AgentStatus::Failed);
+                    let _ = status_tx.send_replace(AgentStatus::Failed);
+                } else {
+                    mark_closed(&agent_registry, child_id);
+                    let _ = status_tx.send_replace(AgentStatus::Closed);
+                }
                 break;
             }
-        }
-
-        // Close the receiver before the final mailbox close/drain so a
-        // parent-held direct sender cannot report success after the sweep.
-        // `transition_live_route` also closes on ordinary terminal paths;
-        // this unconditional close covers its error fallback and park cancel.
-        inbound_rx.close();
-        if closed_mailbox.is_none() {
-            closed_mailbox = pending_messages.close_child_mailbox(child_id, &mailbox_lease);
-        }
-        router.deregister(child_id);
-        let mut stranded = inbound_rx.drain();
-        if let Some(closed) = closed_mailbox.as_ref()
-            && let Err(error) = persist_undelivered_after_close(
-                pending_messages.as_ref(),
-                closed,
-                &mut stranded,
-                UndeliveredWindow::Deregistration,
-            )
-        {
-            tracing::error!(
-                child_id = %child_id,
-                %error,
-                "failed to persist child messages accepted before terminal mailbox closure",
-            );
         }
         if let Some(registry) = wake_registry {
             registry.remove(child_id);

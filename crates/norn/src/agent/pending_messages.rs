@@ -29,6 +29,7 @@ pub use super::pending_record::{
     AGENT_MESSAGE_DEQUEUED_EVENT_TYPE, AGENT_MESSAGE_QUEUED_EVENT_TYPE, PendingAgentMessage,
     PendingAgentMessageLifecycle, append_pending_message_audit,
 };
+use super::pending_teardown::TerminalPendingRecovery;
 
 #[derive(Default)]
 pub(super) struct PendingInner {
@@ -36,6 +37,7 @@ pub(super) struct PendingInner {
     pub(super) ids: HashSet<Uuid>,
     pub(super) preparing_ids: HashSet<Uuid>,
     pub(super) active_delivery_recipients: HashSet<Uuid>,
+    pub(super) terminal_recoveries: HashMap<Uuid, TerminalPendingRecovery>,
 }
 
 /// Shared pending-message store for one multi-agent session tree.
@@ -204,6 +206,17 @@ pub(super) fn find_pending(inner: &PendingInner, message_id: Uuid) -> Option<&Pe
         .by_recipient
         .values()
         .flat_map(|queue| queue.iter())
+        .find(|pending| pending.message.id == message_id)
+}
+
+pub(super) fn find_pending_mut(
+    inner: &mut PendingInner,
+    message_id: Uuid,
+) -> Option<&mut PendingAgentMessage> {
+    inner
+        .by_recipient
+        .values_mut()
+        .flat_map(|queue| queue.iter_mut())
         .find(|pending| pending.message.id == message_id)
 }
 

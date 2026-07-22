@@ -45,6 +45,26 @@ pub(crate) struct ForkOutcome {
     pub(crate) stop: Option<AgentStopReason>,
 }
 
+impl ForkOutcome {
+    /// Surface a terminal mailbox persistence fault without exposing the
+    /// accepted message payload. The result summary stays available as audit
+    /// evidence, while status and error prevent it being reported as success.
+    /// An existing failure keeps its diagnosis and typed stop reason. Usage
+    /// and duration remain the measurements of work already performed.
+    pub(super) fn downgrade_terminal_persistence(&mut self) {
+        if self.status == AgentStatus::Completed {
+            self.error_message = Some(super::TERMINAL_PERSISTENCE_FAILURE.to_owned());
+            self.stop = None;
+        } else if let Some(error) = self.error_message.as_mut() {
+            error.push_str("\n\n");
+            error.push_str(super::TERMINAL_PERSISTENCE_FAILURE);
+        } else {
+            self.error_message = Some(super::TERMINAL_PERSISTENCE_FAILURE.to_owned());
+        }
+        self.status = AgentStatus::Failed;
+    }
+}
+
 /// Project the agent loop's result into a transport-friendly payload.
 ///
 /// Only [`AgentStepResult::Completed`] is a success. `SchemaUnreachable`,
@@ -438,6 +458,78 @@ mod tests {
             return Err("completed fork must project as success".to_owned());
         }
         Ok(())
+    }
+
+    #[test]
+    fn terminal_persistence_downgrades_success_without_losing_usage() {
+        let duration = std::time::Duration::from_millis(17);
+        let mut outcome = classify_step_result(
+            AgentStepResult::Completed {
+                output: serde_json::json!({"private": "result"}),
+                usage: Usage {
+                    input_tokens: 11,
+                    ..Usage::default()
+                },
+                children_usage: Usage {
+                    output_tokens: 7,
+                    ..Usage::default()
+                },
+            },
+            duration,
+        );
+
+        outcome.downgrade_terminal_persistence();
+
+        assert_eq!(outcome.status, AgentStatus::Failed);
+        assert_eq!(
+            outcome.result_summary,
+            serde_json::json!({"private": "result"}),
+        );
+        assert_eq!(
+            outcome.error_message.as_deref(),
+            Some(super::super::TERMINAL_PERSISTENCE_FAILURE),
+        );
+        assert!(outcome.stop.is_none());
+        assert_eq!(outcome.usage.input_tokens, 11);
+        assert_eq!(outcome.children_usage.output_tokens, 7);
+        assert_eq!(outcome.duration, duration);
+    }
+
+    #[test]
+    fn terminal_persistence_appends_to_existing_failure() {
+        let duration = std::time::Duration::from_millis(23);
+        let mut outcome = classify_step_result(
+            AgentStepResult::TimedOut {
+                elapsed: std::time::Duration::from_secs(30),
+                iterations: 4,
+                partial_output: Some(serde_json::json!("partial")),
+                usage: Usage {
+                    input_tokens: 19,
+                    ..Usage::default()
+                },
+                children_usage: Usage {
+                    output_tokens: 5,
+                    ..Usage::default()
+                },
+            },
+            duration,
+        );
+        let original_error = outcome.error_message.clone().unwrap_or_default();
+        let original_stop = outcome.stop.clone();
+
+        outcome.downgrade_terminal_persistence();
+
+        let error = outcome.error_message.as_deref().unwrap_or_default();
+        assert!(
+            error.starts_with(&original_error),
+            "original diagnosis: {error}"
+        );
+        assert!(error.ends_with(super::super::TERMINAL_PERSISTENCE_FAILURE));
+        assert_eq!(outcome.result_summary, serde_json::json!("partial"));
+        assert_eq!(outcome.stop, original_stop);
+        assert_eq!(outcome.usage.input_tokens, 19);
+        assert_eq!(outcome.children_usage.output_tokens, 5);
+        assert_eq!(outcome.duration, duration);
     }
 
     /// Fix 6: `MaxIterationsReached` surfaces as non-success.

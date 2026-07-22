@@ -1,8 +1,7 @@
 //! Fork launch: the `tokio::spawn` task and completion wrapper for
 //! [`crate::tools::agent::fork_tool::ForkTool`].
 //!
-//! Hoisted from the former fork pipeline (see [`super::fork_context`],
-//! which keeps context
+//! Hoisted from the former fork pipeline (see [`super::fork_context`], which keeps context
 //! construction, store resolution, and outcome projection) so both
 //! modules stay inside the per-file 500-line production-code limit
 //! (CO5) — mirroring the [`super::spawn_launch`] / spawn split.
@@ -106,6 +105,8 @@ pub(super) struct ForkLaunch {
     pub(super) config: AgentLoopConfig,
     pub(super) pending_messages: Arc<PendingAgentMessages>,
     pub(super) mailbox_lease: Arc<PendingMailboxLease>,
+    #[cfg(test)]
+    pub(super) terminal_transition_gate: Option<Arc<super::TestTerminalTransitionGate>>,
 }
 
 /// Launch the fork on its own `tokio::spawn` task and build the parent-side
@@ -137,6 +138,8 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         config,
         pending_messages,
         mailbox_lease,
+        #[cfg(test)]
+        terminal_transition_gate,
     } = launch;
 
     let handle_store = Arc::clone(&child_store);
@@ -227,7 +230,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         }))
         .catch_unwind()
         .await;
-        let outcome = match step {
+        let mut outcome = match step {
             Ok(step_result) => {
                 if let Err(ref e) = step_result {
                     tracing::error!(
@@ -269,6 +272,10 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         // own-calls-only on `outcome.usage`; the aggregation is explicit
         // here and computed exactly once per fork.
         let subtree_usage = outcome.usage.clone() + outcome.children_usage.clone();
+        #[cfg(test)]
+        if let Some(gate) = terminal_transition_gate.as_ref() {
+            gate.hold().await;
+        }
 
         // The fork's loop has ended: nothing will ever drain its inbound
         // channel again, so the route is removed now — unconditionally,
@@ -276,33 +283,71 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         // transition (route ownership follows the loop's life; the
         // registry entry tracks observability). Later sends fail fast as
         // NotRouted instead of enqueueing into a buffer nothing reads.
-        let closed_mailbox = match pending_messages.transition_live_route(
-            fork_id,
-            child_store.as_ref(),
-            router.as_ref(),
-            &mut inbound_rx,
-            Some(&mailbox_lease),
-        ) {
+        let mut persistence_errors = Vec::new();
+        let (closed_mailbox, transition_hard_failure) = match pending_messages
+            .transition_live_route(
+                fork_id,
+                child_store.as_ref(),
+                router.as_ref(),
+                &mut inbound_rx,
+                Some(&mailbox_lease),
+            ) {
             Ok(transition) => {
                 if let Some(error) = transition.first_error {
-                    tracing::error!(
-                        fork_id = %fork_id,
-                        %error,
-                        "failed to persist one or more fork messages during route closure",
-                    );
+                    persistence_errors.push(("route closure", error));
                 }
-                transition.closed
+                (transition.closed, transition.hard_failure)
             }
             Err(error) => {
-                tracing::error!(
-                    fork_id = %fork_id,
-                    %error,
-                    "failed to linearize fork route and mailbox closure",
-                );
+                persistence_errors.push(("route closure", error));
                 router.deregister(fork_id);
-                pending_messages.close_child_mailbox(fork_id, &mailbox_lease)
+                (
+                    pending_messages.close_child_mailbox(fork_id, &mailbox_lease),
+                    true,
+                )
             }
         };
+
+        // Admission is closed, so this is the final authoritative sweep. Its
+        // result must shape every outward terminal observation below.
+        let mut stranded = inbound_rx.drain();
+        let mut finalizer_failed = false;
+        if let Some(closed) = closed_mailbox.as_ref()
+            && let Err(error) = persist_undelivered_after_close(
+                pending_messages.as_ref(),
+                closed,
+                &mut stranded,
+                UndeliveredWindow::Deregistration,
+            )
+        {
+            finalizer_failed = true;
+            persistence_errors.push(("final closed-mailbox drain", error));
+        }
+        let terminal_recovery_pending = pending_messages
+            .terminal_pending_recovery_status(fork_id)
+            .is_some();
+        let persistence_failed =
+            transition_hard_failure || finalizer_failed || terminal_recovery_pending;
+        if persistence_failed {
+            outcome.downgrade_terminal_persistence();
+        }
+        for (phase, error) in persistence_errors {
+            if persistence_failed {
+                tracing::error!(
+                    fork_id = %fork_id,
+                    phase,
+                    %error,
+                    "fork terminal message persistence failed",
+                );
+            } else {
+                tracing::warn!(
+                    fork_id = %fork_id,
+                    phase,
+                    %error,
+                    "fork terminal message persistence recovered before completion",
+                );
+            }
+        }
 
         // NH-006 R5 parity with spawn: fire SubagentHook::on_subagent_stop
         // before the registry's terminal transition. A Block suppresses
@@ -416,7 +461,10 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         // with the handle present — no second actor ever reclaims
         // concurrently, and nothing infers state from registry-entry
         // absence.
-        if !stop_blocked && let Some(handshake) = reclaim {
+        if !stop_blocked
+            && !persistence_failed
+            && let Some(handshake) = reclaim
+        {
             if handshake.handle_installed.await.is_err() {
                 // The tool's execute was torn down between launching the
                 // wrapper and storing the handle (e.g. the parent task
@@ -429,26 +477,6 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
                 );
             }
             reclaim_delivered_child(&agent_registry, &handshake.handles, fork_id);
-        }
-
-        // Hooks, result delivery, and reclamation are await points after the
-        // first terminal sweep. The mailbox is already closed, so no new
-        // direct send can succeed, but drain once more before dropping the
-        // controller to preserve any buffer item accepted before closure.
-        let mut stranded = inbound_rx.drain();
-        if let Some(closed) = closed_mailbox.as_ref()
-            && let Err(error) = persist_undelivered_after_close(
-                pending_messages.as_ref(),
-                closed,
-                &mut stranded,
-                UndeliveredWindow::Deregistration,
-            )
-        {
-            tracing::error!(
-                fork_id = %fork_id,
-                %error,
-                "failed to persist fork messages accepted before terminal mailbox closure",
-            );
         }
     });
 

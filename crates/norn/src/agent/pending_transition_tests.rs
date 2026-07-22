@@ -7,6 +7,7 @@ use super::message_router::MessageRouter;
 use super::pending_delivery::pending_queue_event_id;
 use super::pending_mailbox::PendingMailboxLease;
 use super::pending_messages::PendingAgentMessages;
+use super::pending_record::PendingAgentMessage;
 use crate::r#loop::inbound::{ChannelMessage, InboundTrySendError, MessageKind, inbound_channel};
 use crate::session::SessionBinding;
 use crate::session::store::EventStore;
@@ -74,6 +75,7 @@ fn terminal_transition_closes_before_drain_and_persists_every_accepted_message()
 
     assert!(transition.closed.is_some());
     assert!(transition.first_error.is_none());
+    assert!(!transition.hard_failure);
     assert!(!router.is_routed(recipient_id));
     assert_eq!(
         sender.try_send(message(recipient_id, "after close")),
@@ -171,10 +173,47 @@ fn terminal_send_race_never_loses_a_successful_direct_send() -> TestResult {
         }
         assert!(transition.closed.is_some());
         assert!(transition.first_error.is_none());
+        assert!(!transition.hard_failure);
     }
 
     assert_eq!(accepted + closed, TRIALS);
     assert!(accepted > 0, "the race matrix observed no accepted sends");
     assert!(closed > 0, "the race matrix observed no close-first sends");
+    Ok(())
+}
+
+#[test]
+fn conflicting_retained_id_is_a_hard_transition_failure() -> TestResult {
+    let recipient_id = Uuid::new_v4();
+    let pending = PendingAgentMessages::new();
+    let router = MessageRouter::new();
+    let store = Arc::new(EventStore::new());
+    let lease = Arc::new(PendingMailboxLease::new());
+    pending.register_child_mailbox(
+        recipient_id,
+        SessionBinding::ephemeral_root().mailbox_id(),
+        &store,
+        &lease,
+    )?;
+    let accepted = message(recipient_id, "first identity");
+    let mut queued =
+        PendingAgentMessage::new(accepted.clone(), recipient_id.to_string(), Utc::now());
+    pending.persist_for_registered_recipient(&mut queued)?;
+
+    let (sender, mut inbound) = inbound_channel(1);
+    router.register(recipient_id, sender.clone());
+    let mut conflicting = accepted;
+    conflicting.content = "conflicting identity".to_owned();
+    sender
+        .try_send(conflicting)
+        .map_err(|error| format!("conflicting message was not accepted: {error}"))?;
+
+    let transition =
+        pending.transition_live_route(recipient_id, store.as_ref(), &router, &mut inbound, None)?;
+
+    assert!(transition.closed.is_none());
+    assert!(transition.first_error.is_some());
+    assert!(transition.hard_failure);
+    assert_eq!(pending.pending_for(recipient_id), 1);
     Ok(())
 }

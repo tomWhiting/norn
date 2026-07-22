@@ -214,6 +214,10 @@ impl Tool for ForkTool {
             reason: format!("fork: session branch failed: {e}"),
         })?;
         let child_store = Arc::clone(&branched.store);
+        #[cfg(test)]
+        let child_store = ctx
+            .get_extension::<super::TestChildEventStore>()
+            .map_or(child_store, |override_store| Arc::clone(&override_store.0));
         let forked_session_id = branched.session_id.clone();
 
         // The seed copy is the parent history UP TO the anchor the
@@ -443,6 +447,8 @@ impl Tool for ForkTool {
                 config: fork_config,
                 pending_messages: Arc::clone(&infra.pending_messages),
                 mailbox_lease,
+                #[cfg(test)]
+                terminal_transition_gate: ctx.get_extension::<super::TestTerminalTransitionGate>(),
             },
             inbound_tx,
         );

@@ -15,7 +15,8 @@
 //! - The single-agent (root-only) case shows zero rows — R1 / C56.
 //! - When a child reaches [`AgentStatus::Completed`],
 //!   [`AgentStatus::Failed`], or [`AgentStatus::Closed`], its line is held for
-//!   [`HOLD_DURATION`] showing the terminal icon/state, then reclaimed.
+//!   [`HOLD_DURATION`] showing the terminal icon/state, then reclaimed unless
+//!   accepted terminal messages still have unresolved persistence.
 //! - The collapse heuristic in [`super::tree::collapse`] limits visible
 //!   rows to five; the panel emits a `⋯ N more active agents` overflow
 //!   row when there are unseen entries.
@@ -32,9 +33,12 @@ use termina::escape::csi::{Csi, Cursor, Edit, EraseInLine, Sgr};
 use termina::style::{Intensity, RgbColor};
 use uuid::Uuid;
 
+use norn::agent::PendingAgentMessages;
 use norn::agent::registry::{AgentEntry, AgentRegistry, AgentStatus};
 
 use crate::render::style::colour_for;
+
+type TerminalRecoveryProbe = dyn Fn(Uuid) -> bool + Send + Sync;
 use crate::render::text::truncate_with_ellipsis;
 use crate::terminal::caps::TerminalCaps;
 
@@ -309,6 +313,7 @@ fn row_colour(
 /// metadata (activity / token counts).
 pub struct AgentStatusPanel {
     registry: Arc<RwLock<AgentRegistry>>,
+    terminal_recovery_probe: Option<Arc<TerminalRecoveryProbe>>,
     holds: HashMap<Uuid, Instant>,
     last_status: HashMap<Uuid, AgentStatus>,
     last_change_at: HashMap<Uuid, Instant>,
@@ -321,12 +326,31 @@ impl AgentStatusPanel {
     pub fn new(registry: Arc<RwLock<AgentRegistry>>) -> Self {
         Self {
             registry,
+            terminal_recovery_probe: None,
             holds: HashMap::new(),
             last_status: HashMap::new(),
             last_change_at: HashMap::new(),
             activity: HashMap::new(),
             tokens: HashMap::new(),
         }
+    }
+
+    /// Attach the shared pending-message recovery authority used by the
+    /// runtime that owns this panel.
+    ///
+    /// The panel only observes recovery status. Retrying persistence can touch
+    /// the filesystem and therefore remains on explicit coordination paths,
+    /// never the synchronous render loop.
+    pub fn set_pending_messages(&mut self, pending_messages: Option<Arc<PendingAgentMessages>>) {
+        self.terminal_recovery_probe = pending_messages.map(|pending| {
+            Arc::new(move |id| pending.terminal_pending_recovery_status(id).is_some())
+                as Arc<TerminalRecoveryProbe>
+        });
+    }
+
+    #[cfg(test)]
+    fn set_terminal_recovery_probe(&mut self, probe: Arc<TerminalRecoveryProbe>) {
+        self.terminal_recovery_probe = Some(probe);
     }
 
     /// Record live activity for an agent. NT-011 calls this from its
@@ -412,19 +436,36 @@ impl AgentStatusPanel {
     }
 
     /// Capture the registry, detect transitions, apply terminal hold
-    /// reclaim, and run the collapse heuristic.
+    /// reclamation when no recovery authority remains, and run the collapse
+    /// heuristic.
     ///
     /// Idempotent for a fixed `now` — repeated calls do not move the
     /// view as long as the registry and `now` stay constant. NT-011
     /// can call this between [`Self::height`] and [`Self::render`]
     /// without seeing flicker.
     pub fn snapshot(&mut self, now: Instant) -> (CollapsedView, Vec<AgentEntry>) {
+        let terminal_recovery_probe = self.terminal_recovery_probe.clone();
+        self.snapshot_with_terminal_recovery(now, move |id| {
+            terminal_recovery_probe
+                .as_ref()
+                .is_some_and(|probe| probe(id))
+        })
+    }
+
+    fn snapshot_with_terminal_recovery<F>(
+        &mut self,
+        now: Instant,
+        recovery_pending: F,
+    ) -> (CollapsedView, Vec<AgentEntry>)
+    where
+        F: Fn(Uuid) -> bool,
+    {
         let entries = self.registry.read().list();
 
         self.absorb_transitions(&entries, now);
-        let candidates = self.build_candidates(&entries, now);
+        let candidates = self.build_candidates(&entries, now, &recovery_pending);
         let view = tree::collapse(&candidates, now);
-        self.reclaim_expired_holds(now);
+        self.reclaim_expired_holds(now, &recovery_pending);
         (view, entries)
     }
 
@@ -553,10 +594,18 @@ impl AgentStatusPanel {
         }
     }
 
-    fn build_candidates(&self, entries: &[AgentEntry], now: Instant) -> Vec<CandidateEntry> {
+    fn build_candidates<F>(
+        &self,
+        entries: &[AgentEntry],
+        now: Instant,
+        recovery_pending: &F,
+    ) -> Vec<CandidateEntry>
+    where
+        F: Fn(Uuid) -> bool,
+    {
         entries
             .iter()
-            .filter(|e| self.is_visible_candidate(e, now))
+            .filter(|e| self.is_visible_candidate(e, now, recovery_pending))
             .map(|e| CandidateEntry {
                 id: e.id,
                 parent_id: e.parent_id,
@@ -567,41 +616,60 @@ impl AgentStatusPanel {
             .collect()
     }
 
-    fn is_visible_candidate(&self, entry: &AgentEntry, now: Instant) -> bool {
+    fn is_visible_candidate<F>(
+        &self,
+        entry: &AgentEntry,
+        now: Instant,
+        recovery_pending: &F,
+    ) -> bool
+    where
+        F: Fn(Uuid) -> bool,
+    {
         match entry.status {
             AgentStatus::Spawning
             | AgentStatus::Active
             | AgentStatus::Completing
             | AgentStatus::Idle => true,
-            AgentStatus::Completed | AgentStatus::Failed | AgentStatus::Closed => self
-                .holds
-                .get(&entry.id)
-                .is_some_and(|deadline| now < *deadline),
+            AgentStatus::Completed | AgentStatus::Failed | AgentStatus::Closed => {
+                self.holds
+                    .get(&entry.id)
+                    .is_some_and(|deadline| now < *deadline)
+                    || recovery_pending(entry.id)
+            }
         }
     }
 
-    fn reclaim_expired_holds(&mut self, now: Instant) {
+    fn reclaim_expired_holds<F>(&mut self, now: Instant, recovery_pending: &F)
+    where
+        F: Fn(Uuid) -> bool,
+    {
         let expired: HashSet<Uuid> = self
             .holds
             .iter()
             .filter(|(_, deadline)| now >= **deadline)
             .map(|(id, _)| *id)
             .collect();
-        if expired.is_empty() {
+        let reclaimable: Vec<Uuid> = expired
+            .into_iter()
+            .filter(|id| !recovery_pending(*id))
+            .collect();
+        if reclaimable.is_empty() {
             return;
         }
-        // The registry retains terminal entries precisely so this panel
-        // can show them through the hold window; once the hold expires
-        // the panel is the reclaimer of record for entries nothing else
-        // (e.g. `close_agent`) removed first.
+        // The registry retains terminal entries precisely so this panel can
+        // show them through the hold window. Once the hold expires, the panel
+        // is the reclaimer of record for entries nothing else (e.g.
+        // `close_agent`) removed first. An unresolved pending-message recovery
+        // remains both visible and registered until an explicit recovery path
+        // discharges its filesystem authority.
         let mut registry = self.registry.write();
-        for id in &expired {
-            self.holds.remove(id);
-            self.activity.remove(id);
-            self.tokens.remove(id);
-            self.last_change_at.remove(id);
-            self.last_status.remove(id);
-            registry.remove_terminal(*id);
+        for id in reclaimable {
+            self.holds.remove(&id);
+            self.activity.remove(&id);
+            self.tokens.remove(&id);
+            self.last_change_at.remove(&id);
+            self.last_status.remove(&id);
+            registry.remove_terminal(id);
         }
     }
 
@@ -647,6 +715,9 @@ impl AgentStatusPanel {
         )
     }
 }
+
+#[cfg(test)]
+mod recovery_tests;
 
 #[cfg(test)]
 #[allow(

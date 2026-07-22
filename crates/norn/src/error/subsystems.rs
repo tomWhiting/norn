@@ -289,6 +289,15 @@ pub enum SessionError {
     )]
     PreD8PendingMessageOwnershipUnknown,
 
+    /// Terminal teardown retained accepted messages whose queue write failed.
+    #[error(
+        "terminal agent-message persistence is unresolved for {pending_count} accepted message(s); retry through the pending-message recovery authority"
+    )]
+    TerminalPendingMessagesUnresolved {
+        /// Number of exact queued records retained for durable retry.
+        pending_count: usize,
+    },
+
     /// Credential-scoped session state has no stable provider identity.
     #[error("credential-scoped session state requires a stable provider identity")]
     ProviderStateIdentityRequired,

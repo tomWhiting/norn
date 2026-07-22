@@ -90,6 +90,26 @@ pub(crate) struct ChildOutcomeSummary {
     pub(crate) children_usage: Usage,
 }
 
+impl ChildOutcomeSummary {
+    /// Surface a terminal mailbox persistence fault without exposing the
+    /// accepted message payload. The run's output stays available as audit
+    /// evidence, while status and error prevent it being reported as success.
+    /// An existing failure keeps its diagnosis and typed stop reason. Usage is
+    /// never rewritten because the provider work still happened.
+    pub(super) fn downgrade_terminal_persistence(&mut self) {
+        if self.status == AgentStatus::Completed {
+            self.error = Some(super::TERMINAL_PERSISTENCE_FAILURE.to_owned());
+            self.stop = None;
+        } else if let Some(error) = self.error.as_mut() {
+            error.push_str("\n\n");
+            error.push_str(super::TERMINAL_PERSISTENCE_FAILURE);
+        } else {
+            self.error = Some(super::TERMINAL_PERSISTENCE_FAILURE.to_owned());
+        }
+        self.status = AgentStatus::Failed;
+    }
+}
+
 /// Project an [`AgentStepResult`] outcome into a [`ChildOutcomeSummary`].
 ///
 /// Only [`AgentStepResult::Completed`] maps to success. A child that bailed
@@ -327,6 +347,58 @@ mod tests {
             summary.children_usage.input_tokens, 7,
             "children_usage must come from the step result, not the fallback",
         );
+        assert_eq!(summary.children_usage.output_tokens, 3);
+    }
+
+    #[test]
+    fn terminal_persistence_downgrades_success_without_losing_usage() {
+        let mut summary = extract_outcome_summary(
+            Ok(AgentStepResult::Completed {
+                output: serde_json::json!("completed result"),
+                usage: usage_fixture(),
+                children_usage: children_fixture(),
+            }),
+            Usage::default(),
+        );
+
+        summary.downgrade_terminal_persistence();
+
+        assert_eq!(summary.status, AgentStatus::Failed);
+        assert_eq!(summary.output_text.as_deref(), Some("completed result"));
+        assert_eq!(
+            summary.error.as_deref(),
+            Some(super::super::TERMINAL_PERSISTENCE_FAILURE),
+        );
+        assert!(summary.stop.is_none());
+        assert_eq!(summary.usage.input_tokens, 11);
+        assert_eq!(summary.children_usage.input_tokens, 7);
+    }
+
+    #[test]
+    fn terminal_persistence_appends_to_existing_failure() {
+        let mut summary = extract_outcome_summary(
+            Ok(AgentStepResult::TimedOut {
+                elapsed: Duration::from_secs(12),
+                iterations: 3,
+                partial_output: None,
+                usage: usage_fixture(),
+                children_usage: children_fixture(),
+            }),
+            Usage::default(),
+        );
+        let original_error = summary.error.clone().unwrap_or_default();
+        let original_stop = summary.stop.clone();
+
+        summary.downgrade_terminal_persistence();
+
+        let error = summary.error.as_deref().unwrap_or_default();
+        assert!(
+            error.starts_with(&original_error),
+            "original diagnosis: {error}"
+        );
+        assert!(error.ends_with(super::super::TERMINAL_PERSISTENCE_FAILURE));
+        assert_eq!(summary.stop, original_stop);
+        assert_eq!(summary.usage.output_tokens, 4);
         assert_eq!(summary.children_usage.output_tokens, 3);
     }
 

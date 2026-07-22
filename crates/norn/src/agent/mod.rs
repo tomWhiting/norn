@@ -23,6 +23,7 @@ pub mod pending_messages;
 mod pending_queue;
 mod pending_record;
 mod pending_replay;
+mod pending_teardown;
 mod pending_transition;
 pub mod process_delivery;
 pub(crate) mod prompt_install;
@@ -62,6 +63,7 @@ pub use pending_messages::{
     PendingAgentMessageLifecycle, PendingAgentMessages, append_pending_message_audit,
 };
 pub(crate) use pending_queue::ClosedPendingMailbox;
+pub use pending_teardown::{TerminalPendingRecoveryStatus, TerminalPendingRetryOutcome};
 pub use registry::{AgentEntry, AgentRegistry, AgentStatus, AgentTombstone, SpawnGuard};
 pub use result_channel::{ChildAgentResult, ChildResultSender, frame_child_result};
 pub use resume::rebuild_action_log;
@@ -81,5 +83,7 @@ mod fork_provider_compaction_tests;
 mod pending_messages_tests;
 #[cfg(test)]
 mod pending_replay_tests;
+#[cfg(test)]
+mod pending_teardown_tests;
 #[cfg(test)]
 mod pending_transition_tests;
