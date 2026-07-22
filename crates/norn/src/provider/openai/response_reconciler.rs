@@ -21,6 +21,7 @@ mod frame_signature;
 mod item_channels;
 mod model;
 mod roles;
+mod terminal_authority;
 mod wire;
 
 use audio::ResponseAudioState;
@@ -32,11 +33,12 @@ pub use model::{
     DeltaReconciliation, DeltaReconciliationDisposition, ReconcileUpdate, ResponseDeltaChannel,
     ResponseItemIdentity, ResponseReconciliationError,
 };
+pub(super) use terminal_authority::TerminalOutputPolicy;
 use wire::{
     OutputItemSupport, announced_item_id, authoritative_items_failure, delta_event_name,
     delta_event_type, embedded_item_id, envelope_identity, item_type_allows_missing_id,
-    output_item_support, parse_item, parse_terminal_items, required_object,
-    required_sequence_number, required_u64, validate_output_text_delta_logprobs,
+    output_item_support, parse_item, required_object, required_sequence_number, required_u64,
+    validate_output_text_delta_logprobs,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -61,6 +63,7 @@ pub struct ResponseReconciler {
     item_channels: ItemChannelState,
     audio: ResponseAudioState,
     completed: BTreeMap<ResponseItemIdentity, ResponseTranscriptItem>,
+    terminal_output_policy: TerminalOutputPolicy,
     terminal: bool,
     failed: bool,
 }
@@ -70,6 +73,13 @@ impl ResponseReconciler {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub(super) fn with_terminal_output_policy(policy: TerminalOutputPolicy) -> Self {
+        Self {
+            terminal_output_policy: policy,
+            ..Self::default()
+        }
     }
 
     /// Accept one parsed SSE frame.
@@ -303,90 +313,6 @@ impl ResponseReconciler {
         self.completed.insert(identity, transcript.clone());
         Ok(ReconcileUpdate::CompletedItem {
             item: Box::new(transcript),
-            delta_reconciliations,
-        })
-    }
-
-    fn finish(
-        &mut self,
-        event: &SseEvent,
-        sequence_number: u64,
-    ) -> Result<ReconcileUpdate, ResponseReconciliationError> {
-        let response = event.data.get("response").unwrap_or(&event.data);
-        let output = response
-            .get("output")
-            .and_then(Value::as_array)
-            .ok_or(ResponseReconciliationError::MissingTerminalOutput)?;
-        let parsed_items = parse_terminal_items(output, sequence_number)?;
-        Self::validate_authoritative_item_schemas(&parsed_items)?;
-        let enforce_actionable_resolution = event.event_type != "response.failed";
-        if enforce_actionable_resolution
-            && let Some(error) = authoritative_items_failure(&parsed_items, true)?
-        {
-            return Err(error);
-        }
-        let mut items = Vec::with_capacity(parsed_items.len());
-        let mut terminal_identities = BTreeSet::new();
-        let mut delta_reconciliations = Vec::new();
-        let mut terminal_deltas = self.deltas.clone();
-        for mut transcript in parsed_items {
-            let output_index = transcript.provenance.output_index.ok_or(
-                ResponseReconciliationError::InvalidEnvelopeField {
-                    event_type: "terminal response",
-                    field: "output index",
-                },
-            )?;
-            let item_id = transcript.item.id();
-            if item_id.is_none() && !item_type_allows_missing_id(transcript.item.item_type()) {
-                return Err(ResponseReconciliationError::InvalidEnvelopeField {
-                    event_type: "terminal response",
-                    field: "output item id",
-                });
-            }
-            let identity = self.bind_identity(item_id, output_index)?;
-            transcript.provenance.item_id = identity.item_id().map(str::to_owned);
-            self.validate_added_family(&identity, &transcript.item)?;
-            self.validate_authoritative_call(
-                &identity,
-                transcript.item.raw(),
-                transcript.item.item_type(),
-                "terminal response",
-            )?;
-            self.validate_completed_channels(&identity, &transcript.item)?;
-            self.reconcile_item_channel_authority(&identity, &transcript.item)?;
-            let transcript = if let Some(completed) = self.completed.get(&identity) {
-                if completed.item.raw() != transcript.item.raw() {
-                    return Err(ResponseReconciliationError::TerminalCompletionConflict);
-                }
-                completed.clone()
-            } else {
-                delta_reconciliations.extend(reconcile_authoritative_deltas(
-                    &mut terminal_deltas,
-                    &identity,
-                    &transcript.item,
-                )?);
-                transcript
-            };
-            terminal_identities.insert(identity);
-            items.push(transcript);
-        }
-        if self
-            .completed
-            .keys()
-            .any(|identity| !terminal_identities.contains(identity))
-        {
-            return Err(ResponseReconciliationError::CompletionAbsentFromTerminal);
-        }
-        self.validate_terminal_channels(&terminal_identities)?;
-        self.validate_terminal_item_channels(&terminal_identities)?;
-        if enforce_actionable_resolution {
-            self.validate_terminal_core_deltas(&terminal_identities)?;
-            self.validate_actionable_resolution(&terminal_identities, &items)?;
-        }
-        self.deltas = terminal_deltas;
-        self.terminal = true;
-        Ok(ReconcileUpdate::Terminal {
-            items,
             delta_reconciliations,
         })
     }

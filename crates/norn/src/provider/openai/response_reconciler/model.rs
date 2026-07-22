@@ -135,7 +135,7 @@ pub enum ReconcileUpdate {
     },
     /// A terminal frame produced the authoritative ordered transcript.
     Terminal {
-        /// Canonical items in terminal `response.output` order.
+        /// Canonical items in the selected dialect's terminal-authority order.
         items: Vec<ResponseTranscriptItem>,
         /// Reconciliation outcomes for items synthesized at termination.
         delta_reconciliations: Vec<DeltaReconciliation>,
@@ -293,6 +293,9 @@ pub enum ResponseReconciliationError {
         /// Integer conversion failure.
         reason: String,
     },
+    /// Codex completed-item authority did not describe a contiguous output array.
+    #[error("completed response items did not form contiguous output positions")]
+    NonContiguousCompletedItemOutput,
     /// This platform could not represent a content position as `u64`.
     #[error("response content index was not representable: {reason}")]
     ContentIndexOverflow {
@@ -305,6 +308,9 @@ pub enum ResponseReconciliationError {
     /// A completed item was absent from terminal output.
     #[error("completed response item was absent from terminal response.output")]
     CompletionAbsentFromTerminal,
+    /// A Codex item announcement never gained authoritative completed state.
+    #[error("announced response item was absent from completed-item authority")]
+    AnnouncementAbsentFromTerminal,
     /// A channel-completed item was absent from terminal output.
     #[error("channel-completed response item was absent from terminal response.output")]
     ChannelCompletionAbsentFromTerminal,

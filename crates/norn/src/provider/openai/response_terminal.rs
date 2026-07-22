@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 use super::request::CATALOG_BACKEND_CODEX_SUBSCRIPTION;
-use super::response_reconciler::ReconcileUpdate;
+use super::response_reconciler::{ReconcileUpdate, TerminalOutputPolicy};
 use super::sse::SseEvent;
 use super::sse_types::{completed_stop_reason, incomplete_stop_reason};
 use crate::error::ProviderError;
@@ -28,6 +28,13 @@ impl ResponsesDialect {
             Self::Codex
         } else {
             Self::Public
+        }
+    }
+
+    pub(super) const fn terminal_output_policy(self) -> TerminalOutputPolicy {
+        match self {
+            Self::Public => TerminalOutputPolicy::StrictPublic,
+            Self::Codex => TerminalOutputPolicy::CodexCompletedItemsFallback,
         }
     }
 }
