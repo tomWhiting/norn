@@ -21,6 +21,10 @@ pub(super) enum DeveloperRolePolicy {
 impl DeveloperRolePolicy {
     /// Resolve the provider-pinned policy from provider options.
     pub(super) fn from_provider_options(options: Option<&Value>) -> Result<Self, ProviderError> {
+        if let Some(options) = options {
+            let selected_scoped_path = options.as_object().and_then(selected_chat_policy_path);
+            validate_policy_locations(options, "", selected_scoped_path)?;
+        }
         let Some(object) = options.and_then(Value::as_object) else {
             return Ok(Self::Native);
         };
@@ -57,6 +61,58 @@ impl DeveloperRolePolicy {
             }),
             Self::DowngradeToUser => Ok("user"),
         }
+    }
+}
+
+fn validate_policy_locations(
+    value: &Value,
+    path: &str,
+    selected_scoped_path: Option<&str>,
+) -> Result<(), ProviderError> {
+    match value {
+        Value::Object(object) => {
+            for (key, nested) in object {
+                let nested_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                if key == OPTION_KEY
+                    && nested_path != OPTION_KEY
+                    && selected_scoped_path != Some(nested_path.as_str())
+                {
+                    return Err(invalid_policy(&format!(
+                        "is reserved and cannot be configured at {nested_path}"
+                    )));
+                }
+                validate_policy_locations(nested, &nested_path, selected_scoped_path)?;
+            }
+        }
+        Value::Array(values) => {
+            for (index, nested) in values.iter().enumerate() {
+                validate_policy_locations(
+                    nested,
+                    &format!("{path}[{index}]"),
+                    selected_scoped_path,
+                )?;
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+    Ok(())
+}
+
+fn selected_chat_policy_path(options: &serde_json::Map<String, Value>) -> Option<&'static str> {
+    if options
+        .get("api_options")
+        .and_then(Value::as_object)
+        .is_some_and(|api_options| api_options.contains_key("openai_chat_completions"))
+    {
+        Some("api_options.openai_chat_completions.norn_developer_role_policy")
+    } else if options.contains_key("openai_chat_completions") {
+        Some("openai_chat_completions.norn_developer_role_policy")
+    } else {
+        None
     }
 }
 

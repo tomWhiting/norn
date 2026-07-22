@@ -118,3 +118,29 @@ fn invalid_or_ambiguous_policy_fails_typed() {
         ));
     }
 }
+
+#[test]
+fn reserved_policy_key_is_rejected_outside_supported_locations() {
+    for options in [
+        serde_json::json!({
+            "api_options": {
+                "openai_responses": {(OPTION_KEY): "reject"}
+            }
+        }),
+        serde_json::json!({
+            "openai_chat_completions": {
+                "nested": {(OPTION_KEY): "reject"}
+            }
+        }),
+        serde_json::json!({
+            "metadata": [{(OPTION_KEY): "reject"}]
+        }),
+        serde_json::json!({
+            "api_options": {"openai_chat_completions": {"temperature": 0.25}},
+            "openai_chat_completions": {(OPTION_KEY): "reject"}
+        }),
+    ] {
+        let result = DeveloperRolePolicy::from_provider_options(Some(&options));
+        assert!(matches!(result, Err(ProviderError::InvalidRequest { .. })));
+    }
+}
