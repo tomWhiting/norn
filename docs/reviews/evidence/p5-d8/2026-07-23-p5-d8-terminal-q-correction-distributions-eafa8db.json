@@ -1,0 +1,1605 @@
+{
+  "boundary": "D8 terminal-Q correction evidence only; same-reviewer confirmation required",
+  "cases": [
+    {
+      "command": "cargo +1.94.0 test --locked --quiet -p norn --lib agent::pending_transition_tests::terminal_send_race_never_loses_a_successful_direct_send -- --exact --test-threads=1",
+      "failed": 0,
+      "observations": [
+        {
+          "elapsed_seconds": 109.599,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 2.013,
+          "exit_status": 0,
+          "iteration": 2,
+          "observed_tests": 1,
+          "output_sha256": "e6ca26f1ef07f7957269a35b4e31add8574c55ab6d7767eb6adec92be8c3ebbd",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.374,
+          "exit_status": 0,
+          "iteration": 3,
+          "observed_tests": 1,
+          "output_sha256": "93d5eff0a35d57638461bdaedf188d7fd35e0e47c35d0cd7c276764b437f5b47",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.279,
+          "exit_status": 0,
+          "iteration": 4,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.354,
+          "exit_status": 0,
+          "iteration": 5,
+          "observed_tests": 1,
+          "output_sha256": "93d5eff0a35d57638461bdaedf188d7fd35e0e47c35d0cd7c276764b437f5b47",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.233,
+          "exit_status": 0,
+          "iteration": 6,
+          "observed_tests": 1,
+          "output_sha256": "05b986751fd825e83752454202e106753e115eb9151e91e2e14b41c883e32bcf",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.273,
+          "exit_status": 0,
+          "iteration": 7,
+          "observed_tests": 1,
+          "output_sha256": "93d5eff0a35d57638461bdaedf188d7fd35e0e47c35d0cd7c276764b437f5b47",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.383,
+          "exit_status": 0,
+          "iteration": 8,
+          "observed_tests": 1,
+          "output_sha256": "93d5eff0a35d57638461bdaedf188d7fd35e0e47c35d0cd7c276764b437f5b47",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.477,
+          "exit_status": 0,
+          "iteration": 9,
+          "observed_tests": 1,
+          "output_sha256": "93d5eff0a35d57638461bdaedf188d7fd35e0e47c35d0cd7c276764b437f5b47",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.627,
+          "exit_status": 0,
+          "iteration": 10,
+          "observed_tests": 1,
+          "output_sha256": "93d5eff0a35d57638461bdaedf188d7fd35e0e47c35d0cd7c276764b437f5b47",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.359,
+          "exit_status": 0,
+          "iteration": 11,
+          "observed_tests": 1,
+          "output_sha256": "93d5eff0a35d57638461bdaedf188d7fd35e0e47c35d0cd7c276764b437f5b47",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.596,
+          "exit_status": 0,
+          "iteration": 12,
+          "observed_tests": 1,
+          "output_sha256": "93d5eff0a35d57638461bdaedf188d7fd35e0e47c35d0cd7c276764b437f5b47",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.376,
+          "exit_status": 0,
+          "iteration": 13,
+          "observed_tests": 1,
+          "output_sha256": "93d5eff0a35d57638461bdaedf188d7fd35e0e47c35d0cd7c276764b437f5b47",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.171,
+          "exit_status": 0,
+          "iteration": 14,
+          "observed_tests": 1,
+          "output_sha256": "93d5eff0a35d57638461bdaedf188d7fd35e0e47c35d0cd7c276764b437f5b47",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.385,
+          "exit_status": 0,
+          "iteration": 15,
+          "observed_tests": 1,
+          "output_sha256": "93d5eff0a35d57638461bdaedf188d7fd35e0e47c35d0cd7c276764b437f5b47",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.434,
+          "exit_status": 0,
+          "iteration": 16,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.818,
+          "exit_status": 0,
+          "iteration": 17,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.632,
+          "exit_status": 0,
+          "iteration": 18,
+          "observed_tests": 1,
+          "output_sha256": "93d5eff0a35d57638461bdaedf188d7fd35e0e47c35d0cd7c276764b437f5b47",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.259,
+          "exit_status": 0,
+          "iteration": 19,
+          "observed_tests": 1,
+          "output_sha256": "93d5eff0a35d57638461bdaedf188d7fd35e0e47c35d0cd7c276764b437f5b47",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.801,
+          "exit_status": 0,
+          "iteration": 20,
+          "observed_tests": 1,
+          "output_sha256": "93d5eff0a35d57638461bdaedf188d7fd35e0e47c35d0cd7c276764b437f5b47",
+          "result": "pass"
+        }
+      ],
+      "package": "norn",
+      "passed": 20,
+      "runs": 20,
+      "test": "agent::pending_transition_tests::terminal_send_race_never_loses_a_successful_direct_send"
+    },
+    {
+      "command": "cargo +1.94.0 test --locked --quiet -p norn --lib agent::pending_teardown_tests::terminal_fail_before_second_q_preserves_exact_messages_and_fifo -- --exact --test-threads=1",
+      "failed": 0,
+      "observations": [
+        {
+          "elapsed_seconds": 1.133,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.231,
+          "exit_status": 0,
+          "iteration": 2,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.235,
+          "exit_status": 0,
+          "iteration": 3,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.93,
+          "exit_status": 0,
+          "iteration": 4,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.475,
+          "exit_status": 0,
+          "iteration": 5,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.604,
+          "exit_status": 0,
+          "iteration": 6,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.663,
+          "exit_status": 0,
+          "iteration": 7,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.55,
+          "exit_status": 0,
+          "iteration": 8,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.672,
+          "exit_status": 0,
+          "iteration": 9,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.568,
+          "exit_status": 0,
+          "iteration": 10,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.628,
+          "exit_status": 0,
+          "iteration": 11,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.489,
+          "exit_status": 0,
+          "iteration": 12,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.393,
+          "exit_status": 0,
+          "iteration": 13,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.425,
+          "exit_status": 0,
+          "iteration": 14,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.66,
+          "exit_status": 0,
+          "iteration": 15,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.603,
+          "exit_status": 0,
+          "iteration": 16,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.41,
+          "exit_status": 0,
+          "iteration": 17,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.396,
+          "exit_status": 0,
+          "iteration": 18,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.479,
+          "exit_status": 0,
+          "iteration": 19,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.229,
+          "exit_status": 0,
+          "iteration": 20,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        }
+      ],
+      "package": "norn",
+      "passed": 20,
+      "runs": 20,
+      "test": "agent::pending_teardown_tests::terminal_fail_before_second_q_preserves_exact_messages_and_fifo"
+    },
+    {
+      "command": "cargo +1.94.0 test --locked --quiet -p norn --lib agent::pending_teardown_tests::terminal_fail_after_second_q_preserves_exact_messages_and_fifo -- --exact --test-threads=1",
+      "failed": 0,
+      "observations": [
+        {
+          "elapsed_seconds": 1.515,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.561,
+          "exit_status": 0,
+          "iteration": 2,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.493,
+          "exit_status": 0,
+          "iteration": 3,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.343,
+          "exit_status": 0,
+          "iteration": 4,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.613,
+          "exit_status": 0,
+          "iteration": 5,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.598,
+          "exit_status": 0,
+          "iteration": 6,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.308,
+          "exit_status": 0,
+          "iteration": 7,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.274,
+          "exit_status": 0,
+          "iteration": 8,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.533,
+          "exit_status": 0,
+          "iteration": 9,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.736,
+          "exit_status": 0,
+          "iteration": 10,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.567,
+          "exit_status": 0,
+          "iteration": 11,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.746,
+          "exit_status": 0,
+          "iteration": 12,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.831,
+          "exit_status": 0,
+          "iteration": 13,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.99,
+          "exit_status": 0,
+          "iteration": 14,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.675,
+          "exit_status": 0,
+          "iteration": 15,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.441,
+          "exit_status": 0,
+          "iteration": 16,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.498,
+          "exit_status": 0,
+          "iteration": 17,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.226,
+          "exit_status": 0,
+          "iteration": 18,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.996,
+          "exit_status": 0,
+          "iteration": 19,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.662,
+          "exit_status": 0,
+          "iteration": 20,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        }
+      ],
+      "package": "norn",
+      "passed": 20,
+      "runs": 20,
+      "test": "agent::pending_teardown_tests::terminal_fail_after_second_q_preserves_exact_messages_and_fifo"
+    },
+    {
+      "command": "cargo +1.94.0 test --locked --quiet -p norn --lib tools::agent::spawn::tests::terminal_mailbox::terminal_queue_failure_downgrades_spawn_and_retains_authority -- --exact --test-threads=1",
+      "failed": 0,
+      "observations": [
+        {
+          "elapsed_seconds": 1.221,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.585,
+          "exit_status": 0,
+          "iteration": 2,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.38,
+          "exit_status": 0,
+          "iteration": 3,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.245,
+          "exit_status": 0,
+          "iteration": 4,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.172,
+          "exit_status": 0,
+          "iteration": 5,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.462,
+          "exit_status": 0,
+          "iteration": 6,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.549,
+          "exit_status": 0,
+          "iteration": 7,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.798,
+          "exit_status": 0,
+          "iteration": 8,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.65,
+          "exit_status": 0,
+          "iteration": 9,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.316,
+          "exit_status": 0,
+          "iteration": 10,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.451,
+          "exit_status": 0,
+          "iteration": 11,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.357,
+          "exit_status": 0,
+          "iteration": 12,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.503,
+          "exit_status": 0,
+          "iteration": 13,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.533,
+          "exit_status": 0,
+          "iteration": 14,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.476,
+          "exit_status": 0,
+          "iteration": 15,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.367,
+          "exit_status": 0,
+          "iteration": 16,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.51,
+          "exit_status": 0,
+          "iteration": 17,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 0.89,
+          "exit_status": 0,
+          "iteration": 18,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.532,
+          "exit_status": 0,
+          "iteration": 19,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.55,
+          "exit_status": 0,
+          "iteration": 20,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        }
+      ],
+      "package": "norn",
+      "passed": 20,
+      "runs": 20,
+      "test": "tools::agent::spawn::tests::terminal_mailbox::terminal_queue_failure_downgrades_spawn_and_retains_authority"
+    },
+    {
+      "command": "cargo +1.94.0 test --locked --quiet -p norn --lib tools::agent::fork_tool::tests::terminal_mailbox::terminal_queue_failure_downgrades_fork_and_retains_authority -- --exact --test-threads=1",
+      "failed": 0,
+      "observations": [
+        {
+          "elapsed_seconds": 1.475,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_tests": 1,
+          "output_sha256": "536270d2c0a1dd8f42174ff81ee55aeb15c907ff1d1722cefa1aa1551b59b67b",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.484,
+          "exit_status": 0,
+          "iteration": 2,
+          "observed_tests": 1,
+          "output_sha256": "536270d2c0a1dd8f42174ff81ee55aeb15c907ff1d1722cefa1aa1551b59b67b",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.705,
+          "exit_status": 0,
+          "iteration": 3,
+          "observed_tests": 1,
+          "output_sha256": "536270d2c0a1dd8f42174ff81ee55aeb15c907ff1d1722cefa1aa1551b59b67b",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.239,
+          "exit_status": 0,
+          "iteration": 4,
+          "observed_tests": 1,
+          "output_sha256": "536270d2c0a1dd8f42174ff81ee55aeb15c907ff1d1722cefa1aa1551b59b67b",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.374,
+          "exit_status": 0,
+          "iteration": 5,
+          "observed_tests": 1,
+          "output_sha256": "d225e165ac0f9a17911912fc31046086af5ee380e56bbcb2087ae62e438fa318",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.542,
+          "exit_status": 0,
+          "iteration": 6,
+          "observed_tests": 1,
+          "output_sha256": "536270d2c0a1dd8f42174ff81ee55aeb15c907ff1d1722cefa1aa1551b59b67b",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.207,
+          "exit_status": 0,
+          "iteration": 7,
+          "observed_tests": 1,
+          "output_sha256": "e6ca26f1ef07f7957269a35b4e31add8574c55ab6d7767eb6adec92be8c3ebbd",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.376,
+          "exit_status": 0,
+          "iteration": 8,
+          "observed_tests": 1,
+          "output_sha256": "536270d2c0a1dd8f42174ff81ee55aeb15c907ff1d1722cefa1aa1551b59b67b",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.473,
+          "exit_status": 0,
+          "iteration": 9,
+          "observed_tests": 1,
+          "output_sha256": "536270d2c0a1dd8f42174ff81ee55aeb15c907ff1d1722cefa1aa1551b59b67b",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.596,
+          "exit_status": 0,
+          "iteration": 10,
+          "observed_tests": 1,
+          "output_sha256": "536270d2c0a1dd8f42174ff81ee55aeb15c907ff1d1722cefa1aa1551b59b67b",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.467,
+          "exit_status": 0,
+          "iteration": 11,
+          "observed_tests": 1,
+          "output_sha256": "6f6b8c6f5073f45407be921063ce4ea3b0b8018c995cab106e85adf7bc2a843c",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.584,
+          "exit_status": 0,
+          "iteration": 12,
+          "observed_tests": 1,
+          "output_sha256": "536270d2c0a1dd8f42174ff81ee55aeb15c907ff1d1722cefa1aa1551b59b67b",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.593,
+          "exit_status": 0,
+          "iteration": 13,
+          "observed_tests": 1,
+          "output_sha256": "536270d2c0a1dd8f42174ff81ee55aeb15c907ff1d1722cefa1aa1551b59b67b",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.451,
+          "exit_status": 0,
+          "iteration": 14,
+          "observed_tests": 1,
+          "output_sha256": "536270d2c0a1dd8f42174ff81ee55aeb15c907ff1d1722cefa1aa1551b59b67b",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.309,
+          "exit_status": 0,
+          "iteration": 15,
+          "observed_tests": 1,
+          "output_sha256": "536270d2c0a1dd8f42174ff81ee55aeb15c907ff1d1722cefa1aa1551b59b67b",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.508,
+          "exit_status": 0,
+          "iteration": 16,
+          "observed_tests": 1,
+          "output_sha256": "6f6b8c6f5073f45407be921063ce4ea3b0b8018c995cab106e85adf7bc2a843c",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.465,
+          "exit_status": 0,
+          "iteration": 17,
+          "observed_tests": 1,
+          "output_sha256": "536270d2c0a1dd8f42174ff81ee55aeb15c907ff1d1722cefa1aa1551b59b67b",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.553,
+          "exit_status": 0,
+          "iteration": 18,
+          "observed_tests": 1,
+          "output_sha256": "e6ca26f1ef07f7957269a35b4e31add8574c55ab6d7767eb6adec92be8c3ebbd",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.309,
+          "exit_status": 0,
+          "iteration": 19,
+          "observed_tests": 1,
+          "output_sha256": "6f6b8c6f5073f45407be921063ce4ea3b0b8018c995cab106e85adf7bc2a843c",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.577,
+          "exit_status": 0,
+          "iteration": 20,
+          "observed_tests": 1,
+          "output_sha256": "536270d2c0a1dd8f42174ff81ee55aeb15c907ff1d1722cefa1aa1551b59b67b",
+          "result": "pass"
+        }
+      ],
+      "package": "norn",
+      "passed": 20,
+      "runs": 20,
+      "test": "tools::agent::fork_tool::tests::terminal_mailbox::terminal_queue_failure_downgrades_fork_and_retains_authority"
+    },
+    {
+      "command": "cargo +1.94.0 test --locked --quiet -p norn --lib tools::agent::coord::close::recovery_tests::callsite_tests::close_agent_unconditionally_checks_recovery_after_join_for_live_entry -- --exact --test-threads=1",
+      "failed": 0,
+      "observations": [
+        {
+          "elapsed_seconds": 1.378,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.034,
+          "exit_status": 0,
+          "iteration": 2,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.593,
+          "exit_status": 0,
+          "iteration": 3,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.738,
+          "exit_status": 0,
+          "iteration": 4,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.293,
+          "exit_status": 0,
+          "iteration": 5,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.197,
+          "exit_status": 0,
+          "iteration": 6,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.439,
+          "exit_status": 0,
+          "iteration": 7,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.338,
+          "exit_status": 0,
+          "iteration": 8,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.325,
+          "exit_status": 0,
+          "iteration": 9,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.371,
+          "exit_status": 0,
+          "iteration": 10,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.455,
+          "exit_status": 0,
+          "iteration": 11,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.418,
+          "exit_status": 0,
+          "iteration": 12,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.567,
+          "exit_status": 0,
+          "iteration": 13,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.249,
+          "exit_status": 0,
+          "iteration": 14,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.167,
+          "exit_status": 0,
+          "iteration": 15,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.525,
+          "exit_status": 0,
+          "iteration": 16,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.466,
+          "exit_status": 0,
+          "iteration": 17,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.491,
+          "exit_status": 0,
+          "iteration": 18,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.467,
+          "exit_status": 0,
+          "iteration": 19,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.403,
+          "exit_status": 0,
+          "iteration": 20,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        }
+      ],
+      "package": "norn",
+      "passed": 20,
+      "runs": 20,
+      "test": "tools::agent::coord::close::recovery_tests::callsite_tests::close_agent_unconditionally_checks_recovery_after_join_for_live_entry"
+    },
+    {
+      "command": "cargo +1.94.0 test --locked --quiet -p norn --lib tools::agent::coord::close::recovery_tests::callsite_tests::close_agent_no_handle_terminal_path_refuses_late_parent_recovery -- --exact --test-threads=1",
+      "failed": 0,
+      "observations": [
+        {
+          "elapsed_seconds": 1.439,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.591,
+          "exit_status": 0,
+          "iteration": 2,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.483,
+          "exit_status": 0,
+          "iteration": 3,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.416,
+          "exit_status": 0,
+          "iteration": 4,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.43,
+          "exit_status": 0,
+          "iteration": 5,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.599,
+          "exit_status": 0,
+          "iteration": 6,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.427,
+          "exit_status": 0,
+          "iteration": 7,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.371,
+          "exit_status": 0,
+          "iteration": 8,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.403,
+          "exit_status": 0,
+          "iteration": 9,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.51,
+          "exit_status": 0,
+          "iteration": 10,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.38,
+          "exit_status": 0,
+          "iteration": 11,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.715,
+          "exit_status": 0,
+          "iteration": 12,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.59,
+          "exit_status": 0,
+          "iteration": 13,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.235,
+          "exit_status": 0,
+          "iteration": 14,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.598,
+          "exit_status": 0,
+          "iteration": 15,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.591,
+          "exit_status": 0,
+          "iteration": 16,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.625,
+          "exit_status": 0,
+          "iteration": 17,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.731,
+          "exit_status": 0,
+          "iteration": 18,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.45,
+          "exit_status": 0,
+          "iteration": 19,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.658,
+          "exit_status": 0,
+          "iteration": 20,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        }
+      ],
+      "package": "norn",
+      "passed": 20,
+      "runs": 20,
+      "test": "tools::agent::coord::close::recovery_tests::callsite_tests::close_agent_no_handle_terminal_path_refuses_late_parent_recovery"
+    },
+    {
+      "command": "cargo +1.94.0 test --locked --quiet -p norn --lib r#loop::delivery_pending_tests::cancellation_after_authoritative_append_cannot_redeliver_pending_message -- --exact --test-threads=1",
+      "failed": 0,
+      "observations": [
+        {
+          "elapsed_seconds": 1.57,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.443,
+          "exit_status": 0,
+          "iteration": 2,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.335,
+          "exit_status": 0,
+          "iteration": 3,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.545,
+          "exit_status": 0,
+          "iteration": 4,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.499,
+          "exit_status": 0,
+          "iteration": 5,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.577,
+          "exit_status": 0,
+          "iteration": 6,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.919,
+          "exit_status": 0,
+          "iteration": 7,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.663,
+          "exit_status": 0,
+          "iteration": 8,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.602,
+          "exit_status": 0,
+          "iteration": 9,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.127,
+          "exit_status": 0,
+          "iteration": 10,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.345,
+          "exit_status": 0,
+          "iteration": 11,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.614,
+          "exit_status": 0,
+          "iteration": 12,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.421,
+          "exit_status": 0,
+          "iteration": 13,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.336,
+          "exit_status": 0,
+          "iteration": 14,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.516,
+          "exit_status": 0,
+          "iteration": 15,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.385,
+          "exit_status": 0,
+          "iteration": 16,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.395,
+          "exit_status": 0,
+          "iteration": 17,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.265,
+          "exit_status": 0,
+          "iteration": 18,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.276,
+          "exit_status": 0,
+          "iteration": 19,
+          "observed_tests": 1,
+          "output_sha256": "c2a2035becaf44cad6e3cd36c6bea6fdbe054c247eb8a17569c4e0fc336319ff",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.479,
+          "exit_status": 0,
+          "iteration": 20,
+          "observed_tests": 1,
+          "output_sha256": "ebe7aebf1fb51f305a3694faa2032106481e8459e9a76ece04e2546bb2159ca9",
+          "result": "pass"
+        }
+      ],
+      "package": "norn",
+      "passed": 20,
+      "runs": 20,
+      "test": "r#loop::delivery_pending_tests::cancellation_after_authoritative_append_cannot_redeliver_pending_message"
+    },
+    {
+      "command": "cargo +1.94.0 test --locked --quiet -p norn-tui --lib agents::status_line::recovery_tests::public_snapshot_keeps_terminal_recovery_visible_and_registered -- --exact --test-threads=1",
+      "failed": 0,
+      "observations": [
+        {
+          "elapsed_seconds": 24.804,
+          "exit_status": 0,
+          "iteration": 1,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.992,
+          "exit_status": 0,
+          "iteration": 2,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.661,
+          "exit_status": 0,
+          "iteration": 3,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.259,
+          "exit_status": 0,
+          "iteration": 4,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.282,
+          "exit_status": 0,
+          "iteration": 5,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.348,
+          "exit_status": 0,
+          "iteration": 6,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.355,
+          "exit_status": 0,
+          "iteration": 7,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.228,
+          "exit_status": 0,
+          "iteration": 8,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.307,
+          "exit_status": 0,
+          "iteration": 9,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.47,
+          "exit_status": 0,
+          "iteration": 10,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.295,
+          "exit_status": 0,
+          "iteration": 11,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.355,
+          "exit_status": 0,
+          "iteration": 12,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.413,
+          "exit_status": 0,
+          "iteration": 13,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.63,
+          "exit_status": 0,
+          "iteration": 14,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.37,
+          "exit_status": 0,
+          "iteration": 15,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.626,
+          "exit_status": 0,
+          "iteration": 16,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.53,
+          "exit_status": 0,
+          "iteration": 17,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.213,
+          "exit_status": 0,
+          "iteration": 18,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.507,
+          "exit_status": 0,
+          "iteration": 19,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        },
+        {
+          "elapsed_seconds": 1.381,
+          "exit_status": 0,
+          "iteration": 20,
+          "observed_tests": 1,
+          "output_sha256": "e595b73eede24b459e7e10c1f5e5f6cf068141d4f3fa960f4e2231d7c159ab21",
+          "result": "pass"
+        }
+      ],
+      "package": "norn-tui",
+      "passed": 20,
+      "runs": 20,
+      "test": "agents::status_line::recovery_tests::public_snapshot_keeps_terminal_recovery_visible_and_registered"
+    }
+  ],
+  "distribution_policy": {
+    "one_exact_test_required_per_observation": true,
+    "runs_per_case": 20
+  },
+  "environment": {
+    "cargo_target_directory": "/Users/tom/Developer/ablative/norn/target",
+    "cargo_target_policy": "primary repository target resolved from Git common directory",
+    "platform": "macOS-26.3.1-arm64-arm-64bit-Mach-O",
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)"
+  },
+  "generated_at": "2026-07-22T23:40:16.331132+00:00",
+  "kind": "p5_d8_terminal_q_correction_distributions",
+  "provenance": {
+    "allowed_dirty_evidence_paths": [
+      "docs/RESPONSES-API-REMEDIATION-PLAN.md",
+      "docs/reviews/2026-07-23-p5-d8-terminal-q-correction-handoff.md",
+      "docs/reviews/evidence/p5-d8/2026-07-23-p5-d8-terminal-q-correction-distributions-eafa8db.json",
+      "docs/reviews/evidence/p5-d8/run_p5_d8_terminal_q_correction.py"
+    ],
+    "base": "531200f372741d96ea0810716267e19a0490f027",
+    "branch": "codex/p5-d8-teardown-q-correction",
+    "rust_inventory": {
+      "encoding": "bytewise-sorted NUL-delimited paths",
+      "paths": [
+        "crates/norn-tui/src/agents/status_line.rs",
+        "crates/norn-tui/src/agents/status_line/recovery_tests.rs",
+        "crates/norn-tui/src/app/event_loop.rs",
+        "crates/norn/src/agent/mod.rs",
+        "crates/norn/src/agent/pending_messages.rs",
+        "crates/norn/src/agent/pending_queue.rs",
+        "crates/norn/src/agent/pending_record.rs",
+        "crates/norn/src/agent/pending_teardown.rs",
+        "crates/norn/src/agent/pending_teardown_tests.rs",
+        "crates/norn/src/agent/pending_transition.rs",
+        "crates/norn/src/agent/pending_transition_tests.rs",
+        "crates/norn/src/error/subsystems.rs",
+        "crates/norn/src/loop/delivery_closed.rs",
+        "crates/norn/src/tools/agent/coord/close.rs",
+        "crates/norn/src/tools/agent/coord/close/recovery.rs",
+        "crates/norn/src/tools/agent/coord/close/recovery_tests.rs",
+        "crates/norn/src/tools/agent/coord/close/recovery_tests/callsite_tests.rs",
+        "crates/norn/src/tools/agent/fork_launch.rs",
+        "crates/norn/src/tools/agent/fork_outcome.rs",
+        "crates/norn/src/tools/agent/fork_tool.rs",
+        "crates/norn/src/tools/agent/fork_tool/tests/terminal_mailbox.rs",
+        "crates/norn/src/tools/agent/mod.rs",
+        "crates/norn/src/tools/agent/spawn/execute.rs",
+        "crates/norn/src/tools/agent/spawn/tests/terminal_mailbox.rs",
+        "crates/norn/src/tools/agent/spawn_controller.rs",
+        "crates/norn/src/tools/agent/spawn_launch.rs",
+        "crates/norn/src/tools/agent/spawn_outcome.rs"
+      ],
+      "records": 27,
+      "sha256": "f1909134142a9d990c81c589551a18ac982d7f668434b5b4d0a8c3df05baaaaf"
+    },
+    "source": "eafa8dba8a7b6427fa7fc3750f2c384267cca5fc",
+    "source_tree": "1c67561e5602a278fdcbeb1d16f1811f965c656d",
+    "unexpected_dirty_paths": []
+  },
+  "result": "pass",
+  "runner": {
+    "path": "docs/reviews/evidence/p5-d8/run_p5_d8_terminal_q_correction.py",
+    "sha256": "c1041e206bb0e932eea20df4b16fd7265f840b035734a7719b08cd41481dff94"
+  },
+  "schema_version": 1,
+  "totals": {
+    "failed": 0,
+    "passed": 180,
+    "runs": 180
+  }
+}
