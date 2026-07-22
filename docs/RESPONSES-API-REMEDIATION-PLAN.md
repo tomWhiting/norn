@@ -2042,9 +2042,11 @@ output is absent or empty; public Responses remains strict, nonempty Codex
 terminal output remains strictly cross-checked, and incomplete preview or
 actionable state fails closed. The focused 11/11 Codex matrix, 26/26 integrated
 reconciliation tests, 117/117 reconciler tests, strict Norn Clippy, fmt, and
-diff checks pass. The
+diff checks pass. One owner-approved authenticated simple-text smoke returned
+`hi`, exited `0`, and did not reproduce the terminal protocol error. It retained
+no raw event trace and therefore does not close D7/P9. The
 [`narrow Gate D handoff`](reviews/2026-07-22-p5-codex-terminal-authority-correction-handoff.md)
-is prepared, but external review and the authenticated D7/P9 live-wire rerun
+is prepared, but external review and the complete authenticated D7/P9 live-wire gate
 remain open. This candidate does not re-accept P4 or accept P5.
 
 A separate headless driven-transport reliability slice is packaged at
@@ -2640,14 +2642,15 @@ P5 acceptance.
   preview/actionability guards. Deterministic fixtures pass 11/11, 26/26, and
   117/117; strict Norn Clippy, fmt, and diff checks pass. The
   [`narrow handoff`](reviews/2026-07-22-p5-codex-terminal-authority-correction-handoff.md)
-  records the exact source boundary and honest residuals.
+  records the exact source boundary and honest residuals. An owner-approved
+  authenticated simple-text smoke returned `hi` with exit `0` and no prior
+  protocol error, but retained no raw event trace and does not close D7/P9.
 - [ ] Obtain independent review of the live Codex terminal-authority correction.
   Preparing its handoff does not complete this gate.
-- [ ] Under the D7 credential, spending, redaction, and retention approval, rerun
-  the authenticated Codex request and retain a redacted trace proving one
-  canonical item plus one terminal outcome without the prior protocol error.
-  This remains part of the mandatory D7/P9 real-wire boundary; a skipped run is
-  not a pass.
+- [ ] Under the D7 credential, spending, redaction, and retention approval,
+  retain a redacted authenticated trace proving one canonical item plus one
+  terminal outcome without the prior protocol error, then complete the broader
+  live-wire matrix. The unretained simple-text smoke is not this gate.
 - [x] Raw `end_turn:false`, `true`, `null`, and absence plus typed loop
   projections have explicit tests; function/custom/schema calls, refusal-only,
   mixed refusal-plus-tool, text, and empty continuation interactions are pinned.

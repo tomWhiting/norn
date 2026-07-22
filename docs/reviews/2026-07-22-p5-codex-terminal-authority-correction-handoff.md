@@ -177,6 +177,34 @@ no `allow`, `unwrap`, `expect`, `panic!`, `todo!`, `unimplemented!`, `unsafe`,
 This candidate has not run a complete workspace test gate. The three reported
 suites and strict Norn Clippy are the claimed local evidence.
 
+### Narrow authenticated smoke after packaging
+
+With the owner's explicit approval, the exact candidate source was built in
+release mode and run once through the CLI's default OpenAI Responses selection
+using the existing Norn-owned OAuth credential:
+
+```text
+norn -p "Reply with exactly: hi"
+```
+
+The command returned `hi`, exited `0`, and did not reproduce
+`CompletionAbsentFromTerminal` or any other provider protocol error. This is
+useful end-to-end evidence that backend selection, transport, mapper policy,
+terminal projection, and print-mode completion are wired together for the
+reported simple-text shape.
+
+This narrow smoke retained no raw event trace and exercised only one completed
+text response. It therefore does **not** complete D7/P9, prove every terminal
+shape, or replace the deterministic matrix above. The broader authenticated
+gate remains unchecked.
+
+The release build command accidentally omitted the mandated shared
+`CARGO_TARGET_DIR` and created a worktree-local `target/`. After the smoke, that
+generated directory was removed with `cargo clean` (`5,953` files, `1.6 GiB`);
+the worktree is clean. This build is reported for transparency and is not used
+as policy-compliant Gate C evidence. The focused test and Clippy commands above
+did use the mandated shared target.
+
 ## Source shape and size
 
 The prior 495-line reconciler was reduced to a 421-line coordinator by moving
@@ -205,11 +233,12 @@ Gate D verdict requested here.
 
 ## Honest residuals and mandatory live check
 
-- The authenticated request that exposed the defect has not been rerun against
-  this candidate. The correction is not yet proven on the live Codex wire.
+- One authenticated simple-text request now succeeds against this candidate,
+  with exit `0` and no prior protocol error. No raw event trace was retained,
+  so the exact absent-versus-empty terminal-output shape remains unbound.
 - The mandatory D7/P9 authenticated real-wire gate remains open. It still
   requires explicit approval for credentials, spending, redaction, and retained
-  evidence. A skipped live test is not a pass.
+  evidence across its complete matrix. A narrow smoke is not that pass.
 - When that gate runs, the retained redacted trace should establish the actual
   terminal-output shape after the done-item frames, and should prove one
   canonical item plus one terminal outcome without the old protocol error.
