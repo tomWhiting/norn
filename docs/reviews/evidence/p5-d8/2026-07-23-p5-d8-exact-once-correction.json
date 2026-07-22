@@ -1,0 +1,234 @@
+{
+  "schema_version": 1,
+  "scope": "P5 D8 pending-message exact-once correction",
+  "acceptance": {
+    "d8_accepted": false,
+    "p5_accepted": false,
+    "boundary": "implementation candidate; independent same-reviewer confirmation required"
+  },
+  "source_binding": {
+    "branch": "codex/p5-d8-exact-once",
+    "base_commit": "6d168830ee3c4edad5893d39a0e1e67950da98ad",
+    "source_commit": "de0b4d3287b0d5e11e21d6259cb5d8058f736260",
+    "source_tree": "82e4eecbe60a31af9d22862dabf8738f90b32aaf"
+  },
+  "inventory": {
+    "encoding": "NUL-delimited git diff --name-only -z base..source",
+    "records": 69,
+    "sha256": "a09cc19ba30e592b312e9161af0a979d2914f02d20ee8bec2dcd8b44f2a68a10",
+    "paths": [
+      "crates/norn/src/agent/arming.rs",
+      "crates/norn/src/agent/assembly/runtime/infra.rs",
+      "crates/norn/src/agent/assembly/runtime/tests.rs",
+      "crates/norn/src/agent/assembly/tooling.rs",
+      "crates/norn/src/agent/build_support.rs",
+      "crates/norn/src/agent/builder/build.rs",
+      "crates/norn/src/agent/message_router.rs",
+      "crates/norn/src/agent/mod.rs",
+      "crates/norn/src/agent/pending_delivery.rs",
+      "crates/norn/src/agent/pending_mailbox.rs",
+      "crates/norn/src/agent/pending_messages.rs",
+      "crates/norn/src/agent/pending_messages_tests.rs",
+      "crates/norn/src/agent/pending_queue.rs",
+      "crates/norn/src/agent/pending_record.rs",
+      "crates/norn/src/agent/pending_replay.rs",
+      "crates/norn/src/agent/pending_replay_tests.rs",
+      "crates/norn/src/agent/pending_transition.rs",
+      "crates/norn/src/agent/pending_transition_tests.rs",
+      "crates/norn/src/agent/process_delivery.rs",
+      "crates/norn/src/agent/process_delivery_tests/completion.rs",
+      "crates/norn/src/agent/process_delivery_tests/mod.rs",
+      "crates/norn/src/agent/process_delivery_tests/support.rs",
+      "crates/norn/src/agent/process_delivery_tests/watch.rs",
+      "crates/norn/src/error/subsystems.rs",
+      "crates/norn/src/loop/delivery.rs",
+      "crates/norn/src/loop/delivery_closed.rs",
+      "crates/norn/src/loop/delivery_pending.rs",
+      "crates/norn/src/loop/delivery_pending_tests.rs",
+      "crates/norn/src/loop/inbound.rs",
+      "crates/norn/src/loop/inbound_tests.rs",
+      "crates/norn/src/loop/loop_context.rs",
+      "crates/norn/src/loop/mod.rs",
+      "crates/norn/src/loop/runner/entry.rs",
+      "crates/norn/src/loop/runner/tests.rs",
+      "crates/norn/src/loop/runner/tests/inbound_sweep.rs",
+      "crates/norn/src/loop/runner/tests/pending_inbound.rs",
+      "crates/norn/src/loop/runner/tests/pending_mailbox_api.rs",
+      "crates/norn/src/loop/runner/tests/update_requeue.rs",
+      "crates/norn/src/schedule/executor.rs",
+      "crates/norn/src/session/branch.rs",
+      "crates/norn/src/session/branch_child.rs",
+      "crates/norn/src/session/branch_materialize.rs",
+      "crates/norn/src/session/events.rs",
+      "crates/norn/src/session/mod.rs",
+      "crates/norn/src/session/store.rs",
+      "crates/norn/src/session/store/idempotent_append.rs",
+      "crates/norn/src/tools/agent/coord/mod.rs",
+      "crates/norn/src/tools/agent/coord/signal_agent.rs",
+      "crates/norn/src/tools/agent/coord/signal_agent_tests/durable_queue_races.rs",
+      "crates/norn/src/tools/agent/coord/signal_agent_tests/mod.rs",
+      "crates/norn/src/tools/agent/coord/signal_agent_tests/routing_audit.rs",
+      "crates/norn/src/tools/agent/coord/signal_agent_tests/scope_terminal.rs",
+      "crates/norn/src/tools/agent/coord/signal_agent_tests/test_support.rs",
+      "crates/norn/src/tools/agent/coord/signal_queue.rs",
+      "crates/norn/src/tools/agent/coord/signal_recipient.rs",
+      "crates/norn/src/tools/agent/coord/wake.rs",
+      "crates/norn/src/tools/agent/fork_launch.rs",
+      "crates/norn/src/tools/agent/fork_outcome.rs",
+      "crates/norn/src/tools/agent/fork_tool.rs",
+      "crates/norn/src/tools/agent/fork_tool/tests/mod.rs",
+      "crates/norn/src/tools/agent/fork_tool/tests/terminal_mailbox.rs",
+      "crates/norn/src/tools/agent/mod.rs",
+      "crates/norn/src/tools/agent/spawn/execute.rs",
+      "crates/norn/src/tools/agent/spawn/tests/mod.rs",
+      "crates/norn/src/tools/agent/spawn/tests/terminal_mailbox.rs",
+      "crates/norn/src/tools/agent/spawn_completion.rs",
+      "crates/norn/src/tools/agent/spawn_controller.rs",
+      "crates/norn/src/tools/agent/spawn_launch.rs",
+      "crates/norn/src/tools/agents_messages.rs"
+    ]
+  },
+  "strict_gates": [
+    {
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 fmt --all -- --check",
+      "result": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "result": "pass"
+    },
+    {
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 clippy --locked -p norn --all-targets --all-features -- -D warnings",
+      "result": "pass"
+    },
+    {
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 clippy --locked --workspace --all-targets --all-features -- -D warnings",
+      "result": "pass"
+    },
+    {
+      "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 test --locked --workspace --all-features --quiet",
+      "result": "pass",
+      "exit_status": 0,
+      "primary_harness_counts": {
+        "norn_lib": "4345/4345",
+        "norn_cli": "522/522",
+        "norn_tui": "683/683"
+      },
+      "note": "all printed integration and doctest summaries were green; no aggregate beyond the observed summaries is claimed"
+    }
+  ],
+  "focused_suites": [
+    {
+      "scope": "pending replay, including strict pre-D8 handling",
+      "result": "16/16"
+    },
+    {
+      "scope": "pending messages",
+      "result": "10/10"
+    },
+    {
+      "scope": "pending delivery",
+      "result": "5/5"
+    },
+    {
+      "scope": "signal agent",
+      "result": "22/22"
+    },
+    {
+      "scope": "process delivery",
+      "result": "11/11"
+    },
+    {
+      "scope": "schedule executor",
+      "result": "16/16"
+    },
+    {
+      "scope": "pending transition",
+      "result": "3/3"
+    },
+    {
+      "scope": "spawn and fork terminal wrappers",
+      "result": "2/2"
+    },
+    {
+      "scope": "permit close and drop",
+      "result": "1/1"
+    },
+    {
+      "scope": "runner inbound sweep",
+      "result": "5/5"
+    },
+    {
+      "scope": "runner update requeue",
+      "result": "4/4"
+    },
+    {
+      "scope": "public pending-mailbox API",
+      "result": "2/2"
+    }
+  ],
+  "distribution_cases": [
+    {
+      "test": "agent::pending_transition_tests::terminal_send_race_never_loses_a_successful_direct_send",
+      "command_template": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 test --locked --quiet -p norn --lib TEST -- --exact --test-threads=1",
+      "runs": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    {
+      "test": "tools::agent::spawn::tests::terminal_mailbox::terminal_wrapper_revokes_reserved_capacity_before_completion",
+      "command_template": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 test --locked --quiet -p norn --lib TEST -- --exact --test-threads=1",
+      "runs": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    {
+      "test": "tools::agent::fork_tool::tests::terminal_mailbox::fork_terminal_wrapper_revokes_reserved_capacity_before_completion",
+      "command_template": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 test --locked --quiet -p norn --lib TEST -- --exact --test-threads=1",
+      "runs": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    {
+      "test": "agent::pending_messages_tests::indeterminate_queue_write_retains_exact_q_and_reconciles_before_later_fifo_work",
+      "command_template": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 test --locked --quiet -p norn --lib TEST -- --exact --test-threads=1",
+      "runs": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    {
+      "test": "r#loop::delivery_pending_tests::cancellation_after_authoritative_append_cannot_redeliver_pending_message",
+      "command_template": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/norn/target cargo +1.94.0 test --locked --quiet -p norn --lib TEST -- --exact --test-threads=1",
+      "runs": 20,
+      "passed": 20,
+      "failed": 0
+    }
+  ],
+  "distribution_provenance": {
+    "retained_runner": false,
+    "retained_per_iteration_output": false,
+    "statement": "The coordinator observed all five exact filters pass 20/20. This summary does not fabricate per-run hashes, durations, or a runner that did not exist; the external reviewer is asked to reproduce the distributions."
+  },
+  "policy": {
+    "temporary_cargo_target_used": false,
+    "cargo_target": "/Users/tom/Developer/ablative/norn/target",
+    "production_lint_suppressions_added": 0,
+    "include_macros_added": 0,
+    "new_or_split_modules_over_500_lines": 0,
+    "touched_legacy_files_over_500_physical_lines": [
+      "crates/norn/src/agent/message_router.rs (697 total, 272 production prefix)",
+      "crates/norn/src/schedule/executor.rs (1431 total, 450 production prefix)",
+      "crates/norn/src/session/branch.rs (1104 total; production logic remains below 500 but test-only declarations occur near the file head)",
+      "crates/norn/src/session/events.rs (1022 total, 492 production prefix)",
+      "crates/norn/src/tools/agent/coord/wake.rs (516 total, 290 production prefix)",
+      "crates/norn/src/tools/agent/fork_outcome.rs (636 total, 132 production prefix)",
+      "crates/norn/src/tools/agents_messages.rs (834 total, 410 production prefix)"
+    ]
+  },
+  "honest_boundaries": [
+    "Authority-less unresolved pre-D8 queued rows are not automatically adopted or migrated; resume fails typed with PreD8PendingMessageOwnershipUnknown until operator action.",
+    "The exact-once claim covers coordinated pending-store delivery bound to a canonical mailbox and EventStore. Coordination-less runners still have no durable pending queue.",
+    "An embedder invoking its own PersistenceSink directly remains outside EventStore guarantees.",
+    "The evidence package summarizes observed distributions but does not retain a runner or per-iteration raw output."
+  ]
+}
