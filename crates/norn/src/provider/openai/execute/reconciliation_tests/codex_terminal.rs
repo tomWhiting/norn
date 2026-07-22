@@ -218,6 +218,39 @@ fn codex_empty_terminal_output_uses_done_item_authority() -> TestResult {
 }
 
 #[test]
+fn codex_empty_authority_accepts_absent_or_empty_terminal_output() -> TestResult {
+    for output in [None, Some(Vec::<Value>::new())] {
+        let mut mapper = ResponsesMapper::for_catalog_backend(CATALOG_BACKEND_CODEX_SUBSCRIPTION);
+
+        let terminal = mapper.map_event(&codex_completed(0, output.as_deref()));
+
+        assert_eq!(
+            terminal
+                .iter()
+                .filter(|event| matches!(event, Ok(ProviderEvent::ResponseItemDone { .. })))
+                .count(),
+            0,
+        );
+        assert_eq!(
+            terminal
+                .iter()
+                .filter(|event| matches!(event, Ok(ProviderEvent::Done { .. })))
+                .count(),
+            1,
+        );
+        assert!(matches!(
+            terminal.last(),
+            Some(Ok(ProviderEvent::Done {
+                stop_reason: crate::provider::events::StopReason::EndTurn,
+                ..
+            }))
+        ));
+        only_ok(terminal)?;
+    }
+    Ok(())
+}
+
+#[test]
 fn public_responses_still_requires_terminal_output_authority() -> TestResult {
     let item = completed_message("msg_public", "answer");
 
