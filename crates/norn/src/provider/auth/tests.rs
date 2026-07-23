@@ -80,13 +80,6 @@ fn auth_source_oauth_default_constructor() {
 }
 
 #[test]
-fn login_config_default_is_browser_pkce() {
-    let config = LoginConfig::default();
-    assert!(config.auth_root.is_none());
-    assert!(!config.device_code);
-}
-
-#[test]
 fn auth_provider_is_object_safe() {
     let _provider: Arc<dyn AuthProvider> =
         Arc::new(ApiKeyAuthProvider::new(SecretString::new("k")));
@@ -150,37 +143,6 @@ async fn mock_auth_provider_consumes_on_unauthorized_sequence() -> TestResult {
     assert!(provider.on_unauthorized().await?);
     assert!(!provider.on_unauthorized().await?);
     assert_eq!(provider.refresh_call_count(), 2);
-    Ok(())
-}
-
-#[tokio::test]
-async fn login_with_device_code_returns_config_error() -> TestResult {
-    let result = login(LoginConfig {
-        auth_root: Some(std::path::PathBuf::from("/tmp/norn-auth-test-nx")),
-        device_code: true,
-    })
-    .await;
-    let Err(NornError::Config(ConfigError::InvalidConfig { reason })) = result else {
-        return Err(std::io::Error::other("device login did not return a config error").into());
-    };
-    assert!(reason.contains("device code"));
-    Ok(())
-}
-
-#[tokio::test]
-async fn login_rejects_relative_auth_root_before_starting_browser_flow() -> TestResult {
-    let result = login(LoginConfig {
-        auth_root: Some(PathBuf::from("relative-auth-root")),
-        device_code: false,
-    })
-    .await;
-    let Err(NornError::Config(ConfigError::InvalidConfig { reason })) = result else {
-        return Err(std::io::Error::other(
-            "relative login root did not fail at the typed auth boundary",
-        )
-        .into());
-    };
-    assert!(reason.contains("must be absolute"));
     Ok(())
 }
 

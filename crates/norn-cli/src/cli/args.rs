@@ -390,11 +390,14 @@ pub enum InitCmd {
 /// Auth subcommands (NC13).
 #[derive(Subcommand, Debug)]
 pub enum AuthCmd {
-    /// OAuth PKCE login flow (opens browser).
+    /// Sign in with `ChatGPT` using browser PKCE or a headless device code.
     Login {
         /// Publish the login as a named Norn-owned account.
         #[arg(long, value_name = "ALIAS")]
         name: Option<String>,
+        /// Use headless device-code authorization instead of a localhost callback.
+        #[arg(long)]
+        device_auth: bool,
     },
     /// Clear stored credentials.
     Logout {
@@ -594,7 +597,10 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Command::Auth {
-                command: AuthCmd::Login { name: None },
+                command: AuthCmd::Login {
+                    name: None,
+                    device_auth: false,
+                },
             })
         ));
         Ok(())
@@ -606,8 +612,23 @@ mod tests {
         assert!(matches!(
             login.command,
             Some(Command::Auth {
-                command: AuthCmd::Login { name: Some(ref name) },
+                command: AuthCmd::Login {
+                    name: Some(ref name),
+                    device_auth: false,
+                },
             }) if name == "work"
+        ));
+
+        let device =
+            Cli::try_parse_from(["norn", "auth", "login", "--device-auth", "--name", "remote"])?;
+        assert!(matches!(
+            device.command,
+            Some(Command::Auth {
+                command: AuthCmd::Login {
+                    name: Some(ref name),
+                    device_auth: true,
+                },
+            }) if name == "remote"
         ));
 
         let use_account = Cli::try_parse_from(["norn", "auth", "use", "work"])?;

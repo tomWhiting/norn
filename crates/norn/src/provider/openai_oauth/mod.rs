@@ -15,8 +15,11 @@ mod credential_revision;
 mod credential_state;
 mod credential_transaction;
 mod credential_validation;
+mod device_login;
 mod endpoints;
 pub mod jwt;
+mod login_commit;
+mod login_prompt;
 mod login_server;
 mod manager;
 mod options;
@@ -47,7 +50,13 @@ pub use credential_state::{
     RefreshCandidateReason, UnknownExpiryReason, evaluate_chatgpt_credential,
     inspect_file_credential,
 };
+#[cfg(test)]
+pub(crate) use credential_transaction::CredentialTransaction;
+pub(crate) use device_login::{DeviceLoginOptions, run_device_login_with_hooks};
 pub use endpoints::CLIENT_ID;
+#[cfg(test)]
+pub(crate) use login_commit::persist_prepared_login;
+pub use login_prompt::{LoginPrompt, LoginPromptError, LoginPromptPresenter};
 pub use login_server::{
     LoginError, LoginServer, LoginStorageFailureKind, ServerOptions, run_login_server,
 };

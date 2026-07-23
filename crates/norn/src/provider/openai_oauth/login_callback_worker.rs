@@ -8,6 +8,7 @@ use tokio::sync::oneshot;
 
 use super::super::options::OAuthHttpOptions;
 use super::super::types::AuthDotJson;
+use super::browser_prompt::PreparedBrowserLaunch;
 use super::callback_protocol::{
     CallbackDisposition, classify_callback, configure_accepted_stream, read_request_target,
     write_response,
@@ -46,7 +47,7 @@ fn prepare_callback(
         redirect_uri,
         verifier,
         state,
-        browser_launch,
+        browser,
         lifecycle,
     } = args;
     let mut callback = wait_for_callback(
@@ -55,7 +56,7 @@ fn prepare_callback(
         accepted_permit,
         state,
         http.callback_timeout,
-        Some(browser_launch),
+        browser,
         lifecycle,
     )?;
     let auth = match super::super::code_exchange::exchange_code_blocking(
@@ -96,7 +97,7 @@ pub(super) struct CallbackServerArgs<'a> {
     pub(super) redirect_uri: &'a str,
     pub(super) verifier: &'a str,
     pub(super) state: &'a str,
-    pub(super) browser_launch: super::super::browser::BrowserLaunch,
+    pub(super) browser: PreparedBrowserLaunch,
     pub(super) lifecycle: &'a AtomicU8,
 }
 
@@ -117,7 +118,7 @@ pub(super) fn wait_for_callback(
     accepted_permit: crate::resource::DescriptorPermit,
     expected_state: &str,
     total_wait: Duration,
-    mut browser_launch: Option<super::super::browser::BrowserLaunch>,
+    mut browser: PreparedBrowserLaunch,
     lifecycle: &AtomicU8,
 ) -> Result<PendingCallback, LoginError> {
     // Computed from the elapsed time rather than `Instant + Duration`,
@@ -127,8 +128,14 @@ pub(super) fn wait_for_callback(
         if lifecycle.load(Ordering::Acquire) == LOGIN_CANCELED {
             return Err(LoginError::Canceled);
         }
-        if let Some(launch) = browser_launch.as_mut() {
-            launch.check().map_err(map_browser_launch_error)?;
+        if let Some(launch) = browser.browser_launch.as_mut()
+            && let Err(error) = launch.check()
+        {
+            if browser.manual_fallback {
+                browser.browser_launch = None;
+            } else {
+                return Err(map_browser_launch_error(error));
+            }
         }
         let remaining = total_wait.saturating_sub(started.elapsed());
         if remaining.is_zero() {

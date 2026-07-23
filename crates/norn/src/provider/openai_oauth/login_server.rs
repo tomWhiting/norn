@@ -13,20 +13,27 @@ use tokio::sync::oneshot;
 
 use super::auth_root::NornAuthRoot;
 use super::credential_lock_timing::CredentialLockTiming;
-use super::credential_transaction::{
-    CredentialRevision, CredentialTransaction, CredentialTransactionError,
-};
+use super::credential_transaction::CredentialRevision;
+#[cfg(test)]
+use super::credential_transaction::{CredentialTransaction, CredentialTransactionError};
 use super::endpoints::{AUTHORIZE_URL, OAUTH_SCOPES};
+#[cfg(test)]
+use super::login_commit::map_credential_transaction_error;
+use super::login_commit::{inspect_login_revision, persist_prepared_login};
+use super::login_prompt::LoginPromptPresenter;
 use super::options::OAuthHttpOptions;
 use super::pkce;
 use super::storage::AuthCredentialsStoreMode;
 use super::types::AuthDotJson;
 
+#[path = "login_browser_prompt.rs"]
+mod browser_prompt;
 #[path = "login_callback.rs"]
 mod callback_protocol;
 #[path = "login_callback_worker.rs"]
 mod callback_worker;
 
+use browser_prompt::present_and_open_browser;
 use callback_protocol::CALLBACK_PATH;
 #[cfg(test)]
 use callback_protocol::{CallbackDisposition, classify_callback, configure_accepted_stream};
@@ -42,12 +49,26 @@ const LOGIN_CANCELED: u8 = 1;
 const LOGIN_CALLBACK_CLAIMED: u8 = 2;
 
 /// Login server options.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ServerOptions {
     auth_root: NornAuthRoot,
     client_id: String,
     mode: AuthCredentialsStoreMode,
     http: OAuthHttpOptions,
+    presenter: Option<Arc<dyn LoginPromptPresenter>>,
+}
+
+impl std::fmt::Debug for ServerOptions {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ServerOptions")
+            .field("auth_root", &self.auth_root)
+            .field("client_id", &"[REDACTED]")
+            .field("mode", &self.mode)
+            .field("http", &self.http)
+            .field("presenter", &self.presenter.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 impl ServerOptions {
@@ -67,7 +88,15 @@ impl ServerOptions {
             client_id,
             mode,
             http,
+            presenter: None,
         }
+    }
+
+    /// Adds the explicit terminal-only presentation boundary used by the CLI.
+    #[must_use]
+    pub fn with_prompt_presenter(mut self, presenter: Arc<dyn LoginPromptPresenter>) -> Self {
+        self.presenter = Some(presenter);
+        self
     }
 }
 
@@ -135,6 +164,37 @@ pub enum LoginError {
     /// Token exchange failed.
     #[error("token exchange failed: {0}")]
     TokenExchange(String),
+    /// Login instructions could not be written through the explicit presenter.
+    #[error("login instructions could not be written to the terminal")]
+    Presentation,
+    /// Device authorization is not enabled for this account or workspace.
+    #[error(
+        "device-code login is not enabled for this account or workspace; enable it in ChatGPT security settings or use browser login"
+    )]
+    DeviceCodeUnsupported,
+    /// Device authorization timing was configured with an unusable deadline.
+    #[error("device-code login requires a non-zero authorization deadline")]
+    DeviceCodeConfiguration,
+    /// A device authority request failed before a response was available.
+    #[error("device-code authority request failed before a response was available")]
+    DeviceCodeTransport,
+    /// The device authority rejected one protocol stage.
+    #[error("device-code authority returned HTTP {status} while {stage}")]
+    DeviceCodeAuthority {
+        /// Non-sensitive protocol operation.
+        stage: &'static str,
+        /// HTTP response status.
+        status: u16,
+    },
+    /// The device authority returned a malformed success response.
+    #[error("device-code authority returned a malformed {stage} response")]
+    DeviceCodeMalformed {
+        /// Non-sensitive protocol stage.
+        stage: &'static str,
+    },
+    /// Device authorization was not completed before its deadline.
+    #[error("device-code authorization expired before it completed")]
+    DeviceCodeExpired,
     /// Auth storage failed with a structural lifecycle classification.
     #[error("auth storage failed ({kind}): {reason}")]
     Storage {
@@ -148,18 +208,19 @@ pub enum LoginError {
     Canceled,
 }
 
-/// Starts the local callback server and opens the browser.
+/// Starts the local callback server, presents its URL, and attempts to open it.
 ///
 /// # Errors
 ///
-/// Returns `LoginError` if no allowlisted port can be bound or browser launch
-/// fails.
+/// Returns `LoginError` if no allowlisted port can be bound, presentation
+/// fails, or browser launch fails without a presented manual fallback.
 pub fn run_login_server(opts: ServerOptions) -> Result<LoginServer, LoginError> {
     let ServerOptions {
         auth_root,
         client_id,
         mode,
         http,
+        presenter,
     } = opts;
     let credential_lock_timing =
         http.credential_lock_timing()
@@ -167,9 +228,7 @@ pub fn run_login_server(opts: ServerOptions) -> Result<LoginServer, LoginError> 
                 kind: LoginStorageFailureKind::Coordination,
                 reason: error.to_string(),
             })?;
-    let expected_revision = CredentialTransaction::inspect(&auth_root)
-        .map_err(map_credential_transaction_error)?
-        .revision;
+    let expected_revision = inspect_login_revision(&auth_root)?;
     let governor = crate::resource::DescriptorGovernor::global()
         .map_err(|error| LoginError::DescriptorAdmission(Box::new(error)))?;
     let mut callback_permits = governor
@@ -183,8 +242,11 @@ pub fn run_login_server(opts: ServerOptions) -> Result<LoginServer, LoginError> 
     let pkce = pkce::generate();
     let state = generate_state();
     let authorize_url = build_authorize_url(&client_id, &redirect_uri, &pkce.challenge, &state)?;
-    let browser_launch =
-        super::browser::open_authorization_url(&authorize_url).map_err(map_browser_launch_error)?;
+    let browser = present_and_open_browser(
+        presenter.as_deref(),
+        &authorize_url,
+        super::browser::open_authorization_url,
+    )?;
 
     let (prepared_tx, prepared_rx) = oneshot::channel();
     let (acknowledgement_tx, acknowledgement_rx) = oneshot::channel();
@@ -204,7 +266,7 @@ pub fn run_login_server(opts: ServerOptions) -> Result<LoginServer, LoginError> 
                     redirect_uri: &redirect_uri,
                     verifier: &pkce.verifier,
                     state: &state,
-                    browser_launch,
+                    browser,
                     lifecycle: &worker_lifecycle,
                 },
                 prepared_tx,
@@ -236,33 +298,15 @@ fn map_browser_launch_error(error: super::browser::BrowserLaunchError) -> LoginE
     }
 }
 
-fn map_credential_transaction_error(error: CredentialTransactionError) -> LoginError {
-    let reason = error.to_string();
-    let kind = match error {
-        CredentialTransactionError::DescriptorAdmission(error) => {
-            return LoginError::DescriptorAdmission(error);
-        }
-        CredentialTransactionError::Conflict
-        | CredentialTransactionError::VerificationConflict
-        | CredentialTransactionError::RecoveryIncomplete(_) => LoginStorageFailureKind::Conflict,
-        CredentialTransactionError::PublishedButUndurable { .. }
-        | CredentialTransactionError::DeletedButUndurable(_) => LoginStorageFailureKind::Undurable,
-        CredentialTransactionError::OpenRoot(_)
-        | CredentialTransactionError::OpenLock(_)
-        | CredentialTransactionError::LockTimeout { .. }
-        | CredentialTransactionError::Lock(_)
-        | CredentialTransactionError::Storage(_) => LoginStorageFailureKind::Coordination,
-    };
-    LoginError::Storage { kind, reason }
-}
-
 impl LoginServer {
     /// Blocks until the browser login flow completes.
     ///
-    /// This future owns the credential commit. Dropping it before commit sends
-    /// an explicit cancellation to the callback worker, which closes the
-    /// browser request without writing credentials. A successful browser page
-    /// is released only after the durable save returns successfully.
+    /// This future owns the credential commit. Dropping it while credential
+    /// transaction acquisition is pending cancels without writing credentials.
+    /// Once credential acquisition returns, save and named-account publication
+    /// run without an await in one future poll; cancellation cannot split them.
+    /// A successful browser page is released only after that transaction
+    /// returns successfully to this owner.
     ///
     /// # Errors
     ///
@@ -275,7 +319,7 @@ impl LoginServer {
     /// Commits one caller-owned durable index before browser success is shown.
     pub(crate) async fn block_until_done_with_commit<F>(self, commit: F) -> Result<(), LoginError>
     where
-        F: FnOnce() -> Result<(), LoginError>,
+        F: FnOnce() -> Result<(), LoginError> + Send + 'static,
     {
         self.block_until_done_with_hooks(|_| Ok(()), commit).await
     }
@@ -288,8 +332,8 @@ impl LoginServer {
         commit: F,
     ) -> Result<(), LoginError>
     where
-        V: FnOnce(&AuthDotJson) -> Result<(), LoginError>,
-        F: FnOnce() -> Result<(), LoginError>,
+        V: FnOnce(&AuthDotJson) -> Result<(), LoginError> + Send + 'static,
+        F: FnOnce() -> Result<(), LoginError> + Send + 'static,
     {
         let prepared = match (&mut self.prepared).await {
             Ok(prepared) => prepared,
@@ -305,36 +349,16 @@ impl LoginServer {
                 return Err(error);
             }
         };
-        if let Err(error) = validate(&auth) {
-            let acknowledged = self.acknowledge_worker(CommitAcknowledgement::Canceled);
-            let finished = self.wait_for_worker().await;
-            acknowledged?;
-            finished?;
-            return Err(error);
-        }
-
-        let root = self.auth_root.clone();
-        let timing = self.credential_lock_timing;
-        let transaction =
-            tokio::task::spawn_blocking(move || CredentialTransaction::acquire(&root, timing))
-                .await
-                .map_err(|error| LoginError::Storage {
-                    kind: LoginStorageFailureKind::Coordination,
-                    reason: format!("credential transaction task failed: {error}"),
-                })
-                .and_then(|result| result.map_err(map_credential_transaction_error));
-
-        // Keep the durable write and acknowledgement in one synchronous poll.
-        // Dropping this future before this point sends Canceled; once this poll
-        // starts, the credential is durable before the worker can render success.
-        let stored = match (self.mode, transaction) {
-            (AuthCredentialsStoreMode::File, Ok(transaction)) => transaction
-                .save_if_revision(self.expected_revision.as_ref(), &auth)
-                .map(drop)
-                .map_err(map_credential_transaction_error),
-            (AuthCredentialsStoreMode::File, Err(error)) => Err(error),
-        }
-        .and_then(|()| commit());
+        let stored = persist_prepared_login(
+            self.auth_root.clone(),
+            self.expected_revision.clone(),
+            self.mode,
+            self.credential_lock_timing,
+            auth,
+            validate,
+            commit,
+        )
+        .await;
         let acknowledgement = if stored.is_ok() {
             CommitAcknowledgement::Committed
         } else {

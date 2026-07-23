@@ -27,6 +27,10 @@ pub struct OAuthHttpOptions {
     /// Total wait for the browser to deliver the OAuth redirect to the
     /// local login-callback server before the login flow fails.
     pub callback_timeout: Duration,
+    /// Total wait for a device-code authorization to be approved. The
+    /// authority's current device codes expire after 15 minutes; callers may
+    /// set a shorter policy or track a future authority contract explicitly.
+    pub device_code_timeout: Duration,
     /// Maximum time to wait for another Norn process to finish a credential
     /// transaction. This does not coordinate lock-ignoring foreign writers;
     /// raw revision checks detect observed foreign changes instead.
@@ -43,6 +47,8 @@ impl OAuthHttpOptions {
     /// Documented, owner-approved default (pre-existing hardcoded value)
     /// for [`OAuthHttpOptions::callback_timeout`]: 5 minutes.
     pub const DEFAULT_CALLBACK_TIMEOUT: Duration = Duration::from_mins(5);
+    /// Current `OpenAI` device-code lifetime, as implemented by Codex: 15 minutes.
+    pub const DEFAULT_DEVICE_CODE_TIMEOUT: Duration = Duration::from_mins(15);
     /// Owner-approved bounded wait for one credential transaction: 30 seconds.
     pub const DEFAULT_CREDENTIAL_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
     /// Owner-approved inter-process lock polling cadence: 25 milliseconds.
@@ -63,6 +69,7 @@ impl Default for OAuthHttpOptions {
         Self {
             request_timeout: Self::DEFAULT_REQUEST_TIMEOUT,
             callback_timeout: Self::DEFAULT_CALLBACK_TIMEOUT,
+            device_code_timeout: Self::DEFAULT_DEVICE_CODE_TIMEOUT,
             credential_lock_timeout: Self::DEFAULT_CREDENTIAL_LOCK_TIMEOUT,
             credential_lock_poll_interval: Self::DEFAULT_CREDENTIAL_LOCK_POLL_INTERVAL,
         }
@@ -78,6 +85,7 @@ mod tests {
         let options = OAuthHttpOptions::default();
 
         assert_eq!(options.credential_lock_timeout, Duration::from_secs(30));
+        assert_eq!(options.device_code_timeout, Duration::from_mins(15));
         assert_eq!(
             options.credential_lock_poll_interval,
             Duration::from_millis(25)

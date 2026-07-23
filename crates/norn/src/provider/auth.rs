@@ -18,25 +18,31 @@ use std::sync::Arc;
 
 use super::CredentialIdentity;
 use super::openai_oauth::{
-    AuthCredentialsStoreMode, AuthManager, AuthManagerBuildError, LoginError,
-    LoginStorageFailureKind, LogoutReport, NornAuthRoot, OAuthCredentialIdentity, OAuthHttpOptions,
-    RefreshTokenError, resolve_norn_auth_root,
+    AuthCredentialsStoreMode, AuthManager, AuthManagerBuildError, LogoutReport, NornAuthRoot,
+    OAuthCredentialIdentity, OAuthHttpOptions, RefreshTokenError, resolve_norn_auth_root,
 };
 use super::startup_trace;
 use async_trait::async_trait;
 
 use super::request::SecretString;
-use crate::error::{
-    ConfigError, NornError, OAuthCredentialFailureKind, ProviderError, TransientKind,
-};
+use crate::error::{ConfigError, NornError, OAuthCredentialFailureKind, ProviderError};
 
 mod accounts;
+mod login;
 mod static_codex;
 
+#[cfg(test)]
+use super::openai_oauth::{LoginError, LoginStorageFailureKind};
+pub use super::openai_oauth::{LoginPrompt, LoginPromptError, LoginPromptPresenter};
+#[cfg(test)]
+use crate::error::TransientKind;
 pub use accounts::{
     command_account_root, list_auth_accounts, login_named, logout_all_auth_accounts, logout_named,
     provider_account_root, use_auth_account,
 };
+#[cfg(test)]
+use login::map_login_error;
+pub use login::{LoginConfig, login};
 pub(crate) use static_codex::StaticCodexAuthProvider;
 pub use static_codex::StaticCodexCredential;
 
@@ -357,36 +363,6 @@ pub async fn build_from_auth_source(
     }
 }
 
-/// Configuration for the [`login`] / [`logout`] flows.
-#[derive(Clone, Debug, Default)]
-pub struct LoginConfig {
-    /// Optional absolute override for the Norn OAuth credential root. `None`
-    /// resolves to `$NORN_HOME/auth` (default `~/.norn/auth`).
-    /// Supplying a path declares it Norn-owned; it must not identify a foreign
-    /// Codex credential directory.
-    pub auth_root: Option<PathBuf>,
-    /// Whether to use the device code flow. Currently unsupported;
-    /// setting this to `true` returns an error.
-    pub device_code: bool,
-}
-
-/// Triggers the OAuth PKCE login flow.
-///
-/// Opens a browser, runs a local callback server, and persists tokens
-/// to `auth.json` on success. Uses the documented default
-/// [`OAuthHttpOptions`] (10-second exchange deadline, 5-minute callback wait,
-/// 30-second credential-lock acquisition deadline, and 25-millisecond
-/// inter-process lock polling cadence).
-///
-/// # Errors
-///
-/// Returns [`NornError::Config`] for an unsupported login mode, invalid auth
-/// root, or unavailable browser launcher. Callback transport, authority, and
-/// credential-lifecycle failures retain their structural provider error type.
-pub async fn login(config: LoginConfig) -> Result<(), NornError> {
-    accounts::login_account(config, None).await
-}
-
 /// Clears local auth storage before attempting remote token revocation and
 /// reports both outcomes independently.
 ///
@@ -411,50 +387,6 @@ pub(super) fn command_norn_auth_root(
             reason: error.to_string(),
         })
     })
-}
-
-pub(super) fn map_login_error(error: LoginError) -> NornError {
-    match error {
-        LoginError::DescriptorAdmission(error) => {
-            NornError::Provider(ProviderError::DescriptorAdmission(error))
-        }
-        error @ (LoginError::Bind | LoginError::Server(_) | LoginError::Canceled) => {
-            NornError::Provider(ProviderError::ConnectionFailed {
-                reason: error.to_string(),
-                kind: TransientKind::ConnectionReset,
-            })
-        }
-        error @ LoginError::Browser(_) => NornError::Config(ConfigError::InvalidConfig {
-            reason: error.to_string(),
-        }),
-        error @ (LoginError::MissingCode
-        | LoginError::AuthorizationFailed
-        | LoginError::TokenExchange(_)) => {
-            NornError::Provider(ProviderError::AuthenticationFailed {
-                reason: error.to_string(),
-            })
-        }
-        LoginError::Storage { kind, reason } => match kind {
-            LoginStorageFailureKind::Conflict => {
-                NornError::Provider(ProviderError::OAuthCredentialFailure {
-                    kind: OAuthCredentialFailureKind::Conflict,
-                    reason,
-                })
-            }
-            LoginStorageFailureKind::Undurable => {
-                NornError::Provider(ProviderError::OAuthCredentialFailure {
-                    kind: OAuthCredentialFailureKind::Undurable,
-                    reason,
-                })
-            }
-            LoginStorageFailureKind::Coordination => {
-                NornError::Provider(ProviderError::ConnectionFailed {
-                    reason,
-                    kind: TransientKind::ConnectionReset,
-                })
-            }
-        },
-    }
 }
 
 #[cfg(any(test, feature = "test-utils"))]

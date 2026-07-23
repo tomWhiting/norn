@@ -22,7 +22,7 @@ use parking_lot::{Condvar, Mutex};
 
 pub(crate) use super::credential_revision::CredentialRevision;
 
-const CREDENTIAL_LOCK_FILE: &str = ".norn-auth.lock";
+pub(super) const CREDENTIAL_LOCK_FILE: &str = ".norn-auth.lock";
 
 static PROCESS_GATES: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));

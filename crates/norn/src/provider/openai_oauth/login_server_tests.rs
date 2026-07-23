@@ -1,6 +1,7 @@
 use std::io::{Read as _, Write as _};
 
 use super::super::types::CodexAuth;
+use super::browser_prompt::PreparedBrowserLaunch;
 use super::*;
 
 const CALLBACK_ERROR_SECRET: &str = "callback-secret-must-not-escape";
@@ -151,6 +152,13 @@ fn waiting_lifecycle() -> Arc<AtomicU8> {
     Arc::new(AtomicU8::new(LOGIN_WAITING))
 }
 
+fn no_browser_launch() -> PreparedBrowserLaunch {
+    PreparedBrowserLaunch {
+        browser_launch: None,
+        manual_fallback: false,
+    }
+}
+
 fn test_auth_document() -> Result<AuthDotJson, std::io::Error> {
     match CodexAuth::create_dummy_chatgpt_auth_for_testing() {
         CodexAuth::ChatGpt(auth) => Ok(*auth),
@@ -196,7 +204,7 @@ fn stray_requests_get_404_and_login_still_completes() -> Result<(), Box<dyn std:
             accepted_permit,
             "expected-state",
             Duration::from_secs(10),
-            None,
+            no_browser_launch(),
             &lifecycle,
         )
     });
@@ -262,7 +270,7 @@ fn matching_error_callback_fails_the_flow_with_a_400_page() -> Result<(), Box<dy
             accepted_permit,
             "expected-state",
             Duration::from_secs(10),
-            None,
+            no_browser_launch(),
             &lifecycle,
         )
     });
@@ -308,7 +316,7 @@ fn accepted_connection_waits_for_delayed_request_bytes() -> Result<(), Box<dyn s
             accepted_permit,
             "expected-state",
             Duration::from_secs(2),
-            None,
+            no_browser_launch(),
             &lifecycle,
         )
     });
@@ -352,7 +360,7 @@ fn cancellation_releases_callback_listener_without_waiting_for_deadline()
             accepted_permit,
             "expected-state",
             Duration::from_secs(10),
-            None,
+            no_browser_launch(),
             &worker_lifecycle,
         )
     });
@@ -462,7 +470,7 @@ fn wait_times_out_when_no_matching_callback_arrives() -> Result<(), Box<dyn std:
             accepted_permit,
             "expected-state",
             Duration::from_secs(2),
-            None,
+            no_browser_launch(),
             &lifecycle,
         )
     });

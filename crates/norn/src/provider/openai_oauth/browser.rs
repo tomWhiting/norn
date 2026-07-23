@@ -1,8 +1,11 @@
 //! Isolated browser launcher for OAuth authorization targets.
 
 use std::io::{self, Write as _};
+#[cfg(any(test, target_os = "macos"))]
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
+#[cfg(any(test, target_os = "macos"))]
+use std::process::Stdio;
+use std::process::{Child, ChildStdin, Command, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
@@ -341,6 +344,7 @@ fn finish_after_supervision_failure(child: &mut Child, ownership: LaunchOwnershi
     }
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn isolated_command(program: &Path, current_dir: &Path) -> Command {
     let mut command = Command::new(program);
     command
