@@ -189,6 +189,15 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         .as_ref()
         .map(|_| crate::config::session_data_dir())
         .transpose()?;
+    let herdr_session_path = parts.session_entry.as_ref().and_then(|entry| {
+        persist_data_dir
+            .as_ref()
+            .map(|data_dir| match entry.rel_path.as_deref() {
+                Some(relative) => data_dir.join(relative),
+                None => data_dir.join(format!("{}.jsonl", entry.id)),
+            })
+    });
+    let herdr_claim = crate::herdr::PaneClaim::claim(&session_id, herdr_session_path.as_deref());
     startup_trace.mark_session(
         "session_opened",
         &session_id,
@@ -287,6 +296,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     if let Some(hooks) = session_hooks.as_ref() {
         hooks.run_session_end(&session_id).await;
     }
+    drop(herdr_claim);
     app_result?;
 
     Ok(ExitCode::Success)
