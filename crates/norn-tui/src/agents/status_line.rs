@@ -343,7 +343,7 @@ impl AgentStatusPanel {
     /// never the synchronous render loop.
     pub fn set_pending_messages(&mut self, pending_messages: Option<Arc<PendingAgentMessages>>) {
         self.terminal_recovery_probe = pending_messages.map(|pending| {
-            Arc::new(move |id| pending.terminal_pending_recovery_status(id).is_some())
+            Arc::new(move |id| pending.nondurable_pending_status(id).is_some())
                 as Arc<TerminalRecoveryProbe>
         });
     }

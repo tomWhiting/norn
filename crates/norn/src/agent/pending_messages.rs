@@ -228,6 +228,9 @@ pub(super) fn publish_pending(
     let message_id = pending.message.id;
     let recipient_id = pending.mailbox_owner;
     pending.queue_durable = queue_durable;
+    if queue_durable {
+        pending.persistence_authority = None;
+    }
     inner.ids.insert(message_id);
     inner
         .by_recipient

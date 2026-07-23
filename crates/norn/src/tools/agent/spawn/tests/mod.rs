@@ -3,6 +3,7 @@ mod close_and_routes;
 mod completion_lifecycle;
 mod context_and_files;
 mod grandchildren;
+mod idle_queue_recovery;
 mod launch_basics;
 mod leaf_delegation;
 mod linger_and_limits;

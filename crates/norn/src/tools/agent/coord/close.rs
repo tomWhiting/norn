@@ -8,7 +8,10 @@ use uuid::Uuid;
 
 mod recovery;
 
-use self::recovery::{reclaim_observed_terminal, recover_terminal_pending_before_reclamation};
+use self::recovery::{
+    reclaim_observed_terminal, recover_all_pending_before_reclamation,
+    recover_joined_pending_before_reclamation, recover_terminal_pending_before_reclamation,
+};
 use super::helpers::sender_attribution;
 use crate::agent::PendingAgentMessages;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
@@ -274,7 +277,11 @@ async fn shutdown_one(
     // reclaiming the now-terminal entry. The handle has already been joined
     // and consumed, but the registry entry and shared recovery authority remain
     // intact if this hard error returns.
-    recover_terminal_pending_before_reclamation(pending_messages, id)?;
+    if had_handle {
+        recover_joined_pending_before_reclamation(registry, pending_messages, id)?;
+    } else {
+        recover_terminal_pending_before_reclamation(pending_messages, id)?;
+    }
 
     let mut reg = registry.write();
     let Some(entry) = reg.get(id) else {
@@ -401,7 +408,7 @@ impl Tool for CloseAgentTool {
             // that nothing was actually shut down. So: success, with the
             // recorded completion spelled out.
             ResolvedAgent::Reclaimed(tombstone) => {
-                recover_terminal_pending_before_reclamation(&infra.pending_messages, tombstone.id)?;
+                recover_all_pending_before_reclamation(&infra.pending_messages, tombstone.id)?;
                 let completed_at = tombstone.completed_at.to_rfc3339();
                 return Ok(ToolOutput::success(serde_json::json!({
                     "agent_id": tombstone.id.to_string(),
@@ -429,10 +436,11 @@ impl Tool for CloseAgentTool {
             collect_subtree(&reg, target_id)
         };
 
-        // Recovery is a subtree-wide preflight. It must finish before the
-        // token-first cascade below, because every later stage can consume a
-        // handle or reclaim a terminal registry entry. On failure the hard
-        // error returns with both observability surfaces byte-for-byte intact.
+        // Existing terminal recovery is a subtree-wide preflight. Live
+        // nondurable rows retain their own strong authority and remain under
+        // their controller until shutdown owns or observes that controller's
+        // terminal state; promoting them here could steal queued work if a
+        // later subtree preflight failed before cancellation began.
         for id in &order {
             recover_terminal_pending_before_reclamation(&infra.pending_messages, *id)?;
         }

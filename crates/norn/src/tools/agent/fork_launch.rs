@@ -324,7 +324,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
             persistence_errors.push(("final closed-mailbox drain", error));
         }
         let terminal_recovery_pending = pending_messages
-            .terminal_pending_recovery_status(fork_id)
+            .nondurable_pending_status(fork_id)
             .is_some();
         let persistence_failed =
             transition_hard_failure || finalizer_failed || terminal_recovery_pending;

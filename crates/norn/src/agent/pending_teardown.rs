@@ -18,6 +18,13 @@ pub struct TerminalPendingRecoveryStatus {
     pub pending_count: usize,
 }
 
+/// Payload-free status for every retained queue record not yet known durable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NondurablePendingStatus {
+    /// Number of retained records whose canonical queue append is unresolved.
+    pub pending_count: usize,
+}
+
 /// Result of an explicit terminal queue recovery attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TerminalPendingRetryOutcome {
@@ -37,6 +44,73 @@ pub(super) struct TerminalPendingRecovery {
 }
 
 impl PendingAgentMessages {
+    /// Promote retained live-mailbox failures into terminal recovery.
+    ///
+    /// Each nondurable live record owns exact mailbox/store authority. Promotion
+    /// validates one generation and store for the complete unresolved FIFO,
+    /// then moves that authority into the terminal retry surface without I/O.
+    pub(crate) fn promote_nondurable_for_terminal(
+        &self,
+        recipient_id: Uuid,
+    ) -> Result<(), SessionError> {
+        let enqueue_lock = self.enqueue_locks.for_recipient(recipient_id);
+        let _enqueue_guard = enqueue_lock.lock();
+        let authority = {
+            let inner = self.inner.lock();
+            let mut authority = inner
+                .terminal_recoveries
+                .get(&recipient_id)
+                .map(
+                    |recovery| super::pending_record::PendingPersistenceAuthority {
+                        mailbox_id: recovery.mailbox_id,
+                        store: Arc::clone(&recovery.store),
+                    },
+                );
+            if let Some(queue) = inner.by_recipient.get(&recipient_id) {
+                for pending in queue.iter().filter(|pending| !pending.queue_durable) {
+                    let candidate = pending.persistence_authority.as_ref();
+                    if candidate.is_none()
+                        && pending.terminal_recovery
+                        && authority
+                            .as_ref()
+                            .is_some_and(|current| pending.mailbox_id == Some(current.mailbox_id))
+                    {
+                        continue;
+                    }
+                    let Some(candidate) = candidate else {
+                        return Err(SessionError::EventAppendFailed {
+                            reason: format!(
+                                "agent {recipient_id} has a nondurable record without recovery authority"
+                            ),
+                        });
+                    };
+                    if authority.as_ref().is_some_and(
+                        |current: &super::pending_record::PendingPersistenceAuthority| {
+                            current.mailbox_id != candidate.mailbox_id
+                                || !Arc::ptr_eq(&current.store, &candidate.store)
+                        },
+                    ) {
+                        return Err(SessionError::EventAppendFailed {
+                            reason: format!(
+                                "agent {recipient_id} has nondurable records for different mailbox authorities"
+                            ),
+                        });
+                    }
+                    authority = Some(candidate.clone());
+                }
+            }
+            authority
+        };
+        let Some(authority) = authority else {
+            return Ok(());
+        };
+        self.adopt_closed_pending_locked(&ClosedPendingMailbox {
+            recipient_id,
+            store: authority.store,
+            mailbox_id: authority.mailbox_id,
+        })
+    }
+
     /// Reconcile the complete pending FIFO owned by a mailbox that has closed.
     ///
     /// Existing live-route failures and newly drained records are first adopted
@@ -99,6 +173,24 @@ impl PendingAgentMessages {
                 ),
             });
         }
+        if inner.by_recipient.get(&recipient_id).is_some_and(|queue| {
+            queue.iter().any(|pending| {
+                !pending.queue_durable
+                    && match pending.persistence_authority.as_ref() {
+                        Some(authority) => {
+                            authority.mailbox_id != closed.mailbox_id
+                                || !Arc::ptr_eq(&authority.store, &closed.store)
+                        }
+                        None => !pending.terminal_recovery,
+                    }
+            })
+        }) {
+            return Err(SessionError::EventAppendFailed {
+                reason: format!(
+                    "agent {recipient_id} has nondurable records without the closing mailbox authority"
+                ),
+            });
+        }
 
         let mut adopted = false;
         if let Some(queue) = inner.by_recipient.get_mut(&recipient_id) {
@@ -107,6 +199,7 @@ impl PendingAgentMessages {
                 .filter(|pending| pending.mailbox_id == Some(closed.mailbox_id))
             {
                 pending.terminal_recovery = true;
+                pending.persistence_authority = None;
                 adopted = true;
             }
         }
@@ -138,6 +231,23 @@ impl PendingAgentMessages {
             return None;
         }
         Some(TerminalPendingRecoveryStatus { pending_count })
+    }
+
+    /// Return payload-free status for any retained nondurable queue record.
+    #[must_use]
+    pub fn nondurable_pending_status(&self, recipient_id: Uuid) -> Option<NondurablePendingStatus> {
+        let pending_count = self
+            .inner
+            .lock()
+            .by_recipient
+            .get(&recipient_id)
+            .map_or(0, |queue| {
+                queue
+                    .iter()
+                    .filter(|pending| !pending.queue_durable)
+                    .count()
+            });
+        (pending_count != 0).then_some(NondurablePendingStatus { pending_count })
     }
 
     /// Retry every retained terminal queue record in recipient FIFO order.

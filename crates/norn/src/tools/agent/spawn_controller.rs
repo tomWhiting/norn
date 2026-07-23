@@ -224,7 +224,7 @@ impl SpawnController {
                     persistence_errors.push(("final closed-mailbox drain", error));
                 }
                 terminal_recovery_pending = pending_messages
-                    .terminal_pending_recovery_status(child_id)
+                    .nondurable_pending_status(child_id)
                     .is_some();
             }
             let persistence_failed = will_terminate
@@ -339,7 +339,7 @@ impl SpawnController {
                     persistence_error = Some(error);
                 }
                 let recovery_pending = pending_messages
-                    .terminal_pending_recovery_status(child_id)
+                    .nondurable_pending_status(child_id)
                     .is_some();
                 if let Some(error) = persistence_error.as_ref() {
                     tracing::error!(

@@ -1,5 +1,8 @@
 //! Durable pending-message record and audit payload.
 
+use std::fmt;
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -17,6 +20,22 @@ pub const AGENT_MESSAGE_QUEUED_EVENT_TYPE: &str = "agent_message.queued";
 
 /// `event_type` for a pending message claimed for a resumed recipient.
 pub const AGENT_MESSAGE_DEQUEUED_EVENT_TYPE: &str = "agent_message.dequeued";
+
+#[derive(Clone)]
+pub(super) struct PendingPersistenceAuthority {
+    pub(super) mailbox_id: MailboxId,
+    pub(super) store: Arc<EventStore>,
+}
+
+impl fmt::Debug for PendingPersistenceAuthority {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PendingPersistenceAuthority")
+            .field("mailbox_id", &"[REDACTED]")
+            .field("store", &"[REDACTED]")
+            .finish()
+    }
+}
 
 /// Audit lifecycle for a pending inter-agent message.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -111,6 +130,7 @@ pub struct PendingAgentMessage {
     pub(super) exact_message_timestamp: Option<DateTime<Utc>>,
     pub(super) queue_durable: bool,
     pub(super) terminal_recovery: bool,
+    pub(super) persistence_authority: Option<PendingPersistenceAuthority>,
     pub(super) queue_event: Option<SessionEvent>,
     pub(super) delivery_attempt: Option<PendingDeliveryAttempt>,
 }
@@ -130,6 +150,7 @@ impl PendingAgentMessage {
             exact_message_timestamp,
             queue_durable: false,
             terminal_recovery: false,
+            persistence_authority: None,
             queue_event: None,
             delivery_attempt: None,
         }
@@ -205,6 +226,7 @@ impl PendingAgentMessage {
                 exact_message_timestamp: message_timestamp,
                 queue_durable: true,
                 terminal_recovery: false,
+                persistence_authority: None,
                 queue_event: None,
                 delivery_attempt: None,
             },

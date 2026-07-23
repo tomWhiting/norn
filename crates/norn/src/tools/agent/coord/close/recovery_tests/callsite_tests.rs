@@ -183,8 +183,8 @@ async fn close_agent_unconditionally_checks_recovery_after_join_for_live_entry()
     assert!(!handles.contains(child), "joined handle is consumed");
     assert_eq!(
         registry.read().get(child).map(|entry| entry.status),
-        Some(AgentStatus::Active),
-        "recovery failure occurs before forced-failure mutation",
+        Some(AgentStatus::Failed),
+        "a joined dead wrapper remains observable as Failed without reclamation",
     );
     assert!(registry.read().tombstone(child).is_none());
     assert_eq!(

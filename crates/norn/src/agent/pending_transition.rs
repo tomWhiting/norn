@@ -82,7 +82,7 @@ impl PendingAgentMessages {
             let result = if terminal {
                 self.stage_terminal_locked(&mut pending)
             } else {
-                self.persist_and_publish_locked(target.store.as_ref(), &mut pending)
+                self.persist_and_publish_locked(&target.store, &mut pending)
                     .map(|_| ())
             };
             if let Err(error) = result {

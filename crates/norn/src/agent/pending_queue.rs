@@ -16,6 +16,7 @@ use super::pending_messages::{
     PendingAgentMessages, exact_frame, exact_pending, find_pending, find_pending_mut,
     publish_pending, remove_message,
 };
+use super::pending_record::PendingPersistenceAuthority;
 
 pub(crate) struct QueuedPendingMessage {
     pub(crate) mailbox_store: Arc<EventStore>,
@@ -157,7 +158,7 @@ impl PendingAgentMessages {
                 })?;
         validate_expected_store(recipient_id, expected_store, target.store.as_ref())?;
         pending.bind_mailbox(recipient_id, target.mailbox_id)?;
-        let published = self.persist_and_publish_locked(target.store.as_ref(), pending)?;
+        let published = self.persist_and_publish_locked(&target.store, pending)?;
         Ok(QueuedPendingMessage {
             mailbox_store: target.store,
             observation: pending.queued_observation(),
@@ -185,7 +186,7 @@ impl PendingAgentMessages {
 
     pub(super) fn persist_and_publish_locked(
         &self,
-        store: &EventStore,
+        store: &Arc<EventStore>,
         pending: &mut PendingAgentMessage,
     ) -> Result<bool, SessionError> {
         let message_id = pending.message.id;
@@ -197,7 +198,10 @@ impl PendingAgentMessages {
                 let durable = existing.queue_durable;
                 drop(inner);
                 if !durable {
-                    self.ensure_recipient_prefix_durable_locked(pending.mailbox_owner, store)?;
+                    self.ensure_recipient_prefix_durable_locked(
+                        pending.mailbox_owner,
+                        store.as_ref(),
+                    )?;
                 }
                 return Ok(false);
             }
@@ -208,12 +212,12 @@ impl PendingAgentMessages {
             }
         }
         let attempt: Result<bool, SessionError> = (|| {
-            self.ensure_recipient_prefix_durable_locked(pending.mailbox_owner, store)?;
-            let event = pending.prepare_queue_event(store)?;
-            if delivery_is_durable(store, pending, &framed)? {
+            self.ensure_recipient_prefix_durable_locked(pending.mailbox_owner, store.as_ref())?;
+            let event = pending.prepare_queue_event(store.as_ref())?;
+            if delivery_is_durable(store.as_ref(), pending, &framed)? {
                 return Ok(false);
             }
-            crate::r#loop::append_idempotent_off_executor(store, event)?;
+            crate::r#loop::append_idempotent_off_executor(store.as_ref(), event)?;
             Ok(true)
         })();
 
@@ -228,7 +232,20 @@ impl PendingAgentMessages {
             Err(error) => {
                 // The exact cached Q is the only safe way to reconcile an
                 // ambiguous persistence failure. Retain it locally without
-                // claiming durability; later FIFO work retries this identity.
+                // claiming durability. The record itself owns strong,
+                // generation-bound store authority before any live controller
+                // can disappear.
+                let Some(mailbox_id) = pending.mailbox_id else {
+                    return Err(SessionError::EventAppendFailed {
+                        reason: format!(
+                            "pending message {message_id} lost mailbox authority before recovery"
+                        ),
+                    });
+                };
+                pending.persistence_authority = Some(PendingPersistenceAuthority {
+                    mailbox_id,
+                    store: Arc::clone(store),
+                });
                 publish_pending(&mut inner, pending.clone(), false);
                 Err(SessionError::EventAppendFailed {
                     reason: format!(
@@ -291,6 +308,7 @@ impl PendingAgentMessages {
                 });
             };
             pending_record.queue_durable = true;
+            pending_record.persistence_authority = None;
         }
     }
 }

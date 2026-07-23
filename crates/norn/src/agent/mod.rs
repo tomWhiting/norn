@@ -63,7 +63,9 @@ pub use pending_messages::{
     PendingAgentMessageLifecycle, PendingAgentMessages, append_pending_message_audit,
 };
 pub(crate) use pending_queue::ClosedPendingMailbox;
-pub use pending_teardown::{TerminalPendingRecoveryStatus, TerminalPendingRetryOutcome};
+pub use pending_teardown::{
+    NondurablePendingStatus, TerminalPendingRecoveryStatus, TerminalPendingRetryOutcome,
+};
 pub use registry::{AgentEntry, AgentRegistry, AgentStatus, AgentTombstone, SpawnGuard};
 pub use result_channel::{ChildAgentResult, ChildResultSender, frame_child_result};
 pub use resume::rebuild_action_log;
