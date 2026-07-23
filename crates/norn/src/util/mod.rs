@@ -13,7 +13,9 @@ mod secure_file;
 pub use frontmatter::{FrontmatterError, split_frontmatter};
 pub(crate) use private_file_identity::PrivateFileIdentity;
 pub use private_fs::validate_private_component;
-pub(crate) use private_fs::{PrivateEntryKind, PrivateRoot, PrivateRootReader, PrivateTreeEntry};
+pub(crate) use private_fs::{
+    PrivateDirEntry, PrivateEntryKind, PrivateRoot, PrivateRootReader, PrivateTreeEntry,
+};
 #[cfg(unix)]
 pub(crate) use process_signal::kill_process_group;
 pub(crate) use secure_file::{

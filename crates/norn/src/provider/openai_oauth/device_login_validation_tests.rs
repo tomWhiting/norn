@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -88,6 +89,16 @@ fn valid_poll_response() -> serde_json::Value {
         "code_challenge": challenge_for(verifier),
         "code_verifier": verifier
     })
+}
+
+#[test]
+fn error_only_poll_envelope_cannot_be_classified_as_success() -> TestResult {
+    let envelope = serde_json::from_value::<TokenPollEnvelope>(serde_json::json!({
+        "error": "authorization_pending"
+    }))?;
+
+    assert!(matches!(envelope, TokenPollEnvelope::Error));
+    Ok(())
 }
 
 #[tokio::test]
@@ -193,6 +204,75 @@ async fn malformed_poll_json_is_payload_free_and_stops_before_exchange() -> Test
     ));
     assert!(!rendered.contains("malformed-poll-body-secret"));
     assert!(load_auth_dot_json(&root, AuthCredentialsStoreMode::File)?.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn mixed_poll_success_error_stops_before_exchange_or_persistence() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let root = NornAuthRoot::try_from(directory.path())?;
+    let existing = AuthDotJson::from_tokens(ChatGptTokens {
+        id_token: IdTokenInfo::from_raw_jwt(fixture_jwt("existing-account", "existing-user"))?,
+        access_token: "existing-access-token".to_owned(),
+        refresh_token: "existing-refresh-token".to_owned(),
+        account_id: Some("existing-account".to_owned()),
+        additional_fields: BTreeMap::new(),
+    });
+    save_auth_dot_json(root.as_path(), &existing)?;
+    let auth_path = root.as_path().join(super::super::storage::AUTH_JSON_FILE);
+    let before = std::fs::read(&auth_path)?;
+    let server = MockServer::start().await;
+    mount_user_code(&server).await;
+    let mut mixed = valid_poll_response();
+    let object = mixed
+        .as_object_mut()
+        .ok_or_else(|| std::io::Error::other("poll fixture was not an object"))?;
+    object.insert(
+        "error".to_owned(),
+        serde_json::Value::String("authorization-pending-secret".to_owned()),
+    );
+    Mock::given(method("POST"))
+        .and(path("/api/accounts/deviceauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(mixed))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let validated = Arc::new(AtomicBool::new(false));
+    let validation_observer = Arc::clone(&validated);
+    let committed = Arc::new(AtomicBool::new(false));
+    let commit_observer = Arc::clone(&committed);
+
+    let result = run_device_login_with_hooks(
+        options(root, &server, Arc::new(AcceptingPresenter)),
+        move |_| {
+            validation_observer.store(true, Ordering::Release);
+            Ok(())
+        },
+        move || {
+            commit_observer.store(true, Ordering::Release);
+            Ok(())
+        },
+    )
+    .await;
+    let Err(error) = result else {
+        return Err(std::io::Error::other("mixed poll envelope succeeded").into());
+    };
+    let rendered = format!("{error} {error:?}");
+
+    assert!(matches!(
+        error,
+        LoginError::DeviceCodeMalformed { stage: "poll" }
+    ));
+    assert!(!rendered.contains("authorization-pending-secret"));
+    assert!(!validated.load(Ordering::Acquire));
+    assert!(!committed.load(Ordering::Acquire));
+    assert_eq!(std::fs::read(auth_path)?, before);
     Ok(())
 }
 

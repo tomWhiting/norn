@@ -123,9 +123,21 @@ impl NamedLoginReservation {
         Ok(())
     }
 
-    /// Remove an uncommitted reservation after the browser flow fails.
+    /// Remove an uncommitted reservation after an interactive login fails.
     pub fn abort(self) -> Result<(), AccountCatalogError> {
+        self.abort_after_slot_scrub(|| Ok(()))
+    }
+
+    fn abort_after_slot_scrub(
+        self,
+        after_slot_scrub: impl FnOnce() -> Result<(), AccountCatalogError>,
+    ) -> Result<(), AccountCatalogError> {
         let timing = validated_timing(self.options)?;
+        let relative = slot_relative_path(self.storage_id);
+        // Preserve the lock identities until the exact pending record is gone,
+        // but durably remove every credential-bearing entry first.
+        io_layer::scrub_slot_credentials(&self.base_root, &relative)?;
+        after_slot_scrub()?;
         io_layer::mutate_catalog(&self.base_root, timing, |catalog| {
             catalog.records.retain(|record| {
                 record.alias_key != self.alias.key() || record.storage_id != self.storage_id
@@ -135,7 +147,6 @@ impl NamedLoginReservation {
             }
             Ok(())
         })?;
-        let relative = slot_relative_path(self.storage_id);
         drop(self.slot_lock);
         io_layer::remove_slot(&self.base_root, &relative)
     }

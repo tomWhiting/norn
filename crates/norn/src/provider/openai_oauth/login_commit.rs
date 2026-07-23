@@ -53,30 +53,16 @@ where
     .map_err(map_credential_transaction_error)?;
     let (transaction, auth, validate, commit) = acquired;
 
-    commit_without_yield(move || {
-        validate(&auth)?;
-        // The durable save and caller-owned publication execute in one
-        // synchronous future poll with no cancellation point between them.
-        match mode {
-            AuthCredentialsStoreMode::File => transaction
-                .save_if_revision(expected_revision.as_ref(), &auth)
-                .map(drop)
-                .map_err(map_credential_transaction_error),
-        }
-        .and_then(|()| commit())
-    })
-}
-
-fn commit_without_yield<F, T>(commit: F) -> T
-where
-    F: FnOnce() -> T,
-{
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
-            tokio::task::block_in_place(commit)
-        }
-        _ => commit(),
+    validate(&auth)?;
+    // These synchronous operations run in one future poll, so cancellation
+    // cannot split the durable save from caller-owned publication.
+    match mode {
+        AuthCredentialsStoreMode::File => transaction
+            .save_if_revision(expected_revision.as_ref(), &auth)
+            .map(drop)
+            .map_err(map_credential_transaction_error),
     }
+    .and_then(|()| commit())
 }
 
 pub(super) fn map_credential_transaction_error(error: CredentialTransactionError) -> LoginError {

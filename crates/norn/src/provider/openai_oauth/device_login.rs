@@ -134,6 +134,38 @@ struct TokenPollResponse {
     code_verifier: String,
 }
 
+enum TokenPollEnvelope {
+    Success(TokenPollResponse),
+    Error,
+}
+
+impl<'de> Deserialize<'de> for TokenPollEnvelope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let object = raw
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("device poll response must be an object"))?;
+        let has_error = object.contains_key("error");
+        let has_success = ["authorization_code", "code_challenge", "code_verifier"]
+            .iter()
+            .any(|field| object.contains_key(*field));
+        if has_error && has_success {
+            return Err(serde::de::Error::custom(
+                "device poll response mixed success and error fields",
+            ));
+        }
+        if has_error {
+            return Ok(Self::Error);
+        }
+        serde_json::from_value(raw)
+            .map(Self::Success)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 struct PendingDeviceCode {
     device_auth_id: String,
     user_code: String,
@@ -322,11 +354,16 @@ async fn poll_once(
         .map_err(|_error| LoginError::DeviceCodeTransport)?;
     match response.status() {
         StatusCode::FORBIDDEN | StatusCode::NOT_FOUND => Ok(None),
-        status if status.is_success() => response
-            .json::<TokenPollResponse>()
-            .await
-            .map(Some)
-            .map_err(|_error| LoginError::DeviceCodeMalformed { stage: "poll" }),
+        status if status.is_success() => {
+            let envelope = response
+                .json::<TokenPollEnvelope>()
+                .await
+                .map_err(|_error| LoginError::DeviceCodeMalformed { stage: "poll" })?;
+            match envelope {
+                TokenPollEnvelope::Success(response) => Ok(Some(response)),
+                TokenPollEnvelope::Error => Err(LoginError::DeviceCodeMalformed { stage: "poll" }),
+            }
+        }
         status => Err(authority_status("polling for authorization", status)),
     }
 }

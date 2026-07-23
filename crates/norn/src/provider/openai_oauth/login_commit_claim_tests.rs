@@ -69,3 +69,37 @@ async fn cancellation_after_commit_claim_cannot_split_save_and_publication() -> 
     assert!(auth_root.as_path().join("auth.json").is_file());
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_set_embedder_can_persist_and_publish_login() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let auth_root = NornAuthRoot::try_from(directory.path())?;
+    let task_root = auth_root.clone();
+    let timing = OAuthHttpOptions::default().credential_lock_timing()?;
+    let committed = Arc::new(AtomicBool::new(false));
+    let commit_observer = Arc::clone(&committed);
+    let local = tokio::task::LocalSet::new();
+
+    local
+        .run_until(async move {
+            tokio::task::spawn_local(persist_prepared_login(
+                task_root,
+                None,
+                AuthCredentialsStoreMode::File,
+                timing,
+                test_auth(),
+                |_| Ok(()),
+                move || {
+                    commit_observer.store(true, Ordering::Release);
+                    Ok(())
+                },
+            ))
+            .await??;
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+        })
+        .await?;
+
+    assert!(committed.load(Ordering::Acquire));
+    assert!(auth_root.as_path().join("auth.json").is_file());
+    Ok(())
+}

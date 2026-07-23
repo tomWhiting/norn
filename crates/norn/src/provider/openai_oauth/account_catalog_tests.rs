@@ -1,5 +1,8 @@
+use std::cell::Cell;
 use std::error::Error;
 use std::path::Path;
+use std::process::Command;
+use std::time::Duration;
 
 use serial_test::serial;
 
@@ -10,7 +13,15 @@ use crate::provider::openai_oauth::{
     AuthCredentialsStoreMode, prepare_local_logout, resolve_norn_auth_root,
 };
 
+#[path = "account_catalog_tests/cleanup.rs"]
+mod cleanup;
+
 type TestResult = Result<(), Box<dyn Error>>;
+
+const ABORT_CRASH_CHILD_ENV: &str = "NORN_ACCOUNT_ABORT_CRASH_ROOT";
+const ABORT_CRASH_CHILD_TEST: &str =
+    "provider::openai_oauth::account_catalog::tests::abort_crash_child_stops_after_slot_scrub";
+const ABORT_CRASH_EXIT: i32 = 86;
 
 fn base_root(directory: &tempfile::TempDir) -> Result<NornAuthRoot, Box<dyn Error>> {
     NornAuthRoot::try_from(directory.path().join("auth")).map_err(Into::into)
@@ -201,6 +212,140 @@ fn interrupted_post_save_login_is_published_without_replaying_login() -> TestRes
         NamedLoginPreparation::Recovered
     ));
     assert_eq!(resolve_account_root(&base, None)?, reserved_root);
+    Ok(())
+}
+
+#[test]
+fn abort_scrubs_credentials_before_retiring_catalog_reservation() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let base = base_root(&directory)?;
+    let prepared = prepare_named_login(&base, "ordered", OAuthHttpOptions::default())?;
+    let NamedLoginPreparation::Pending(reservation) = prepared else {
+        return Err(std::io::Error::other("fresh alias unexpectedly recovered").into());
+    };
+    let reserved_root = reservation.auth_root().clone();
+    save_fixture(&reserved_root)?;
+    let credential_lock = reserved_root
+        .as_path()
+        .join(super::super::credential_transaction::CREDENTIAL_LOCK_FILE);
+    std::fs::write(&credential_lock, b"")?;
+    let residue = reserved_root.as_path().join("staged");
+    std::fs::create_dir(&residue)?;
+    std::fs::write(residue.join("credential.tmp"), b"secret")?;
+    let observed = Cell::new(false);
+
+    reservation.abort_after_slot_scrub(|| {
+        assert!(!reserved_root.as_path().join("auth.json").exists());
+        assert!(!residue.exists());
+        assert!(credential_lock.is_file());
+        assert!(reserved_root.as_path().join(LOGIN_LOCK_FILE).is_file());
+        let catalog = io_layer::load_catalog(&base)?;
+        let record = catalog
+            .record("ordered")
+            .ok_or(AccountCatalogError::ReservationLost)?;
+        assert_eq!(record.state, AccountState::Pending);
+        observed.set(true);
+        Ok(())
+    })?;
+
+    assert!(observed.get());
+    assert!(!reserved_root.as_path().exists());
+    assert!(matches!(
+        resolve_account_root(&base, Some("ordered")),
+        Err(AccountCatalogError::AliasNotFound)
+    ));
+    Ok(())
+}
+
+#[test]
+fn catalog_failure_after_slot_scrub_self_heals_without_old_credentials() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let base = base_root(&directory)?;
+    let options = OAuthHttpOptions {
+        credential_lock_timeout: Duration::from_millis(20),
+        credential_lock_poll_interval: Duration::from_millis(1),
+        ..OAuthHttpOptions::default()
+    };
+    let prepared = prepare_named_login(&base, "retry", options)?;
+    let NamedLoginPreparation::Pending(reservation) = prepared else {
+        return Err(std::io::Error::other("fresh alias unexpectedly recovered").into());
+    };
+    let reserved_root = reservation.auth_root().clone();
+    save_fixture(&reserved_root)?;
+    let catalog_lock = CredentialTransaction::acquire(
+        &base,
+        OAuthHttpOptions::default().credential_lock_timing()?,
+    )?;
+
+    let result = reservation.abort();
+
+    assert!(matches!(result, Err(AccountCatalogError::Coordination)));
+    assert!(!reserved_root.as_path().join("auth.json").exists());
+    let catalog = io_layer::load_catalog(&base)?;
+    let record = catalog
+        .record("retry")
+        .ok_or(AccountCatalogError::ReservationLost)?;
+    assert_eq!(record.state, AccountState::Pending);
+    drop(catalog_lock);
+    let prepared = prepare_named_login(&base, "RETRY", OAuthHttpOptions::default())?;
+    let NamedLoginPreparation::Pending(replacement) = prepared else {
+        return Err(std::io::Error::other("credential-free slot unexpectedly recovered").into());
+    };
+    assert_eq!(replacement.auth_root(), &reserved_root);
+    let snapshot = CredentialTransaction::inspect(replacement.auth_root())?;
+    assert!(matches!(snapshot.document, CredentialDocument::Missing));
+    save_fixture(replacement.auth_root())?;
+    replacement.commit()?;
+    assert_eq!(resolve_account_root(&base, Some("retry"))?, reserved_root);
+    Ok(())
+}
+
+#[test]
+fn abort_crash_child_stops_after_slot_scrub() -> TestResult {
+    let Some(base_path) = std::env::var_os(ABORT_CRASH_CHILD_ENV) else {
+        return Ok(());
+    };
+    let base = NornAuthRoot::try_from(std::path::PathBuf::from(base_path))?;
+    let prepared = prepare_named_login(&base, "crash", OAuthHttpOptions::default())?;
+    let NamedLoginPreparation::Pending(reservation) = prepared else {
+        return Err(std::io::Error::other("crash fixture unexpectedly recovered").into());
+    };
+    save_fixture(reservation.auth_root())?;
+    reservation.abort_after_slot_scrub(|| std::process::exit(ABORT_CRASH_EXIT))?;
+    Ok(())
+}
+
+#[test]
+fn crash_after_slot_scrub_restarts_from_credential_free_pending_record() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let base = base_root(&directory)?;
+    let prepared = prepare_named_login(&base, "crash", OAuthHttpOptions::default())?;
+    let NamedLoginPreparation::Pending(reservation) = prepared else {
+        return Err(std::io::Error::other("fresh alias unexpectedly recovered").into());
+    };
+    let reserved_root = reservation.auth_root().clone();
+    drop(reservation);
+
+    let output = Command::new(std::env::current_exe()?)
+        .args(["--exact", ABORT_CRASH_CHILD_TEST, "--nocapture"])
+        .env(ABORT_CRASH_CHILD_ENV, base.as_path())
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(ABORT_CRASH_EXIT));
+    assert!(!reserved_root.as_path().join("auth.json").exists());
+    let catalog = io_layer::load_catalog(&base)?;
+    let record = catalog
+        .record("crash")
+        .ok_or(AccountCatalogError::ReservationLost)?;
+    assert_eq!(record.state, AccountState::Pending);
+    let prepared = prepare_named_login(&base, "CRASH", OAuthHttpOptions::default())?;
+    let NamedLoginPreparation::Pending(replacement) = prepared else {
+        return Err(std::io::Error::other("crashed slot unexpectedly recovered").into());
+    };
+    assert_eq!(replacement.auth_root(), &reserved_root);
+    let snapshot = CredentialTransaction::inspect(replacement.auth_root())?;
+    assert!(matches!(snapshot.document, CredentialDocument::Missing));
+    replacement.abort()?;
     Ok(())
 }
 

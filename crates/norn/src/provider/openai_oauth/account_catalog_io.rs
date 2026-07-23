@@ -1,15 +1,16 @@
 //! Private durable I/O for the named-account catalog.
 
-use std::io::{Read as _, Write as _};
+use std::ffi::OsStr;
+use std::io::{ErrorKind, Read as _, Write as _};
 use std::path::Path;
 
 use uuid::Uuid;
 
 use super::super::auth_root::NornAuthRoot;
 use super::super::credential_lock_timing::CredentialLockTiming;
-use super::super::credential_transaction::CredentialTransaction;
-use super::AccountCatalog;
-use crate::util::PrivateRoot;
+use super::super::credential_transaction::{CREDENTIAL_LOCK_FILE, CredentialTransaction};
+use super::{AccountCatalog, LOGIN_LOCK_FILE};
+use crate::util::{PrivateEntryKind, PrivateRoot};
 
 const CATALOG_FILE: &str = "accounts.json";
 
@@ -129,6 +130,112 @@ pub(super) fn remove_slot(
     drop(root);
     drop(descriptor_permit);
     Ok(())
+}
+
+pub(super) fn scrub_slot_credentials(
+    base_root: &NornAuthRoot,
+    relative: &Path,
+) -> Result<(), AccountCatalogError> {
+    let descriptor_permit = crate::resource::acquire_private_fs()
+        .map_err(|error| AccountCatalogError::coordination(&error))?;
+    let root = match PrivateRoot::open(base_root.as_path()) {
+        Ok(root) => root,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let entries = match root.read_dir(relative) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let outcome = scrub_directory_entries(&root, relative, &entries, true);
+    drop(root);
+    drop(descriptor_permit);
+    if let Some(error) = outcome.first_error {
+        return Err(AccountCatalogError::Io(error));
+    }
+    if outcome.unsupported {
+        return Err(AccountCatalogError::Io(std::io::Error::new(
+            ErrorKind::InvalidData,
+            "named-account slot contains an unsupported entry",
+        )));
+    }
+    Ok(())
+}
+
+fn scrub_directory_entries(
+    root: &PrivateRoot,
+    relative: &Path,
+    entries: &[crate::util::PrivateDirEntry],
+    preserve_locks: bool,
+) -> SlotScrubOutcome {
+    let mut outcome = SlotScrubOutcome {
+        unsupported: entries
+            .iter()
+            .any(|entry| entry.kind == PrivateEntryKind::Other),
+        first_error: None,
+    };
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.kind == PrivateEntryKind::File)
+    {
+        let is_lock = entry.name.as_os_str() == OsStr::new(LOGIN_LOCK_FILE)
+            || entry.name.as_os_str() == OsStr::new(CREDENTIAL_LOCK_FILE);
+        if preserve_locks && is_lock {
+            continue;
+        }
+        if let Err(error) = root.remove_file(&relative.join(&entry.name)) {
+            outcome.record(error);
+        }
+    }
+    // Make deletion of regular credential-bearing entries durable before an
+    // unsupported residue can make the cleanup fail closed.
+    if let Err(error) = root.sync_dir(relative) {
+        outcome.record(error);
+    }
+
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.kind == PrivateEntryKind::Directory)
+    {
+        let child = relative.join(&entry.name);
+        match root.read_dir(&child) {
+            Ok(child_entries) => {
+                let child_outcome = scrub_directory_entries(root, &child, &child_entries, false);
+                let child_is_clean =
+                    !child_outcome.unsupported && child_outcome.first_error.is_none();
+                outcome.merge(child_outcome);
+                if child_is_clean && let Err(error) = root.remove_dir_all(&child) {
+                    outcome.record(error);
+                }
+            }
+            Err(error) => outcome.record(error),
+        }
+    }
+    if let Err(error) = root.sync_dir(relative) {
+        outcome.record(error);
+    }
+    outcome
+}
+
+struct SlotScrubOutcome {
+    unsupported: bool,
+    first_error: Option<std::io::Error>,
+}
+
+impl SlotScrubOutcome {
+    fn record(&mut self, error: std::io::Error) {
+        if self.first_error.is_none() {
+            self.first_error = Some(error);
+        }
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.unsupported |= other.unsupported;
+        if self.first_error.is_none() {
+            self.first_error = other.first_error;
+        }
+    }
 }
 
 fn load_from_root(root: &PrivateRoot) -> Result<AccountCatalog, AccountCatalogError> {
