@@ -191,11 +191,19 @@ mod imp {
             .as_nanos()
             .try_into()
             .unwrap_or(u64::MAX);
-        LAST_SEQUENCE
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |previous| {
-                Some(wall_clock.max(previous.saturating_add(1)))
-            })
-            .unwrap_or_else(|previous| previous)
+        let mut previous = LAST_SEQUENCE.load(Ordering::Relaxed);
+        loop {
+            let next = wall_clock.max(previous.saturating_add(1));
+            match LAST_SEQUENCE.compare_exchange_weak(
+                previous,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return next,
+                Err(actual) => previous = actual,
+            }
+        }
     }
 
     #[cfg(test)]
@@ -261,6 +269,7 @@ mod imp {
             };
             let request = capture_request(&endpoint, true);
             assert_eq!(request["method"], "pane.report_agent");
+            assert!(request["params"]["seq"].as_u64().is_some_and(|seq| seq > 0));
             assert_eq!(
                 request["params"],
                 json!({
