@@ -11,12 +11,16 @@
   zero-error attestation, and closed GD-1 through GD-18. P1 historically used
   `2917c8e`; any restart requires a new prospective base. D13 moves D0 remote
   merge enforcement and shared release-gate work to P9; no remote-protection
-  claim is permitted while D0 is open. P2
-  implementation candidate and fixture closure are complete through source
-  `fcd1b30`; additive browser-presentation and headless device-login source
-  `dc908f3` is packaged for focused review. D14 records the retrospective phase
-  base, while retained Gate C, the live A/B/A experiment, authenticated device
-  proof, and independent P2 acceptance remain open. The
+  claim is permitted while D0 is open. P2 implementation candidate and fixture
+  closure are complete through source `fcd1b30`; additive browser-presentation
+  and headless device-login source `dc908f3` received a focused `READY`
+  implementation-candidate review at `da4b8bf`. Correction `2c5b9f0` closes
+  review MINOR-A/B/C with explicit poll-envelope validation, exhaustive
+  credential scrubbing before catalog retirement, and a runtime-independent
+  no-yield save/publication boundary. The live-authority status contract,
+  authenticated device proof, retained Gate C, the live A/B/A experiment, and
+  independent P2 acceptance remain open. D14 records the retrospective phase
+  base. The
   combined P3/P4 implementation candidate reaches frozen source `7f47218`: all
   28 public output-item discriminators and the shipped non-audio
   nested/tool schemas are inventoried, schema-validated, and
@@ -94,9 +98,13 @@
   adoption and then be reclaimed by close. Narrow source correction `7747decb`
   (tree `f9ff207d`) promotes every nondurable record before reclamation and
   retains its recovery authority; its checked-in runner retains `80/80`
-  source-bound observations. Narrow same-reviewer confirmation is pending, so
-  D8 is not accepted. The broad conversation-state matrices, whole-P5 acceptance,
-  and D7/P9 authenticated live-wire conformance remain open. P5 is not accepted.
+  source-bound observations. Same-reviewer confirmation `13737cd` closes
+  MAJOR-2 and returns the bounded D8 implementation candidate `READY`; the owner
+  accepts and integrates that candidate on 2026-07-23. Codex terminal-authority
+  source `d86a4ed` is independently `READY` at review `642fd8a`, and test-only
+  hardening `b967967` pins the zero-item empty-success shape. The broad
+  conversation-state matrices, whole-P5 acceptance, and D7/P9 authenticated
+  live-wire conformance remain open. P5 is not accepted.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -516,10 +524,10 @@ artifacts to the same clean head with zero errors.
 |---|---|---|
 | P0. Credential and workspace authority containment | [x] Accepted by focused Gate D review `7ce29d7` on 2026-07-15 | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] Historical Gate A retained but stale; no Gate B implementation landed. D13 moves generic repository enforcement and D0 to P9 rather than reviving the rejected 364-file prototype | Current product phases use their own strict source-bound contract and policy gates; shared release governance is completed once in P9. |
-| P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; additive browser/device-login source `dc908f3` awaits focused review; D14 records base `6669b9d`; retained Gate C, live A/B/A, authenticated device proof, and independent acceptance remain open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit; remote operators use one-time device authorization rather than token paste. |
+| P2. OAuth lifecycle correctness | [ ] Implementation candidate and fixture closure through `fcd1b30` complete; additive browser/device-login source `dc908f3` is reviewed `READY` at `da4b8bf`, and correction `2c5b9f0` closes MINOR-A/B/C; D14 records base `6669b9d`; the live-authority status contract, retained Gate C, live A/B/A, authenticated device proof, and independent acceptance remain open | Login, refresh, storage, and logout fail safely; named-account selection is evidence-backed and explicit; remote operators use one-time device authorization rather than token paste. |
 | P3. Canonical ordered transcript | [x] Accepted by whole-phase Gate D review `06be7c7` on 2026-07-18. Frozen combined source `7f47218` contains the exact 28-item union, canonical model/replay/persistence, caller ownership, strict format-2 store, offline migration, explicit resume classifications, and response-scoped private audio artifacts. The reviewer independently reproduced the final source-bound gate, zero-violation policy audit, 60/60 distributions, redaction report, and attestation | Responses items survive stream, persistence, resume, and replay in order; explicit context edits change only the provider-facing view, not the audit timeline. |
 | P4. Streaming and replay conformance | [x] Accepted on 2026-07-19 by corrected Gate D review `0095f5c`. Product correction `ab26632` closes the orphan-core-preview authority defect; evidence binds to source `180759f`, and the independently reproduced five-artifact bundle is retained at `8faf1f4`. P3 remains accepted and D15's D7/P9 live-wire boundary is unchanged | Supported events/items are complete, reconciled against terminal authority, and fail closed without promoting preview-only content. |
-| P5. Conversation and Codex turn semantics | [ ] The `TRANS-01` retained 200/200 candidate is externally checked; `CODEX-01`, `CODEX-02`, and `AFFINITY-01` are accepted as isolated implementation candidates. Original D3 review `7155196` returned `NOT READY` only on swallowed response-audio errors (R1) and non-bisectable split history (R2), with no reachable product defect. The superseding branch reconstructs a buildable split at `61c7a52`, preserves the reviewed feature tree at `97f63a5`, closes R1 and elected H2/H3 at `acfcb69`, and retains historical 49/49 and 64/64 records. Same-reviewer confirmation `0dc2035` closes R1/R2/H2/H3/H4 and returns D3 `READY` as an implementation candidate, with three nonblocking H1 residuals. Product correction `e96ee64` closes those residuals; exact source `c8619ae` (tree `e7f676a`) retains 70/70 observations. Same-reviewer confirmation `db3cf81` closes H1-a/b/c; D3 is owner-accepted on 2026-07-22 and incorporated into `main` through reviewed head `db3cf81`. D8 role authority is frozen at `4fa6c67`; its original duplication blocker is closed by `de0b4d3`. Review `531200f` found the distinct terminal-Q loss MAJOR-1. Narrow source `eafa8db` (tree `1c67561e`) retains exact messages before Q I/O, fails spawn/fork loudly, and retains 180/180 observations. Same-reviewer verdict `4f82e55` closes MAJOR-1 but finds distinct idle/live-requeue orphan MAJOR-2. Narrow source `7747decb` (tree `f9ff207d`) promotes every nondurable record before reclamation, retains strong recovery authority, and records 80/80 observations. Narrow same-reviewer confirmation remains pending; D8 and P5 remain unaccepted. The broad matrices and whole-P5 acceptance remain open | Local/provider history and turn-scoped state have explicit lifetimes. |
+| P5. Conversation and Codex turn semantics | [ ] `TRANS-01` retains 200/200 and has a bounded external check; `CODEX-01`, `CODEX-02`, `AFFINITY-01`, and D3 are accepted implementation candidates. D8 source `4fa6c67`, exact-once source `de0b4d3`, terminal-Q correction `eafa8db`, and MAJOR-2 correction `7747dec` complete the reviewed chain; verdict `13737cd` closes MAJOR-2 and returns D8 `READY`, and the owner accepts and integrates that candidate on 2026-07-23. Codex terminal-authority source `d86a4ed` permits missing/empty terminal output only for the credential-sealed Codex backend while retaining strict public Responses behavior; review `642fd8a` returns `READY`, and `b967967` adds the requested empty-success regression. Whole-P5 acceptance, the broad volatile/concurrent matrices, D8 post-acceptance hardening, and D7/P9 authenticated live-wire evidence remain open | Local/provider history and turn-scoped state have explicit lifetimes. |
 | P6. Transport, retry, and usage | [ ] | Retries terminate once; observed and unknown attempt usage remain explicit. |
 | P7. Request, schema, and model controls | [ ] | Advertised capabilities match validated payload and tool behavior. |
 | P8. Prompt-cache measurement and policy | [ ] | Cache policy is observable, backend-specific, and empirically justified. |
@@ -561,7 +569,7 @@ blocks phase acceptance and cannot be represented as implemented evidence.
 | D5 | Native `text.format` versus synthetic tool policy by API shape, catalog-selected apply-patch/search envelopes, and local-dispatch versus user-request semantics for tool-backed slash commands. | P7 | [ ] Open |
 | D6 | Pre-register the cache experiment: ratify or replace the proposed 20-iteration design; approve public/private backends, models, spending, warm-up, key isolation/reuse, an approximately 15 requests/minute per-key ceiling rechecked against current guidance, concurrency, retention/cooldown, service tier, output/effort controls, randomization, primary measures, and statistical treatment. | P8 | [ ] Open |
 | D7 | Approve credentials, spending, redaction, and retention for final live Codex and public Responses conformance. Without approval P9 is blocked, not passed by a skipped test. | P9 | [ ] Open |
-| D8 | Ratify the source-to-wire-role matrix for product System policy, trusted operator Developer policy, repository `NORN.md`/rules/profiles, user input, and compatible backends that cannot preserve Developer. | P5 | [x] Decided 2026-07-22 in `DECISIONS-2026-07.md` section 24 and implemented at frozen source `4fa6c6756ed497a002b4281f51cbb14f7bd7a3eb` (tree `c0d9f69bb5283184432862016c1212644f7088c2`) over base `05be10c40981460c00fed9acc306938ff93b40b2`. Authority derives from source, never file position, content labels, or transport shape: compiled product/embedder/child/fork/built-in/skill-catalog policy is System; trusted operator profiles/overrides, `~/.norn/NORN.md`, operator rules/skills, and trusted prompt-command output are Developer; repository/root/nested `NORN.md`, workspace profiles/rules/skills, configured variants, human task/delegation/steering, and child output are User. Public threaded Responses projects source-System fragments plus Norn-owned volatile policy through current request-local instructions; that field has no literal role discriminator. Stable Developer/User content and trusted prompt-command output bind the provider seed; unchanged command output reuses the anchor and changed output cuts it, requiring exact replay that may fail typed before mutation when replay material is unavailable. Runtime MCP descriptions remain only in live tool definitions. Stateless transports use one explicit trailing Developer compatibility message. Developer-capable compatible backends preserve Developer; incapable adapters reject or explicitly lower it without promotion to System. Original Gate D `6d16883` and exact-once review `531200f` are complete. Terminal-Q loss correction `eafa8db` retains 180/180 observations; same-reviewer verdict `4f82e55` closes MAJOR-1 but returns `NOT READY` on distinct MAJOR-2. Narrow source `7747decb` (tree `f9ff207d`) implements the MAJOR-2 correction and retains 80/80 observations pending narrow same-reviewer confirmation. This decision row is complete, but D8 acceptance and P5 remain open. |
+| D8 | Ratify the source-to-wire-role matrix for product System policy, trusted operator Developer policy, repository `NORN.md`/rules/profiles, user input, and compatible backends that cannot preserve Developer. | P5 | [x] Decided 2026-07-22 in `DECISIONS-2026-07.md` section 24 and implemented at frozen source `4fa6c6756ed497a002b4281f51cbb14f7bd7a3eb` (tree `c0d9f69bb5283184432862016c1212644f7088c2`) over base `05be10c40981460c00fed9acc306938ff93b40b2`. Authority derives from source, never file position, content labels, or transport shape: compiled product/embedder/child/fork/built-in/skill-catalog policy is System; trusted operator profiles/overrides, `~/.norn/NORN.md`, operator rules/skills, and trusted prompt-command output are Developer; repository/root/nested `NORN.md`, workspace profiles/rules/skills, configured variants, human task/delegation/steering, and child output are User. Public threaded Responses projects source-System fragments plus Norn-owned volatile policy through current request-local instructions; that field has no literal role discriminator. Stable Developer/User content and trusted prompt-command output bind the provider seed; unchanged command output reuses the anchor and changed output cuts it, requiring exact replay that may fail typed before mutation when replay material is unavailable. Runtime MCP descriptions remain only in live tool definitions. Stateless transports use one explicit trailing Developer compatibility message. Developer-capable compatible backends preserve Developer; incapable adapters reject or explicitly lower it without promotion to System. Original Gate D `6d16883` and exact-once review `531200f` are complete. Terminal-Q loss correction `eafa8db` retains 180/180 observations; same-reviewer verdict `4f82e55` closes MAJOR-1 but returns `NOT READY` on distinct MAJOR-2. Narrow source `7747decb` (tree `f9ff207d`) implements the MAJOR-2 correction and retains 80/80 observations. Same-reviewer confirmation `13737cd` closes MAJOR-2 and returns D8 `READY` as a bounded implementation candidate; the owner accepts and integrates D8 on 2026-07-23. P5 remains open. |
 | D9 | OAuth credential ownership and explicit named-account policy: Norn-managed storage; file-backed foreign `$CODEX_HOME/auth.json`; import/migration semantics; OS-keyring scope; static/embedder ownership; trusted selection; unknown expiry; durable recovery-journal policy; accepted `provider.auth` spellings and required/forbidden companion fields; and isolated-account validity. | P2 | [x] Decided 2026-07-16. P2 implements explicit Norn-owned named accounts while retaining `$NORN_HOME/auth/auth.json` as the legacy `default` slot. A private versioned catalog maps case-insensitively unique shell-safe aliases to opaque random storage IDs below `$NORN_HOME/auth/accounts/`; aliases are never paths. Successful named login becomes active for newly constructed providers; `auth use` changes only future providers; deleting the active account clears selection and never auto-selects another. Before P5, resume requires explicit trusted account selection. Project/local/model/tool input cannot select an account. The live A/B/A refresh experiment is required before P2 acceptance, but does not block implementation. P2 adds no foreign-file import or OS-keyring surface and never reads, locks, hardens, copies, or deletes ambient `$CODEX_HOME`; those capabilities are out of P2. Restart-safe refresh recovery uses a private versioned, token-free, no-TTL marker under the same Norn-owned transaction lock; ambiguous same-lineage outcomes block replay until durable state proves commit or external advancement. Explicit `provider.auth` accepts only `oauth` and `api_key`; `env`, blank, and unknown values are rejected. Omitted mode preserves current backend defaults. Explicit OAuth forbids an API-key environment field; explicit API-key mode requires one; incompatible backends reject invalid combinations before environment, credential, provider, or network access. Automatic account rotation remains outside P2. |
 | D9A | Credential-transaction timing policy: the default acquisition deadline and the positive polling cadence used by portable timed file-lock acquisition. Both must have explicit owner-approved values, and the cadence must become programmatically overridable like the deadline. | P2 | [x] Decided and implemented 2026-07-15. The default acquisition deadline is 30 seconds and the inter-process polling cadence is 25 milliseconds; both are programmatically overridable. Both must be positive and are rejected before credential filesystem access when invalid. The deadline bounds acquisition only, not the duration of a transaction after the lock is held. Source commit `455990a`; retained 20-iteration deadline and two-process convergence distributions are recorded in `docs/reviews/evidence/2026-07-15-p2-credential-lock.json`. |
 | D10 | Automatic account rotation policy: applicable product/contract permission, eligible exhaustion signals, trusted candidate allowlist, pre-request rejection proof, turn/session affinity, state reset, cache-isolation handoff, and resume authorization. | P6 | [ ] Open until authoritative current terms/product guidance permits the behavior and P3/P5 establish transcript replay, account-scoped state, and turn affinity. The current [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/) prohibit circumventing rate limits or restrictions, so exhaustion-triggered rotation is unsupported unless OpenAI or the governing contract explicitly establishes that this use is permitted. Even then, switching occurs only before dispatch or after a typed provider outcome proving no execution or state mutation; absence of observed output is insufficient. P6 otherwise keeps `ROUTE-01` unsupported. |
@@ -570,7 +578,7 @@ blocks phase acceptance and cannot be represented as implemented evidence.
 | D13 | Correct phase dependencies and disposition the unfinished P1 enforcement program. | P1/P3/P4/P9 | [x] Owner-approved 2026-07-18. P1's historical Gate A is retained as chronology but is stale against accepted D11 nullable-phase evidence; no P1 Gate B implementation landed. The archived 364-file policy prototype is rejected as a candidate and is not resurrected. Generic policy-product, staged-mutation, clean-checkout, and D0 remote-enforcement work moves to P9 release governance. P3/P4 retain strict source-bound fmt, Clippy, workspace/all-target/doc tests, exact diff, LOC/module/bypass, redaction, distribution, and independent-review gates. P1 and P2 are not semantic prerequisites for transcript/streaming acceptance; P2 remains independently gated and P4 still depends on accepted P3. No remote-protection claim is made. |
 | D14 | Retrospective P2 timing disposition and exact phase base. | P2 | [x] Owner-approved 2026-07-18: use `6669b9d` as the exact P2 comparison base; its child `6a76d9f` is the first P2 source commit and `fcd1b30` is the frozen implementation/fixture candidate. This acknowledges that the base was not recorded prospectively, P1 was incomplete, and D9 plus its live validity experiment were still open when implementation began. It waives none of the live experiment, retained evidence, policy, or independent-review requirements and does not accept P2. |
 | D15 | P3/P4 final source, evidence, compaction boundary, and credentialed live-fixture disposition. | P3/P4/P9 | [x] Owner-approved 2026-07-18: freeze final combined source `7f47218` over D12 base `a90b730`; use one source-bound machine bundle while requiring separate P3 then P4 Gate D verdicts; retain the settled local/provider compaction boundary. Deterministic public/Codex fixtures complete the P4 protocol/streaming evidence requirement. A real authenticated streamed Responses request remains a mandatory D7/P9 integration gate before overall acceptance, was not run here, and still requires explicit credentials, spending, redaction, and retention approval at the point of use. A skipped live test is never a pass. P4 review `80f0e36` invalidated only the P4 half of the freeze; accepted P3 is unchanged. Corrected P4 evidence is bound to `180759f`, containing product correction `ab26632`. This ruling and correction did not themselves accept P4 or P9; corrected review `0095f5c` subsequently returned P4 `READY`, and P4 acceptance is recorded separately while P9 remains open. |
-| D16 | Browser authorization presentation and remote/headless OAuth login. | P2 | [x] Owner-approved 2026-07-23: browser PKCE remains the default and the CLI presents its exact authorization URL before desktop launch. Remote/headless login uses the provider's one-time device authorization flow, not reusable-token or callback-code copy/paste. Production device endpoints are compiled OpenAI authority values; one positive, library-overridable 15-minute default deadline covers the complete authority exchange. Operator-visible prompt material uses the trusted terminal boundary; the macOS launcher receives its URL over stdin, never argv. Linux/BSD argv-based automatic launch is disabled rather than exposing the state-bearing URL in a process argument. Default and named results use the existing Norn-owned durable transaction. Only transaction acquisition is delegated to a blocking worker; validation, credential save, and named-catalog publication run synchronously with no await boundary. Current-thread runtime blocking at that bounded final commit is an accepted ergonomics residual. Source `dc908f3` is an implementation candidate pending focused review and authenticated real-authority proof; this decision does not accept P2. |
+| D16 | Browser authorization presentation and remote/headless OAuth login. | P2 | [x] Owner-approved 2026-07-23: browser PKCE remains the default and the CLI presents its exact authorization URL before desktop launch. Remote/headless login uses the provider's one-time device authorization flow, not reusable-token or callback-code copy/paste. Production device endpoints are compiled OpenAI authority values; one positive, library-overridable 15-minute default deadline covers the complete authority exchange. Operator-visible prompt material uses the trusted terminal boundary; the macOS launcher receives its URL over stdin, never argv. Linux/BSD argv-based automatic launch is disabled rather than exposing the state-bearing URL in a process argument. Default and named results use the existing Norn-owned durable transaction. Only transaction acquisition is delegated to a blocking worker; validation, credential save, and named-catalog publication run synchronously with no await boundary. Current-thread runtime blocking at that bounded final commit is an accepted ergonomics residual. Source `dc908f3` is `READY` as a focused implementation candidate at review `da4b8bf`; correction `2c5b9f0` closes review MINOR-A/B/C. The authenticated real-authority proof and live status contract remain open; this decision does not accept P2. |
 
 ## Accepted boundary and operator guidance
 
@@ -1266,9 +1274,10 @@ campaign rules. No provider behavior changes in this phase.
 
 **Status:** [ ] Implementation candidate and fixture closure complete through
 source `fcd1b30`; bounded browser-presentation and headless device-login
-follow-up source `dc908f3` is packaged for focused review. Focused OAuth and CLI
-gates are green, but no retained Gate C, authenticated device-login, or P2
-acceptance claim;
+follow-up source `dc908f3` is `READY` as a focused implementation candidate at
+review `da4b8bf`. Correction `2c5b9f0` closes review MINOR-A/B/C. Focused OAuth
+and CLI gates are green, but no retained Gate C, authenticated device-login,
+live-authority status-contract, or P2 acceptance claim;
 **findings targeted:** `AUTH-01` through `AUTH-07`, `CONFIG-01`, `CONFIG-02`;
 **dependencies:** P0; D9, D9A, and retrospective D14 are decided. Checked work items below mean the
 implementation and focused source fixtures are present; they do not substitute
@@ -1398,8 +1407,29 @@ handoff records 17/17 device tests, 240/240 OAuth tests, 523/523 CLI tests,
 strict Clippy, and fmt. Its full Norn library observation was 4,326/4,330, not
 an unqualified pass: four failures were rerun exactly, with two passing in
 isolation and two passing outside the execution sandbox after failures observed
-inside it. No authenticated live device-code login was run,
-and focused independent review remains open. See the
+inside it. Focused review `da4b8bf` returns `READY` as an implementation
+candidate and records no production blocker or major finding. It identifies
+four should-fix minors: explicit success/error poll-envelope handling,
+credential scrubbing before catalog-reservation retirement, removal of a
+current-thread runtime panic in the final commit boundary, and live-authority
+status classification.
+
+Correction `2c5b9f0` closes the first three. Any poll response containing an
+`error` member is excluded from success, and mixed or malformed envelopes fail
+payload-free before exchange or publication. Named-account abort now
+exhaustively attempts credential deletion and directory durability before
+retiring the catalog row, retaining the first cleanup error without abandoning
+later secret removal. Validation, durable save, and catalog publication remain
+in one synchronous future poll without `block_in_place`, including under a
+`LocalSet`. Focused correction checks pass 19/19 device-login tests, 16/16
+account-catalog tests, 2/2 login-commit boundary tests, strict Norn all-target
+Clippy with `-D warnings`, fmt, diff, and the physical-file limit. The broad
+sandboxed auth run produced 189 passes and 58 loopback-permission failures; that
+run is explicitly invalid as product evidence rather than represented as a
+failure-free gate.
+
+No authenticated live device-code login was run, and the live-authority status
+classification remains open for D7/P9 or the P2 live contract. See the
 [`device-auth implementation handoff`](reviews/2026-07-23-p2-device-auth-handoff.md).
 
 ### What this phase fixes
@@ -1412,10 +1442,11 @@ addresses those Norn-owned default and named-account paths. It also
 separates Norn's writable `$NORN_HOME/auth/auth.json` from foreign
 `$CODEX_HOME/auth.json`, so Norn no longer races or mutates the Codex CLI file.
 Foreign import/migration and OS-keyring integration are explicitly outside P2.
-Remaining phase work is focused review and authenticated proof for the additive
-device flow, the live A/B/A validity experiment, retained candidate gates, and
-independent P2 acceptance. D14 records the historical phase-base and
-entry-timing facts without waiving any of those requirements.
+Remaining phase work is authenticated proof and live-authority status
+classification for the additive device flow, the live A/B/A validity
+experiment, retained candidate gates, and independent P2 acceptance. D14
+records the historical phase-base and entry-timing facts without waiving any of
+those requirements.
 
 ### Difference after the phase
 
@@ -1600,13 +1631,15 @@ are not pass claims.
   the generic HTTP 400 page. Source `dc908f3` adds the shared no-yield login
   publication boundary, browser-presentation-before-launch sentinels, and
   default/named device-login cancellation and publication fixtures. Focused
-  execution is recorded, but retained candidate execution and independent
-  review remain pending.)
+  review `da4b8bf` returns the bounded candidate `READY`; correction `2c5b9f0`
+  removes the current-thread runtime panic without adding an await boundary.
+  Retained whole-candidate execution remains pending.)
 - [ ] An authenticated device-code login against the compiled production
   authority presents only the verification URL and one-time code, completes
   the default and named durable-save paths, and leaves no reusable token or
   account identity in terminal, trace, debug, event, or session artifacts.
-  (Deterministic authority and disclosure fixtures are present at `dc908f3`;
+  (Deterministic authority and disclosure fixtures are present at `dc908f3`,
+  and correction `2c5b9f0` fails mixed success/error envelopes before exchange;
   no live credentialed device flow was run.)
 - [ ] Panic, abort, completion-channel loss, and ambiguous post-dispatch
   disconnect wake every live refresh waiter with `Indeterminate`; one live
@@ -2083,22 +2116,23 @@ H1-a/b/c. Product correction `e96ee64` closes those residuals; source `c8619ae`
   180/180 observations. Same-reviewer verdict `4f82e55` closes MAJOR-1 but
   returns `NOT READY` on distinct idle/live-requeue orphan MAJOR-2. Narrow source
   `7747decb` (tree `f9ff207d`) corrects that path and retains 80/80 observations.
-  Narrow same-reviewer confirmation, the remaining P5 source/evidence work, and
-  whole-P5 acceptance remain open;
+  Same-reviewer confirmation `13737cd` closes MAJOR-2 and returns D8 `READY`;
+  the owner accepts and integrates D8 on 2026-07-23. The remaining P5
+  source/evidence work and whole-P5 acceptance remain open;
 **findings owned:** `STATE-02`,
 `STATE-03`, `ROLE-01`, `ROLE-02`, `CODEX-01`, `CODEX-02`, `TRANS-01`; **dependencies:**
 P2-P4 and D3/D8/D9.
 
 P5 remains open until its integrated phase gates. D8 role-authority source
 `4fa6c67`, exact-once source `de0b4d3`, reviewed MAJOR-1 correction `eafa8db`,
-and MAJOR-2 correction `7747decb` form the current implementation candidate,
-pending same-reviewer confirmation of the last correction.
+and MAJOR-2 correction `7747decb` form the implementation candidate.
+Same-reviewer confirmation `13737cd` closes MAJOR-2 and returns D8 `READY`; the
+owner accepts and integrates that bounded candidate on 2026-07-23.
 Stable prompt authority is typed by source;
 source-System and Norn-owned volatile policy reach current Responses
 instructions, while stable Developer/User content and trusted prompt-command
 output are seed-bound input. Runtime MCP descriptions stay in live tool
-definitions. D8 correction confirmation and the broader volatile/concurrent
-matrices remain open.
+definitions. The broader volatile/concurrent matrices remain open.
 Producer ownership is externally checked, and `CODEX-01` is externally accepted
 as an implementation candidate. The `CODEX-02` source candidate for turn-scoped
 capture/replay and the approved Norn `client_metadata` projection is accepted as
@@ -2110,9 +2144,30 @@ isolated candidate. D3 correction confirmation `0dc2035` returns the isolated
 D3 implementation candidate `READY`; H1 residual confirmation `db3cf81` closes
 H1-a/b/c. The owner accepts D3 on 2026-07-22, and reviewed D3 head `db3cf81` is
 incorporated into `main` by fast-forward. D8 correction source `7747decb` (tree
-`f9ff207d`) retains 80/80 observations and is pending narrow same-reviewer
-confirmation over the already reviewed role-authority, exact-once, and MAJOR-1
-correction sources; D8/P5 acceptance and whole-phase evidence remain open.
+`f9ff207d`) retains 80/80 observations. Same-reviewer confirmation `13737cd`
+closes MAJOR-2 over the already reviewed role-authority, exact-once, and
+MAJOR-1 correction sources. D8 is owner-accepted and integrated; P5 acceptance
+and whole-phase evidence remain open.
+
+The live Codex terminal-authority correction at `d86a4ed` addresses an
+authenticated response whose canonical `response.output_item.done` item was not
+present in `response.completed.response.output`. Only the compiled
+Codex-subscription dialect may use exact completed-item authority when terminal
+output is absent or empty; public Responses remains strict, nonempty Codex
+terminal output remains strictly cross-checked, and incomplete preview or
+actionable state fails closed. The focused 11/11 Codex matrix, 26/26 integrated
+reconciliation tests, 117/117 reconciler tests, strict Norn Clippy, fmt, and
+diff checks pass. One owner-approved authenticated simple-text smoke returned
+`hi`, exited `0`, and did not reproduce the terminal protocol error. It retained
+no raw event trace and therefore does not close D7/P9. Focused review `642fd8a`
+returns the correction `READY` as a narrow implementation candidate with no
+product finding. Test-only hardening `b967967` adds the requested zero-item
+empty-success regression without changing production source. The
+[`narrow Gate D handoff`](reviews/2026-07-22-p5-codex-terminal-authority-correction-handoff.md)
+and
+[`review`](reviews/2026-07-23-p5-codex-terminal-authority-correction-review.md)
+retain the source and verdict. The complete authenticated D7/P9 live-wire gate
+remains open. This candidate does not re-accept P4 or accept P5.
 
 A separate headless driven-transport reliability slice is packaged at
 `e3549b4` plus original correction `31553e8`, replayed patch-identically as
@@ -2249,8 +2304,9 @@ provider construction rather than degrading to account-only affinity.
   `de0b4d3` closes the original duplication blocker; review `531200f` finds the
   distinct terminal-Q loss MAJOR-1. Correction `eafa8db` retains 180/180
   observations; review `4f82e55` closes MAJOR-1 but finds distinct MAJOR-2.
-  Correction `7747decb` (tree `f9ff207d`) retains 80/80 observations pending
-  narrow same-reviewer confirmation. D8 and P5 remain unaccepted.
+  Correction `7747decb` (tree `f9ff207d`) retains 80/80 observations;
+  same-reviewer confirmation `13737cd` closes MAJOR-2 and returns D8 `READY`.
+  D8 is owner-accepted and integrated; P5 remains unaccepted.
 - [x] Keep ChatGPT/Codex `store:false` replay distinct from public Responses
   threading and prove both wire shapes.
 - [x] Resend source-System fragments and Norn-owned runtime policy through
@@ -2361,8 +2417,9 @@ incorporated into `main` through reviewed head `db3cf81`. D8 role authority
 Terminal-Q correction `eafa8db` retains 180/180 observations; same-reviewer
 verdict `4f82e55` closes MAJOR-1 but returns `NOT READY` on distinct MAJOR-2.
 Source `7747decb` (tree `f9ff207d`) is the separate correction candidate with
-80/80 retained observations, pending narrow same-reviewer confirmation and
-therefore still blocking D8 and whole-P5 acceptance. P5 Gate A timing remains a
+80/80 retained observations. Same-reviewer confirmation `13737cd` closes
+MAJOR-2 and returns D8 `READY`; the owner accepts and integrates D8 on
+2026-07-23. Whole-P5 acceptance remains open. P5 Gate A timing remains a
 separate prospective gate.
 `TRANS-01` remains an isolated slice and cannot be represented as P5 Gate B
 completion.
@@ -2729,8 +2786,30 @@ P5 acceptance.
   status/reclamation on any surviving nondurable record. Its
   [`checked-in evidence`](reviews/evidence/p5-d8/2026-07-23-p5-d8-major2-correction-distributions-7747dec.json)
   binds the 14-path NUL inventory and records four exact cases at 20/20 each
-  (`80/80`). Narrow same-reviewer confirmation is pending; D8 and P5 remain
-  unaccepted.
+  (`80/80`). Same-reviewer verdict
+  [`13737cd`](reviews/2026-07-23-p5-d8-major2-correction-review.md) independently
+  closes MAJOR-2 and returns D8 `READY` as an implementation candidate. The
+  owner accepts and integrates D8 on 2026-07-23; this does not accept P5.
+- [ ] Add an inbound-owning drop/abort-safe controller guard so a channel send
+  acknowledged immediately before wrapper panic/abort cannot be lost before it
+  becomes a `PendingAgentMessage`.
+- [ ] Add the focused mixed-mailbox/store-authority rejection fixture requested
+  as post-D8 hardening.
+- [x] The live Codex terminal-authority correction at `d86a4ed` uses exact
+  completed-item authority only for missing/empty Codex terminal output, keeps
+  public Responses and nonempty terminal output strict, and retains fail-closed
+  preview/actionability guards. Review `642fd8a` returns `READY` as a narrow
+  implementation candidate, and test-only hardening `b967967` pins the
+  zero-item empty-success shape requested by that review. The
+  [`narrow handoff`](reviews/2026-07-22-p5-codex-terminal-authority-correction-handoff.md)
+  and
+  [`review`](reviews/2026-07-23-p5-codex-terminal-authority-correction-review.md)
+  record the exact source boundary and honest residuals.
+- [ ] Under the D7 credential, spending, redaction, and retention approval,
+  retain a redacted authenticated trace proving one canonical item plus one
+  terminal outcome without the prior protocol error, then complete the broader
+  live-wire matrix. The prior unretained simple-text smoke returned `hi` with
+  exit `0`, but is not this gate.
 - [x] Raw `end_turn:false`, `true`, `null`, and absence plus typed loop
   projections have explicit tests; function/custom/schema calls, refusal-only,
   mixed refusal-plus-tool, text, and empty continuation interactions are pinned.
@@ -2919,8 +2998,8 @@ commands cannot invent provider history.
   ordinary positional prompt input for Claude, never System promotion.
   Terminal-Q correction `eafa8db` retains 180/180 observations; review `4f82e55`
   closes MAJOR-1 but finds MAJOR-2. Correction `7747decb` retains 80/80
-  observations; narrow same-reviewer confirmation remains pending, so D8 and P5
-  are unaccepted.
+  observations; same-reviewer confirmation `13737cd` closes MAJOR-2 and returns
+  D8 `READY`. D8 is owner-accepted and integrated; P5 remains unaccepted.
 - [ ] Replace `SlashCommandHandler::Tool` transcript fabrication with normal
   authorized local dispatch/persistence/result echo or a user-role model request.
 - [ ] Reject raw provider-option collisions with Norn-owned typed fields.
@@ -3128,10 +3207,10 @@ evidence.
 |---|---|---|---|
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
 | P1 | Historical Gate A at `2917c8e` is stale against accepted D11 nullable-phase evidence; no Gate B source landed; archived `393f67e` is rejected as a candidate | Historical contract/review chronology and 62-row preregistration remain available but make no current implementation claim | D13 moves generic repository enforcement and D0 to P9. If standalone P1 resumes, restart prospectively with the current contract; do not resurrect the archived prototype |
-| P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and bounded source fixture matrices are present. Additive source `dc908f3` presents browser URLs and implements default/named headless device authorization through the same durable transaction | D14 establishes retrospective base `6669b9d`. Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks. The unreviewed `dc908f3` follow-up records 17/17 device, 240/240 OAuth, and 523/523 CLI tests plus strict Clippy/fmt; its full Norn library observation remains explicitly 4,326/4,330, with all four exact failures passing on isolated or unsandboxed rerun. Retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle exists | Obtain focused review and authenticated real-authority proof for `dc908f3`; run the live A/B/A validity experiment after explicit credential-use approval; execute and retain the complete candidate gates; then obtain P2 acceptance |
+| P2 | Implementation candidate and fixture closure through `fcd1b30`: Norn-owned default and named OAuth accounts, trusted selection and provider pinning, a public library-owned provider-auth matrix, durable restart-safe refresh recovery, foreign `CODEX_HOME` non-authority, durable login/logout, status/doctor classification, and bounded source fixture matrices are present. Additive source `dc908f3` presents browser URLs and implements default/named headless device authorization through the same durable transaction; correction `2c5b9f0` closes poll-envelope, abort-cleanup, and current-thread runtime findings | D14 establishes retrospective base `6669b9d`. Implementation review `c4965e0` is `READY` for source `4d51a36`; correction review `f1fcca2` is `READY` for source `448353d`; the fixture handoff for `fcd1b30` records 219/219 OAuth, 482/482 CLI, 6/6 JWT chains, 3/3 recovery-fault tests, 9/9 revoke tests, the joined production resume case, strict workspace/all-target Clippy, fmt, diff, bypass, and source-size checks. Focused device review `da4b8bf` returns `dc908f3` `READY` as an implementation candidate. Correction `2c5b9f0` passes 19/19 device, 16/16 catalog, 2/2 commit-boundary tests, strict Norn all-target Clippy, fmt, diff, and source-size checks; its broad sandboxed auth run is explicitly invalid evidence because loopback creation was denied. Retained D9A distributions remain 20/20 for the process-local deadline and 20/20 for two-process convergence; no complete retained P2 candidate gate bundle exists | Confirm the live-authority status contract and authenticated real-authority device flow; run the live A/B/A validity experiment after explicit credential-use approval; execute and retain the complete candidate gates; then obtain P2 acceptance |
 | P3 | Accepted source `7f47218` over D12 base `a90b730`; tree `b8b042f61b8d921b4cb27496d5a72b8d56b8bb0c`; accepted D2 source `e9755fe`, lifecycle fixtures `f252cbb`, M-1/F-2 correction `df47e9e`, and finite D11 source `56fd4dd` are included | D2 remains unconditionally `READY`; review `dad0291` closes M-1/F-2; review `5af7308` accepts D11's 28/274/659 inventory and seven-by-ten matrix. The final gate passes strict fmt/Clippy, Norn 4,035/4,035, CLI 551/551, TUI 700/700, workspace 5,364/5,364, doctests 8/8, redaction sentinels 23/23, exact diff, and policy. The policy reports 298 changed Rust files, 78 test-only, and zero LOC/module/added-line violations. Three repeated cases pass 60/60; the 213-record redaction report has zero findings; the single-process attestation has zero errors. Whole-phase review `06be7c7` independently reproduces the evidence and returns `READY` | None; accepted 2026-07-18. `STATE-01` and `EVT-01..07` remain P4-owned |
 | P4 | Accepted product correction `ab26632` over common source `7f47218`; corrected source-bound evidence head `180759f`; public/Codex manifests, 53 event contracts, 28 item validators, reconciliation, terminal parsing, raw CLI events, refusal, hosted-search replay, response-audio persistence, and successful-terminal core-delta authority are implemented | The correction bundle at `8faf1f4` passes strict fmt/Clippy, Norn 4,042, CLI 551, TUI 700, workspace 5,371, doctests 8, 60/60 distributions, 25 redaction sentinels, zero policy violations, 219-record zero-finding redaction, and zero-error attestation. Same-reviewer confirmation `0095f5c` reproduces the evidence and returns corrected P4 Gate D `READY`. P3 remains accepted at `06be7c7`; D15's D7/P9 live-wire gate is unchanged | None; accepted 2026-07-19. P6 separately owns usage-presence projection and retry-attempt UI cleanup |
-| P5 | Codex `store:false` and public threaded request shapes are distinct; stateless encrypted-reasoning replay exists; `TRANS-01` owns provider producers; accepted `CODEX-01` scopes and projects `end_turn` with durable intermediate replay; accepted `CODEX-02` carries first-wins private turn state across retry/continuation with recursive observer/debug redaction. Accepted `AFFINITY-01` source `693d5b1` binds anchors and turn state to opaque credential/backend/endpoint identity across managed create, resume, adoption, append, and fork; managed OAuth requires a stable account/user principal and stale same-identity stores must reopen. The accepted D3 implementation adds replaceable current instructions, provider/local compaction separation, first-class response-publication and filtered-fork frames, exact-prefix non-interleaving managed publication, monotonic legacy closure, strict direct/audio target identity, interrupted-result anchor clearing, managed fail-before-mutation provenance validation, typed fork-filter errors, typed replay rejection, and V1 count-plus-SHA-256 whole-group commitments without changing session format 2. Residual correction `e96ee64` distinguishes signed zero and enforces framing across the Norn publisher, EventStore-managed writes, and in-tree direct/registered JSONL writers; direct embedder-owned sinks and trusted preload remain outside. Frozen D8 source `4fa6c67` adds source-derived role authority. Exact-once source `de0b4d3` closes duplicate wake delivery. Terminal-Q correction `eafa8db` retains exact accepted records across fail-before/fail-after, downgrades spawn/fork false success, and gates built-in reclamation. MAJOR-2 correction `7747decb` promotes idle/live-requeue nondurable records into terminal recovery before reclamation and retains strong mailbox/store authority | `TRANS-01` retains 200/200 exact process-isolated observations and a bounded external check. `CODEX-01` confirmation `2f55b15`, CODEX-02 confirmation `efdf913`, and AFFINITY-01 confirmation `79c8366` return unconditional candidate `READY`; all three are owner-accepted. AFFINITY-01 retains 91/91 source-bound observations. D3 evidence generations remain historical at 49/49 and 64/64. Review `0dc2035` closes R1/R2/H2/H3/H4; source `c8619ae` retains 70/70 and confirmation `db3cf81` closes H1-a/b/c. D3 is owner-accepted and merged. Original D8 review `6d16883` and exact-once review `531200f` are complete; the latter closes the duplication blocker and finds terminal-Q MAJOR-1. Source `eafa8db` passes Norn 4,366, CLI 522, TUI 685, doctests 8, strict Clippy/fmt/diff, five mutation kills, a 27-path zero-added-violation policy audit, and retained 180/180 distributions. Same-reviewer verdict `4f82e55` closes MAJOR-1 but returns `NOT READY` on MAJOR-2. Source `7747decb` (tree `f9ff207d`) retains 80/80 distributions; narrow same-reviewer confirmation is pending | Obtain the D8 MAJOR-2 correction confirmation, complete the still-open broad volatile/concurrent matrices, then run whole-phase gates. D8 and P5 remain unaccepted; D7/P9 authenticated real-wire remains an integrated-release requirement, not a D3 pass |
+| P5 | Codex `store:false` and public threaded request shapes are distinct; stateless encrypted-reasoning replay exists; `TRANS-01` owns provider producers; accepted `CODEX-01` scopes and projects `end_turn` with durable intermediate replay; accepted `CODEX-02` carries first-wins private turn state across retry/continuation with recursive observer/debug redaction. Accepted `AFFINITY-01` source `693d5b1` binds anchors and turn state to opaque credential/backend/endpoint identity across managed create, resume, adoption, append, and fork; managed OAuth requires a stable account/user principal and stale same-identity stores must reopen. The accepted D3 implementation adds replaceable current instructions, provider/local compaction separation, first-class response-publication and filtered-fork frames, exact-prefix non-interleaving managed publication, monotonic legacy closure, strict direct/audio target identity, interrupted-result anchor clearing, managed fail-before-mutation provenance validation, typed fork-filter errors, typed replay rejection, and V1 count-plus-SHA-256 whole-group commitments without changing session format 2. Residual correction `e96ee64` distinguishes signed zero and enforces framing across the Norn publisher, EventStore-managed writes, and in-tree direct/registered JSONL writers; direct embedder-owned sinks and trusted preload remain outside. Frozen D8 source `4fa6c67` adds source-derived role authority. Exact-once source `de0b4d3` closes duplicate wake delivery. Terminal-Q correction `eafa8db` retains exact accepted records across fail-before/fail-after, downgrades spawn/fork false success, and gates built-in reclamation. MAJOR-2 correction `7747decb` promotes idle/live-requeue nondurable records into terminal recovery before reclamation and retains strong mailbox/store authority. Codex terminal-authority correction `d86a4ed` permits absent/empty terminal output only under the credential-sealed Codex policy, and test-only `b967967` pins zero-item empty success | `TRANS-01` retains 200/200 exact process-isolated observations and a bounded external check. `CODEX-01` confirmation `2f55b15`, CODEX-02 confirmation `efdf913`, and AFFINITY-01 confirmation `79c8366` return unconditional candidate `READY`; all three are owner-accepted. AFFINITY-01 retains 91/91 source-bound observations. D3 evidence generations remain historical at 49/49 and 64/64. Review `0dc2035` closes R1/R2/H2/H3/H4; source `c8619ae` retains 70/70 and confirmation `db3cf81` closes H1-a/b/c. D3 is owner-accepted and merged. Original D8 review `6d16883` and exact-once review `531200f` are complete; the latter closes the duplication blocker and finds terminal-Q MAJOR-1. Source `eafa8db` passes Norn 4,366, CLI 522, TUI 685, doctests 8, strict Clippy/fmt/diff, five mutation kills, a 27-path zero-added-violation policy audit, and retained 180/180 distributions. Same-reviewer verdict `4f82e55` closes MAJOR-1 but returns `NOT READY` on MAJOR-2. Source `7747decb` (tree `f9ff207d`) retains 80/80 distributions; confirmation `13737cd` closes MAJOR-2 and returns D8 `READY`, then the owner accepts and integrates it. Terminal review `642fd8a` returns `d86a4ed` `READY` with no product finding | Complete the still-open broad volatile/concurrent matrices and the two tracked post-D8 hardening items, then run whole-phase gates. P5 remains unaccepted; D7/P9 authenticated real-wire remains an integrated-release requirement |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|

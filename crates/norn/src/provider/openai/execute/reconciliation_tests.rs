@@ -7,6 +7,7 @@ use super::*;
 use crate::provider::response_audio::ResponseAudioEvent;
 use crate::provider::response_item::ResponseItem;
 
+mod codex_terminal;
 mod equivalence;
 mod terminal_boundaries;
 

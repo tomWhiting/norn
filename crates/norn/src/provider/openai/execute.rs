@@ -73,10 +73,11 @@ impl SenderProvider {
 ///
 /// Every valid envelope is emitted for machine observers, with the reusable
 /// `x-codex-turn-state` transport secret redacted. The reconciler separately
-/// owns identity-keyed preview state and emits canonical items only in terminal
-/// `response.output` order. [`map_sse_event`] remains a compatibility projection
-/// for the existing text/thinking/tool UI; it is no longer an authority for
-/// replay or execution.
+/// owns identity-keyed preview state and emits canonical items only in the
+/// dialect's terminal-authority order: public `response.output`, or Codex
+/// completed items ordered by `output_index` when terminal output is absent.
+/// [`map_sse_event`] remains a compatibility projection for the existing
+/// text/thinking/tool UI; it is no longer an authority for replay or execution.
 #[derive(Default)]
 struct ResponsesMapper {
     /// Tool-call `item_id` (`fc_*` / `ctc_*`) -> `call_id` (`call_*`),
@@ -268,7 +269,9 @@ impl ResponsesMapper {
     fn new(dialect: ResponsesDialect) -> Self {
         Self {
             call_ids: HashMap::new(),
-            reconciler: ResponseReconciler::new(),
+            reconciler: ResponseReconciler::with_terminal_output_policy(
+                dialect.terminal_output_policy(),
+            ),
             terminal: false,
             dialect,
             turn_context: None,
