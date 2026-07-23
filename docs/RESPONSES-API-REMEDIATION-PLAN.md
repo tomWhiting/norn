@@ -105,6 +105,15 @@
   hardening `b967967` pins the zero-item empty-success shape. The broad
   conversation-state matrices, whole-P5 acceptance, and D7/P9 authenticated
   live-wire conformance remain open. P5 is not accepted.
+- **2026-07-23 integration:** source merge head `db0a196` integrates the
+  owner-accepted D8 candidate, focused device-auth candidate plus correction
+  `2c5b9f0`, and reviewed Codex terminal-authority candidate plus test-only
+  hardening. From the repository's normal `target/`,
+  `cargo +1.94.0 fmt --all -- --check`, strict locked workspace/all-target
+  Clippy with `-D warnings`, and `git diff --check` pass. The locked
+  all-feature workspace suite passes 5,794/5,794 tests plus 8/8 doctests with
+  valid loopback access. This is combined integration evidence, not P2 or P5
+  acceptance and not the authenticated D7/P9 live-wire gate.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
