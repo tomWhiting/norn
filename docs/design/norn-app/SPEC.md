@@ -113,13 +113,16 @@ EARS-style; R-numbers are stable references for briefs. **[D]** desktop-only, **
 
 ## 7. Library work packages (the "broaden the library" track)
 
-The app is the forcing function; these land in `crates/norn` first:
+The app is the forcing function; these land in `crates/norn` first. Now evidence-bound by the scout audit (Appendix A); P-ranks are the scout's, confirmed against the cited code:
 
-- **L1** Public embedding audit: expose the pub(crate) seams a GUI needs (canonical session-path resolver, rotation actions, registry snapshots). *(Scout worker enumerating; binds to Appendix A.)*
-- **L2** Lift driver-duplicated logic out of norn-cli/norn-tui (R1.2 list) into library APIs consumed by all drivers.
-- **L3** iOS capability gating: a platform-capability layer for tool profiles (R7.3) replacing scattered `cfg(unix)` assumptions where they'd panic or silently no-op.
-- **L4** Mobile durability delta: suspend/resume + interrupted-turn recovery hardening on top of existing persistence (R7.1/R7.2).
-- **L5** Presence seam (R8.1) shared with PR #18's revision.
+- **L0 (P0, new — the real first blocker)** `DescriptorGovernor::global()` cannot initialize on iOS: open-FD observation is implemented only for macOS (`/dev/fd`) and Linux (`/proc/self/fd`) (`resource/descriptor.rs:157-182`, `descriptor_governor.rs:91-117`), and provider HTTP + private filesystem admission both require the governor. Work: an iOS observation or injected-budget implementation plus a public one-time init seam, with tests proving provider/file permits acquire without `/dev/fd`.
+- **L1 (P1)** Serializable, versioned event DTOs: `AgentEvent`/`ProviderEvent` are not serde types (`provider/agent_event.rs:409-440`, `provider/events.rs:29-33`) — the Tauri bridge needs a stable projection with lag/retry/reset semantics, not debug formatting. Plus the remaining pub(crate) seams (canonical session-path resolver, registry snapshots).
+- **L2 (P0)** Lift a library `MultiTurnDriver`/`AgentSession` service around `AgentParts`: submit/stream/steer/cancel/checkpoint, execute compact/clear/new, and **rotate all store dependents atomically** — TUI rotation rewires store, action log, action-log tree, child infra binding, cache key, and prompt environment (`norn-tui/src/app/rotation.rs:42-175`); a GUI-local reimplementation would silently fork or query the retired session.
+- **L3 (P0)** Platform capability gating, three layers deep: (a) Cargo features (`core`, `desktop-process`, `desktop-oauth`, optional `lsp`/`claude-runner`) gating modules *and dependencies*; (b) a public runtime capability policy consumed by AgentBuilder assembly — default assembly ships `bash`+`process` (`tools/registry_builder.rs:61-74`); (c) closure of **indirect shell paths** — hooks, variables, prompt commands, rules, skills, rhai, MCP stdio, extensions, Claude Runner all spawn `Command` independently; tool-name filtering alone is insufficient.
+- **L4 (P1)** Mobile durability delta: streamed assistant output lives only in memory until response publication (`loop/runner/provider_call.rs:83-107,270-281`) — cooperative cancel records partials, abrupt kill does not. Work: begin-attempt WAL, bounded delta checkpoints, response commit marker, interrupted-attempt recovery, a `checkpoint_and_suspend` API for background transitions, and connectivity-aware retry so offline periods don't burn the retry budget (`loop/retry.rs:39-101`).
+- **L5 (P0/P1)** Platform auth abstraction: browser OAuth is explicitly unsupported on iOS (`provider/openai_oauth/browser.rs:394-405`), the loopback-callback model has no `ASWebAuthenticationSession` bridge, and credential storage is file-mode only, hardcoded (`provider/openai_oauth/storage.rs:21-26`, `provider/auth.rs:168-172`). Work: native authorization-session + credential-store traits; current osascript+loopback+file stays the desktop backend; ASWebAuthenticationSession + Keychain for iOS; account catalog stays above the storage backend.
+- **L6 (P1)** Presence seam (R8.1) shared with PR #18's revision.
+- **L7 (P2)** CI: `aarch64-apple-ios` + simulator target checks; transitive-crate audit (rustix, tree-sitter grammars, tokei, reqwest/rustls, git deps) — iOS *compilation* is still unproven (audit was read-only).
 
 ## 8. Milestones
 
@@ -146,8 +149,7 @@ Each milestone gets per-cluster briefs (R-numbers above are the anchor) and ship
 4. Updater channel & signing infrastructure.
 5. Whether driven-mode (JSON-RPC) gets an app surface (debug console) in v1.
 
-## Appendix A — Evidence bindings (pending)
+## Appendix A — Evidence bindings
 
-- Scout (embedding surface + iOS breakage audit): norn session `claude-scout.3mrkb7`, envelope `~/.norn/delegations/claude-scout.3mrkb7`.
-- Research (desktop/mobile AI-app pain points, competitive synthesis): norn session `claude-research.J242Te`, envelope `~/.norn/delegations/claude-research.J242Te`.
-- Findings from both amend §4/§7 and add a "market pain-point → requirement" traceability table.
+- **Scout (BOUND into §7):** norn session `claude-scout.3mrkb7` (gpt-5.6-sol, xhigh), envelope `~/.norn/delegations/claude-scout.3mrkb7` — embedding-surface map + iOS breakage audit with file:line evidence; §7's L0–L7 and their P-ranks derive from it. Headline correction to v1 intuition: the first iOS blocker is **not** subprocess tooling but `DescriptorGovernor` initialization (L0). Also confirmed: the in-process driver surface (`AgentBuilder` → `Agent::into_parts` → public `run_agent_step`) is already substantial; multi-turn *policy* is what's duplicated in drivers (hence L2).
+- **Research (PENDING, relaunched):** first worker `claude-research.J242Te` died on a norn provider defect ("unsupported Responses stream event" — tracked separately as an engine bug); relaunched as `claude-research.4bKwm3`. On completion: amend §4 and add the "market pain-point → requirement" traceability table.
