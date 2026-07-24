@@ -275,6 +275,14 @@ async fn handle_new(
         if let Some(env) = runtime.loop_context.environment.as_mut() {
             env.session_id = Some(new_id.clone());
         }
+        if let (Some(tx), Some(data_dir)) =
+            (runtime.lifecycle_tx.as_ref(), runtime.data_dir.as_ref())
+        {
+            let _ = tx.send(super::TuiLifecycleEvent::SessionChanged {
+                session_path: data_dir.join(format!("{new_id}.jsonl")),
+                session_id: new_id.clone(),
+            });
+        }
         state.fixed_panel.status_bar_mut().session_name = new_id;
     }
 

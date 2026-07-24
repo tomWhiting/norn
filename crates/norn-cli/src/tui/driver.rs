@@ -14,10 +14,10 @@ use norn::agent::registry::AgentRegistry;
 use norn::system_prompt::ExecutionMode;
 use norn::tools::lsp::{LspBackend, WorkspaceLspBackend, build_lsp_workspace};
 
-use norn_tui::TuiInputs;
 use norn_tui::input::history::{InputHistory, default_history_path};
 use norn_tui::render::fixed_panel::StatusBar;
 use norn_tui::terminal::caps::TerminalCaps;
+use norn_tui::{TuiInputs, TuiLifecycleEvent};
 
 use crate::cli::{Cli, ExitCode};
 use crate::print::build_provider;
@@ -197,7 +197,38 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 None => data_dir.join(format!("{}.jsonl", entry.id)),
             })
     });
-    let herdr_claim = crate::herdr::PaneClaim::claim(&session_id, herdr_session_path.as_deref());
+    let herdr_claim = crate::herdr::PaneClaim::claim(
+        &session_id,
+        herdr_session_path.as_deref(),
+        crate::herdr::AgentState::Idle,
+    )
+    .await;
+    let (lifecycle_tx, mut lifecycle_rx) = tokio::sync::mpsc::unbounded_channel();
+    let herdr_reporter = herdr_claim.map(|claim| {
+        let mut current_session_id = session_id.clone();
+        let mut current_session_path = herdr_session_path;
+        tokio::spawn(async move {
+            let mut state = crate::herdr::AgentState::Idle;
+            while let Some(event) = lifecycle_rx.recv().await {
+                match event {
+                    TuiLifecycleEvent::TurnStarted => state = crate::herdr::AgentState::Working,
+                    TuiLifecycleEvent::TurnFinished => state = crate::herdr::AgentState::Idle,
+                    TuiLifecycleEvent::SessionChanged {
+                        session_id,
+                        session_path,
+                    } => {
+                        current_session_id = session_id;
+                        current_session_path = Some(session_path);
+                    }
+                }
+                claim
+                    .update(&current_session_id, current_session_path.as_deref(), state)
+                    .await;
+            }
+            claim.release().await;
+        })
+    });
+    let lifecycle_tx = herdr_reporter.as_ref().map(|_| lifecycle_tx);
     startup_trace.mark_session(
         "session_opened",
         &session_id,
@@ -285,6 +316,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         agent_event_rx,
         root_inbound: parts.inbound.take(),
         mcp_control: parts.mcp_control.take(),
+        lifecycle_tx,
     };
     startup_trace.mark("handoff_to_tui_app");
 
@@ -296,7 +328,9 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     if let Some(hooks) = session_hooks.as_ref() {
         hooks.run_session_end(&session_id).await;
     }
-    drop(herdr_claim);
+    if let Some(reporter) = herdr_reporter {
+        let _ = reporter.await;
+    }
     app_result?;
 
     Ok(ExitCode::Success)

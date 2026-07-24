@@ -26,12 +26,27 @@ mod imp {
     const SOCKET_TIMEOUT: Duration = Duration::from_millis(500);
     static LAST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+    #[derive(Clone, Copy)]
+    pub(crate) enum AgentState {
+        Idle,
+        Working,
+    }
+
+    impl AgentState {
+        const fn as_str(self) -> &'static str {
+            match self {
+                Self::Idle => "idle",
+                Self::Working => "working",
+            }
+        }
+    }
+
     /// An active `Norn` claim on the surrounding `HerdR` pane.
     ///
     /// Construction is a no-op outside `HerdR`. Inside `HerdR`, a successful
     /// claim is released automatically on every normal return path.
     pub(crate) struct PaneClaim {
-        endpoint: Endpoint,
+        endpoint: Option<Endpoint>,
     }
 
     #[derive(Clone)]
@@ -73,7 +88,11 @@ mod imp {
         /// Returns `None` when `Norn` is not running in a `HerdR`-managed pane
         /// or when `HerdR` rejects/unavailable for the initial report.
         /// Integration failures are observational and never fail the `Norn` run itself.
-        pub(crate) fn claim(session_id: &str, session_path: Option<&Path>) -> Option<Self> {
+        pub(crate) async fn claim(
+            session_id: &str,
+            session_path: Option<&Path>,
+            state: AgentState,
+        ) -> Option<Self> {
             let endpoint = match Endpoint::from_env() {
                 Ok(Some(endpoint)) => endpoint,
                 Ok(None) => return None,
@@ -82,23 +101,82 @@ mod imp {
                     return None;
                 }
             };
-            let path = session_path.and_then(Path::to_str);
+            let path = session_path.and_then(Path::to_str).map(str::to_owned);
             if session_path.is_some() && path.is_none() {
                 tracing::warn!("Norn session path is not UTF-8; omitting it from the HerdR report");
             }
-            if let Err(error) = endpoint.report(session_id, path) {
+            let session_id = session_id.to_owned();
+            let report_endpoint = endpoint.clone();
+            if let Err(error) =
+                run_bounded(move || report_endpoint.report(&session_id, path.as_deref(), state))
+                    .await
+            {
                 tracing::warn!(%error, "failed to report Norn session to HerdR");
                 return None;
             }
-            Some(Self { endpoint })
+            Some(Self {
+                endpoint: Some(endpoint),
+            })
+        }
+
+        pub(crate) async fn update(
+            &self,
+            session_id: &str,
+            session_path: Option<&Path>,
+            state: AgentState,
+        ) {
+            let Some(endpoint) = self.endpoint.clone() else {
+                return;
+            };
+            let session_id = session_id.to_owned();
+            let path = session_path.and_then(Path::to_str).map(str::to_owned);
+            if let Err(error) =
+                run_bounded(move || endpoint.report(&session_id, path.as_deref(), state)).await
+            {
+                tracing::warn!(%error, "failed to update Norn session in HerdR");
+            }
+        }
+
+        /// Release this claim without blocking the async executor on socket I/O.
+        pub(crate) async fn release(mut self) {
+            let Some(endpoint) = self.endpoint.take() else {
+                return;
+            };
+            if let Err(error) = run_bounded(move || endpoint.release()).await {
+                tracing::warn!(%error, "failed to release Norn session from HerdR");
+            }
         }
     }
 
     impl Drop for PaneClaim {
         fn drop(&mut self) {
-            if let Err(error) = self.endpoint.release() {
-                tracing::warn!(%error, "failed to release Norn session from HerdR");
-            }
+            let Some(endpoint) = self.endpoint.take() else {
+                return;
+            };
+            // Exceptional/early-return fallback. Normal paths call `release().await`.
+            // A detached thread prevents synchronous socket I/O from blocking an
+            // async runtime worker during unwinding or cancellation.
+            let _ = std::thread::Builder::new()
+                .name("norn-herdr-release".to_owned())
+                .spawn(move || {
+                    if let Err(error) = endpoint.release() {
+                        tracing::warn!(%error, "failed to release Norn session from HerdR");
+                    }
+                });
+        }
+    }
+
+    async fn run_bounded<F>(operation: F) -> Result<(), String>
+    where
+        F: FnOnce() -> Result<(), String> + Send + 'static,
+    {
+        match tokio::time::timeout(SOCKET_TIMEOUT, tokio::task::spawn_blocking(operation)).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => Err(format!("HerdR socket worker failed: {error}")),
+            Err(_) => Err(format!(
+                "HerdR socket exchange exceeded {} ms",
+                SOCKET_TIMEOUT.as_millis()
+            )),
         }
     }
 
@@ -122,7 +200,12 @@ mod imp {
             }))
         }
 
-        fn report(&self, session_id: &str, session_path: Option<&str>) -> Result<(), String> {
+        fn report(
+            &self,
+            session_id: &str,
+            session_path: Option<&str>,
+            state: AgentState,
+        ) -> Result<(), String> {
             let seq = next_sequence();
             self.send(&Request {
                 id: format!("{SOURCE}:{seq}"),
@@ -131,7 +214,7 @@ mod imp {
                     pane_id: &self.pane_id,
                     source: SOURCE,
                     agent: AGENT,
-                    state: "working",
+                    state: state.as_str(),
                     seq,
                     agent_session_id: session_id,
                     agent_session_path: session_path,
@@ -249,7 +332,11 @@ mod imp {
             };
             if report {
                 must(
-                    local.report("session-42", Some("/tmp/session-42.jsonl")),
+                    local.report(
+                        "session-42",
+                        Some("/tmp/session-42.jsonl"),
+                        AgentState::Working,
+                    ),
                     "report succeeds",
                 );
             } else {
@@ -330,14 +417,24 @@ mod imp {
 }
 
 #[cfg(unix)]
-pub(crate) use imp::PaneClaim;
+pub(crate) use imp::{AgentState, PaneClaim};
 
 #[cfg(not(unix))]
 pub(crate) struct PaneClaim;
 
 #[cfg(not(unix))]
+pub(crate) enum AgentState {
+    Idle,
+    Working,
+}
+
+#[cfg(not(unix))]
 impl PaneClaim {
-    pub(crate) fn claim(_: &str, _: Option<&std::path::Path>) -> Option<Self> {
+    pub(crate) async fn claim(_: &str, _: Option<&std::path::Path>, _: AgentState) -> Option<Self> {
         None
     }
+
+    pub(crate) async fn update(&self, _: &str, _: Option<&std::path::Path>, _: AgentState) {}
+
+    pub(crate) async fn release(self) {}
 }

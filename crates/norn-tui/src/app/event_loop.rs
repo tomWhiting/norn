@@ -49,6 +49,22 @@ use super::slash::{SlashOutcome, try_dispatch_slash};
 use super::state::AppState;
 use super::turn::{run_pending_child_prompts, run_ready_root_inbound, run_turn_and_pending};
 
+/// Observable root-session lifecycle changes emitted by the TUI.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TuiLifecycleEvent {
+    /// A root turn has begun executing.
+    TurnStarted,
+    /// The root turn has ended, including error and cancellation paths.
+    TurnFinished,
+    /// `/new` or `/clear` rotated the active persisted session.
+    SessionChanged {
+        /// Canonical identifier of the newly active persisted session.
+        session_id: String,
+        /// Canonical JSONL path for the newly active persisted session.
+        session_path: std::path::PathBuf,
+    },
+}
+
 /// Bundled runtime inputs needed by [`run_app`].
 ///
 /// Keeps the function signature inside the
@@ -106,6 +122,8 @@ pub struct TuiInputs {
     pub root_inbound: Option<InboundChannel>,
     /// Session-scoped live MCP control for `/mcp`.
     pub mcp_control: Option<McpControlHandle>,
+    /// Optional observer channel for root turn and session lifecycle changes.
+    pub lifecycle_tx: Option<mpsc::UnboundedSender<TuiLifecycleEvent>>,
 }
 
 /// Render-tick cadence — 120 fps for tear-free panel redraws and
@@ -179,6 +197,7 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         root_inbound: inputs.root_inbound,
         mcp_control: inputs.mcp_control,
         mcp_command: None,
+        lifecycle_tx: inputs.lifecycle_tx,
     };
 
     // The TUI owns the child-result receiver so it can surface final
@@ -280,6 +299,8 @@ pub(super) struct RuntimeRefs {
     pub(super) root_inbound: Option<InboundChannel>,
     pub(super) mcp_control: Option<McpControlHandle>,
     pub(super) mcp_command: Option<McpCommandTask>,
+    /// Optional observer for root turn and persisted-session changes.
+    pub(super) lifecycle_tx: Option<mpsc::UnboundedSender<TuiLifecycleEvent>>,
 }
 
 /// TUI-owned child-result delivery state.

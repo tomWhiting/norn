@@ -370,8 +370,12 @@ pub(super) async fn orchestrate(
                 }
             },
         );
-    let herdr_claim =
-        crate::herdr::PaneClaim::claim(&herdr_session_id, herdr_session_path.as_deref());
+    let herdr_claim = crate::herdr::PaneClaim::claim(
+        &herdr_session_id,
+        herdr_session_path.as_deref(),
+        crate::herdr::AgentState::Working,
+    )
+    .await;
     let session_id: Option<String> = assembly
         .parts
         .session_entry
@@ -380,7 +384,9 @@ pub(super) async fn orchestrate(
     let is_driven = driven_run.is_some();
 
     let result = orchestrate_run(cli, assembly, prompt, output_schema, driven_run).await;
-    drop(herdr_claim);
+    if let Some(claim) = herdr_claim {
+        claim.release().await;
+    }
 
     if !is_driven && let Err(err) = result.as_ref() {
         emit_error_envelope(cli, err, Some(&model), session_id.as_deref());

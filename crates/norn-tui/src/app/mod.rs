@@ -18,5 +18,5 @@ pub mod streaming;
 pub mod tool_calls;
 mod turn;
 
-pub use event_loop::{TuiInputs, run_app};
+pub use event_loop::{TuiInputs, TuiLifecycleEvent, run_app};
 pub use state::AppState;

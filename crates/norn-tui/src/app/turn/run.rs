@@ -39,6 +39,18 @@ enum TurnSeed {
     AgentMessages(Vec<ChannelMessage>),
 }
 
+struct LifecycleTurnGuard {
+    tx: Option<mpsc::UnboundedSender<crate::app::TuiLifecycleEvent>>,
+}
+
+impl Drop for LifecycleTurnGuard {
+    fn drop(&mut self) {
+        if let Some(tx) = self.tx.as_ref() {
+            let _ = tx.send(crate::app::TuiLifecycleEvent::TurnFinished);
+        }
+    }
+}
+
 #[derive(Default)]
 struct TurnOutcome {
     interrupt_prompt: Option<String>,
@@ -201,6 +213,12 @@ async fn run_turn(
     agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
     child_results: &mut ChildResultState,
 ) -> Result<TurnOutcome, TuiError> {
+    if let Some(tx) = runtime.lifecycle_tx.as_ref() {
+        let _ = tx.send(crate::app::TuiLifecycleEvent::TurnStarted);
+    }
+    let lifecycle_guard = LifecycleTurnGuard {
+        tx: runtime.lifecycle_tx.clone(),
+    };
     reset_turn_state(state);
     state.in_flight_input.set_running(true);
     let mut renderer: Option<MarkdownRenderer> = None;
@@ -378,6 +396,7 @@ async fn run_turn(
         Ok(())
     })?;
     redraw_panel(state, guard)?;
+    drop(lifecycle_guard);
     Ok(TurnOutcome { interrupt_prompt })
 }
 
