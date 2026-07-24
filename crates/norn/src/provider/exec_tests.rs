@@ -69,19 +69,27 @@ impl SseEventMapper for NeverReachedMapper {
 }
 
 fn executor(endpoint: String) -> Result<StreamExecutor, Box<dyn std::error::Error + Send + Sync>> {
+    executor_config(endpoint, 0, None)
+}
+
+fn executor_config(
+    endpoint: String,
+    max_retries: u32,
+    debug_dump_file: Option<std::path::PathBuf>,
+) -> Result<StreamExecutor, Box<dyn std::error::Error + Send + Sync>> {
     let client = build_streaming_client(Duration::from_secs(5))?;
     let auth_provider = Arc::new(MockAuthProvider::single("private-test-token"));
     let executor = StreamExecutor {
         client,
         endpoint,
         timeout: Duration::from_secs(5),
-        max_retries: 0,
-        retry_backoff: Duration::from_secs(1),
+        max_retries,
+        retry_backoff: Duration::from_millis(1),
         retry_after_ceiling: None,
-        rate_limiter: Arc::new(RateLimiter::new(1, Duration::from_secs(1))),
+        rate_limiter: Arc::new(RateLimiter::new(4, Duration::from_secs(1))),
         auth_provider,
         request_headers: reqwest::header::HeaderMap::new(),
-        debug_dump_file: None,
+        debug_dump_file,
         backend_label: "responses",
     };
     Ok(executor)
@@ -145,7 +153,7 @@ async fn every_redirect_status_is_an_explicit_terminal_policy_refusal() -> TestR
         let executor = executor(format!("{}/initial", source.uri()))?;
 
         let Err(error) = executor
-            .send_with_retries(r#"{"private":"request-body"}"#)
+            .send_with_retries(r#"{"private":"request-body"}"#, None)
             .await
         else {
             return Err(io::Error::other(format!(
@@ -198,7 +206,7 @@ async fn specialized_401_and_429_paths_never_wait_for_or_disclose_the_body() -> 
         let executor = executor(endpoint)?;
         let result = tokio::time::timeout(
             Duration::from_millis(500),
-            executor.send_with_retries(r#"{"request":"sentinel"}"#),
+            executor.send_with_retries(r#"{"request":"sentinel"}"#, None),
         )
         .await
         .map_err(|_elapsed| {
@@ -217,6 +225,146 @@ async fn specialized_401_and_429_paths_never_wait_for_or_disclose_the_body() -> 
             _ => return Err(io::Error::other("test fixture used an unsupported status").into()),
         }
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn failed_and_retried_attempts_record_response_metadata_in_the_debug_dump() -> TestResult {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("Retry-After", "0")
+                .set_body_string("private-429-body"),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(400)
+                .insert_header("x-request-id", "req-corr-1234")
+                .set_body_string("private-400-body"),
+        )
+        .mount(&server)
+        .await;
+
+    let dump_dir = tempfile::tempdir()?;
+    let dump_path = dump_dir.path().join("api-dump.jsonl");
+    let executor = executor_config(
+        format!("{}/responses", server.uri()),
+        1,
+        Some(dump_path.clone()),
+    )?;
+    let (sender, _receiver) = tokio::sync::mpsc::channel(1);
+    let mut mapper = NeverReachedMapper;
+
+    let error = executor
+        .execute(r#"{"request":"sentinel"}"#.to_owned(), &mut mapper, &sender)
+        .await
+        .err()
+        .ok_or_else(|| io::Error::other("terminal HTTP 400 unexpectedly succeeded"))?;
+    assert!(matches!(error, ProviderError::StreamError { .. }));
+
+    let dump = std::fs::read_to_string(&dump_path)?;
+    let entries = dump
+        .lines()
+        .map(serde_json::from_str::<serde_json::Value>)
+        .collect::<Result<Vec<_>, _>>()?;
+    let request_count = entries
+        .iter()
+        .filter(|entry| entry["type"] == "request")
+        .count();
+    assert_eq!(request_count, 1, "exactly one request entry is dumped");
+    let meta_statuses = entries
+        .iter()
+        .filter(|entry| entry["type"] == "response_meta")
+        .map(|entry| entry["status"].as_u64())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        meta_statuses,
+        vec![Some(429), Some(400)],
+        "every received attempt records response metadata, in attempt order"
+    );
+    let terminal_meta = entries
+        .iter()
+        .find(|entry| entry["type"] == "response_meta" && entry["status"] == 400)
+        .ok_or_else(|| io::Error::other("terminal attempt metadata is missing"))?;
+    let header_names: Vec<&str> = terminal_meta["headers"]
+        .as_array()
+        .ok_or_else(|| io::Error::other("response metadata headers are not an array"))?
+        .iter()
+        .filter_map(|pair| pair[0].as_str())
+        .collect();
+    assert!(
+        header_names.contains(&"x-request-id"),
+        "terminal attempt metadata carries the request correlation header"
+    );
+    assert!(
+        !dump.contains("private-429-body") && !dump.contains("private-400-body"),
+        "error bodies never reach the dump"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn drain_transport_failure_is_carried_in_the_stream_error_reason() -> TestResult {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+    let address = listener.local_addr()?;
+    let server = tokio::spawn(async move {
+        let Ok((mut stream, _peer)) = listener.accept().await else {
+            return;
+        };
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        loop {
+            let Ok(count) = stream.read(&mut chunk).await else {
+                return;
+            };
+            if count == 0 {
+                return;
+            }
+            request.extend_from_slice(&chunk[..count]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+        // A body shorter than the declared length, then a hard close:
+        // the drain hits a transport error mid-body.
+        let response =
+            "HTTP/1.1 400 Bad Request\r\nContent-Length: 1000000\r\n\r\npartial-private-body";
+        let _ = stream.write_all(response.as_bytes()).await;
+        let _ = stream.shutdown().await;
+    });
+
+    let executor = executor(format!("http://{address}/responses"))?;
+    let (sender, _receiver) = tokio::sync::mpsc::channel(1);
+    let mut mapper = NeverReachedMapper;
+    let error = executor
+        .execute(r#"{"request":"sentinel"}"#.to_owned(), &mut mapper, &sender)
+        .await
+        .err()
+        .ok_or_else(|| io::Error::other("truncated HTTP 400 unexpectedly succeeded"))?;
+    server.await?;
+
+    let ProviderError::StreamError { reason, transient } = error else {
+        return Err(
+            io::Error::other("truncated HTTP 400 did not classify as a stream error").into(),
+        );
+    };
+    assert_eq!(transient, None, "HTTP 400 is not transient");
+    assert!(
+        reason.contains("response body omitted"),
+        "body-omission statement is preserved: {reason}"
+    );
+    assert!(
+        reason.contains("error-body drain failed"),
+        "drain-failure diagnostics are carried in the typed error: {reason}"
+    );
+    assert!(
+        !reason.contains("partial-private-body"),
+        "body content never reaches the error: {reason}"
+    );
     Ok(())
 }
 

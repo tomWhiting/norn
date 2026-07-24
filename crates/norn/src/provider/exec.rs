@@ -133,23 +133,7 @@ impl StreamExecutor {
         let request_start = std::time::Instant::now();
         tracing::debug!(backend = self.backend_label, "provider request starting");
 
-        let response = self.send_with_retries(&body).await?;
-
-        if let Some(ref dump) = dumper {
-            let status = response.response.status().as_u16();
-            let headers: Vec<(String, String)> = response
-                .response
-                .headers()
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        key.to_string(),
-                        value.to_str().unwrap_or("<binary>").to_owned(),
-                    )
-                })
-                .collect();
-            dump.write_response_meta(status, &headers);
-        }
+        let response = self.send_with_retries(&body, dumper.as_ref()).await?;
 
         mapper.observe_response_headers(response.response.headers());
 
@@ -158,7 +142,18 @@ impl StreamExecutor {
     }
 
     /// Sends the request, retrying through 401 refresh and 429 backoff.
-    async fn send_with_retries(&self, body: &str) -> Result<GovernedResponse, ProviderError> {
+    ///
+    /// Every attempt whose response headers arrive records a `response_meta`
+    /// entry in the debug dump — including 401, 429, and terminal non-2xx
+    /// attempts, in attempt order — so a failed request leaves its status and
+    /// header names (values redacted) as evidence rather than vanishing.
+    /// Attempts that fail before headers (connect errors, header timeouts)
+    /// have no response to record.
+    async fn send_with_retries(
+        &self,
+        body: &str,
+        dumper: Option<&DebugDumper>,
+    ) -> Result<GovernedResponse, ProviderError> {
         let mut attempts = 0u32;
         let mut auth_retried = false;
         loop {
@@ -205,6 +200,19 @@ impl StreamExecutor {
                         backend = self.backend_label,
                         "provider response headers received"
                     );
+                    if let Some(dump) = dumper {
+                        let headers: Vec<(String, String)> = resp
+                            .headers()
+                            .iter()
+                            .map(|(key, value)| {
+                                (
+                                    key.to_string(),
+                                    value.to_str().unwrap_or("<binary>").to_owned(),
+                                )
+                            })
+                            .collect();
+                        dump.write_response_meta(resp.status().as_u16(), &headers);
+                    }
                     resp
                 }
                 Err(error) => {
@@ -315,6 +323,11 @@ impl StreamExecutor {
     /// bodies stream to a sink under the configured deadline: a server that sends
     /// error headers and then stalls is a retryable timeout, while a completed
     /// body classifies by status.
+    ///
+    /// A transport failure during the drain is carried inside the returned
+    /// error's reason (transport diagnostics only — never body content), so
+    /// the failure mode survives into whatever records the error instead of
+    /// living solely in a trace line.
     async fn error_response_to_provider_error(&self, response: GovernedResponse) -> ProviderError {
         let GovernedResponse { response, _permit } = response;
         let status = response.status();
@@ -331,7 +344,7 @@ impl StreamExecutor {
             }
             Ok::<(), reqwest::Error>(())
         };
-        match tokio::time::timeout(self.timeout, drain).await {
+        let drain_failure = match tokio::time::timeout(self.timeout, drain).await {
             Err(_) => {
                 return ProviderError::StreamError {
                     reason: format!(
@@ -353,13 +366,17 @@ impl StreamExecutor {
                     error = %error,
                     "failed while discarding provider error-response body"
                 );
+                Some(format!(
+                    "; error-body drain failed (timeout={is_timeout}, body={is_body}): {error}"
+                ))
             }
-            Ok(Ok(())) => {}
-        }
+            Ok(Ok(())) => None,
+        };
         ProviderError::StreamError {
             reason: format!(
-                "HTTP {status} from {}; response body omitted",
-                self.backend_label
+                "HTTP {status} from {}; response body omitted{}",
+                self.backend_label,
+                drain_failure.as_deref().unwrap_or_default()
             ),
             transient: status
                 .is_server_error()
