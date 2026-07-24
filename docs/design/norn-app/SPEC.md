@@ -58,7 +58,7 @@ EARS-style; R-numbers are stable references for briefs. **[D]** desktop-only, **
 - **R2.1** The app SHALL render the session index as a **tree** (root sessions → forks → children at `{root}/children/…`), with lineage from `parent_id`/fork linkage, status, fidelity, and generation surfaced.
 - **R2.2** The timeline view SHALL render the immutable event log (JSONL) faithfully: user/assistant turns, tool calls with inputs/outputs, child branch/fork events, compaction events — with the raw event inspectable for any rendered item.
 - **R2.3** Compaction SHALL be presented as a **layered context view**: the user can toggle between "what the model sees" (post-compaction view) and "what happened" (full immutable history). Compaction never deletes, and the UI never implies it did.
-- **R2.4** The app SHALL support an **annotation layer** ("road signs") over timelines: bookmarks, labels, and notes attached to event ranges, stored outside the immutable event log (sidecar, format owner-ruled §10) and never mutating it.
+- **R2.4** The app SHALL support an **annotation layer** ("road signs") over timelines: bookmarks, labels, and notes attached to event ranges, stored outside the immutable event log and never mutating it. Storage: haematite as canonical store recommended (research-verdict, Appendix A; pin `97d6545b`), pending the two §10.1 owner rulings (fork semantics; write discipline). Facts binding on the M1 brief: (a) fork copies events verbatim — EventBase ids are preserved across fork, so annotation keys are `(session, event)` unless annotations are explicitly ruled global; (b) all UI reads ride haematite's lock-free `ReadOnlyDatabase` observer (committed-state-only; the single-writer lock governs mutation exclusively); (c) the annotation read layer SHALL retry typed observer misses (`MissingNode`/`MissingCommittedRoot` from concurrent prune) by re-deriving the root and re-reading — a stated requirement, not incidental handling.
 - **R2.5** Fork SHALL be a first-class UI action from any resumable point, using library fork semantics (provider-state identity, fidelity, and epoch rules enforced by the engine, surfaced — not re-implemented — by the UI).
 - **R2.6** Session search: full-text over titles, names, and event content, local only.
 
@@ -143,7 +143,7 @@ Each milestone gets per-cluster briefs (R-numbers above are the anchor) and ship
 
 ## 10. Owner rulings required (no invented defaults)
 
-1. Annotation-layer storage format & location (sidecar file per session vs index-adjacent).
+1. Annotation storage — narrowed by research (Appendix A) to two decisions: **(a) fork semantics** (global-by-event / snapshot-inherit-then-diverge / session-local) and **(b) write discipline** (open-per-write cycling vs broker vs haematite multi-process API; observer reads are lock-free either way; cycling's viability = one measured number, post-crash reopen p99 — bench in flight).
 2. iOS↔desktop session sync ambition for v1 (manual export only, or file-provider/iCloud container?).
 3. Event-window sizes / virtualization thresholds if any must be fixed rather than configurable.
 4. Updater channel & signing infrastructure.
