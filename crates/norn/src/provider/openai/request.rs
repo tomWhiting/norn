@@ -139,7 +139,7 @@ pub(crate) fn build_payload(
             }
             MessageRole::Assistant => {
                 callers.observe_assistant(msg)?;
-                serialize_assistant_into(&mut input, msg);
+                serialize_assistant_into(&mut input, msg)?;
             }
             MessageRole::ToolResult => {
                 let caller = callers.caller_for_result(msg)?;
@@ -337,14 +337,34 @@ fn serialize_user_message(msg: &Message) -> serde_json::Value {
     })
 }
 
-/// Serializes an assistant message into the input array.
+/// Serializes an assistant message into the input array, via one of two
+/// mutually exclusive paths.
 ///
-/// When the assistant carries canonical Responses items, those item objects
-/// are appended unchanged and in provider order. Current `OpenAI` guidance for
-/// stateless conversation state explicitly requires preserving every item in
-/// `response.output`; this keeps encrypted reasoning and assistant phase data
-/// intact. Stream-only coordinates are stored in the surrounding transcript
-/// envelope and therefore never appear in this replay array.
+/// **Canonical path** — when the assistant carries canonical Responses items,
+/// those item objects are appended *verbatim* and in provider order, then the
+/// function returns. Current `OpenAI` guidance for stateless conversation
+/// state explicitly requires preserving every item in `response.output`; this
+/// keeps encrypted reasoning and assistant phase data intact. Verbatim means
+/// server-assigned fields are retained on the wire: `rs_*`/`fc_*`/`ctc_*`
+/// item ids, function-call `status`, and empty optional fields all replay
+/// exactly as received. Note the parity delta: the Codex reference client
+/// strips response-item ids under `store: false` while its `item_ids`
+/// feature is disabled (`client.rs:830-837`); Norn deliberately follows the
+/// public preserve-everything guidance instead. Whether the private
+/// Codex-subscription backend requires the reference's stripping is an OPEN
+/// wire-contract question (2026-07-25 incident handoff,
+/// `docs/reviews/2026-07-25-remote-headless-session-death-handoff.md`) —
+/// resolving it is a ruled decision, not a silent edit here. Stream-only
+/// coordinates are stored in the surrounding transcript envelope and never
+/// appear in this replay array.
+///
+/// **Fallback path** — legacy messages without canonical items are
+/// reconstructed from the normalized fields below. Here the server-internal
+/// ids ARE omitted: reasoning items replay without their `rs_*` id
+/// (`protocol-models.rs:757-761`), and tool calls replay without their
+/// `fc_*`/`ctc_*` id (the Codex reference applies `skip_serializing` to the
+/// same field at `protocol-models.rs:779-781`) — `call_id` is the only
+/// identifier the model correlates on replay.
 ///
 /// The Responses API expects tool calls as top-level items in the input
 /// array, not nested inside an assistant message's content. Text output (if
@@ -359,8 +379,7 @@ fn serialize_user_message(msg: &Message) -> serde_json::Value {
 /// backend drops the model's reasoning between tool-call iterations. Items
 /// without nonempty `encrypted_content` make a full replay impossible and are
 /// rejected before serialization; silently omitting them would change the
-/// conversation. The server-internal `rs_*` item id is deliberately omitted
-/// from replay (`protocol-models.rs:757-761`).
+/// conversation.
 ///
 /// Each `AssistantToolCall` is replayed with the wire envelope its `kind`
 /// requires:
@@ -369,19 +388,24 @@ fn serialize_user_message(msg: &Message) -> serde_json::Value {
 /// * [`ToolCallKind::Custom`] → `custom_tool_call` item with an `input`
 ///   freeform string (no JSON envelope).
 ///
-/// The `call_id` is the only identifier the model correlates on replay; the
-/// `fc_*`/`ctc_*` item `id` is server-internal and is not echoed (the Codex
-/// reference applies `skip_serializing` to the same field at
-/// `protocol-models.rs:779-781`). Empty `call_id` is a bug, not a
-/// fallback — `tc.call_id` carries the value `assemble_response` propagated.
-fn serialize_assistant_into(input: &mut Vec<serde_json::Value>, msg: &Message) {
+/// # Errors
+///
+/// Returns [`ProviderError::RequestSerializationFailed`] when a fallback
+/// tool call carries an empty `call_id` — the same invariant
+/// [`serialize_tool_result`] enforces on the result side: a silently-empty
+/// `call_id` would detach the call from its result and corrupt the
+/// conversation, so it fails loud before dispatch.
+fn serialize_assistant_into(
+    input: &mut Vec<serde_json::Value>,
+    msg: &Message,
+) -> Result<(), ProviderError> {
     if !msg.response_items.is_empty() {
         input.extend(
             msg.response_items
                 .iter()
                 .map(|transcript_item| transcript_item.item.raw().clone()),
         );
-        return;
+        return Ok(());
     }
 
     for item in &msg.reasoning {
@@ -408,6 +432,13 @@ fn serialize_assistant_into(input: &mut Vec<serde_json::Value>, msg: &Message) {
     }
 
     for tc in &msg.tool_calls {
+        if tc.call_id.is_empty() {
+            return Err(ProviderError::RequestSerializationFailed {
+                reason: "assistant tool call is missing its call_id; refusing to dispatch an \
+                         unmoored function_call"
+                    .to_owned(),
+            });
+        }
         let mut item = match tc.kind {
             ToolCallKind::Function => serde_json::json!({
                 "type": "function_call",
@@ -427,6 +458,7 @@ fn serialize_assistant_into(input: &mut Vec<serde_json::Value>, msg: &Message) {
         }
         input.push(item);
     }
+    Ok(())
 }
 
 /// Serializes a `ToolResult` message into a `function_call_output` or
@@ -1334,6 +1366,25 @@ mod tests {
             store: false,
             context_management: None,
         }
+    }
+
+    #[test]
+    fn blank_fallback_call_id_is_a_typed_serialization_failure() {
+        // Mirrors the enforcement `serialize_tool_result` already applies to
+        // the result side of the same invariant: a silently-empty `call_id`
+        // detaches a call from its result and corrupts the conversation, so
+        // it fails loud before dispatch instead of being serialized.
+        let mut req = assistant_request_with_reasoning(vec![]);
+        req.messages[0].tool_calls[0].call_id = String::new();
+        let error = build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION)
+            .expect_err("blank call_id must not serialize");
+        let ProviderError::RequestSerializationFailed { reason } = error else {
+            panic!("blank call_id produced the wrong error class: {error:?}");
+        };
+        assert!(
+            reason.contains("call_id"),
+            "the failed invariant is named: {reason}"
+        );
     }
 
     #[test]
