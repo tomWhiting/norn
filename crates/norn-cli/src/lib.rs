@@ -17,6 +17,7 @@
 pub mod cli;
 pub mod commands;
 pub mod config;
+pub(crate) mod herdr;
 pub mod nofile;
 pub mod print;
 pub mod runtime;

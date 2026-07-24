@@ -14,7 +14,7 @@ pub mod render;
 pub mod terminal;
 pub mod tools;
 
-pub use app::{AppState, TuiInputs, run_app};
+pub use app::{AppState, TuiInputs, TuiLifecycleEvent, run_app};
 pub use error::TuiError;
 
 use terminal::caps::TerminalCaps;

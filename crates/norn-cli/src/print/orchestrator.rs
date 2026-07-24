@@ -353,6 +353,29 @@ pub(super) async fn orchestrate(
     // keeps the payload minimal; the nullable fields stay null only when
     // genuinely unknown, i.e. pre-assembly).
     let model = assembly.parts.model.clone();
+    let herdr_session_id = assembly.parts.info.session_id.clone();
+    let herdr_session_path =
+        assembly.parts.session_entry.as_ref().and_then(
+            |entry| match crate::config::session_data_dir() {
+                Ok(data_dir) => Some(match entry.rel_path.as_deref() {
+                    Some(relative) => data_dir.join(relative),
+                    None => data_dir.join(format!("{}.jsonl", entry.id)),
+                }),
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        "failed to resolve Norn session path for the HerdR report"
+                    );
+                    None
+                }
+            },
+        );
+    let herdr_claim = crate::herdr::PaneClaim::claim(
+        &herdr_session_id,
+        herdr_session_path.as_deref(),
+        crate::herdr::AgentState::Working,
+    )
+    .await;
     let session_id: Option<String> = assembly
         .parts
         .session_entry
@@ -361,6 +384,9 @@ pub(super) async fn orchestrate(
     let is_driven = driven_run.is_some();
 
     let result = orchestrate_run(cli, assembly, prompt, output_schema, driven_run).await;
+    if let Some(claim) = herdr_claim {
+        claim.release().await;
+    }
 
     if !is_driven && let Err(err) = result.as_ref() {
         emit_error_envelope(cli, err, Some(&model), session_id.as_deref());
