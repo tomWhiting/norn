@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 
 use super::codex_turn;
+use super::opaque_discriminator::{OpaqueDiscriminator, opaque_tag};
 use super::request::build_payload;
 use super::response_reconciler::{
     DeltaReconciliation, ReconcileUpdate, ResponseDeltaChannel, ResponseReconciler,
@@ -26,6 +27,29 @@ use crate::provider::turn::{
     CODEX_TURN_STATE_HEADER, ProviderTurnContext, codex_turn_state_from_metadata,
     redact_codex_turn_state,
 };
+
+/// Logs a skipped unknown stream event without disclosing its
+/// authority-controlled discriminator.
+///
+/// The exact frame is preserved on the canonical event lane (the lossless
+/// `ResponseStreamEvent` envelope) and in the armed debug dump; this line
+/// exists so an un-armed run still records that an unrecognized frame
+/// arrived, keyed by a process-local opaque tag that lets repeated
+/// occurrences of the same discriminator be correlated without naming it.
+fn log_unknown_stream_event(event_type: &str, sequence_number: Option<&serde_json::Value>) {
+    match opaque_tag(OpaqueDiscriminator::UnknownEventType, event_type) {
+        Ok(tag) => tracing::warn!(
+            discriminator = %format!("[opaque:{tag}]"),
+            sequence_number = ?sequence_number,
+            "skipping unknown Responses stream event"
+        ),
+        Err(error) => tracing::warn!(
+            %error,
+            sequence_number = ?sequence_number,
+            "skipping unknown Responses stream event; opaque tag unavailable"
+        ),
+    }
+}
 
 /// Per-request sender state cloned out of the provider.
 pub(super) struct SenderProvider {
@@ -138,8 +162,18 @@ impl SseEventMapper for ResponsesMapper {
 
         match manifest {
             ResponseStreamEventManifest::Unknown => {
-                self.finish();
-                mapped.push(Err(ProviderError::UnsupportedResponseEvent));
+                // Unknown stream events are skipped, not fatal — the Codex
+                // reference ignores unrecognized event types
+                // (`codex-rs/codex-api/src/sse/responses.rs`), and killing
+                // the stream here is how a single undocumented `keepalive`
+                // frame terminated live agents in the 2026-07-24 incident.
+                // The lossless envelope pushed above already carries the
+                // frame to consumers and the armed debug dump; the log line
+                // uses a non-disclosing tag because the discriminator is
+                // authority-controlled. Terminal safety is preserved by
+                // assembly: a stream that ends without a known terminal
+                // event never produces `Done` and the turn fails loudly.
+                log_unknown_stream_event(&event.event_type, event.data.get("sequence_number"));
                 return mapped;
             }
             ResponseStreamEventManifest::CodexOverlay(_) => return mapped,

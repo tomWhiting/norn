@@ -276,8 +276,45 @@ fn unknown_output_item_is_raw_then_retained_then_typed_unsupported() -> TestResu
     Ok(())
 }
 
+/// Sends a benign known event through the mapper and asserts the stream is
+/// still alive: every mapped entry is `Ok` — no terminal latch, no error.
+fn assert_stream_still_alive(mapper: &mut ResponsesMapper, sequence_number: u64) -> TestResult {
+    let follow_up = SseEvent {
+        event_type: "response.output_item.added".to_owned(),
+        data: json!({
+            "type": "response.output_item.added",
+            "sequence_number": sequence_number,
+            "output_index": 0,
+            "item": {
+                "id": "msg_alive",
+                "type": "message",
+                "role": "assistant",
+                "status": "in_progress",
+                "content": []
+            }
+        }),
+    };
+    let events = mapper.map_event(&follow_up);
+    if events.iter().any(Result::is_err) {
+        return Err(io::Error::other(
+            "known event after a skipped unknown event did not map cleanly",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// Unknown stream events are retained losslessly and SKIPPED — never fatal.
+///
+/// Codex-reference precedent: `codex-rs/codex-api/src/sse/responses.rs`
+/// ignores unrecognized event types. Before this policy, an unknown frame
+/// latched the mapper terminal and returned a fatal
+/// `UnsupportedResponseEvent` — which is how a single undocumented frame
+/// mid-stream killed live agents in the 2026-07-24 incident. Terminal
+/// safety is preserved downstream: a stream that never delivers a known
+/// terminal event produces no `Done`, and assembly fails the turn loudly.
 #[test]
-fn unknown_event_is_raw_then_typed_unsupported() -> TestResult {
+fn unknown_event_is_retained_and_skipped_without_killing_the_stream() -> TestResult {
     let raw = json!({
         "type": "response.future.delta",
         "sequence_number": 11,
@@ -290,10 +327,7 @@ fn unknown_event_is_raw_then_typed_unsupported() -> TestResult {
     let mut mapper = ResponsesMapper::default();
     let events = mapper.map_event(&event);
     let raw_event = match events.as_slice() {
-        [
-            Ok(ProviderEvent::ResponseStreamEvent { event }),
-            Err(ProviderError::UnsupportedResponseEvent),
-        ] => event,
+        [Ok(ProviderEvent::ResponseStreamEvent { event })] => event,
         other => {
             return Err(io::Error::other(format!(
                 "unexpected event sequence with {} entries",
@@ -303,7 +337,36 @@ fn unknown_event_is_raw_then_typed_unsupported() -> TestResult {
         }
     };
     assert_eq!(raw_event.raw(), &raw);
-    Ok(())
+    assert_stream_still_alive(&mut mapper, 12)
+}
+
+/// Replays the captured 2026-07-24 Variant-A strike frame: an undocumented
+/// `keepalive` event the server emits during long server-side gaps (observed
+/// mid-hosted-web-search under high reasoning effort). `keepalive` is in
+/// neither the pinned public schema nor the pinned Codex overlay sources, so
+/// it rides the unknown-event skip policy; this fixture pins that the exact
+/// captured frame no longer kills the stream.
+#[test]
+fn captured_keepalive_frame_is_skipped_and_the_stream_survives() -> TestResult {
+    let raw = json!({"type": "keepalive", "sequence_number": 22});
+    let event = SseEvent {
+        event_type: "keepalive".to_owned(),
+        data: raw.clone(),
+    };
+    let mut mapper = ResponsesMapper::default();
+    let events = mapper.map_event(&event);
+    let raw_event = match events.as_slice() {
+        [Ok(ProviderEvent::ResponseStreamEvent { event })] => event,
+        other => {
+            return Err(io::Error::other(format!(
+                "unexpected keepalive sequence with {} entries",
+                other.len()
+            ))
+            .into());
+        }
+    };
+    assert_eq!(raw_event.raw(), &raw);
+    assert_stream_still_alive(&mut mapper, 23)
 }
 
 #[test]

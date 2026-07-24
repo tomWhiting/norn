@@ -30,7 +30,7 @@ use serde_json::Value;
 use crate::error::{ProviderError, TransientKind};
 use crate::provider::events::StopReason;
 
-use super::opaque_discriminator::{TerminalDiscriminator, opaque_tag};
+use super::opaque_discriminator::{OpaqueDiscriminator, opaque_tag};
 
 /// Typed payload of a `response.failed` or `response.incomplete` SSE event.
 ///
@@ -104,6 +104,38 @@ pub(super) fn completed_stop_reason(
 
 /// Classifies a `response.failed` error detail into a typed [`ProviderError`].
 ///
+/// Thin label-binding wrapper over [`classify_error_code`], which carries the
+/// shared code table for every wire envelope that delivers a provider error
+/// code.
+pub(super) fn classify_failed_error(detail: &ApiErrorDetail) -> ProviderError {
+    classify_error_code(detail, "response.failed")
+}
+
+/// Classifies a standalone `error` SSE event (`ResponseErrorEvent`).
+///
+/// The standalone event carries `code`/`message`/`param`/`sequence_number`
+/// at the TOP level — unlike `response.failed`, which nests its detail under
+/// `response.error`. It rides the same code table as `response.failed` so a
+/// given provider code classifies identically regardless of which wire
+/// envelope delivered it. Before this classifier existed, the standalone arm
+/// discarded the payload and hard-coded `transient: None` — which turned the
+/// provider's own "You can retry your request" `server_error` into an
+/// unretryable, undiagnosable death (the 2026-07-24 fleet incident: fourteen
+/// headless sessions killed by a stochastic ~1%/turn provider transient the
+/// default retry policy would have absorbed).
+pub(super) fn classify_standalone_error(detail: &ApiErrorDetail) -> ProviderError {
+    if detail.code.is_none() {
+        return ProviderError::StreamError {
+            reason: "provider returned a standalone Responses error event without an error code"
+                .to_owned(),
+            transient: None,
+        };
+    }
+    classify_error_code(detail, "standalone-error")
+}
+
+/// The shared provider-error-code table.
+///
 /// Mirrors the Codex reference's seven-way classification (see
 /// `reference/codex-rs/sse-responses.rs:346-391`). The three terminal client
 /// faults — context window, quota, and invalid request — map to dedicated
@@ -114,10 +146,15 @@ pub(super) fn completed_stop_reason(
 /// taxonomy classifies them retryable and the loop-level retry policy in
 /// [`crate::agent_loop::retry`] matches them as
 /// [`RetryableError::ServerError`](crate::agent_loop::retry::RetryableError::ServerError)
-/// with exponential backoff. Any unrecognized code degrades to a terminal
+/// with exponential backoff. `server_error` is the provider's generic
+/// internal failure whose message invites retry ("You can retry your
+/// request" — captured strike payload, 2026-07-24); it carries
+/// `ServerError { status: 0 }`, the any-5xx wildcard the default retry
+/// policy matches, plus the bounded request-id token extracted from the
+/// message when one is present. Any unrecognized code degrades to a terminal
 /// [`ProviderError::StreamError`] (`transient: None`) — unknown failure
 /// modes do not opt in to automatic retry.
-pub(super) fn classify_failed_error(detail: &ApiErrorDetail) -> ProviderError {
+fn classify_error_code(detail: &ApiErrorDetail, event_label: &str) -> ProviderError {
     match detail.code.as_deref() {
         Some("rate_limit_exceeded") => ProviderError::RateLimited {
             retry_after: detail.message.as_deref().and_then(parse_retry_after),
@@ -140,24 +177,57 @@ pub(super) fn classify_failed_error(detail: &ApiErrorDetail) -> ProviderError {
             reason: "provider reported slow_down".to_owned(),
             transient: Some(TransientKind::ServerError { status: 503 }),
         },
-        Some(unknown) => unknown_failed_error(unknown),
+        Some("server_error") => {
+            let reason = match detail.message.as_deref().and_then(extract_request_id) {
+                Some(request_id) => {
+                    format!("provider reported server_error; request id {request_id}")
+                }
+                None => "provider reported server_error".to_owned(),
+            };
+            ProviderError::StreamError {
+                reason,
+                transient: Some(TransientKind::ServerError { status: 0 }),
+            }
+        }
+        Some(unknown) => unknown_error_code(event_label, unknown),
         None => ProviderError::StreamError {
-            reason: "provider returned response.failed without an error code".to_owned(),
+            reason: format!("provider returned {event_label} without an error code"),
             transient: None,
         },
     }
 }
 
-fn unknown_failed_error(raw_code: &str) -> ProviderError {
-    match opaque_tag(TerminalDiscriminator::FailedCode, raw_code) {
+fn unknown_error_code(event_label: &str, raw_code: &str) -> ProviderError {
+    match opaque_tag(OpaqueDiscriminator::FailedCode, raw_code) {
         Ok(tag) => ProviderError::StreamError {
-            reason: format!("provider returned unknown response.failed code [opaque:{tag}]"),
+            reason: format!("provider returned unknown {event_label} code [opaque:{tag}]"),
             transient: None,
         },
         Err(_) => ProviderError::ResponseParseError {
             reason: "could not initialize the non-disclosing failed-code diagnostic".to_owned(),
         },
     }
+}
+
+/// Extracts the bounded request-correlation token from a provider error
+/// message, when one is present.
+///
+/// Only a pattern-matched id (`req_*` or a UUID) ever crosses into the error
+/// reason — never the provider's free-text message, which is
+/// authority-controlled and may echo prompts or credentials. This satisfies
+/// the incident-forensics requirement for a "bounded, sanitized provider
+/// request ID" without weakening the no-body-disclosure posture.
+fn extract_request_id(message: &str) -> Option<&str> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    let re = RE
+        .get_or_init(|| {
+            Regex::new(
+                r"req_[A-Za-z0-9]+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            )
+            .ok()
+        })
+        .as_ref()?;
+    re.find(message).map(|found| found.as_str())
 }
 
 /// Maps the `incomplete_details.reason` of a `response.incomplete` SSE
@@ -193,7 +263,7 @@ pub(super) fn incomplete_stop_reason(reason: Option<&str>) -> Result<StopReason,
 }
 
 fn unknown_incomplete_reason(raw_reason: &str) -> Result<StopReason, ProviderError> {
-    let Ok(tag) = opaque_tag(TerminalDiscriminator::IncompleteReason, raw_reason) else {
+    let Ok(tag) = opaque_tag(OpaqueDiscriminator::IncompleteReason, raw_reason) else {
         return Err(ProviderError::ResponseParseError {
             reason: "could not initialize the non-disclosing incomplete-reason diagnostic"
                 .to_owned(),

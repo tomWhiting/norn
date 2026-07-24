@@ -18,30 +18,14 @@ use crate::session::store::EventStore;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-#[derive(Clone, Copy)]
-enum UnsupportedContract {
-    OutputItem,
-    StreamEvent,
-}
-
-impl UnsupportedContract {
-    const fn provider_error(self) -> ProviderError {
-        match self {
-            Self::OutputItem => ProviderError::UnsupportedResponseItem,
-            Self::StreamEvent => ProviderError::UnsupportedResponseEvent,
-        }
-    }
-}
-
 struct UnsupportedContractProvider {
     previews: Vec<ProviderEvent>,
-    failure: UnsupportedContract,
 }
 
 impl Provider for UnsupportedContractProvider {
     fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         let mut events = self.previews.iter().cloned().map(Ok).collect::<Vec<_>>();
-        events.push(Err(self.failure.provider_error()));
+        events.push(Err(ProviderError::UnsupportedResponseItem));
         Ok(Box::pin(stream::iter(events)))
     }
 
@@ -112,7 +96,6 @@ async fn unknown_output_item_fails_loudly_without_persisting_an_ordinary_turn() 
                 },
             },
         ],
-        failure: UnsupportedContract::OutputItem,
     };
     let store = EventStore::new();
 
@@ -121,31 +104,6 @@ async fn unknown_output_item_fails_loudly_without_persisting_an_ordinary_turn() 
     assert!(matches!(
         result,
         Err(NornError::Provider(ProviderError::UnsupportedResponseItem))
-    ));
-    assert_no_ordinary_response_events(&store);
-    Ok(())
-}
-
-#[tokio::test]
-async fn unknown_stream_event_fails_loudly_without_persisting_an_ordinary_turn() -> TestResult {
-    let stream_event = ResponseStreamEvent::from_raw(json!({
-        "type": "response.future.delta",
-        "sequence_number": 1,
-        "payload": {"retained": true}
-    }))?;
-    let provider = UnsupportedContractProvider {
-        previews: vec![ProviderEvent::ResponseStreamEvent {
-            event: Box::new(stream_event),
-        }],
-        failure: UnsupportedContract::StreamEvent,
-    };
-    let store = EventStore::new();
-
-    let result = run(&provider, &store).await;
-
-    assert!(matches!(
-        result,
-        Err(NornError::Provider(ProviderError::UnsupportedResponseEvent))
     ));
     assert_no_ordinary_response_events(&store);
     Ok(())

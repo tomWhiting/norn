@@ -1,4 +1,4 @@
-//! Non-disclosing identifiers for provider-controlled terminal discriminators.
+//! Non-disclosing identifiers for provider-controlled discriminators.
 
 use std::sync::OnceLock;
 
@@ -10,20 +10,24 @@ type HmacSha256 = Hmac<Sha256>;
 
 static PROCESS_KEY: OnceLock<Result<[u8; 32], OpaqueTagError>> = OnceLock::new();
 
-/// Provider terminal field whose unknown value is being identified.
+/// Provider-controlled field whose unknown value is being identified.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum TerminalDiscriminator {
+pub(super) enum OpaqueDiscriminator {
     /// `response.failed.response.error.code`.
     FailedCode,
     /// `response.incomplete.response.incomplete_details.reason`.
     IncompleteReason,
+    /// The `type` of a structurally valid stream event absent from both
+    /// pinned manifests (skipped under the unknown-event policy).
+    UnknownEventType,
 }
 
-impl TerminalDiscriminator {
+impl OpaqueDiscriminator {
     fn domain(self) -> &'static [u8] {
         match self {
             Self::FailedCode => b"norn:responses:failed-code:v1",
             Self::IncompleteReason => b"norn:responses:incomplete-reason:v1",
+            Self::UnknownEventType => b"norn:responses:unknown-event-type:v1",
         }
     }
 }
@@ -51,7 +55,7 @@ impl std::error::Error for OpaqueTagError {}
 
 /// Returns a process-local opaque tag for an unknown provider discriminator.
 pub(super) fn opaque_tag(
-    kind: TerminalDiscriminator,
+    kind: OpaqueDiscriminator,
     raw_value: &str,
 ) -> Result<String, OpaqueTagError> {
     let key = PROCESS_KEY
@@ -77,7 +81,7 @@ fn generate_key_with<FillError>(
 
 fn compute_opaque_tag(
     key: &[u8; 32],
-    kind: TerminalDiscriminator,
+    kind: OpaqueDiscriminator,
     raw_value: &str,
 ) -> Result<String, OpaqueTagError> {
     let Ok(mut mac) = HmacSha256::new_from_slice(key) else {
@@ -92,7 +96,7 @@ fn compute_opaque_tag(
 #[cfg(test)]
 fn opaque_tag_with_test_key(
     key: &[u8; 32],
-    kind: TerminalDiscriminator,
+    kind: OpaqueDiscriminator,
     raw_value: &str,
 ) -> Result<String, OpaqueTagError> {
     compute_opaque_tag(key, kind, raw_value)
@@ -117,19 +121,13 @@ mod tests {
     #[test]
     fn deterministic_test_key_preserves_equality_without_raw_text() -> TestResult {
         let key = [0x5a; 32];
-        let first = opaque_tag_with_test_key(
-            &key,
-            TerminalDiscriminator::FailedCode,
-            "private-future-code",
-        )?;
-        let repeated = opaque_tag_with_test_key(
-            &key,
-            TerminalDiscriminator::FailedCode,
-            "private-future-code",
-        )?;
+        let first =
+            opaque_tag_with_test_key(&key, OpaqueDiscriminator::FailedCode, "private-future-code")?;
+        let repeated =
+            opaque_tag_with_test_key(&key, OpaqueDiscriminator::FailedCode, "private-future-code")?;
         let distinct = opaque_tag_with_test_key(
             &key,
-            TerminalDiscriminator::FailedCode,
+            OpaqueDiscriminator::FailedCode,
             "another-private-code",
         )?;
 
@@ -143,14 +141,11 @@ mod tests {
     #[test]
     fn terminal_categories_are_domain_separated() -> TestResult {
         let key = [0x42; 32];
-        let failed = opaque_tag_with_test_key(
-            &key,
-            TerminalDiscriminator::FailedCode,
-            "same-private-value",
-        )?;
+        let failed =
+            opaque_tag_with_test_key(&key, OpaqueDiscriminator::FailedCode, "same-private-value")?;
         let incomplete = opaque_tag_with_test_key(
             &key,
-            TerminalDiscriminator::IncompleteReason,
+            OpaqueDiscriminator::IncompleteReason,
             "same-private-value",
         )?;
 

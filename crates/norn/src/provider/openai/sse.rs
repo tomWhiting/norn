@@ -19,7 +19,10 @@ use serde::Deserialize;
 
 use super::sse_completed_item::map_completed_item;
 pub use super::sse_parser::{SseEvent, SseParseError, SseParser};
-use super::sse_types::{ResponseFailedPayload, classify_failed_error, incomplete_stop_reason};
+use super::sse_types::{
+    ApiErrorDetail, ResponseFailedPayload, classify_failed_error, classify_standalone_error,
+    incomplete_stop_reason,
+};
 use crate::error::ProviderError;
 use crate::provider::events::ProviderEvent;
 use crate::provider::request::ToolCallKind;
@@ -187,10 +190,25 @@ pub(crate) fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, Pr
             Some(Err(err))
         }
 
-        "error" => Some(Err(ProviderError::StreamError {
-            reason: "provider returned a standalone Responses error event".to_owned(),
-            transient: None,
-        })),
+        "error" => {
+            // Standalone `ResponseErrorEvent`: `code`/`message`/`param`/
+            // `sequence_number` at the TOP level, unlike `response.failed`
+            // which nests under `response.error`. The raw frame is preserved
+            // in the log (turn-state redacted, same redactor as the debug
+            // dump) because discarding exactly this payload made the
+            // 2026-07-24 stream-death incident undiagnosable from local
+            // evidence.
+            let redacted = crate::provider::turn::redact_codex_turn_state(&event.data);
+            tracing::error!(
+                frame = %redacted,
+                "provider emitted a standalone Responses error event"
+            );
+            let detail = ApiErrorDetail::deserialize(&event.data).unwrap_or(ApiErrorDetail {
+                code: None,
+                message: None,
+            });
+            Some(Err(classify_standalone_error(&detail)))
+        }
 
         "response.incomplete" => {
             // A `response.incomplete` event is the Responses API's terminal
@@ -393,6 +411,123 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         let raw = ": this is a comment\nevent: response.created\ndata: {}\n\n";
         let events = parse_sse_bytes(raw);
         assert_eq!(events.len(), 1);
+    }
+
+    /// Replays the captured 2026-07-24 strike payload: a standalone
+    /// `ResponseErrorEvent` whose `server_error` code invites retry. The
+    /// classification must be structurally transient (the any-5xx wildcard),
+    /// the bounded request-id token must survive into the reason, and the
+    /// provider's free-text message must NOT be disclosed wholesale.
+    #[test]
+    fn standalone_error_server_error_code_is_structurally_transient() {
+        let raw = concat!(
+            "event: error\n",
+            "data: {\"type\":\"error\",\"code\":\"server_error\",\"message\":\"The server had an ",
+            "error while processing your request. Sorry about that! You can retry your request, ",
+            "or contact us through our help center at help.openai.com if the error persists. ",
+            "(Please include the request ID 09e64991-0b82-409b-af77-e3ff5d5820ac in your ",
+            "message.)\",\"param\":null,\"sequence_number\":3}\n\n"
+        );
+        let events = parse_sse_bytes(raw);
+        assert_eq!(events.len(), 1);
+        let Some(Err(error)) = map_sse_event(&events[0]) else {
+            panic!("standalone error event did not map to a provider error");
+        };
+        let ProviderError::StreamError { reason, transient } = &error else {
+            panic!("standalone error event did not classify as a stream error: {error:?}");
+        };
+        assert_eq!(
+            *transient,
+            Some(TransientKind::ServerError { status: 0 }),
+            "server_error is the any-5xx transient wildcard: {reason}"
+        );
+        assert!(
+            reason.contains("server_error"),
+            "reason names the provider code: {reason}"
+        );
+        assert!(
+            reason.contains("09e64991-0b82-409b-af77-e3ff5d5820ac"),
+            "bounded request-id token survives into the reason: {reason}"
+        );
+        assert!(
+            !reason.contains("help.openai.com"),
+            "provider free-text message is not disclosed wholesale: {reason}"
+        );
+        assert!(
+            crate::r#loop::retry::RetryPolicy::default().classifies_as_retryable(&error),
+            "the default retry policy absorbs a standalone server_error strike"
+        );
+    }
+
+    /// The standalone-error arm rides the shared code table: a rate-limit
+    /// code classifies as `RateLimited`, not as an opaque stream error.
+    #[test]
+    fn standalone_error_rate_limit_code_maps_to_rate_limited() {
+        let raw = concat!(
+            "event: error\n",
+            "data: {\"type\":\"error\",\"code\":\"rate_limit_exceeded\",",
+            "\"message\":\"Rate limit reached. Please try again in 2s.\",",
+            "\"param\":null,\"sequence_number\":1}\n\n"
+        );
+        let events = parse_sse_bytes(raw);
+        let Some(Err(error)) = map_sse_event(&events[0]) else {
+            panic!("standalone error event did not map to a provider error");
+        };
+        assert!(
+            matches!(error, ProviderError::RateLimited { .. }),
+            "rate_limit_exceeded classifies through the shared table: {error:?}"
+        );
+    }
+
+    /// Unknown standalone-error codes stay terminal — no retry opt-in for
+    /// unrecognized failure modes — while the diagnosis is preserved as an
+    /// opaque tag rather than disclosed verbatim.
+    #[test]
+    fn standalone_error_unknown_code_stays_terminal_with_opaque_diagnosis() {
+        let raw = concat!(
+            "event: error\n",
+            "data: {\"type\":\"error\",\"code\":\"future_mystery_code\",",
+            "\"message\":\"something new\",\"param\":null,\"sequence_number\":1}\n\n"
+        );
+        let events = parse_sse_bytes(raw);
+        let Some(Err(error)) = map_sse_event(&events[0]) else {
+            panic!("standalone error event did not map to a provider error");
+        };
+        let ProviderError::StreamError { reason, transient } = &error else {
+            panic!("unknown code did not classify as a stream error: {error:?}");
+        };
+        assert_eq!(*transient, None, "unknown codes never opt in to retry");
+        assert!(
+            reason.contains("[opaque:"),
+            "diagnosis is preserved as an opaque tag: {reason}"
+        );
+        assert!(
+            !reason.contains("future_mystery_code"),
+            "unknown provider code is not disclosed verbatim: {reason}"
+        );
+    }
+
+    /// A standalone error event with no code stays terminal and names the
+    /// event instead of losing the payload entirely.
+    #[test]
+    fn standalone_error_without_code_stays_terminal_and_named() {
+        let raw = concat!(
+            "event: error\n",
+            "data: {\"type\":\"error\",\"code\":null,\"message\":\"opaque failure\",",
+            "\"param\":null,\"sequence_number\":1}\n\n"
+        );
+        let events = parse_sse_bytes(raw);
+        let Some(Err(error)) = map_sse_event(&events[0]) else {
+            panic!("standalone error event did not map to a provider error");
+        };
+        let ProviderError::StreamError { reason, transient } = &error else {
+            panic!("codeless standalone error did not classify as a stream error: {error:?}");
+        };
+        assert_eq!(*transient, None);
+        assert!(
+            reason.contains("standalone Responses error event"),
+            "the event is named in the reason: {reason}"
+        );
     }
 
     #[test]
