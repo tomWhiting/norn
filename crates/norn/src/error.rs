@@ -174,6 +174,58 @@ pub enum ProviderError {
         kind: TransientKind,
     },
 
+    /// The local runner process backing a subprocess-based provider could
+    /// not be started.
+    ///
+    /// Covers every failure of the operating system's process-creation call
+    /// for a provider implemented over a child process (today: the Claude
+    /// Code CLI adapter) — the runner binary is absent, is not executable by
+    /// this user, is not a runnable file, or the host refused to create the
+    /// process at all. Distinct from [`ConnectionFailed`], which describes a
+    /// transport fault against a provider endpoint: a spawn that failed
+    /// never created a connection, so it has no transport category.
+    ///
+    /// Classification: [`ErrorClass::Terminal`], deliberately for the whole
+    /// set rather than only its obviously deterministic members.
+    ///
+    /// * Absent, non-executable, and malformed runner paths are
+    ///   deterministic configuration faults. Re-running the identical spawn
+    ///   cannot succeed, and the loop's default
+    ///   [`RetryPolicy`](crate::agent_loop::retry::RetryPolicy) is
+    ///   **unbounded**, so a retryable classification would respawn against
+    ///   an unhealable fault forever instead of failing the turn loudly.
+    /// * Host process-creation pressure (process-table or memory exhaustion)
+    ///   is local resource exhaustion, which this taxonomy already treats as
+    ///   terminal on this very code path: the descriptor governor guards the
+    ///   same spawn and its refusal
+    ///   ([`DescriptorAdmission`](ProviderError::DescriptorAdmission)) is
+    ///   terminal. Classifying the kernel's own refusal to fork as retryable
+    ///   would contradict the admission gate standing immediately in front
+    ///   of it.
+    ///
+    /// No transient category is faked to reach the second bullet:
+    /// [`TransientKind`] is a transport vocabulary (network timeout,
+    /// connection reset, HTTP 5xx) and none of its members is a truthful
+    /// description of local fork pressure. Should the taxonomy ever gain a
+    /// truthful local-resource-exhaustion transient kind — together with the
+    /// retry policy's matching category and an owner-ruled decision on
+    /// whether it belongs in the default retryable set — this variant is the
+    /// single place that would split.
+    ///
+    /// `reason` carries the operating system's own error text. That text is
+    /// locally authored by the host kernel and libc, never provider- or
+    /// authority-controlled, so it is outside the free-text disclosure rule
+    /// that keeps provider strings off durable and always-on surfaces; it is
+    /// exactly what an operator needs to tell "no such file" from "permission
+    /// denied".
+    ///
+    /// [`ConnectionFailed`]: ProviderError::ConnectionFailed
+    #[error("provider runner process could not be started: {reason}")]
+    RunnerSpawnFailed {
+        /// Operating-system description of the process-creation failure.
+        reason: String,
+    },
+
     /// Authentication with the provider was rejected.
     ///
     /// Classification: [`ErrorClass::Auth`] — terminal until the
@@ -419,7 +471,8 @@ impl ProviderError {
             Self::AuthenticationFailed { .. } | Self::OAuthCredentialFailure { .. } => {
                 ErrorClass::Auth
             }
-            Self::ResponseParseError { .. }
+            Self::RunnerSpawnFailed { .. }
+            | Self::ResponseParseError { .. }
             | Self::RequestSerializationFailed { .. }
             | Self::UnsupportedFeature { .. }
             | Self::UnsupportedResponseItem

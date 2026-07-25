@@ -113,6 +113,53 @@ fn rate_limited_without_delay_still_classifies_rate_limited() {
     assert_eq!(err.class().retry_after(), None);
 }
 
+/// A runner process that could not be started is terminal for every fault
+/// in the set — deterministic configuration faults and host process-creation
+/// pressure alike — and the operating system's message text carries zero
+/// classification weight.
+#[test]
+fn runner_spawn_failure_classifies_terminal_for_every_reason() {
+    for reason in [
+        "failed to spawn Claude runner: No such file or directory (os error 2)",
+        "failed to spawn Claude runner: Permission denied (os error 13)",
+        "failed to spawn Claude runner: Resource temporarily unavailable (os error 35)",
+        "failed to spawn Claude runner: Cannot allocate memory (os error 12)",
+        // Text that used to be a retry trigger elsewhere in the taxonomy
+        // must not opt a spawn fault into retry either.
+        "failed to spawn Claude runner: connection reset",
+        "failed to spawn Claude runner: timed out",
+    ] {
+        let err = ProviderError::RunnerSpawnFailed {
+            reason: reason.to_string(),
+        };
+        assert_eq!(err.class(), ErrorClass::Terminal, "{reason}");
+        assert!(!err.is_retryable(), "{reason}");
+    }
+}
+
+/// The retry brain's projection agrees: no policy — not even a maximally
+/// permissive one naming every retryable category — can opt a spawn fault
+/// into the unbounded retry loop.
+#[test]
+fn runner_spawn_failure_is_never_retryable_under_any_policy() {
+    use crate::agent_loop::retry::{RetryPolicy, RetryableError};
+
+    let err = ProviderError::RunnerSpawnFailed {
+        reason: "failed to spawn Claude runner: No such file or directory (os error 2)".to_string(),
+    };
+    let permissive = RetryPolicy {
+        retryable_errors: vec![
+            RetryableError::NetworkTimeout,
+            RetryableError::ConnectionReset,
+            RetryableError::ServerError { status: 0 },
+            RetryableError::RateLimited,
+        ],
+        ..RetryPolicy::default()
+    };
+    assert!(!RetryPolicy::default().classifies_as_retryable(&err));
+    assert!(!permissive.classifies_as_retryable(&err));
+}
+
 #[test]
 fn authentication_failed_classifies_auth() {
     let err = ProviderError::AuthenticationFailed {

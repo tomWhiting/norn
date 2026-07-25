@@ -157,10 +157,7 @@ impl Provider for ClaudeRunnerAdapter {
             let mut process = match ClaudeProcess::spawn(&cmd) {
                 Ok(p) => p,
                 Err(e) => {
-                    let _ = tx.blocking_send(Err(ProviderError::ConnectionFailed {
-                        reason: format!("failed to spawn Claude runner: {e}"),
-                        kind: crate::error::TransientKind::ConnectionReset,
-                    }));
+                    let _ = tx.blocking_send(Err(spawn_failure(&e)));
                     return;
                 }
             };
@@ -209,6 +206,26 @@ impl Provider for ClaudeRunnerAdapter {
 
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
         Ok(Box::pin(stream) as Pin<Box<dyn Stream<Item = _> + Send>>)
+    }
+}
+
+/// Map a Claude runner process-creation failure onto the provider taxonomy.
+///
+/// Total over [`claude_runner::Error`]: every way the runner process can fail
+/// to start becomes [`ProviderError::RunnerSpawnFailed`], which classifies
+/// [`ErrorClass::Terminal`](crate::error::ErrorClass::Terminal). The mapping
+/// is structural — it never inspects the operating system's message text —
+/// and it is deliberately terminal for the entire set, including host fork
+/// pressure; [`ProviderError::RunnerSpawnFailed`]'s rustdoc carries the
+/// full rationale and records the one taxonomy gap that could ever split it.
+///
+/// The previous mapping (`ConnectionFailed { kind: ConnectionReset }`) was
+/// retryable and untrue on both counts: no connection was ever established,
+/// and under the loop's unbounded default policy a missing or non-executable
+/// runner binary respawned forever against a fault that cannot heal.
+fn spawn_failure(error: &claude_runner::Error) -> ProviderError {
+    ProviderError::RunnerSpawnFailed {
+        reason: format!("failed to spawn Claude runner: {error}"),
     }
 }
 
@@ -656,6 +673,107 @@ mod tests {
             Ok(_) => return Err("canonical Responses items must fail closed".into()),
         }
         Ok(())
+    }
+
+    /// Drive the adapter's provider stream against `runner_path` and return
+    /// the first item's error, failing the test if the spawn unexpectedly
+    /// succeeded or the stream produced an event instead.
+    async fn first_stream_error(runner_path: PathBuf) -> TestResult<ProviderError> {
+        use futures_util::StreamExt;
+
+        let adapter = ClaudeRunnerAdapter::new(ClaudeRunnerConfig {
+            runner_path,
+            model: "sonnet".to_owned(),
+            max_tokens: None,
+        });
+        let mut stream = adapter.stream(user_request("hello"))?;
+        let Some(first) = stream.next().await else {
+            return Err("a failed spawn must surface an error on the stream".into());
+        };
+        match first {
+            Err(error) => Ok(error),
+            Ok(event) => Err(format!("a failed spawn must not yield {event:?}").into()),
+        }
+    }
+
+    /// A runner path that does not exist is a deterministic configuration
+    /// fault. The loop's default retry policy is unbounded, so a retryable
+    /// classification here respawns forever against a fault that can never
+    /// heal; the spawn must fail the turn loudly instead.
+    #[tokio::test]
+    async fn nonexistent_runner_path_spawn_failure_classifies_terminal() -> TestResult {
+        let error =
+            first_stream_error(PathBuf::from("/nonexistent/norn-f1/claude-binary-absent")).await?;
+
+        assert!(
+            matches!(error, ProviderError::RunnerSpawnFailed { .. }),
+            "expected RunnerSpawnFailed, got {error:?}"
+        );
+        assert_eq!(
+            error.class(),
+            crate::error::ErrorClass::Terminal,
+            "spawn against a nonexistent runner path must be terminal, got {error:?}"
+        );
+        assert!(!error.is_retryable());
+        Ok(())
+    }
+
+    /// Mirror of the not-found case: a runner path that exists but is not
+    /// executable is equally deterministic and must not be retried either.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn non_executable_runner_path_spawn_failure_classifies_terminal() -> TestResult {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir()?;
+        let runner_path = dir.path().join("claude-not-executable");
+        std::fs::write(&runner_path, b"#!/bin/sh\nexit 0\n")?;
+        std::fs::set_permissions(&runner_path, std::fs::Permissions::from_mode(0o600))?;
+
+        let error = first_stream_error(runner_path).await?;
+
+        assert!(
+            matches!(error, ProviderError::RunnerSpawnFailed { .. }),
+            "expected RunnerSpawnFailed, got {error:?}"
+        );
+        assert_eq!(
+            error.class(),
+            crate::error::ErrorClass::Terminal,
+            "spawn against a non-executable runner path must be terminal, got {error:?}"
+        );
+        assert!(!error.is_retryable());
+        Ok(())
+    }
+
+    /// The spawn mapping is structural: no operating-system message text can
+    /// steer the classification, and no spawn fault is dressed up as a
+    /// transport failure the way the previous `ConnectionFailed` mapping did.
+    #[test]
+    fn spawn_failure_maps_every_runner_error_to_a_terminal_spawn_fault() {
+        let cases = [
+            claude_runner::Error::Spawn(std::io::Error::from(std::io::ErrorKind::NotFound)),
+            claude_runner::Error::Spawn(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+            // Host process-creation pressure (EAGAIN/ENOMEM). Terminal by the
+            // same rule the descriptor governor already applies to this spawn:
+            // local resource exhaustion is not dressed up as a transport fault.
+            claude_runner::Error::Spawn(std::io::Error::from(std::io::ErrorKind::WouldBlock)),
+            claude_runner::Error::Spawn(std::io::Error::from(std::io::ErrorKind::OutOfMemory)),
+            claude_runner::Error::Spawn(std::io::Error::from(std::io::ErrorKind::Other)),
+            claude_runner::Error::Timeout,
+        ];
+        for case in cases {
+            let mapped = spawn_failure(&case);
+            assert!(
+                matches!(mapped, ProviderError::RunnerSpawnFailed { .. }),
+                "expected RunnerSpawnFailed for {case}, got {mapped:?}"
+            );
+            assert_eq!(
+                mapped.class(),
+                crate::error::ErrorClass::Terminal,
+                "spawn fault {case} must be terminal"
+            );
+            assert!(!mapped.is_retryable(), "spawn fault {case} must not retry");
+        }
     }
 
     #[test]
