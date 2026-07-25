@@ -116,10 +116,11 @@ impl ClaudeRunnerAdapter {
     /// # Errors
     ///
     /// Returns [`IntegrationError::ClaudeRunnerError`] when spawning or
-    /// reading the runner process fails, or when the runner reports a
-    /// terminal error result. Canonical Responses items are also rejected
-    /// before the command is rendered because the Claude CLI prompt shape
-    /// cannot preserve them.
+    /// reading the runner process fails, when the runner reports a terminal
+    /// error result, or when it died before emitting one — a step with no
+    /// terminal `result` event produced no outcome to return. Canonical
+    /// Responses items are also rejected before the command is rendered
+    /// because the Claude CLI prompt shape cannot preserve them.
     pub fn run_step(&self, request: &ProviderRequest) -> Result<StepOutcome, IntegrationError> {
         let cmd =
             self.build_command(request)
@@ -168,7 +169,13 @@ impl Provider for ClaudeRunnerAdapter {
             loop {
                 match process.read_event() {
                     Ok(Some(event)) => {
-                        let (events, stop) = map_claude_event(event, &mut total_usage);
+                        let (events, stop) = match map_claude_event(event, &mut total_usage) {
+                            Ok(mapped) => mapped,
+                            Err(error) => {
+                                let _ = tx.blocking_send(Err(error));
+                                return;
+                            }
+                        };
                         for ev in events {
                             if tx.blocking_send(Ok(ev)).is_err() {
                                 return;
@@ -195,11 +202,19 @@ impl Provider for ClaudeRunnerAdapter {
                 }
             }
 
+            // `sent_done` is set only where a stop reason actually arrived —
+            // a `result` event, an assistant message carrying `stop_reason`,
+            // or a `message_delta` carrying one — and every other way out of
+            // the loop returns early. Reaching here therefore means exactly
+            // one thing: the runner's stdout hit EOF before the protocol's
+            // terminal event. The turn did not complete, so it is reported as
+            // the typed failure it is; synthesizing `Done` here would present
+            // a crashed, OOM-killed, or immediately-exiting runner as a
+            // successful turn carrying whatever partial text had arrived.
             if !sent_done {
-                let _ = tx.blocking_send(Ok(ProviderEvent::Done {
-                    stop_reason: StopReason::EndTurn,
-                    usage: total_usage,
-                    response_id: None,
+                let _ = tx.blocking_send(Err(ProviderError::StreamError {
+                    reason: missing_terminal_result_reason(process),
+                    transient: None,
                 }));
             }
         });
@@ -227,6 +242,26 @@ fn spawn_failure(error: &claude_runner::Error) -> ProviderError {
     ProviderError::RunnerSpawnFailed {
         reason: format!("failed to spawn Claude runner: {error}"),
     }
+}
+
+/// Describe a runner stream that ended before the protocol's terminal
+/// `result` event, reaping the child so the description carries how it died.
+///
+/// Reaping is safe here and only here: the caller reaches this function
+/// because the runner's stdout reached EOF, which the Claude CLI closes on
+/// exit — after its stop hooks have run. Waiting is therefore bounded by a
+/// process that has already finished writing, unlike the completed-turn path,
+/// where the terminal event can precede minutes of stop-hook work.
+///
+/// The exit status text is the operating system's own (`exit status: 3`,
+/// `signal: 9 (SIGKILL)`): kernel/libc authored, never provider-controlled,
+/// and exactly what distinguishes a crash from an OOM kill for an operator.
+fn missing_terminal_result_reason(process: ClaudeProcess) -> String {
+    let disposition = match process.wait() {
+        Ok(status) => format!("runner {status}"),
+        Err(error) => format!("runner exit status unavailable: {error}"),
+    };
+    format!("Claude runner stream ended without a terminal result event ({disposition})")
 }
 
 fn render_prompt(messages: &[Message]) -> String {
@@ -270,6 +305,16 @@ fn render_system_prompt(messages: &[Message]) -> String {
 /// Spawn a [`ClaudeProcess`] from the given command and collect all events
 /// synchronously. Used by both the adapter and the wrapped Claude Code
 /// runner.
+///
+/// # Errors
+///
+/// Returns [`IntegrationError::ClaudeRunnerError`] when the descriptor budget
+/// refuses the spawn, when the process cannot be started, when reading its
+/// stdout fails, or when the stream ends before the protocol's terminal
+/// `result` event. Both callers drive the CLI in `--print`
+/// `--output-format stream-json` mode, whose every completed invocation ends
+/// with that event; its absence means the runner died mid-turn, and returning
+/// the partial event list would present that death as a completed run.
 pub(super) fn spawn_and_collect(cmd: &ClaudeCommand) -> Result<Vec<ClaudeEvent>, IntegrationError> {
     let governor =
         DescriptorGovernor::global().map_err(|error| IntegrationError::ClaudeRunnerError {
@@ -285,9 +330,13 @@ pub(super) fn spawn_and_collect(cmd: &ClaudeCommand) -> Result<Vec<ClaudeEvent>,
             reason: format!("failed to spawn Claude runner: {e}"),
         })?;
     let mut events = Vec::new();
+    let mut saw_terminal_result = false;
     loop {
         match process.read_event() {
-            Ok(Some(ev)) => events.push(ev),
+            Ok(Some(ev)) => {
+                saw_terminal_result |= matches!(ev, ClaudeEvent::Result { .. });
+                events.push(ev);
+            }
             Ok(None) => break,
             Err(e) => {
                 return Err(IntegrationError::ClaudeRunnerError {
@@ -296,14 +345,25 @@ pub(super) fn spawn_and_collect(cmd: &ClaudeCommand) -> Result<Vec<ClaudeEvent>,
             }
         }
     }
+    if !saw_terminal_result {
+        return Err(IntegrationError::ClaudeRunnerError {
+            reason: missing_terminal_result_reason(process),
+        });
+    }
     Ok(events)
 }
 
+/// Roll a collected event stream up into the single [`StepOutcome`] a step
+/// claims. The claim is only made when the runner's terminal `result` event
+/// is present: without it there is no outcome, and defaulting to a null
+/// result with an `EndTurn` stop reason would assert a successful step over a
+/// stream that was cut short.
 fn consolidate_outcome(events: &[ClaudeEvent]) -> Result<StepOutcome, IntegrationError> {
     let mut result = Value::Null;
     let mut usage = Usage::default();
     let mut stop_reason = StopReason::EndTurn;
     let mut error: Option<String> = None;
+    let mut saw_terminal_result = false;
 
     for event in events {
         match event {
@@ -316,6 +376,7 @@ fn consolidate_outcome(events: &[ClaudeEvent]) -> Result<StepOutcome, Integratio
                 usage: u,
                 ..
             } => {
+                saw_terminal_result = true;
                 if let Some(r) = r {
                     result = r.clone();
                 }
@@ -352,6 +413,11 @@ fn consolidate_outcome(events: &[ClaudeEvent]) -> Result<StepOutcome, Integratio
     if let Some(err) = error {
         return Err(IntegrationError::ClaudeRunnerError { reason: err });
     }
+    if !saw_terminal_result {
+        return Err(IntegrationError::ClaudeRunnerError {
+            reason: "Claude runner stream ended without a terminal result event".to_owned(),
+        });
+    }
     Ok(StepOutcome {
         result,
         usage,
@@ -359,10 +425,17 @@ fn consolidate_outcome(events: &[ClaudeEvent]) -> Result<StepOutcome, Integratio
     })
 }
 
+/// Translate one runner event into the provider events it carries and the
+/// stop reason it may announce.
+///
+/// # Errors
+///
+/// Returns [`ProviderError::ResponseParseError`] when a tool-use payload in
+/// the event is malformed; see [`tool_data_pair`].
 fn map_claude_event(
     event: ClaudeEvent,
     usage_accum: &mut Usage,
-) -> (Vec<ProviderEvent>, Option<StopReason>) {
+) -> Result<(Vec<ProviderEvent>, Option<StopReason>), ProviderError> {
     let mut emitted = Vec::new();
     let mut stop: Option<StopReason> = None;
 
@@ -380,7 +453,7 @@ fn map_claude_event(
                         });
                     }
                     ContentItem::ToolUse { id, tool_data } => {
-                        let (name, input) = tool_data_pair(tool_data);
+                        let (name, input) = tool_data_pair(tool_data)?;
                         // Claude's `id` is the streaming item identifier — the
                         // same role `item_id` plays in the OpenAI Responses
                         // stream. It is used by `assemble_response` to merge
@@ -394,7 +467,15 @@ fn map_claude_event(
                             // correlation id embedders see for this call.
                             call_id: Some(id.clone()),
                             name: Some(name),
-                            arguments_delta: serde_json::to_string(&input).unwrap_or_default(),
+                            // `Value`'s `Display` is serde_json's compact
+                            // serializer over a `String` sink: a `Value` holds
+                            // only string-keyed maps and finite numbers, so
+                            // this rendering has no failure mode to hide. The
+                            // previous `to_string(&input).unwrap_or_default()`
+                            // could only ever have turned a serialization
+                            // failure into an empty argument set — a tool call
+                            // silently stripped of its arguments.
+                            arguments_delta: input.to_string(),
                             kind: crate::provider::request::ToolCallKind::Function,
                         });
                     }
@@ -468,7 +549,7 @@ fn map_claude_event(
         _ => {}
     }
 
-    (emitted, stop)
+    Ok((emitted, stop))
 }
 
 fn message_usage(message: &ClaudeMessage) -> Usage {
@@ -501,23 +582,36 @@ fn parse_stop_reason(reason: &str) -> StopReason {
 /// Extract the `(name, input)` pair from a [`ToolData`] value. Used by both
 /// the adapter (for [`ProviderEvent`] emission) and the wrapped runner (for
 /// [`SessionEvent`] capture).
-pub(super) fn tool_data_pair(data: &ToolData) -> (String, Value) {
-    serde_json::to_value(data)
-        .ok()
-        .and_then(|v| match v {
-            Value::Object(mut map) => {
-                let name = map
-                    .remove("name")
-                    .and_then(|n| n.as_str().map(str::to_owned))
-                    .unwrap_or_else(|| "unknown".to_owned());
-                let input = map
-                    .remove("input")
-                    .unwrap_or(Value::Object(serde_json::Map::default()));
-                Some((name, input))
-            }
-            _ => None,
-        })
-        .unwrap_or_else(|| ("unknown".to_owned(), Value::Null))
+///
+/// # Errors
+///
+/// Returns [`ProviderError::ResponseParseError`] when the runner's tool-use
+/// payload does not render as a named JSON object. Every such shape is
+/// malformed provider output: a tool call Norn cannot name is a tool call it
+/// cannot execute or attribute, and the previous `("unknown", null)` fallback
+/// invented both a tool name that was never requested and an empty argument
+/// set, silently, in the middle of the tool-call path.
+pub(super) fn tool_data_pair(data: &ToolData) -> Result<(String, Value), ProviderError> {
+    let rendered =
+        serde_json::to_value(data).map_err(|error| ProviderError::ResponseParseError {
+            reason: format!("Claude tool-use payload could not be rendered as JSON: {error}"),
+        })?;
+    let Value::Object(mut map) = rendered else {
+        return Err(ProviderError::ResponseParseError {
+            reason: "Claude tool-use payload did not render as a JSON object".to_owned(),
+        });
+    };
+    let Some(Value::String(name)) = map.remove("name") else {
+        return Err(ProviderError::ResponseParseError {
+            reason: "Claude tool-use payload carries no tool name".to_owned(),
+        });
+    };
+    let input = map
+        .remove("input")
+        .ok_or_else(|| ProviderError::ResponseParseError {
+            reason: "Claude tool-use payload carries no input field".to_owned(),
+        })?;
+    Ok((name, input))
 }
 
 #[cfg(test)]
@@ -774,6 +868,354 @@ mod tests {
             );
             assert!(!mapped.is_retryable(), "spawn fault {case} must not retry");
         }
+    }
+
+    /// One line of `--output-format stream-json` carrying assistant text and
+    /// no `stop_reason`: partial output, turn not finished.
+    const PARTIAL_TEXT_LINE: &str = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"partial answer"}]},"session_id":"s1"}"#;
+
+    /// An assistant line that itself carries the turn's `stop_reason` — the
+    /// adapter treats this as a legitimate end of turn.
+    const ASSISTANT_STOP_LINE: &str = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"},"session_id":"s1"}"#;
+
+    /// The protocol's terminal event.
+    const RESULT_LINE: &str = r#"{"type":"result","subtype":"success","is_error":false,"result":{"ok":true},"stop_reason":"end_turn","session_id":"s1"}"#;
+
+    /// Write an executable fake Claude CLI that prints `lines` to stdout and
+    /// exits with `exit_code`, ignoring its arguments. The JSON fixtures above
+    /// contain no single quotes, so single-quoted `printf` operands are exact.
+    #[cfg(unix)]
+    fn fake_runner(
+        dir: &std::path::Path,
+        lines: &[&str],
+        exit_code: i32,
+    ) -> TestResult<std::path::PathBuf> {
+        use std::fmt::Write as _;
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut script = String::from("#!/bin/sh\n");
+        for line in lines {
+            writeln!(script, "printf '%s\\n' '{line}'")?;
+        }
+        writeln!(script, "exit {exit_code}")?;
+
+        let path = dir.join("claude-fake");
+        std::fs::write(&path, script)?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+        Ok(path)
+    }
+
+    /// Drive the adapter's provider stream against `runner_path` to completion.
+    #[cfg(unix)]
+    async fn collect_stream(
+        runner_path: std::path::PathBuf,
+    ) -> TestResult<Vec<Result<ProviderEvent, ProviderError>>> {
+        use futures_util::StreamExt;
+
+        let adapter = ClaudeRunnerAdapter::new(ClaudeRunnerConfig {
+            runner_path,
+            model: "sonnet".to_owned(),
+            max_tokens: None,
+        });
+        let stream = adapter.stream(user_request("hello"))?;
+        Ok(stream.collect::<Vec<_>>().await)
+    }
+
+    /// A runner that dies before emitting the protocol's terminal `result`
+    /// event has not completed a turn. Synthesizing `Done { EndTurn }` over
+    /// whatever partial text arrived reports a crash as a successful turn —
+    /// the worst possible shape. The stream must fail loudly and typed.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn runner_death_without_a_result_event_fails_instead_of_synthesizing_done() -> TestResult
+    {
+        let dir = tempfile::tempdir()?;
+        let runner = fake_runner(dir.path(), &[PARTIAL_TEXT_LINE], 3)?;
+
+        let items = collect_stream(runner).await?;
+
+        assert!(
+            items
+                .iter()
+                .any(|item| matches!(item, Ok(ProviderEvent::TextDelta { .. }))),
+            "the partial text the runner did emit is still forwarded: {items:?}"
+        );
+        assert!(
+            !items
+                .iter()
+                .any(|item| matches!(item, Ok(ProviderEvent::Done { .. }))),
+            "a runner that never emitted a result event must not report Done: {items:?}"
+        );
+
+        let Some(Err(error)) = items.last() else {
+            return Err(format!("expected a trailing typed error, got {items:?}").into());
+        };
+        match error {
+            ProviderError::StreamError { reason, transient } => {
+                assert!(
+                    transient.is_none(),
+                    "a violated protocol contract is not a transport transient: {error:?}"
+                );
+                assert!(
+                    reason.contains("terminal result event"),
+                    "reason names the missing terminal event: {reason}"
+                );
+                assert!(
+                    reason.contains("exit status: 3"),
+                    "reason carries the reaped child exit status: {reason}"
+                );
+            }
+            other => return Err(format!("expected StreamError, got {other:?}").into()),
+        }
+        assert_eq!(error.class(), crate::error::ErrorClass::Terminal);
+        assert!(!error.is_retryable());
+        Ok(())
+    }
+
+    /// The legitimate flow: the runner emits its terminal `result` event and
+    /// then stdout reaches EOF. The turn completed, so `Done` is truthful and
+    /// must keep flowing.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn result_event_then_eof_still_completes_the_turn() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let runner = fake_runner(dir.path(), &[PARTIAL_TEXT_LINE, RESULT_LINE], 0)?;
+
+        let items = collect_stream(runner).await?;
+
+        assert!(
+            items.iter().all(Result::is_ok),
+            "a completed turn carries no error: {items:?}"
+        );
+        assert!(
+            matches!(
+                items.last(),
+                Some(Ok(ProviderEvent::Done {
+                    stop_reason: StopReason::EndTurn,
+                    ..
+                }))
+            ),
+            "the terminal result event completes the turn: {items:?}"
+        );
+        Ok(())
+    }
+
+    /// The other legitimate flow: the turn's `stop_reason` arrives on the
+    /// assistant message itself. The adapter completes the turn there and
+    /// stops reading, so no terminal-result check applies.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn assistant_stop_reason_still_completes_the_turn() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let runner = fake_runner(dir.path(), &[ASSISTANT_STOP_LINE], 0)?;
+
+        let items = collect_stream(runner).await?;
+
+        assert!(
+            items.iter().all(Result::is_ok),
+            "a completed turn carries no error: {items:?}"
+        );
+        assert!(
+            matches!(
+                items.last(),
+                Some(Ok(ProviderEvent::Done {
+                    stop_reason: StopReason::EndTurn,
+                    ..
+                }))
+            ),
+            "an assistant stop_reason completes the turn: {items:?}"
+        );
+        Ok(())
+    }
+
+    /// The synchronous path has the same contract: a runner that dies before
+    /// its terminal `result` event produced no step outcome, and `run_step`
+    /// must not hand back a `StepOutcome` whose `result` is merely `null`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_step_fails_when_the_runner_dies_without_a_result_event() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let runner = fake_runner(dir.path(), &[PARTIAL_TEXT_LINE], 3)?;
+        let adapter = ClaudeRunnerAdapter::new(ClaudeRunnerConfig {
+            runner_path: runner,
+            model: "sonnet".to_owned(),
+            max_tokens: None,
+        });
+
+        let outcome = tokio::task::spawn_blocking(move || adapter.run_step(&user_request("hello")))
+            .await
+            .map_err(|error| format!("run_step task failed: {error}"))?;
+
+        match outcome {
+            Err(IntegrationError::ClaudeRunnerError { reason }) => {
+                assert!(
+                    reason.contains("terminal result event"),
+                    "reason names the missing terminal event: {reason}"
+                );
+                assert!(
+                    reason.contains("exit status: 3"),
+                    "reason carries the reaped child exit status: {reason}"
+                );
+            }
+            Err(other) => return Err(format!("expected ClaudeRunnerError, got {other:?}").into()),
+            Ok(outcome) => {
+                return Err(
+                    format!("a runner death must not produce a step outcome: {outcome:?}").into(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// `consolidate_outcome` builds the success claim for a step. A stream
+    /// with no terminal `result` event carries no outcome to claim.
+    #[test]
+    fn consolidate_outcome_rejects_a_stream_without_a_result_event() -> TestResult {
+        let events = vec![ClaudeEvent::Assistant {
+            message: ClaudeMessage {
+                id: Some("m1".to_owned()),
+                message_type: Some("message".to_owned()),
+                role: "assistant".to_owned(),
+                model: None,
+                content: vec![ContentItem::Text {
+                    text: "partial".to_owned(),
+                }],
+                stop_reason: None,
+                usage: None,
+            },
+            session_id: Some("s1".to_owned()),
+            parent_tool_use_id: None,
+            uuid: None,
+        }];
+
+        let Err(error) = consolidate_outcome(&events) else {
+            return Err("a stream with no result event must not consolidate to success".into());
+        };
+        match error {
+            IntegrationError::ClaudeRunnerError { reason } => assert!(
+                reason.contains("terminal result event"),
+                "reason names the missing terminal event: {reason}"
+            ),
+            other => return Err(format!("expected ClaudeRunnerError, got {other:?}").into()),
+        }
+        Ok(())
+    }
+
+    /// A tool-use payload the runner sent without a name cannot be executed.
+    /// Naming it `"unknown"` invents a tool that was never requested.
+    #[test]
+    fn tool_data_pair_rejects_a_nameless_tool_payload() -> TestResult {
+        let data = ToolData::Unknown {
+            name: None,
+            input: Some(serde_json::json!({"a": 1})),
+            extra: std::collections::HashMap::new(),
+        };
+
+        let Err(error) = tool_data_pair(&data) else {
+            return Err("a nameless tool payload must not be renamed 'unknown'".into());
+        };
+        assert!(
+            matches!(error, ProviderError::ResponseParseError { .. }),
+            "expected ResponseParseError, got {error:?}"
+        );
+        assert_eq!(error.class(), crate::error::ErrorClass::Terminal);
+        Ok(())
+    }
+
+    /// The ordinary shape still round-trips: a named tool keeps its name and
+    /// its input verbatim.
+    #[test]
+    fn tool_data_pair_extracts_name_and_input() -> TestResult {
+        let data = ToolData::Read {
+            file_path: "/tmp/x".to_owned(),
+            offset: None,
+            limit: None,
+        };
+
+        let (name, input) = tool_data_pair(&data)?;
+        assert_eq!(name, "Read");
+        assert_eq!(input["file_path"], serde_json::json!("/tmp/x"));
+        Ok(())
+    }
+
+    /// The malformed payload must reach the caller as a typed failure rather
+    /// than being smuggled into the event stream as a tool call.
+    #[test]
+    fn map_claude_event_propagates_a_malformed_tool_payload() -> TestResult {
+        let event = ClaudeEvent::Assistant {
+            message: ClaudeMessage {
+                id: Some("m1".to_owned()),
+                message_type: Some("message".to_owned()),
+                role: "assistant".to_owned(),
+                model: None,
+                content: vec![ContentItem::ToolUse {
+                    id: "call_1".to_owned(),
+                    tool_data: ToolData::Unknown {
+                        name: None,
+                        input: Some(serde_json::json!({"a": 1})),
+                        extra: std::collections::HashMap::new(),
+                    },
+                }],
+                stop_reason: None,
+                usage: None,
+            },
+            session_id: Some("s1".to_owned()),
+            parent_tool_use_id: None,
+            uuid: None,
+        };
+
+        let mut usage = Usage::default();
+        let Err(error) = map_claude_event(event, &mut usage) else {
+            return Err("a malformed tool payload must not map to provider events".into());
+        };
+        assert!(
+            matches!(error, ProviderError::ResponseParseError { .. }),
+            "expected ResponseParseError, got {error:?}"
+        );
+        Ok(())
+    }
+
+    /// Tool-call arguments are the runner's own JSON, forwarded verbatim —
+    /// never quietly replaced by an empty string.
+    #[test]
+    fn tool_call_arguments_are_forwarded_verbatim() -> TestResult {
+        let event = ClaudeEvent::Assistant {
+            message: ClaudeMessage {
+                id: Some("m1".to_owned()),
+                message_type: Some("message".to_owned()),
+                role: "assistant".to_owned(),
+                model: None,
+                content: vec![ContentItem::ToolUse {
+                    id: "call_1".to_owned(),
+                    tool_data: ToolData::Read {
+                        file_path: "/tmp/x".to_owned(),
+                        offset: None,
+                        limit: None,
+                    },
+                }],
+                stop_reason: None,
+                usage: None,
+            },
+            session_id: Some("s1".to_owned()),
+            parent_tool_use_id: None,
+            uuid: None,
+        };
+
+        let mut usage = Usage::default();
+        let (events, stop) = map_claude_event(event, &mut usage)?;
+        assert!(stop.is_none());
+        let Some(ProviderEvent::ToolCallDelta {
+            arguments_delta,
+            name,
+            ..
+        }) = events.first()
+        else {
+            return Err(format!("expected a ToolCallDelta, got {events:?}").into());
+        };
+        assert_eq!(name.as_deref(), Some("Read"));
+        let parsed: Value = serde_json::from_str(arguments_delta)?;
+        assert_eq!(parsed["file_path"], serde_json::json!("/tmp/x"));
+        Ok(())
     }
 
     #[test]

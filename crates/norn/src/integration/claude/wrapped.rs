@@ -6,7 +6,6 @@
 //! replays its stream-json events into Norn [`SessionEvent`]s, and tracks
 //! the Claude session id for legitimate resumption.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -99,13 +98,22 @@ impl NornWrappedClaudeCode {
     pub fn run(&self, prompt: &str) -> Result<Vec<SessionEvent>, IntegrationError> {
         let cmd = self.build_command(prompt);
         let claude_events = spawn_and_collect(&cmd)?;
-        let session_events = self.capture_session_events(&claude_events);
+        let session_events = self.capture_session_events(&claude_events)?;
         Ok(session_events)
     }
 
     /// Map a slice of [`ClaudeEvent`]s into [`SessionEvent`]s, threading the
     /// Claude session id into the wrapper for resumption. Public for tests.
-    pub fn capture_session_events(&self, events: &[ClaudeEvent]) -> Vec<SessionEvent> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IntegrationError::ClaudeRunnerError`] when a captured
+    /// tool-use payload is malformed. A tool call that cannot be named cannot
+    /// be recorded honestly in the session transcript either.
+    pub fn capture_session_events(
+        &self,
+        events: &[ClaudeEvent],
+    ) -> Result<Vec<SessionEvent>, IntegrationError> {
         let mut out = Vec::new();
         for ev in events {
             if let Some(session_id) = claude_session_id_of(ev) {
@@ -116,24 +124,24 @@ impl NornWrappedClaudeCode {
             }
             match ev {
                 ClaudeEvent::Assistant { message, .. } => {
-                    let tool_calls = message
-                        .content
-                        .iter()
-                        .filter_map(|item| {
-                            if let ContentItem::ToolUse { id, tool_data } = item {
-                                let (name, input) = tool_data_pair(tool_data);
-                                Some(ToolCallEvent {
-                                    call_id: id.clone(),
-                                    name,
-                                    arguments: input,
-                                    kind: crate::provider::request::ToolCallKind::Function,
-                                    caller: crate::provider::request::ToolCallCaller::Absent,
-                                })
-                            } else {
-                                None
+                    let mut tool_calls = Vec::new();
+                    for item in &message.content {
+                        let ContentItem::ToolUse { id, tool_data } = item else {
+                            continue;
+                        };
+                        let (name, input) = tool_data_pair(tool_data).map_err(|error| {
+                            IntegrationError::ClaudeRunnerError {
+                                reason: error.to_string(),
                             }
-                        })
-                        .collect();
+                        })?;
+                        tool_calls.push(ToolCallEvent {
+                            call_id: id.clone(),
+                            name,
+                            arguments: input,
+                            kind: crate::provider::request::ToolCallKind::Function,
+                            caller: crate::provider::request::ToolCallCaller::Absent,
+                        });
+                    }
                     let content = message.text_items().collect::<Vec<&str>>().join("\n");
                     out.push(SessionEvent::AssistantMessage {
                         response_items: Vec::new(),
@@ -177,18 +185,22 @@ impl NornWrappedClaudeCode {
                     result: Some(value),
                     ..
                 } => {
-                    let mut data = HashMap::new();
+                    // Built as a JSON object directly rather than converted
+                    // from a map: there is no conversion left to fail, so no
+                    // fallback can quietly replace the runner's result with
+                    // `null` the way `to_value(..).unwrap_or(Value::Null)` did.
+                    let mut data = serde_json::Map::new();
                     data.insert("result".to_owned(), value.clone());
                     out.push(SessionEvent::Custom {
                         base: EventBase::new(None),
                         event_type: "claude_code.result".to_owned(),
-                        data: serde_json::to_value(&data).unwrap_or(Value::Null),
+                        data: Value::Object(data),
                     });
                 }
                 _ => {}
             }
         }
-        out
+        Ok(out)
     }
 }
 
@@ -260,9 +272,11 @@ mod tests {
         );
     }
 
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
     // R2 acceptance: Claude Code stream events convert into Norn SessionEvents.
     #[test]
-    fn capture_session_events_maps_assistant_and_result() {
+    fn capture_session_events_maps_assistant_and_result() -> TestResult {
         let wrapper = NornWrappedClaudeCode::new(wrapper_config());
         let claude_events = vec![
             ClaudeEvent::System(Box::new(SystemEventData {
@@ -301,17 +315,63 @@ mod tests {
                 usage: None,
             },
         ];
-        let events = wrapper.capture_session_events(&claude_events);
+        let events = wrapper.capture_session_events(&claude_events)?;
         assert!(events.iter().any(
             |e| matches!(e, SessionEvent::AssistantMessage { content, .. } if content == "ok")
         ));
         assert!(events.iter().any(|e| matches!(
             e,
-            SessionEvent::Custom { event_type, .. } if event_type == "claude_code.result"
+            SessionEvent::Custom { event_type, data, .. }
+                if event_type == "claude_code.result"
+                    && data["result"] == serde_json::json!({"final": true})
         )));
         assert_eq!(
             wrapper.claude_session_id().as_deref(),
             Some("claude-session-1")
         );
+        Ok(())
+    }
+
+    /// A tool-use payload the wrapped runner emitted without a name cannot be
+    /// written into the transcript under an invented name: the capture fails
+    /// typed instead.
+    #[test]
+    fn capture_session_events_rejects_a_nameless_tool_payload() -> TestResult {
+        use claude_runner::events::ToolData;
+
+        let wrapper = NornWrappedClaudeCode::new(wrapper_config());
+        let claude_events = vec![ClaudeEvent::Assistant {
+            message: ClaudeMessage {
+                id: Some("m1".to_owned()),
+                message_type: Some("message".to_owned()),
+                role: "assistant".to_owned(),
+                model: None,
+                content: vec![ContentItem::ToolUse {
+                    id: "call_1".to_owned(),
+                    tool_data: ToolData::Unknown {
+                        name: None,
+                        input: Some(serde_json::json!({"a": 1})),
+                        extra: std::collections::HashMap::new(),
+                    },
+                }],
+                stop_reason: None,
+                usage: None,
+            },
+            session_id: Some("claude-session-1".to_owned()),
+            parent_tool_use_id: None,
+            uuid: None,
+        }];
+
+        let Err(error) = wrapper.capture_session_events(&claude_events) else {
+            return Err("a nameless tool payload must not be captured as a tool call".into());
+        };
+        match error {
+            IntegrationError::ClaudeRunnerError { reason } => assert!(
+                reason.contains("no tool name"),
+                "reason names the malformed payload: {reason}"
+            ),
+            other => return Err(format!("expected ClaudeRunnerError, got {other:?}").into()),
+        }
+        Ok(())
     }
 }
