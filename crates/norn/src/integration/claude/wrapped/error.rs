@@ -65,6 +65,12 @@ pub enum NornWrappedClaudeError {
     #[error("Norn-wrapped Claude SDK session requires an active Tokio runtime: {0}")]
     RuntimeUnavailable(#[source] tokio::runtime::TryCurrentError),
 
+    /// Claude Code has no explicit `none` effort value; omission is distinct.
+    #[error(
+        "reasoning effort 'none' is not supported by Claude Code; omit reasoning_effort to use the Claude default"
+    )]
+    UnsupportedReasoningEffortNone,
+
     /// The high-level Claude SDK query rejected or failed an operation.
     #[error(transparent)]
     Query(#[from] QueryError),

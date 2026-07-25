@@ -11,7 +11,7 @@ use std::pin::Pin;
 use claude_runner::events::{
     ClaudeMessage, ContentItem, StreamEvent, ToolData, Usage as ClaudeUsage,
 };
-use claude_runner::types::{Model, OutputFormat};
+use claude_runner::types::{InputFormat, Model, OutputFormat};
 use claude_runner::{ClaudeCommand, ClaudeEvent, ClaudeProcess};
 use futures_util::Stream;
 use serde_json::Value;
@@ -56,12 +56,16 @@ pub struct StepOutcome {
     pub stop_reason: StopReason,
 }
 
-/// Provider implementation that routes requests through the Claude CLI.
+/// Provider implementation that routes model-only requests through the Claude CLI.
 ///
 /// `ClaudeRunnerAdapter::stream` builds a [`ClaudeCommand`] with
 /// `--output-format stream-json --include-partial-messages`, spawns a
 /// [`ClaudeProcess`], and forwards each line-delimited [`ClaudeEvent`] as a
-/// [`ProviderEvent`].
+/// [`ProviderEvent`]. Native Claude tools and ambient settings are disabled.
+/// Requests containing Norn tool schemas are rejected because the provider
+/// adapter cannot safely bind those schemas to Norn's governed tool runtime;
+/// use [`NornWrappedClaudeSession`](super::NornWrappedClaudeSession) with its
+/// strict MCP bridge for agentic execution.
 pub struct ClaudeRunnerAdapter {
     config: ClaudeRunnerConfig,
 }
@@ -87,16 +91,16 @@ impl ClaudeRunnerAdapter {
         request: &ProviderRequest,
     ) -> Result<ClaudeCommand, ProviderError> {
         validation::reject_canonical_response_items(request)?;
+        validation::reject_unbound_tools(request)?;
         let prompt = render_prompt(&request.messages);
         let system = render_system_prompt(&request.messages);
 
-        let mut cmd = ClaudeCommand::new()
+        let mut cmd = ClaudeCommand::minimal_subscription()
             .binary(self.config.runner_path.to_string_lossy().into_owned())
             .prompt(prompt)
-            .print_mode()
+            .input_format(InputFormat::Text)
             .output_format(OutputFormat::StreamJson)
-            .include_partial_messages()
-            .dangerously_skip_permissions();
+            .include_partial_messages();
         if !system.is_empty() {
             cmd = cmd.system_prompt(system);
         }

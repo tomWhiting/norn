@@ -18,6 +18,12 @@ mod adapter;
 mod wrapped;
 
 pub use adapter::{ClaudeRunnerAdapter, ClaudeRunnerConfig, StepOutcome};
+/// Exact Claude Runner SDK dependency used by this Norn build.
+///
+/// Downstream users of the wrapper can name its event, control, and query
+/// types through this re-export without adding a second potentially
+/// incompatible `claude_runner` revision.
+pub use claude_runner as sdk;
 pub use wrapped::{
     NornWrappedClaudeCode, NornWrappedClaudeConfig, NornWrappedClaudeControl,
     NornWrappedClaudeError, NornWrappedClaudeSession,

@@ -18,6 +18,17 @@ pub(super) fn reject_canonical_response_items(
     Ok(())
 }
 
+pub(super) fn reject_unbound_tools(request: &ProviderRequest) -> Result<(), ProviderError> {
+    if request.tools.is_empty() {
+        return Ok(());
+    }
+    Err(ProviderError::UnsupportedFeature {
+        feature: "Norn tool schemas through the model-only Claude Runner adapter; use \
+                  NornWrappedClaudeSession with a strict Norn MCP server"
+            .to_owned(),
+    })
+}
+
 pub(super) fn claude_effort(
     request: &ProviderRequest,
 ) -> Result<Option<EffortLevel>, ProviderError> {

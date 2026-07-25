@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use super::*;
-use crate::provider::request::{ReasoningEffort, ToolCallCaller};
+use crate::provider::request::{ReasoningEffort, ToolCallCaller, ToolDefinition};
+use crate::provider::tools::ProviderToolDefinition;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -86,5 +87,44 @@ fn explicit_none_reasoning_effort_fails_before_spawn() -> TestResult {
         }
         Ok(_) => return Err("explicit 'none' must fail before spawning Claude Runner".into()),
     }
+    Ok(())
+}
+
+#[test]
+fn adapter_is_isolated_and_rejects_unbound_norn_tools() -> TestResult {
+    let command = adapter().build_command(&request(None))?;
+    let arguments = command.build_args();
+
+    assert_eq!(effort_argument(&arguments), None);
+    assert!(arguments.windows(2).any(|pair| pair == ["--tools", ""]));
+    assert!(
+        arguments
+            .windows(2)
+            .any(|pair| pair == ["--setting-sources", ""])
+    );
+    assert!(
+        !arguments
+            .iter()
+            .any(|argument| argument == "--dangerously-skip-permissions")
+    );
+    assert!(
+        arguments
+            .windows(2)
+            .any(|pair| pair == ["--input-format", "text"])
+    );
+
+    let mut request = request(None);
+    request
+        .tools
+        .push(ProviderToolDefinition::Function(ToolDefinition {
+            name: "read".to_owned(),
+            description: "Read a file".to_owned(),
+            parameters: serde_json::json!({"type": "object"}),
+        }));
+    assert!(matches!(
+        adapter().build_command(&request),
+        Err(ProviderError::UnsupportedFeature { feature })
+            if feature.contains("NornWrappedClaudeSession")
+    ));
     Ok(())
 }

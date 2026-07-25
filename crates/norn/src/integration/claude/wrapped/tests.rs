@@ -35,6 +35,8 @@ fn wrapper_config(claude_code_path: PathBuf) -> NornWrappedClaudeConfig {
         claude_code_path,
         norn_tools: vec!["read".to_owned(), "write".to_owned()],
         system_prompt: "you are norn-wrapped".to_owned(),
+        model: Some("claude-opus-5".to_owned()),
+        reasoning_effort: Some(crate::provider::request::ReasoningEffort::Max),
         mcp_server_address:
             r#""/opt/Norn MCP/bin/server" --mode "stdio fast" 'literal value' path\ with\ spaces"#
                 .to_owned(),
@@ -72,6 +74,8 @@ fn sdk_command_is_minimal_strict_and_parses_mcp_command_arguments() {
         argument_value(&arguments, "--allowedTools"),
         Some("mcp__norn__read,mcp__norn__write")
     );
+    assert_eq!(argument_value(&arguments, "--model"), Some("claude-opus-5"));
+    assert_eq!(argument_value(&arguments, "--effort"), Some("max"));
 
     let mcp: serde_json::Value =
         serde_json::from_str(argument_value(&arguments, "--mcp-config").unwrap()).unwrap();
@@ -83,6 +87,16 @@ fn sdk_command_is_minimal_strict_and_parses_mcp_command_arguments() {
         mcp["mcpServers"]["norn"]["args"],
         serde_json::json!(["--mode", "stdio fast", "literal value", "path with spaces"])
     );
+}
+
+#[test]
+fn explicit_none_effort_is_rejected_before_spawn() {
+    let mut config = wrapper_config(PathBuf::from("claude"));
+    config.reasoning_effort = Some(crate::provider::request::ReasoningEffort::None);
+    assert!(matches!(
+        config.build_sdk_command(),
+        Err(NornWrappedClaudeError::UnsupportedReasoningEffortNone)
+    ));
 }
 
 #[test]

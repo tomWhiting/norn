@@ -1,22 +1,15 @@
 use std::path::PathBuf;
 
 use claude_runner::ClaudeCommand;
+use claude_runner::types::{EffortLevel, InputFormat, Model};
 use serde::Serialize;
+
+use crate::provider::request::ReasoningEffort;
 
 use super::NornWrappedClaudeError;
 use super::command_line::parse_command_line;
 
 const NORN_MCP_SERVER_NAME: &str = "norn";
-const MINIMAL_SETTINGS: &str =
-    r#"{"disableAllHooks":true,"disableAgentView":true,"disableBundledSkills":true}"#;
-const MINIMAL_DISABLE_ENV_VARS: &[&str] = &[
-    "CLAUDE_CODE_DISABLE_AGENT_VIEW",
-    "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
-    "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
-    "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS",
-    "CLAUDE_CODE_DISABLE_CLAUDE_MDS",
-    "CLAUDE_CODE_DISABLE_CRON",
-];
 
 /// Configuration shared by one-shot compatibility calls and persistent
 /// [`NornWrappedClaudeSession`](super::NornWrappedClaudeSession)s.
@@ -30,6 +23,12 @@ pub struct NornWrappedClaudeConfig {
     pub norn_tools: Vec<String>,
     /// System prompt that fully replaces Claude Code's default.
     pub system_prompt: String,
+    /// Initial Claude model. `None` leaves selection to the signed-in Claude
+    /// Code account's current default.
+    pub model: Option<String>,
+    /// Initial Claude reasoning effort. `None` leaves the Claude default
+    /// untouched; explicit `none` is rejected before spawning.
+    pub reasoning_effort: Option<ReasoningEffort>,
     /// Shell-style command line that starts Norn's stdio MCP server.
     ///
     /// This compatibility field is parsed into an executable and argument
@@ -57,30 +56,22 @@ impl NornWrappedClaudeConfig {
             .binary(self.claude_binary()?)
             .system_prompt(self.system_prompt.clone())
             .mcp_config(self.serialized_mcp_configuration()?);
-        self.apply_norn_tool_permissions(command)
+        self.apply_launch_selection(self.apply_norn_tool_permissions(command)?)
     }
 
     pub(super) fn build_legacy_command(
         &self,
         prompt: &str,
     ) -> Result<ClaudeCommand, NornWrappedClaudeError> {
-        let mut command = ClaudeCommand::new()
+        let command = ClaudeCommand::minimal_subscription()
             .binary(self.claude_binary()?)
             .prompt(prompt)
-            .print_mode()
+            .input_format(InputFormat::Text)
             .output_format(claude_runner::OutputFormat::StreamJson)
             .include_partial_messages()
             .system_prompt(self.system_prompt.clone())
-            .tools(String::new())
-            .mcp_config(self.serialized_mcp_configuration()?)
-            .strict_mcp_config()
-            .no_setting_sources()
-            .settings_json(MINIMAL_SETTINGS)
-            .disable_slash_commands();
-        for name in MINIMAL_DISABLE_ENV_VARS {
-            command = command.env(*name, "1");
-        }
-        self.apply_norn_tool_permissions(command)
+            .mcp_config(self.serialized_mcp_configuration()?);
+        self.apply_launch_selection(self.apply_norn_tool_permissions(command)?)
     }
 
     fn serialized_mcp_configuration(&self) -> Result<String, NornWrappedClaudeError> {
@@ -140,5 +131,27 @@ impl NornWrappedClaudeConfig {
             permission_rules.push(format!("mcp__norn__{tool}"));
         }
         Ok(command.allowed_tools(permission_rules))
+    }
+
+    fn apply_launch_selection(
+        &self,
+        mut command: ClaudeCommand,
+    ) -> Result<ClaudeCommand, NornWrappedClaudeError> {
+        if let Some(model) = self.model.as_ref() {
+            command = command.model(Model::full(model.clone()));
+        }
+        if let Some(effort) = self.reasoning_effort {
+            command = command.effort(match effort {
+                ReasoningEffort::None => {
+                    return Err(NornWrappedClaudeError::UnsupportedReasoningEffortNone);
+                }
+                ReasoningEffort::Low => EffortLevel::Low,
+                ReasoningEffort::Medium => EffortLevel::Medium,
+                ReasoningEffort::High => EffortLevel::High,
+                ReasoningEffort::XHigh => EffortLevel::XHigh,
+                ReasoningEffort::Max => EffortLevel::Max,
+            });
+        }
+        Ok(command)
     }
 }
