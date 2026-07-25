@@ -22,15 +22,18 @@ fn main() -> ProcessExitCode {
         );
     }
     // Send tracing output to stderr so stdout stays clean for piping
-    // (DESIGN CO5). The subscriber is best-effort: if a global subscriber
-    // is already installed (tests, embedding), silently continue.
-    let _ = tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-        )
-        .try_init();
+    // (DESIGN CO5, D9). Losing the install means another global
+    // subscriber owns the process's tracing and norn's stderr routing was
+    // discarded — never silently: stdout is the machine-output channel in
+    // `-f json` / `-f stream-json`, and `tracing_subscriber`'s own default
+    // writer is stdout.
+    if !print::ensure_stderr_tracing() {
+        eprintln!(
+            "[WARN] A tracing subscriber was already installed by this process, so norn could \
+             not route engine diagnostics to stderr; with `-f json` / `-f stream-json` that \
+             subscriber must not write to stdout or it will corrupt the output stream."
+        );
+    }
 
     let mut cli = Cli::parse();
     let command = cli.command.take();

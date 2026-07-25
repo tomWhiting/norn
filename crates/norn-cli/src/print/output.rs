@@ -11,9 +11,12 @@
 //! - [`super::stream_renderer::spawn_stream_renderer`]: a background
 //!   tokio task that consumes `ProviderEvent`s arriving on the
 //!   [`tokio::sync::broadcast`] channel and writes one NDJSON object per
-//!   line to stdout as they arrive (the per-event payload mapping lives
-//!   HERE, in [`agent_event_to_value`]). [`emit_stream_completed`]
-//!   writes the final `completed` event after `run_agent_step` returns.
+//!   line, as they arrive, onto the run's single
+//!   [`StreamSink`](super::stream_renderer::StreamSink) — stdout by
+//!   default, the `-o PATH` file when one is given (the per-event
+//!   payload mapping lives HERE, in [`agent_event_to_value`]).
+//!   [`emit_stream_completed`] writes the final `completed` event onto
+//!   the same sink after `run_agent_step` returns.
 //!
 //! On a FAILED plain-mode run the same two machine surfaces still emit a
 //! terminal envelope, carrying [`StopInfo::Error`]

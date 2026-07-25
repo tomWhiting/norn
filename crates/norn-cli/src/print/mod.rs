@@ -10,6 +10,7 @@ pub mod provider;
 mod provider_trace;
 mod step_output;
 pub mod stream_renderer;
+mod tracing_setup;
 
 pub use orchestrator::{run, run_async};
 pub use output::{
@@ -18,4 +19,7 @@ pub use output::{
 };
 pub use provider::{BuiltProvider, ProviderBuildError, build_provider};
 pub(crate) use step_output::emit_error_envelope;
-pub use stream_renderer::{StreamRendererHandle, spawn_stream_renderer};
+pub use stream_renderer::{
+    StreamRendererHandle, StreamSink, StreamWrite, StreamWriter, spawn_stream_renderer,
+};
+pub use tracing_setup::ensure_stderr_tracing;

@@ -54,9 +54,11 @@ use super::jsonrpc::{DrivenRun, SharedRunDriver};
 use super::output::{StopInfo, drain_diagnostics, extract_output_and_usage};
 use super::provider::build_provider;
 use super::step_output::{
-    StepOutput, driven_result_value, emit_error_envelope, write_handled_locally, write_output,
+    StepOutput, driven_result_value, emit_error_envelope, emit_error_envelope_on_stream,
+    write_handled_locally, write_output,
 };
-use super::stream_renderer::spawn_stream_renderer;
+use super::stream_renderer::{StreamSink, spawn_stream_renderer};
+use super::tracing_setup::ensure_stderr_tracing;
 use crate::cli::ExitCode;
 use crate::cli::{Cli, OutputFormat, Protocol};
 use crate::commands::slash::{
@@ -79,6 +81,17 @@ const BROADCAST_BUFFER_CAPACITY: usize = 256;
 
 /// Entry point used by `main.rs::run_print`. Spins up a multi-threaded
 /// tokio runtime and dispatches to [`run_async`].
+///
+/// # Embedder contract
+///
+/// In the machine output modes (`-f json`, `-f stream-json`) stdout
+/// carries the requested format and NOTHING else: one JSON envelope, or
+/// one NDJSON object per line. Any tracing subscriber a host installs
+/// before calling this MUST NOT write to stdout — `tracing_subscriber`'s
+/// default writer does, and a global subscriber cannot be replaced once
+/// installed. Hosts that install no subscriber are covered: the print
+/// path installs the stderr-routed one itself
+/// ([`ensure_stderr_tracing`]).
 ///
 /// # Errors
 ///
@@ -117,7 +130,23 @@ pub fn run(cli: &Cli) -> ExitCode {
 
 /// Async print-mode body. Public so integration tests can drive it from
 /// inside an existing tokio runtime.
+///
+/// # Embedder contract
+///
+/// In the machine output modes (`-f json`, `-f stream-json`) stdout
+/// carries the requested format ONLY. This function installs the
+/// stderr-routed tracing subscriber when the host installed none, so the
+/// engine's diagnostics cannot land on stdout by default. A subscriber
+/// the host installed first keeps ownership — the global subscriber is
+/// set once per process — and that subscriber MUST NOT write to stdout,
+/// or it will corrupt the JSON / NDJSON stream this function produces.
 pub async fn run_async(cli: &Cli) -> ExitCode {
+    // Guarantees a stderr-routed subscriber for the library path (D9 /
+    // M1). The outcome is deliberately not reported here: when the call
+    // loses, the only logging channel available is the very subscriber
+    // whose routing is in question — the contract above is the surface
+    // that covers that case, and the binary warns on stderr directly.
+    ensure_stderr_tracing();
     match execute(cli).await {
         Ok(code) => code,
         Err(err) => report(&err),
@@ -360,10 +389,41 @@ pub(super) async fn orchestrate(
         .map(|entry| entry.id.clone());
     let is_driven = driven_run.is_some();
 
-    let result = orchestrate_run(cli, assembly, prompt, output_schema, driven_run).await;
+    // The `stream-json` sink is opened ONCE per invocation, before the
+    // run, and is the single destination of the streamed events, the
+    // diagnostics, and the terminal envelope — including the error
+    // envelope below, which must append to the stream rather than
+    // truncate the `-o PATH` file the renderer has been writing (D9 /
+    // M3). Opening failure fails the run loudly; there is no stdout
+    // fallback.
+    let (stream_sink, sink_error) = match StreamSink::for_invocation(cli, is_driven) {
+        Ok(sink) => (sink, None),
+        Err(err) => (None, Some(err)),
+    };
+
+    let result = match sink_error {
+        Some(err) => Err(err),
+        None => {
+            orchestrate_run(
+                cli,
+                assembly,
+                prompt,
+                output_schema,
+                driven_run,
+                stream_sink.as_ref(),
+            )
+            .await
+        }
+    };
 
     if !is_driven && let Err(err) = result.as_ref() {
-        emit_error_envelope(cli, err, Some(&model), session_id.as_deref());
+        emit_error_envelope_on_stream(
+            cli,
+            err,
+            Some(&model),
+            session_id.as_deref(),
+            stream_sink.as_ref(),
+        );
     }
     result
 }
@@ -377,6 +437,7 @@ async fn orchestrate_run(
     prompt: String,
     output_schema: Option<Value>,
     driven_run: Option<DrivenRun>,
+    stream_sink: Option<&StreamSink>,
 ) -> Result<ExitCode, PrintError> {
     let PrintAssembly {
         mut parts,
@@ -482,7 +543,13 @@ async fn orchestrate_run(
                     .finish_with_result(Value::Null)
                     .map_err(|err| PrintError::Io(err.to_string()))?;
             } else {
-                write_handled_locally(cli, format, &parts.model, output_session_id.as_deref())?;
+                write_handled_locally(
+                    cli,
+                    format,
+                    &parts.model,
+                    output_session_id.as_deref(),
+                    stream_sink,
+                )?;
             }
             return Ok(ExitCode::Success);
         }
@@ -532,7 +599,19 @@ async fn orchestrate_run(
         let (stream_renderer, event_emitter) = if let Some(driver) = driven.as_ref() {
             (None, Some(driver.attach_emitter(&tx)))
         } else if matches!(format, OutputFormat::StreamJson) {
-            (Some(spawn_stream_renderer(&tx, cli.partial)), None)
+            // The sink the terminal envelope is written to as well, so
+            // `-o PATH` receives the WHOLE stream in order (D9 / M3).
+            let Some(sink) = stream_sink else {
+                return Err(PrintError::Agent(
+                    "stream-json output requested without a stream sink; the print path \
+                     failed to open one"
+                        .to_string(),
+                ));
+            };
+            (
+                Some(spawn_stream_renderer(&tx, cli.partial, sink.clone())),
+                None,
+            )
         } else {
             (None, None)
         };
@@ -677,7 +756,7 @@ async fn orchestrate_run(
                 .finish_with_result(result_value)
                 .map_err(|err| PrintError::Io(err.to_string()))?;
         } else {
-            write_output(cli, format, &step)?;
+            write_output(cli, format, &step, stream_sink)?;
         }
     }
 

@@ -1,8 +1,10 @@
 //! Post-step output dispatch for print-mode execution.
 //!
 //! Bundles the completed step's data ([`StepOutput`]) and routes it to the
-//! selected output surface: text / json / stream-json to stdout or `-o
-//! PATH`, or the driven-mode `run/execute` result value. Extracted from
+//! selected output surface: text / json to stdout or `-o PATH`,
+//! stream-json onto the invocation's [`StreamSink`] (which already
+//! resolved stdout vs `-o PATH` and carries the streamed events), or the
+//! driven-mode `run/execute` result value. Extracted from
 //! `orchestrator.rs` so that module stays within the 500-line budget.
 
 use serde_json::Value;
@@ -15,6 +17,7 @@ use super::output::{
     ENVELOPE_VERSION, JsonEnvelope, StopInfo, UsageOut, emit_stream_completed, render_json,
     render_text,
 };
+use super::stream_renderer::StreamSink;
 use crate::cli::{Cli, OutputFormat};
 
 fn create_output_file(
@@ -64,18 +67,41 @@ impl StepOutput<'_> {
 }
 
 /// Write the completed step through the format-selected renderer.
+///
+/// `stream` is the invocation's `stream-json` sink — the destination the
+/// streamed events already went to. It is required in
+/// [`OutputFormat::StreamJson`]: writing the terminal envelope anywhere
+/// else would split the stream `-o` asked to redirect (D9 / M3).
 pub(crate) fn write_output(
     cli: &Cli,
     format: OutputFormat,
     step: &StepOutput<'_>,
+    stream: Option<&StreamSink>,
 ) -> Result<(), PrintError> {
     match format {
         OutputFormat::Text => write_text(cli, step.output, step.diagnostics),
         OutputFormat::Json => write_json(cli, step),
         OutputFormat::StreamJson => {
-            write_stream_completed(cli, step.output, step.usage, step.stop, step.diagnostics)
+            let sink = require_stream_sink(stream)?;
+            write_stream_completed(sink, step.output, step.usage, step.stop, step.diagnostics)
         }
     }
+}
+
+/// The `stream-json` sink, or a typed invariant failure.
+///
+/// The print path opens the sink before the run and hands it to both the
+/// renderer and the output writers, so a missing sink here means the
+/// wiring broke — surfaced rather than silently writing the envelope to a
+/// second, unsynchronised destination.
+fn require_stream_sink(stream: Option<&StreamSink>) -> Result<&StreamSink, PrintError> {
+    stream.ok_or_else(|| {
+        PrintError::Agent(
+            "stream-json output requested without a stream sink; the print path failed to \
+             open one"
+                .to_owned(),
+        )
+    })
 }
 
 fn write_text(
@@ -107,20 +133,20 @@ fn write_json(cli: &Cli, step: &StepOutput<'_>) -> Result<(), PrintError> {
     Ok(())
 }
 
+/// Append the diagnostics and the terminal `completed` envelope to the
+/// stream the renderer already wrote its events onto.
+///
+/// A reader that closed the pipe gets nothing: an envelope aimed at a
+/// dead pipe would either fail loudly for no reason or make a truncated
+/// stream look complete.
 fn write_stream_completed(
-    cli: &Cli,
+    sink: &StreamSink,
     output: Option<&Value>,
     usage: &Usage,
     stop: &StopInfo,
     diagnostics: &[norn::integration::NornDiagnostic],
 ) -> Result<(), PrintError> {
-    if let Some(path) = cli.output.as_ref() {
-        let (_descriptor_permit, mut file) = create_output_file(path)?;
-        emit_stream_completed(&mut file, output, usage, stop, diagnostics)?;
-        return Ok(());
-    }
-    let mut stdout = std::io::stdout().lock();
-    emit_stream_completed(&mut stdout, output, usage, stop, diagnostics)?;
+    sink.write_with(|writer| emit_stream_completed(writer, output, usage, stop, diagnostics))?;
     Ok(())
 }
 
@@ -133,6 +159,7 @@ pub(crate) fn write_handled_locally(
     format: OutputFormat,
     model: &str,
     session_id: Option<&str>,
+    stream: Option<&StreamSink>,
 ) -> Result<(), PrintError> {
     let usage = Usage::default();
     let diagnostics: Vec<norn::integration::NornDiagnostic> = Vec::new();
@@ -159,20 +186,8 @@ pub(crate) fn write_handled_locally(
             Ok(())
         }
         OutputFormat::StreamJson => {
-            if let Some(path) = cli.output.as_ref() {
-                let (_descriptor_permit, mut file) = create_output_file(path)?;
-                emit_stream_completed(&mut file, None, &usage, &StopInfo::Completed, &diagnostics)?;
-            } else {
-                let mut stdout = std::io::stdout().lock();
-                emit_stream_completed(
-                    &mut stdout,
-                    None,
-                    &usage,
-                    &StopInfo::Completed,
-                    &diagnostics,
-                )?;
-            }
-            Ok(())
+            let sink = require_stream_sink(stream)?;
+            write_stream_completed(sink, None, &usage, &StopInfo::Completed, &diagnostics)
         }
     }
 }
@@ -205,6 +220,23 @@ pub(crate) fn emit_error_envelope(
     model: Option<&str>,
     session_id: Option<&str>,
 ) {
+    emit_error_envelope_on_stream(cli, err, model, session_id, None);
+}
+
+/// [`emit_error_envelope`] for call sites that already own the
+/// invocation's `stream-json` sink.
+///
+/// A failure discovered AFTER the renderer streamed events must append
+/// its envelope to that same stream — writing it to a freshly created
+/// `-o PATH` file would truncate the events already in it, and writing it
+/// to stdout would split a redirected stream (D9 / M3).
+pub(crate) fn emit_error_envelope_on_stream(
+    cli: &Cli,
+    err: &PrintError,
+    model: Option<&str>,
+    session_id: Option<&str>,
+    stream: Option<&StreamSink>,
+) {
     let Some(class) = err.envelope_class() else {
         return;
     };
@@ -213,7 +245,7 @@ pub(crate) fn emit_error_envelope(
         message: err.to_string(),
         class: class.to_owned(),
     };
-    if let Err(write_err) = write_error_envelope(cli, format, &stop, model, session_id) {
+    if let Err(write_err) = write_error_envelope(cli, format, &stop, model, session_id, stream) {
         eprintln!("norn: failed to write the error envelope: {write_err}");
     }
 }
@@ -232,7 +264,8 @@ fn write_error_envelope(
     stop: &StopInfo,
     model: Option<&str>,
     session_id: Option<&str>,
-) -> std::io::Result<()> {
+    stream: Option<&StreamSink>,
+) -> Result<(), PrintError> {
     let usage = Usage::default();
     match format {
         OutputFormat::Text => Ok(()),
@@ -249,20 +282,30 @@ fn write_error_envelope(
             };
             if let Some(path) = cli.output.as_ref() {
                 let (_descriptor_permit, mut file) = create_output_file(path)?;
-                render_json(&mut file, &envelope)
+                render_json(&mut file, &envelope)?;
             } else {
                 let mut stdout = std::io::stdout().lock();
-                render_json(&mut stdout, &envelope)
+                render_json(&mut stdout, &envelope)?;
             }
+            Ok(())
         }
+        // With a live stream sink the envelope APPENDS to the stream the
+        // renderer wrote (stdout or `-o PATH`). Without one — a failure
+        // before the print path opened a sink, or a non-print caller such
+        // as the session front door — stdout / `-o PATH` is the only
+        // destination and nothing has been streamed yet.
         OutputFormat::StreamJson => {
+            if let Some(sink) = stream {
+                return write_stream_completed(sink, None, &usage, stop, &[]);
+            }
             if let Some(path) = cli.output.as_ref() {
                 let (_descriptor_permit, mut file) = create_output_file(path)?;
-                emit_stream_completed(&mut file, None, &usage, stop, &[])
+                emit_stream_completed(&mut file, None, &usage, stop, &[])?;
             } else {
                 let mut stdout = std::io::stdout().lock();
-                emit_stream_completed(&mut stdout, None, &usage, stop, &[])
+                emit_stream_completed(&mut stdout, None, &usage, stop, &[])?;
             }
+            Ok(())
         }
     }
 }
