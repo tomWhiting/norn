@@ -28,7 +28,7 @@ pub mod variables;
 
 pub use claude::{
     ClaudeRunnerAdapter, ClaudeRunnerConfig, NornWrappedClaudeCode, NornWrappedClaudeConfig,
-    StepOutcome,
+    NornWrappedClaudeControl, NornWrappedClaudeError, NornWrappedClaudeSession, StepOutcome,
 };
 pub use diagnostics::{DiagnosticCollector, DiagnosticSeverity, NornDiagnostic};
 pub use extensions::{
