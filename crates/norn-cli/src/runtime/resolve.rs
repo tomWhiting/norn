@@ -371,7 +371,7 @@ mod tests {
                 resolved
                     .profile
                     .reasoning_effort
-                    .map(|value| value.as_str()),
+                    .map(norn::provider::ReasoningEffort::as_str),
                 Some(effort),
                 "{effort}",
             );
@@ -390,9 +390,9 @@ mod tests {
             "none",
         ])
         .unwrap();
-        let Err(error) = resolve_invocation(&cli) else {
-            panic!("explicit none effort unexpectedly passed");
-        };
+        let result = resolve_invocation(&cli);
+        assert!(result.is_err(), "explicit none effort unexpectedly passed");
+        let error = result.err().unwrap();
         let error = error.to_string();
         assert!(error.contains("reasoning effort 'none'"));
         assert!(error.contains("claude-opus-5"));
@@ -404,9 +404,9 @@ mod tests {
         let _environment = IsolatedResolutionEnvironment::new();
         let cli = Cli::try_parse_from(["norn", "--model", "claude-opus-5", "--provider", "openai"])
             .unwrap();
-        let Err(error) = resolve_invocation(&cli) else {
-            panic!("conflicting provider unexpectedly passed");
-        };
+        let result = resolve_invocation(&cli);
+        assert!(result.is_err(), "conflicting provider unexpectedly passed");
+        let error = result.err().unwrap();
         let error = error.to_string();
         assert!(error.contains("conflicting --provider openai"));
     }
