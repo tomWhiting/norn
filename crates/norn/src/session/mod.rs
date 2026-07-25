@@ -27,6 +27,7 @@ mod provider_state_provenance;
 #[cfg(test)]
 mod provider_state_test_support;
 mod provider_state_validation;
+mod publication_tail_recovery;
 pub mod response_audio;
 mod response_publication_commitment;
 pub mod resume_repair;
@@ -79,6 +80,9 @@ pub(crate) use provider_state_validation::{
     event_cuts_response_anchor, response_publication_group_len, seal_response_publication_group,
     validate_new_response_publication_batches, validate_no_incomplete_legacy_response_publications,
     validate_provider_state_provenance, validate_response_publication_append,
+};
+pub use publication_tail_recovery::{
+    PUBLICATION_TAIL_RECOVERY_EVENT_TYPE, PublicationTailRecovery, PublicationTailRecoveryError,
 };
 pub use response_audio::{
     RESPONSE_AUDIO_ARTIFACT_EVENT_TYPE, ResponseAudioArtifact, ResponseAudioArtifactLink,

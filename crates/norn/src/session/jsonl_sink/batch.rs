@@ -1,4 +1,37 @@
 //! Cross-handle transaction for one ordered session-event group.
+//!
+//! # Group write order is an invariant, not a choice
+//!
+//! Rows are written one at a time, in slice order, so a writer killed
+//! mid-group (`ENOSPC` is the observed case) leaves a durable strict prefix
+//! of it. For a response publication that prefix is *pointer before
+//! pointee*: the epoch boundary and the `provider.state.provenance` marker
+//! land, and the assistant event the marker names does not.
+//!
+//! That order cannot be inverted to make the tear self-consistent. Four
+//! independent structures fix it:
+//!
+//! * the boundary carries
+//!   [`ResponsePublicationCommitment`](crate::session::ResponsePublicationCommitment)
+//!   over *everything that follows it* in the group, so it must be written
+//!   first to be able to commit to the rest;
+//! * `valid_target_shape` places the provenance marker at `boundary + 1` and
+//!   the assistant at `boundary + 2` (or `+ 3` behind a response-audio link);
+//! * the assistant event's `parent_id` is the marker's event id — the chain
+//!   itself runs marker-then-assistant;
+//! * every `ProviderEpochBoundary` cuts the active response anchor, so moving
+//!   the boundary after the assistant would place that assistant in the
+//!   previous epoch and change provider threading for every timeline already
+//!   on disk.
+//!
+//! Inverting the order would also not remove the tear — it would swap a
+//! dangling marker for an orphan assistant carrying no provenance, which
+//! reads as
+//! [`UnmarkedAfterProvenance`](crate::session::ResponseStateDisposition) and
+//! silently drops the anchor. A plain append-only JSONL file has no
+//! group-level atomic commit, so the tear is repaired on the read side
+//! instead: see
+//! [`session::persistence::timeline_tail_recovery`](crate::session::persistence).
 
 use std::io::Write as _;
 

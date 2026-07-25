@@ -118,6 +118,13 @@ pub(super) fn open_existing_for_append(
     Ok(file)
 }
 
+/// Read one existing timeline, repairing both classes of crash tail.
+///
+/// The syntactic tail (a final row that stops mid-JSON) is truncated by
+/// [`recover_incomplete_tail`]; the semantic tail (a complete-looking but
+/// incomplete response-publication group) is quarantined by
+/// [`super::timeline_tail_recovery`]. The returned history is exactly what
+/// the file holds afterwards.
 pub(super) fn open_existing_timeline(
     root: &PrivateRoot,
     relative: &Path,
@@ -127,7 +134,12 @@ pub(super) fn open_existing_timeline(
     file.seek(SeekFrom::Start(0))?;
     let timeline = read_strict_event_file(BufReader::new(&mut file), &root.display_path(relative))
         .map_err(map_strict_error)?;
-    Ok(timeline.events)
+    drop(file);
+    super::timeline_tail_recovery::events_with_recovered_publication_tail(
+        root,
+        relative,
+        timeline.events,
+    )
 }
 
 #[cfg(test)]

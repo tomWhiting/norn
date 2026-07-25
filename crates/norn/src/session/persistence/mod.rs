@@ -42,6 +42,7 @@ pub mod strict;
 mod strict_runtime;
 mod timeline_file;
 mod timeline_lock;
+mod timeline_tail_recovery;
 pub mod types;
 
 #[cfg(test)]
