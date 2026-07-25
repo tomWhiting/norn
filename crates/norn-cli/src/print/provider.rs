@@ -148,14 +148,13 @@ pub async fn build_provider(
     overrides: &ProviderConfigOverrides,
     model: &str,
     oauth_account: Option<&str>,
-    may_reuse_session: bool,
 ) -> Result<BuiltProvider, ProviderBuildError> {
     let resolved_auth = resolve_provider_auth(kind, overrides).map_err(|error| {
         ProviderBuildError::Provider(format!(
             "invalid provider authentication configuration: {error}",
         ))
     })?;
-    let oauth_account = validate_account_request(&resolved_auth, oauth_account, may_reuse_session)?;
+    let oauth_account = validate_account_request(&resolved_auth, oauth_account)?;
     let provider_build_started = provider_trace::provider_build_start(kind, model);
     match kind {
         ProviderKind::Openai => {
@@ -255,21 +254,25 @@ pub async fn build_provider(
     }
 }
 
+/// Check `--account` coherence for this run.
+///
+/// `--account` is an optional picker, never a binding: an omitted account
+/// under OAuth resolves through the catalog's active/default selection,
+/// identically for fresh, resumed, and forked runs (owner ruling
+/// 2026-07-25: sessions are not locked to an account — credential
+/// affinity is reconciled at the session layer by rebinding through an
+/// epoch boundary, never by demanding a flag). The only invalid shape is
+/// naming an account for a backend that has no account catalog.
 fn validate_account_request<'a>(
     resolved_auth: &ResolvedProviderAuth,
     account: Option<&'a str>,
-    may_reuse_session: bool,
 ) -> Result<Option<&'a str>, ProviderBuildError> {
-    match (resolved_auth, account, may_reuse_session) {
-        (ResolvedProviderAuth::OAuth, None, true) => Err(ProviderBuildError::Auth(
-            "resuming, forking, or opening an existing OAuth session requires --account <alias|default>"
-                .to_owned(),
-        )),
-        (ResolvedProviderAuth::OAuth, account, _) => Ok(account),
-        (_, Some(_), _) => Err(ProviderBuildError::Provider(
+    match (resolved_auth, account) {
+        (ResolvedProviderAuth::OAuth, account) => Ok(account),
+        (_, Some(_)) => Err(ProviderBuildError::Provider(
             "--account is only valid for OpenAI OAuth authentication".to_owned(),
         )),
-        (_, None, _) => Ok(None),
+        (_, None) => Ok(None),
     }
 }
 

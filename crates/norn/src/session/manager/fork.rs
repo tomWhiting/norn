@@ -2,7 +2,9 @@ use uuid::Uuid;
 
 use crate::session::ResponseAudioStore;
 use crate::session::branch::ROOT_PATH_ADDRESS;
-use crate::session::events::{ChildBranchKind, EventBase, SessionEvent};
+use crate::session::events::{
+    ChildBranchKind, EventBase, ProviderEpochBoundaryReason, SessionEvent,
+};
 use crate::session::persistence::index::{
     publish_new_fork_session, resolve_latest_session_in_working_dir_with_deadline,
     resolve_session_with_deadline, revalidate_registered_entry,
@@ -110,16 +112,37 @@ impl SessionManager {
                 });
             }
         }
-        let source_entry = match affinity {
-            AffinityMode::StorageOnly => source_entry.clone(),
+        let (source_entry, child_identity, child_adopts_new_identity) = match affinity {
+            AffinityMode::StorageOnly => {
+                let identity = source_entry.provider_state_identity;
+                (source_entry.clone(), identity, false)
+            }
             AffinityMode::Validate(identity) => {
-                validate_or_bind_provider_state_identity(
-                    &self.data_dir,
-                    source_entry,
-                    identity,
-                    self.index_lock_deadline,
-                )?
-                .entry
+                match (source_entry.provider_state_identity, identity) {
+                    (Some(bound), Some(candidate)) if bound != candidate => {
+                        // Fork under a different credential of the same
+                        // operator (owner ruling 2026-07-25: sessions are not
+                        // locked to an account): the CHILD adopts the forker's
+                        // identity behind its own epoch boundary — appended to
+                        // the copied events below — which retires the source's
+                        // provider-side anchors in the child before its
+                        // identity publishes, so the new credential can never
+                        // replay them (AFFINITY-01 holds by construction). The
+                        // source row is never mutated by a fork.
+                        (source_entry.clone(), Some(candidate), true)
+                    }
+                    _ => {
+                        let entry = validate_or_bind_provider_state_identity(
+                            &self.data_dir,
+                            source_entry,
+                            identity,
+                            self.index_lock_deadline,
+                        )?
+                        .entry;
+                        let identity = entry.provider_state_identity;
+                        (entry, identity, false)
+                    }
+                }
             }
         };
         let artifacts = read_session_events_for_entry_with_deadline(
@@ -135,6 +158,20 @@ impl SessionManager {
             });
         }
         ensure_migrated_epoch_boundary_in_events(&source_entry, &mut events)?;
+        if child_adopts_new_identity {
+            let parent_id = events
+                .last()
+                .ok_or_else(|| SessionPersistError::EmptySource {
+                    id: source_entry.id.clone(),
+                })?
+                .base()
+                .id
+                .clone();
+            events.push(SessionEvent::ProviderEpochBoundary {
+                base: EventBase::new(Some(parent_id)),
+                reason: ProviderEpochBoundaryReason::ProviderIdentityAdoption,
+            });
+        }
         let last_event_id = events
             .last()
             .ok_or_else(|| SessionPersistError::EmptySource {
@@ -147,7 +184,7 @@ impl SessionManager {
         let mut new_entry = new_index_entry(Uuid::new_v4().to_string(), options);
         new_entry.fidelity = source_entry.fidelity;
         new_entry.origin = source_entry.origin.clone();
-        new_entry.provider_state_identity = source_entry.provider_state_identity;
+        new_entry.provider_state_identity = child_identity;
         events.push(SessionEvent::ChildBranch {
             base: EventBase::new(Some(last_event_id.clone())),
             parent_session_id: Some(source_entry.id.clone()),

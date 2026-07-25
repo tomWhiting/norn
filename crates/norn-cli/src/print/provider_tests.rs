@@ -98,7 +98,6 @@ async fn missing_oauth_credentials_keep_login_guidance_and_auth_exit() -> TestRe
             &ProviderConfigOverrides::default(),
             "gpt-5.6-sol",
             None,
-            false,
         ),
     )
     .await;
@@ -199,7 +198,6 @@ async fn openai_compatible_requires_base_url() -> TestResult {
             &overrides,
             "local-model",
             None,
-            false,
         ),
     )
     .await;
@@ -224,7 +222,6 @@ async fn openai_compatible_requires_api_key_env() -> TestResult {
             &overrides,
             "local-model",
             None,
-            false,
         ),
     )
     .await;
@@ -249,7 +246,6 @@ async fn openai_compatible_builds_with_api_key_env() -> TestResult {
             &overrides,
             "local-model",
             None,
-            false,
         ),
     )
     .await?;
@@ -267,7 +263,7 @@ async fn openai_responses_builds_with_api_key_env_when_selected() -> TestResult 
     };
     let built = temp_env::async_with_vars(
         [("NORN_TEST_OPENAI_KEY_PRESENT", Some("test-key"))],
-        build_provider(ProviderKind::Openai, &overrides, "gpt-5.5", None, false),
+        build_provider(ProviderKind::Openai, &overrides, "gpt-5.5", None),
     )
     .await?;
     let BuiltProvider::OpenAi(_) = built else {
@@ -288,7 +284,6 @@ async fn explicit_oauth_rejects_api_key_companion_before_environment_lookup() ->
         },
         "gpt-5.5",
         None,
-        false,
     )
     .await;
     let Err(ProviderBuildError::Provider(reason)) = result else {
@@ -312,7 +307,6 @@ async fn explicit_api_key_without_source_rejects_before_oauth_storage_lookup() -
         },
         "gpt-5.5",
         None,
-        true,
     )
     .await;
     let Err(ProviderBuildError::Provider(reason)) = result else {
@@ -336,7 +330,6 @@ async fn claude_runner_rejects_norn_auth_before_adapter_construction() -> TestRe
         },
         "sonnet",
         None,
-        false,
     )
     .await;
     let Err(ProviderBuildError::Provider(reason)) = result else {
@@ -357,14 +350,7 @@ async fn claude_runner_honors_settings_runner_path_override() -> TestResult {
         runner_path: Some(PathBuf::from("/opt/tools/claude-custom")),
         ..ProviderConfigOverrides::default()
     };
-    let built = build_provider(
-        ProviderKind::ClaudeRunner,
-        &overrides,
-        "sonnet",
-        None,
-        false,
-    )
-    .await?;
+    let built = build_provider(ProviderKind::ClaudeRunner, &overrides, "sonnet", None).await?;
     let BuiltProvider::ClaudeRunner(adapter) = built else {
         return Err(std::io::Error::other("expected Claude Runner provider").into());
     };
@@ -378,14 +364,7 @@ async fn claude_runner_honors_settings_runner_path_override() -> TestResult {
 #[tokio::test]
 async fn claude_runner_defaults_to_claude_when_runner_path_unset() -> TestResult {
     let overrides = ProviderConfigOverrides::default();
-    let built = build_provider(
-        ProviderKind::ClaudeRunner,
-        &overrides,
-        "sonnet",
-        None,
-        false,
-    )
-    .await?;
+    let built = build_provider(ProviderKind::ClaudeRunner, &overrides, "sonnet", None).await?;
     let BuiltProvider::ClaudeRunner(adapter) = built else {
         return Err(std::io::Error::other("expected Claude Runner provider").into());
     };
@@ -401,14 +380,7 @@ async fn claude_runner_construction_is_synchronous_and_succeeds() -> TestResult 
     // ClaudeRunnerAdapter::new is infallible — verify build_provider
     // wraps it correctly and returns a usable &dyn Provider.
     let overrides = ProviderConfigOverrides::default();
-    let built = build_provider(
-        ProviderKind::ClaudeRunner,
-        &overrides,
-        "sonnet",
-        None,
-        false,
-    )
-    .await?;
+    let built = build_provider(ProviderKind::ClaudeRunner, &overrides, "sonnet", None).await?;
     if !matches!(&built, BuiltProvider::ClaudeRunner(_)) {
         return Err(std::io::Error::other("expected Claude Runner provider").into());
     }
@@ -418,29 +390,30 @@ async fn claude_runner_construction_is_synchronous_and_succeeds() -> TestResult 
 }
 
 #[test]
-fn resumed_oauth_requires_explicit_account_but_api_key_does_not() -> TestResult {
-    let oauth = validate_account_request(&ResolvedProviderAuth::OAuth, None, true);
-    assert!(matches!(oauth, Err(ProviderBuildError::Auth(_))));
+fn resume_without_account_is_accepted_like_a_fresh_run() -> TestResult {
+    // Owner ruling 2026-07-25: sessions are not locked to an account.
+    // An omitted --account on a resumed/forked run resolves through the
+    // catalog's active/default selection exactly like a fresh run; the
+    // flag is an optional picker, never a requirement.
+    let oauth = validate_account_request(&ResolvedProviderAuth::OAuth, None)?;
+    assert_eq!(oauth, None);
 
-    let api_key = validate_account_request(
-        &ResolvedProviderAuth::ApiKeyEnv("KEY".to_owned()),
-        None,
-        true,
-    )?;
+    let api_key =
+        validate_account_request(&ResolvedProviderAuth::ApiKeyEnv("KEY".to_owned()), None)?;
     assert_eq!(api_key, None);
     Ok(())
 }
 
 #[test]
 fn explicit_account_is_rejected_for_non_oauth_backends() {
-    let result = validate_account_request(&ResolvedProviderAuth::None, Some("work"), false);
+    let result = validate_account_request(&ResolvedProviderAuth::None, Some("work"));
     assert!(matches!(result, Err(ProviderBuildError::Provider(_))));
 }
 
 #[cfg(unix)]
 #[tokio::test]
 #[serial]
-async fn resumed_oauth_uses_explicit_account_after_active_selection_changes() -> TestResult {
+async fn resumed_run_without_account_uses_active_selection() -> TestResult {
     use norn::provider::openai_oauth::{NornAuthRoot, OAuthHttpOptions, use_account};
 
     let directory = tempfile::tempdir()?;
@@ -451,24 +424,27 @@ async fn resumed_oauth_uses_explicit_account_after_active_selection_changes() ->
         use_account(&base_root, "work", OAuthHttpOptions::default())?;
         use_account(&base_root, "personal", OAuthHttpOptions::default())?;
 
+        // A resumed run with no --account resolves the catalog's active
+        // account, identically to a fresh run (owner ruling 2026-07-25:
+        // sessions are not locked to an account).
         let overrides = ProviderConfigOverrides::default();
-        let omitted =
-            build_provider(ProviderKind::Openai, &overrides, "gpt-5.6-sol", None, true).await;
-        assert!(matches!(omitted, Err(ProviderBuildError::Auth(_))));
+        let omitted = build_provider(ProviderKind::Openai, &overrides, "gpt-5.6-sol", None).await?;
+        assert!(matches!(omitted, BuiltProvider::OpenAi(_)));
 
-        // Make the active account unusable so successful construction proves
-        // the production builder retained the resumed session's explicit alias.
+        // A broken active account fails loudly — the picker never falls
+        // back to a different credential the user did not select.
         let personal_root = norn::provider::provider_account_root(Some("personal"))?;
         std::fs::write(personal_root.join("auth.json"), b"{")?;
         let active_default =
-            build_provider(ProviderKind::Openai, &overrides, "gpt-5.6-sol", None, false).await;
+            build_provider(ProviderKind::Openai, &overrides, "gpt-5.6-sol", None).await;
         assert!(matches!(active_default, Err(ProviderBuildError::Auth(_))));
+
+        // --account remains as an explicit picker.
         let built = build_provider(
             ProviderKind::Openai,
             &overrides,
             "gpt-5.6-sol",
             Some("work"),
-            true,
         )
         .await?;
         assert!(matches!(built, BuiltProvider::OpenAi(_)));

@@ -160,16 +160,91 @@ fn managed_create_and_store_binding_are_durable() -> TestResult {
         ),
         Err(SessionPersistError::ProviderStateIdentityRequired)
     ));
-    assert!(matches!(
-        manager
-            .open_with_affinity(Some(identity("different")))
-            .resume_with_policy(
-                &session_id,
-                DurabilityPolicy::Flush,
-                ResumePolicy::RequireCanonical,
-            ),
-        Err(SessionPersistError::ProviderStateIdentityMismatch)
-    ));
+    // A different credential does not lock the session out — it rebinds
+    // through a fresh epoch boundary (owner ruling 2026-07-25: sessions
+    // are not locked to an account).
+    let rebound = manager
+        .open_with_affinity(Some(identity("different")))
+        .resume_with_policy(
+            &session_id,
+            DurabilityPolicy::Flush,
+            ResumePolicy::RequireCanonical,
+        )?;
+    assert_eq!(
+        rebound.entry.provider_state_identity,
+        Some(identity("different"))
+    );
+    Ok(())
+}
+
+#[test]
+fn resume_under_a_different_credential_rebinds_via_epoch_boundary() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let manager = SessionManager::new(temp.path());
+    let first = identity("account-a");
+    let opened = manager
+        .open_with_affinity(Some(first))
+        .create(options(), DurabilityPolicy::Flush)?;
+    let session_id = opened.entry.id.clone();
+    append_response_history(&opened.store)?;
+    drop(opened);
+
+    // Same-operator credential change: the resume proceeds, the identity
+    // rebinds, and an adoption epoch boundary retires the old anchors so
+    // the new credential can never replay them.
+    let second = identity("account-b");
+    let rebound = manager
+        .open_with_affinity(Some(second))
+        .resume_with_policy(
+            &session_id,
+            DurabilityPolicy::Flush,
+            ResumePolicy::RequireCanonical,
+        )?;
+    assert_eq!(rebound.entry.provider_state_identity, Some(second));
+    assert_eq!(
+        rebound
+            .store
+            .events()
+            .iter()
+            .filter(|event| is_adoption_boundary(event))
+            .count(),
+        1,
+        "rebinding must retire the previous identity's anchors behind a boundary",
+    );
+    drop(rebound);
+
+    // Resuming again under the same credential validates without another
+    // boundary.
+    let steady = manager
+        .open_with_affinity(Some(second))
+        .resume_with_policy(
+            &session_id,
+            DurabilityPolicy::Flush,
+            ResumePolicy::RequireCanonical,
+        )?;
+    assert_eq!(steady.entry.provider_state_identity, Some(second));
+    assert_eq!(
+        steady
+            .store
+            .events()
+            .iter()
+            .filter(|event| is_adoption_boundary(event))
+            .count(),
+        1,
+        "a matching credential must validate without a new boundary",
+    );
+    drop(steady);
+
+    // The rebind is symmetric — moving back is just another rebind. The
+    // boundary count stays at one because nothing was appended after the
+    // previous boundary, so the durable tail boundary is reused rather
+    // than duplicated.
+    let back = manager.open_with_affinity(Some(first)).resume_with_policy(
+        &session_id,
+        DurabilityPolicy::Flush,
+        ResumePolicy::RequireCanonical,
+    )?;
+    assert_eq!(back.entry.provider_state_identity, Some(first));
     Ok(())
 }
 
@@ -288,25 +363,19 @@ fn concurrent_legacy_adoption_converges_on_one_identity() -> TestResult {
                 .map_err(|payload| join_error(payload.as_ref()))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
-    assert_eq!(
-        outcomes
-            .iter()
-            .filter(|result| matches!(
-                result,
-                Err(SessionPersistError::ProviderStateIdentityMismatch)
-            ))
-            .count(),
-        1
-    );
+    // Same-operator credentials never lock each other out (owner ruling
+    // 2026-07-25): both adoptions succeed and the durable row converges
+    // on the last binder. A racer that lost the row detects staleness on
+    // its next index transaction rather than silently diverging.
+    assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 2);
     let durable = manager.resolve(&session_id)?.provider_state_identity;
-    assert_eq!(
-        durable,
+    assert!(durable.is_some());
+    assert!(
         outcomes
             .iter()
-            .find_map(|result| result.as_ref().ok())
-            .copied()
-            .flatten()
+            .filter_map(|result| result.as_ref().ok())
+            .any(|bound| *bound == durable),
+        "the durable identity must be one of the concurrent binders' outcomes",
     );
     Ok(())
 }
@@ -336,17 +405,22 @@ fn affinity_open_or_resume_converges_and_rejects_another_identity() -> TestResul
             ResumePolicy::RequireCanonical,
         )?;
     assert_eq!(resumed.entry.id, id);
-    assert!(matches!(
-        manager
-            .open_with_affinity(Some(identity("different")))
-            .open_or_resume_with_policy(
-                id,
-                options(),
-                DurabilityPolicy::Flush,
-                ResumePolicy::RequireCanonical,
-            ),
-        Err(SessionPersistError::ProviderStateIdentityMismatch)
-    ));
+    drop(resumed);
+    // A different credential rebinds instead of locking the session out
+    // (owner ruling 2026-07-25: sessions are not locked to an account).
+    let rebound = manager
+        .open_with_affinity(Some(identity("different")))
+        .open_or_resume_with_policy(
+            id,
+            options(),
+            DurabilityPolicy::Flush,
+            ResumePolicy::RequireCanonical,
+        )?;
+    assert_eq!(rebound.entry.id, id);
+    assert_eq!(
+        rebound.entry.provider_state_identity,
+        Some(identity("different"))
+    );
     Ok(())
 }
 
@@ -362,19 +436,32 @@ fn fork_validates_before_publication_and_inherits_binding() -> TestResult {
     let source_id = source.entry.id.clone();
     drop(source);
 
-    let before = manager.list()?.len();
-    assert!(matches!(
-        manager
-            .open_with_affinity(Some(identity("different")))
-            .fork_with_policy(
-                &source_id,
-                options(),
-                DurabilityPolicy::Flush,
-                ResumePolicy::RequireCanonical,
-            ),
-        Err(SessionPersistError::ProviderStateIdentityMismatch)
-    ));
-    assert_eq!(manager.list()?.len(), before);
+    // Forking under a different credential of the same operator succeeds:
+    // the CHILD adopts the forker's identity behind its own epoch boundary
+    // and the SOURCE row is never mutated by a fork (owner ruling
+    // 2026-07-25: sessions are not locked to an account).
+    let cross = manager
+        .open_with_affinity(Some(identity("different")))
+        .fork_with_policy(
+            &source_id,
+            options(),
+            DurabilityPolicy::Flush,
+            ResumePolicy::RequireCanonical,
+        )?;
+    assert_eq!(
+        cross.entry.provider_state_identity,
+        Some(identity("different"))
+    );
+    assert!(
+        cross.store.events().iter().any(is_adoption_boundary),
+        "a cross-credential fork must retire the source's anchors behind a boundary",
+    );
+    assert_eq!(
+        manager.resolve(&source_id)?.provider_state_identity,
+        Some(selected),
+        "forking must never mutate the source session's identity",
+    );
+    drop(cross);
 
     let forked = manager
         .open_with_affinity(Some(selected))
@@ -386,6 +473,10 @@ fn fork_validates_before_publication_and_inherits_binding() -> TestResult {
         )?;
     assert_eq!(forked.entry.provider_state_identity, Some(selected));
     assert_eq!(forked.store.provider_state_identity(), Some(selected));
+    assert!(
+        !forked.store.events().iter().any(is_adoption_boundary),
+        "a same-credential fork inherits the binding without a boundary",
+    );
     Ok(())
 }
 
