@@ -299,6 +299,7 @@ mod tests {
                 stop_reason: Some("end_turn".to_owned()),
                 total_cost_usd: None,
                 usage: None,
+                sdk_metadata: Box::default(),
             },
         ];
         let events = wrapper.capture_session_events(&claude_events);

@@ -698,6 +698,7 @@ mod tests {
                     output_tokens: Some(7),
                     ..Default::default()
                 }),
+                sdk_metadata: Box::default(),
             },
         ];
         let outcome = consolidate_outcome(&events)?;
@@ -724,6 +725,7 @@ mod tests {
             stop_reason: None,
             total_cost_usd: None,
             usage: None,
+            sdk_metadata: Box::default(),
         }];
         let Err(err) = consolidate_outcome(&events) else {
             return Err("an error result event must fail outcome consolidation".into());
