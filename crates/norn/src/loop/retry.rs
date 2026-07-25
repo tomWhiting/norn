@@ -1482,6 +1482,261 @@ mod tests {
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
+    // -- Resource whisper: the wait is a parked timer (design D10) -------
+    //
+    // These three tests are the structural half of hard requirement A ("an
+    // idle retry loop is a parked timer — zero busy-wait, flat RSS"). The
+    // measured half — RSS and CPU sampled from the real binary against a
+    // dead endpoint — lives in
+    // `docs/design/retry-forever/EVIDENCE.md`.
+    //
+    // They are EVIDENTIARY, not red-first: `wait_or_cancel` already awaits
+    // `tokio::time::sleep`, so there is no failing state to observe first.
+    // What they pin is that the property cannot silently regress, and the
+    // mechanism doing the pinning is tokio's paused-clock auto-advance:
+    // under `start_paused = true` the virtual clock only jumps forward when
+    // the runtime has *no* task ready to poll. A loop that spun — on
+    // `yield_now`, on a real-time deadline check, on `std::thread::sleep`,
+    // or on any other non-timer wait — would keep the runtime busy or block
+    // its only thread, auto-advance would never fire, and these tests would
+    // hang instead of completing. Completion is therefore itself the proof;
+    // the wall-clock assertions below make the failure loud rather than a
+    // silent hang, and the schedule assertions add that the wait is neither
+    // shortened nor split.
+
+    /// Wall-clock proof under the shipped production policy — unbounded
+    /// attempts, live OS jitter, 60s ceiling. A simulated ten-hour outage
+    /// (600 consecutive transient failures, then success) runs to
+    /// completion while real time barely moves.
+    ///
+    /// The bound is derived from the policy, never invented: the whole
+    /// simulated outage must cost less real time than the *shortest single
+    /// wait its own schedule takes* ([`DEFAULT_INITIAL_BACKOFF`]). Only a
+    /// parked timer can do that; a spin would burn real seconds per
+    /// simulated second (or hang outright, see the module note above).
+    #[tokio::test(start_paused = true)]
+    async fn unbounded_retry_spends_virtual_hours_and_no_real_time() {
+        const FAILURES: usize = 600;
+
+        let policy = RetryPolicy::default();
+        assert_eq!(
+            policy.max_attempts, None,
+            "the shipped default is unbounded"
+        );
+        assert!(policy.jitter, "the shipped default samples live jitter");
+
+        let attempts = AtomicUsize::new(0);
+        let notices = NoticeLog::default();
+        let virtual_start = tokio::time::Instant::now();
+        let real_start = std::time::Instant::now();
+
+        let outcome = retry_with_backoff(
+            &policy,
+            None,
+            |notice| notices.record(notice),
+            || {
+                let count = attempts.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async move {
+                    if count < FAILURES {
+                        Err(transient_503())
+                    } else {
+                        Ok(ok_response())
+                    }
+                })
+            },
+        )
+        .await;
+
+        let virtual_elapsed = virtual_start.elapsed();
+        let real_elapsed = real_start.elapsed();
+
+        assert!(matches!(outcome, RetryOutcome::Completed(_)));
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            FAILURES + 1,
+            "one attempt per failure plus the succeeding one",
+        );
+        assert_eq!(
+            notices.notices().len(),
+            FAILURES,
+            "exactly one announced wait per failure — no wait is taken \
+             that the observer never saw, and none is announced twice",
+        );
+
+        // Full jitter samples in `(0, base]`, so the simulated outage lasts
+        // at most the un-jittered schedule and strictly more than nothing.
+        let unjittered: Duration = (1..=u32::try_from(FAILURES).unwrap())
+            .map(|n| policy.backoff_base(n))
+            .sum();
+        assert!(
+            unjittered >= Duration::from_secs(9 * 60 * 60),
+            "the simulated outage must span hours to be worth measuring, got {unjittered:?}",
+        );
+        assert!(
+            virtual_elapsed > Duration::ZERO && virtual_elapsed <= unjittered,
+            "virtual time {virtual_elapsed:?} must land inside the jittered \
+             envelope (0, {unjittered:?}]",
+        );
+        assert!(
+            real_elapsed < DEFAULT_INITIAL_BACKOFF,
+            "a {virtual_elapsed:?} simulated outage burned {real_elapsed:?} of \
+             real time — more than the shortest single wait in its own \
+             schedule ({DEFAULT_INITIAL_BACKOFF:?}), so the wait is not parked",
+        );
+    }
+
+    /// Deterministic proof that the virtual time the loop advances is
+    /// *exactly* the sum of the delays it announced — no wait is shortened
+    /// by a spurious wakeup, none is padded, and none is split into
+    /// several shorter sleeps.
+    ///
+    /// Every expected value is computed from
+    /// [`RetryPolicy::backoff_base`] rather than transcribed, so the test
+    /// pins the loop against the policy rather than against a literal.
+    #[tokio::test(start_paused = true)]
+    async fn virtual_time_advanced_equals_the_sum_of_the_announced_delays() {
+        const ATTEMPTS: u32 = 20;
+        let policy = RetryPolicy {
+            max_attempts: Some(ATTEMPTS),
+            jitter: false,
+            ..RetryPolicy::default()
+        };
+        let jitter = RecordingJitter::identity();
+        let notices = NoticeLog::default();
+        let attempt_instants: Mutex<Vec<tokio::time::Instant>> = Mutex::new(Vec::new());
+        let started = tokio::time::Instant::now();
+
+        let outcome = retry_with_sampler(
+            &policy,
+            None,
+            &jitter,
+            |notice| notices.record(notice),
+            || {
+                attempt_instants
+                    .lock()
+                    .expect("attempt instant log lock")
+                    .push(tokio::time::Instant::now());
+                Box::pin(async { Err(transient_503()) })
+            },
+        )
+        .await;
+        assert!(matches!(outcome, RetryOutcome::Failed(_)));
+
+        let expected_delays: Vec<Duration> =
+            (1..ATTEMPTS).map(|n| policy.backoff_base(n)).collect();
+        let announced: Vec<Duration> = notices
+            .notices()
+            .into_iter()
+            .map(|notice| notice.delay)
+            .collect();
+        assert_eq!(
+            announced, expected_delays,
+            "with jitter off every announced delay is the computed base",
+        );
+
+        // The loop advanced the clock by exactly the announced total: not
+        // less (no wakeup cut a wait short) and not more (no wait was
+        // padded, and nothing else in the loop body awaits the clock).
+        let expected_total: Duration = expected_delays.iter().copied().sum();
+        assert_eq!(
+            started.elapsed(),
+            expected_total,
+            "total virtual time must equal the sum of the announced delays",
+        );
+
+        // Stronger than the total: every individual attempt lands on its
+        // scheduled instant, so each inter-attempt gap is one whole wait.
+        let mut cumulative = Duration::ZERO;
+        let mut expected_instants = vec![started];
+        for delay in &expected_delays {
+            cumulative += *delay;
+            expected_instants.push(started + cumulative);
+        }
+        assert_eq!(
+            *attempt_instants.lock().expect("attempt instant log lock"),
+            expected_instants,
+            "each attempt must begin exactly one full announced wait after \
+             the previous one",
+        );
+    }
+
+    /// Cancellation deep inside a ceiling-saturated streak wakes the loop
+    /// the instant the token fires — it does not wait out the remaining
+    /// backoff, and it costs no real time to do so.
+    ///
+    /// The existing `cancel_mid_sleep_stops_immediately_with_a_cancelled_outcome`
+    /// pins the same property on the very first wait with a bespoke
+    /// 600s backoff. This one pins it where an unbounded loop actually
+    /// lives: attempt nine, mid-way through a 60s ceiling wait, on the
+    /// shipped schedule.
+    #[tokio::test(start_paused = true)]
+    async fn cancel_inside_a_ceiling_saturated_wait_wakes_without_finishing_it() {
+        let policy = RetryPolicy {
+            jitter: false,
+            ..RetryPolicy::default()
+        };
+        assert_eq!(
+            policy.max_attempts, None,
+            "an unbounded loop is the subject"
+        );
+
+        // Schedule with jitter off: waits 1,2,4,8,16,32,60,60,60,... so
+        // attempt 9 begins at 183s and its wait would end at 243s.
+        let ninth_attempt_at: Duration = (1..=8).map(|n| policy.backoff_base(n)).sum();
+        assert_eq!(ninth_attempt_at, Duration::from_secs(183));
+        let ninth_wait_ends_at = ninth_attempt_at + policy.backoff_base(9);
+        assert_eq!(ninth_wait_ends_at, Duration::from_secs(243));
+        let cancel_at = Duration::from_secs(200);
+        assert!(
+            cancel_at > ninth_attempt_at && cancel_at < ninth_wait_ends_at,
+            "the cancel must land strictly inside the ninth wait",
+        );
+
+        let token = CancellationToken::new();
+        let attempts = AtomicUsize::new(0);
+        let virtual_start = tokio::time::Instant::now();
+        let real_start = std::time::Instant::now();
+        let canceller = {
+            let token = token.clone();
+            async move {
+                tokio::time::sleep(cancel_at).await;
+                token.cancel();
+            }
+        };
+        let retry = retry_with_backoff(
+            &policy,
+            Some(&token),
+            |_notice| {},
+            || {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Err(transient_503()) })
+            },
+        );
+        let (outcome, ()) = tokio::join!(retry, canceller);
+        let real_elapsed = real_start.elapsed();
+
+        assert!(
+            matches!(outcome, RetryOutcome::Cancelled),
+            "cancellation is never a provider failure",
+        );
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            9,
+            "the loop was inside the ninth attempt's wait when the token fired",
+        );
+        assert_eq!(
+            virtual_start.elapsed(),
+            cancel_at,
+            "the loop woke on the token at {cancel_at:?}, not at the \
+             {ninth_wait_ends_at:?} end of the backoff",
+        );
+        assert!(
+            real_elapsed < DEFAULT_INITIAL_BACKOFF,
+            "waiting out {cancel_at:?} of simulated backoff cost \
+             {real_elapsed:?} of real time; a parked timer costs ~none",
+        );
+    }
+
     /// `cancel: None` must never park the loop: the wait still elapses and
     /// the loop still finishes.
     #[tokio::test(start_paused = true)]
