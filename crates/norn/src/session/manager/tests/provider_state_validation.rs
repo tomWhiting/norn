@@ -8,6 +8,15 @@ fn directory_names(path: &std::path::Path) -> std::io::Result<Vec<std::ffi::OsSt
     Ok(names)
 }
 
+/// Append a provenance marker whose target never lands, followed by an
+/// unrelated row.
+///
+/// The trailing row is load-bearing: an orphan group prefix sitting at the
+/// very end of a timeline is a crash artifact that
+/// [`crate::session::persistence`] now quarantines and recovers from (see
+/// `timeline_tail_recovery`). Burying it behind a later row makes the
+/// violation interior, which is genuine corruption and stays fatal — the
+/// condition this test is about.
 fn append_orphan_provenance(
     path: &std::path::Path,
     parent_id: Option<crate::session::events::EventId>,
@@ -36,6 +45,12 @@ fn append_orphan_provenance(
     serde_json::to_writer(&mut file, &boundary)?;
     file.write_all(b"\n")?;
     serde_json::to_writer(&mut file, &provenance)?;
+    file.write_all(b"\n")?;
+    let trailing = SessionEvent::UserMessage {
+        base: crate::session::events::EventBase::new(Some(provenance.base().id.clone())),
+        content: "history continued past the orphan group".to_owned(),
+    };
+    serde_json::to_writer(&mut file, &trailing)?;
     file.write_all(b"\n")?;
     file.sync_all()?;
     Ok(())

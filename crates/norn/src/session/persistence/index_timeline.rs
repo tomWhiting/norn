@@ -18,6 +18,7 @@ use super::super::timeline_file::{
     ExistingEventInspection, open_existing_for_append, open_session_append_bound_under,
 };
 use super::super::timeline_lock::{LockedTimelineFile, TimelineLockGuard};
+use super::super::timeline_tail_recovery::events_with_recovered_publication_tail;
 use super::super::types::{SessionIndexEntry, SessionPersistError};
 
 /// Result of validating or durably adopting a provider-state identity.
@@ -182,7 +183,14 @@ fn validate_or_bind_provider_state_identity_inner(
     let mut file = open_existing_for_append(index_lock.root(), &relative)?;
     let display_path = index_lock.root().display_path(&relative);
     let events = strict_events_from_file(&mut file, &display_path)?;
-    crate::session::validate_provider_state_provenance(&events)?;
+    // Adoption is a resume-time open, so a crash-torn publication tail is
+    // healed here exactly as it is on the read path — binding an identity
+    // must not be the one door a torn tail still locks.
+    drop(events_with_recovered_publication_tail(
+        index_lock.root(),
+        &relative,
+        events,
+    )?);
     let facts = retry_prefix_from_file(&mut file, &display_path, &[])?;
     let (boundary, exact) = match facts.tail {
         Some(event) if is_provider_identity_adoption(&event) => (event, facts.counters),

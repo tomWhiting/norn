@@ -260,6 +260,20 @@ pub enum SessionPersistError {
     #[error(transparent)]
     InvalidProviderStateProvenance(#[from] crate::session::ProviderStateValidationError),
 
+    /// A crash-torn response-publication tail was classified as recoverable
+    /// but could not be quarantined. The timeline is left exactly as it was:
+    /// quarantine failure never truncates a session.
+    #[error(
+        "cannot quarantine the torn publication tail of session timeline {}: {reason}",
+        path.display()
+    )]
+    TornTailQuarantine {
+        /// Timeline whose torn tail could not be quarantined.
+        path: std::path::PathBuf,
+        /// Exact invariant that failed during quarantine.
+        reason: String,
+    },
+
     /// The active format-2 index failed strict structural validation.
     #[error("invalid active session index: {0}")]
     InvalidIndex(#[source] Box<super::strict::StrictStoreError>),
