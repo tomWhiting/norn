@@ -192,9 +192,10 @@ pub struct Cli {
     #[arg(long, conflicts_with = "no_session")]
     pub allow_degraded_session: bool,
 
-    /// OAuth account for this agent run. Resumed, forked, and
-    /// open-or-resume runs require an explicit account to avoid silently
-    /// changing credential affinity; use `default` for the compatibility slot.
+    /// OAuth account for this agent run (optional). When omitted, the
+    /// catalog's active account is used — for fresh, resumed, and forked
+    /// runs alike; sessions are not locked to an account. Use `default`
+    /// for the compatibility slot.
     #[arg(long, value_name = "ALIAS|default")]
     pub account: Option<String>,
 
@@ -228,19 +229,6 @@ pub struct Cli {
     /// Subcommand. When omitted, the agent path runs (REPL or print).
     #[command(subcommand)]
     pub command: Option<Command>,
-}
-
-impl Cli {
-    /// Return whether this agent run may attach to existing session state.
-    ///
-    /// Pre-P5 session records do not persist account affinity. Resuming,
-    /// forking, or conditionally opening an existing session therefore
-    /// requires an explicit selection instead of consulting mutable active
-    /// account state.
-    #[must_use]
-    pub const fn agent_run_may_reuse_session(&self) -> bool {
-        self.resume.is_some() || self.fork.is_some() || self.resume_if_exists
-    }
 }
 
 /// Reasoning-effort levels accepted by `--reasoning-effort` and threaded

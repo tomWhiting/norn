@@ -95,15 +95,19 @@ pub(crate) fn open_registered_timeline_bound(
     ))
 }
 
-/// Bind one managed session generation to a provider identity exactly once,
-/// or validate its existing binding.
+/// Bind one managed session generation to a provider identity, validate its
+/// existing binding, or rebind it to a different identity of the same
+/// operator through a fresh epoch boundary.
 ///
 /// A row that was observed unbound cannot safely attribute historical response
-/// anchors to the first identity it adopts. Under the canonical index-then-
-/// timeline lock order, this transaction fsyncs a dedicated epoch boundary
-/// before publishing the identity-bearing index row. A terminated writer can
-/// therefore leave the row unbound or leave an extra durable boundary, but can
-/// never leave a bound row whose old provider anchor remains active.
+/// anchors to the first identity it adopts, and a bound row's anchors must
+/// never be replayed under a different credential. Under the canonical
+/// index-then-timeline lock order, this transaction fsyncs a dedicated epoch
+/// boundary before publishing the identity-bearing index row — for first
+/// binding and rebinding alike. A terminated writer can therefore leave the
+/// row unbound (or bound to its previous identity) or leave an extra durable
+/// boundary, but can never leave a bound row whose retired provider anchors
+/// remain active.
 pub(crate) fn validate_or_bind_provider_state_identity(
     data_dir: &Path,
     registered: &SessionIndexEntry,
@@ -165,7 +169,19 @@ fn validate_or_bind_provider_state_identity_inner(
                 transition,
             });
         }
-        (Some(_), Some(_)) => return Err(SessionPersistError::ProviderStateIdentityMismatch),
+        // Both remaining `Some(candidate)` shapes fall through to the
+        // adoption transaction below: an unbound row adopts its first
+        // identity, and a bound row REBINDS to a different credential of
+        // the same operator (owner ruling 2026-07-25: sessions are not
+        // locked to an account). In both cases the epoch boundary is
+        // durable BEFORE the identity publishes, so on rebind every
+        // provider-side anchor created under the previous identity is
+        // retired first and the new credential can never replay another
+        // credential's server-side state — the cross-credential
+        // anchor-reuse guard (AFFINITY-01) holds by construction while
+        // the session itself moves freely between the operator's
+        // accounts.
+        (Some(_) | None, Some(_)) => {}
         (Some(_), None) => return Err(SessionPersistError::ProviderStateIdentityRequired),
         (None, None) => {
             return Ok(ProviderAffinityBinding {
@@ -173,7 +189,6 @@ fn validate_or_bind_provider_state_identity_inner(
                 transition: ProviderAffinityTransition::Validated,
             });
         }
-        (None, Some(_)) => {}
     }
 
     let candidate = requested.ok_or(SessionPersistError::ProviderStateIdentityRequired)?;

@@ -255,7 +255,6 @@ pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<PrintAssembly, Pri
         &provider_overrides,
         &resolved.model,
         oauth_account,
-        cli.agent_run_may_reuse_session(),
     )
     .await
     .map_err(|err| match err.exit_code() {

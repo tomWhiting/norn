@@ -112,7 +112,6 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         &provider_overrides,
         &resolved.model,
         oauth_account,
-        cli.agent_run_may_reuse_session(),
     )
     .await?;
     startup_trace.mark("provider_built");

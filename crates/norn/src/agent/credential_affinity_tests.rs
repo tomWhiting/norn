@@ -73,34 +73,6 @@ fn api_key_provider(key: &str, base_url: String) -> TestResult<Arc<dyn Provider>
     )?))
 }
 
-fn managed_state(manager: &SessionManager) -> TestResult<Vec<u8>> {
-    let mut snapshot = Vec::new();
-    for entry in manager.list()? {
-        let durable = crate::session::read_session_events_for_entry(manager.data_dir(), &entry)?;
-        snapshot.push(serde_json::json!({
-            "entry": entry,
-            "events": durable.events,
-        }));
-    }
-    Ok(serde_json::to_vec(&snapshot)?)
-}
-
-fn assert_identity_mismatch(
-    result: Result<crate::agent::Agent, NornError>,
-    operation: &str,
-) -> TestResult {
-    match result {
-        Err(NornError::Provider(ProviderError::ProviderStateIdentityMismatch)) => Ok(()),
-        Err(other) => {
-            Err(io::Error::other(format!("{operation} returned the wrong error: {other}")).into())
-        }
-        Ok(_) => Err(io::Error::other(format!(
-            "{operation} accepted a different provider-state identity"
-        ))
-        .into()),
-    }
-}
-
 async fn request_count(server: &MockServer) -> TestResult<usize> {
     let requests = server
         .received_requests()
@@ -165,31 +137,26 @@ fn managed_open_validates_affinity_before_returning_an_agent() -> TestResult {
     );
     drop(resumed);
 
-    let before = serde_json::to_vec(&manager.list()?)?;
-    let mismatch = build_managed(
+    // A different credential of the same operator rebinds instead of
+    // locking the session out (owner ruling 2026-07-25: sessions are not
+    // locked to an account): the managed open returns an agent whose
+    // session row carries the new identity behind a durable epoch
+    // boundary that retires the previous identity's anchors.
+    let rebound = build_managed(
         provider(other_identity),
         &manager,
         SessionSpec::resume(&entry.id),
         working_dir.path(),
-    );
-    match mismatch {
-        Err(NornError::Provider(ProviderError::ProviderStateIdentityMismatch)) => {}
-        Err(other) => {
-            return Err(io::Error::other(format!(
-                "expected typed provider-state mismatch, got {other}"
-            ))
-            .into());
-        }
-        Ok(_) => {
-            return Err(io::Error::other("mismatched managed resume returned an agent").into());
-        }
-    }
+    )?;
     assert_eq!(
-        serde_json::to_vec(&manager.list()?)?,
-        before,
-        "a mismatched managed resume must not mutate the session index",
+        rebound
+            .session_entry()
+            .and_then(|rebound_entry| rebound_entry.provider_state_identity),
+        Some(other_identity),
     );
+    drop(rebound);
 
+    let before = serde_json::to_vec(&manager.list()?)?;
     let absent = build_managed(
         Arc::new(MockProvider::new(Vec::new())),
         &manager,
@@ -297,17 +264,29 @@ fn latest_resume_and_fork_enforce_affinity_before_mutation_or_publication() -> T
     );
     drop(resumed);
 
-    let before_resume_mismatch = managed_state(&manager)?;
-    assert_identity_mismatch(
-        build_managed(
-            provider(different),
-            &manager,
-            SessionSpec::resume_latest(working_dir.display().to_string()),
-            &working_dir,
-        ),
-        "latest resume",
+    // A latest-resume under a different credential rebinds the row
+    // (owner ruling 2026-07-25: sessions are not locked to an account).
+    let rebound = build_managed(
+        provider(different),
+        &manager,
+        SessionSpec::resume_latest(working_dir.display().to_string()),
+        &working_dir,
     )?;
-    assert_eq!(managed_state(&manager)?, before_resume_mismatch);
+    assert_eq!(
+        rebound
+            .session_entry()
+            .and_then(|entry| entry.provider_state_identity),
+        Some(different),
+    );
+    drop(rebound);
+    // Move the row back so the fork arms below exercise both directions
+    // from a `selected`-bound source.
+    drop(build_managed(
+        provider(selected),
+        &manager,
+        SessionSpec::resume_latest(working_dir.display().to_string()),
+        &working_dir,
+    )?);
 
     let forked = build_managed(
         provider(selected),
@@ -329,20 +308,33 @@ fn latest_resume_and_fork_enforce_affinity_before_mutation_or_publication() -> T
     );
     drop(forked);
 
-    let before_fork_mismatch = managed_state(&manager)?;
-    assert_identity_mismatch(
-        build_managed(
-            provider(different),
-            &manager,
-            SessionSpec::fork_latest(working_dir.display().to_string()),
-            &working_dir,
-        ),
-        "latest fork",
+    // A cross-credential latest-fork publishes a CHILD that adopts the
+    // forker's identity behind its own epoch boundary; the SOURCE row is
+    // never mutated by a fork.
+    let cross_fork = build_managed(
+        provider(different),
+        &manager,
+        SessionSpec::fork_latest(working_dir.display().to_string()),
+        &working_dir,
     )?;
     assert_eq!(
-        managed_state(&manager)?,
-        before_fork_mismatch,
-        "a rejected latest fork must not publish a child or mutate its source",
+        cross_fork
+            .session_entry()
+            .and_then(|entry| entry.provider_state_identity),
+        Some(different),
+    );
+    drop(cross_fork);
+    // Whichever row "latest" resolved to as the fork source, no existing
+    // row's binding moved: a fork never mutates a source.
+    assert_eq!(
+        manager.resolve(&source_id)?.provider_state_identity,
+        Some(selected),
+        "a cross-credential fork must never mutate the original session's identity",
+    );
+    assert_eq!(
+        manager.resolve(&fork_id)?.provider_state_identity,
+        Some(selected),
+        "a cross-credential fork must never mutate its immediate source's identity",
     );
     Ok(())
 }
@@ -374,35 +366,47 @@ fn managed_oauth_session_distinguishes_users_in_the_same_account() -> TestResult
     )?;
     drop(refreshed);
 
-    let before = managed_state(&manager)?;
-    assert_identity_mismatch(
-        build_managed(
-            oauth_provider("shared-account", "user-b", "access-b")?,
-            &manager,
-            SessionSpec::resume(&session_id),
-            working_dir.path(),
-        ),
-        "same-account different-user OAuth resume",
+    // Distinct principals still derive DISTINCT identities — that
+    // distinctness is what forces every credential change through an
+    // audited epoch boundary. Under the 2026-07-25 owner ruling the
+    // change no longer locks the session: a different principal rebinds,
+    // and the boundary retires the previous principal's provider-side
+    // anchors BEFORE the new identity publishes, so one principal can
+    // never replay another's server-side state.
+    let original_principal_identity = manager.resolve(&session_id)?.provider_state_identity;
+    let user_b = build_managed(
+        oauth_provider("shared-account", "user-b", "access-b")?,
+        &manager,
+        SessionSpec::resume(&session_id),
+        working_dir.path(),
     )?;
-    assert_eq!(
-        managed_state(&manager)?,
-        before,
-        "a different OAuth principal must not mutate the bound timeline",
+    let second_user_identity = user_b
+        .session_entry()
+        .and_then(|entry| entry.provider_state_identity);
+    assert!(second_user_identity.is_some());
+    assert_ne!(
+        second_user_identity, original_principal_identity,
+        "distinct users in one account must derive distinct identities",
     );
+    drop(user_b);
 
-    assert_identity_mismatch(
-        build_managed(
-            oauth_provider("other-account", "user-a", "access-c")?,
-            &manager,
-            SessionSpec::resume(&session_id),
-            working_dir.path(),
-        ),
-        "different-account same-user OAuth resume",
+    let other_account = build_managed(
+        oauth_provider("other-account", "user-a", "access-c")?,
+        &manager,
+        SessionSpec::resume(&session_id),
+        working_dir.path(),
     )?;
-    assert_eq!(
-        managed_state(&manager)?,
-        before,
-        "a different OAuth account must not mutate the bound timeline",
+    let other_account_identity = other_account
+        .session_entry()
+        .and_then(|entry| entry.provider_state_identity);
+    assert!(other_account_identity.is_some());
+    assert_ne!(
+        other_account_identity, original_principal_identity,
+        "distinct accounts must derive distinct identities",
+    );
+    assert_ne!(
+        other_account_identity, second_user_identity,
+        "account and user axes must both feed the identity",
     );
     Ok(())
 }
@@ -436,28 +440,45 @@ async fn managed_api_key_or_endpoint_rotation_rejects_before_wire_dispatch() -> 
     )?;
     drop(normalized_resume);
 
-    let before = managed_state(&manager)?;
-    assert_identity_mismatch(
-        build_managed(
-            api_key_provider("second-key", first_authority.uri())?,
-            &manager,
-            SessionSpec::resume(&session_id),
-            working_dir.path(),
-        ),
-        "API-key rotation",
+    // Rotating the API key or endpoint derives a DIFFERENT identity, and
+    // under the 2026-07-25 owner ruling the resume rebinds through an
+    // epoch boundary instead of rejecting. The property that must hold is
+    // unchanged: the rebind is a LOCAL index transaction — no request
+    // reaches either authority during the open, so nothing can thread the
+    // old server-side state against the rotated credential.
+    let original_identity = manager.resolve(&session_id)?.provider_state_identity;
+    let rotated_key = build_managed(
+        api_key_provider("second-key", first_authority.uri())?,
+        &manager,
+        SessionSpec::resume(&session_id),
+        working_dir.path(),
     )?;
-    assert_eq!(managed_state(&manager)?, before);
+    let rotated_key_identity = rotated_key
+        .session_entry()
+        .and_then(|entry| entry.provider_state_identity);
+    assert!(rotated_key_identity.is_some());
+    assert_ne!(
+        rotated_key_identity, original_identity,
+        "an API-key rotation must derive a distinct identity",
+    );
+    drop(rotated_key);
 
-    assert_identity_mismatch(
-        build_managed(
-            api_key_provider("first-key", other_authority.uri())?,
-            &manager,
-            SessionSpec::resume(&session_id),
-            working_dir.path(),
-        ),
-        "normalized endpoint rotation",
+    let rotated_endpoint = build_managed(
+        api_key_provider("first-key", other_authority.uri())?,
+        &manager,
+        SessionSpec::resume(&session_id),
+        working_dir.path(),
     )?;
-    assert_eq!(managed_state(&manager)?, before);
+    let rotated_endpoint_identity = rotated_endpoint
+        .session_entry()
+        .and_then(|entry| entry.provider_state_identity);
+    assert!(rotated_endpoint_identity.is_some());
+    assert_ne!(
+        rotated_endpoint_identity, original_identity,
+        "an endpoint rotation must derive a distinct identity",
+    );
+    drop(rotated_endpoint);
+
     assert_eq!(request_count(&first_authority).await?, 0);
     assert_eq!(request_count(&other_authority).await?, 0);
     Ok(())
