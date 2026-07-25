@@ -106,6 +106,9 @@ impl ClaudeRunnerAdapter {
             request.model.clone()
         };
         cmd = cmd.model(Model::full(model_name));
+        if let Some(effort) = validation::claude_effort(request)? {
+            cmd = cmd.effort(effort);
+        }
         Ok(cmd)
     }
 
@@ -502,6 +505,9 @@ pub(super) fn tool_data_pair(data: &ToolData) -> (String, Value) {
         })
         .unwrap_or_else(|| ("unknown".to_owned(), Value::Null))
 }
+
+#[cfg(test)]
+mod effort_tests;
 
 #[cfg(test)]
 mod role_authority_tests;
