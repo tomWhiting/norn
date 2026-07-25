@@ -5,6 +5,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use rhai::{Engine, EvalAltResult, ImmutableString, Map};
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use super::super::context::{AgentHandle, NornRhaiContext, rhai_error};
 use crate::agent::registry::{AgentRegistry, AgentStatus};
@@ -16,6 +17,7 @@ use crate::provider::usage::Usage;
 use crate::session::events::ChildBranchKind;
 use crate::session::{ChildBranchRequest, slugify_name_stem};
 use crate::tool::context::ToolContext;
+use crate::tools::agent::AgentCancellation;
 use crate::tools::agent::infra::SubAgentExecutor;
 use crate::tools::agent::lifecycle::{LifecycleEmitter, SubagentCompletion};
 use crate::tools::agent::spawn_outcome::{extract_outcome_summary, mark_terminal_in_registry};
@@ -185,6 +187,22 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
         });
     let child_prompt_plan = crate::system_prompt::child::build_child_prompt_plan(prompt_fragment);
 
+    // Hierarchical cancellation (W3.5), identical to the spawn/fork tools'
+    // rule at `spawn/execute.rs`: the script child's run token is a child
+    // of the HOST's published token, so cancelling the host — or any
+    // ancestor above it — cascades into this run. A host that publishes no
+    // token (an embedder assembled outside `AgentBuilder`) yields a
+    // free-standing token; see `AgentCancellation` for that boundary. The
+    // token is both handed to the child's `run_agent_step` below AND
+    // published on the child's own context, so a grandchild spawned from
+    // inside this child chains under it.
+    let child_cancel = host_shared
+        .as_deref()
+        .and_then(ToolContext::get_extension::<AgentCancellation>)
+        .map_or_else(CancellationToken::new, |host_cancel| {
+            host_cancel.0.child_token()
+        });
+
     let child_tool_ctx = {
         let mut child_ctx = ToolContext::with_working_dir(
             crate::tool::context::SharedWorkingDir::new(ctx.working_dir.get()),
@@ -206,6 +224,7 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
         child_ctx.insert_extension(Arc::new(crate::agent::fork::ParentPromptPlan::new(
             child_prompt_plan.clone(),
         )));
+        child_ctx.insert_extension(Arc::new(AgentCancellation(child_cancel.clone())));
         Arc::new(child_ctx)
     };
     let model_for_task = model;
@@ -234,7 +253,7 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
             event_tx: child_event_sender.as_ref(),
             inbound: None,
             loop_context: &mut loop_ctx,
-            cancel: None,
+            cancel: Some(child_cancel),
         })
         .await;
 

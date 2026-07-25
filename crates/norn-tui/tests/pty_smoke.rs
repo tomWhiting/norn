@@ -602,6 +602,10 @@ async fn run_fixture_app() -> Result<(), Box<dyn std::error::Error>> {
         agent_event_rx,
         root_inbound,
         mcp_control: None,
+        // These fixtures assemble no agent tree, so the root token has no
+        // descendants to cascade to; a fresh token is the honest stand-in
+        // for the builder's `parts.cancel` the real driver passes.
+        root_cancel: tokio_util::sync::CancellationToken::new(),
     })
     .await?;
     Ok(())

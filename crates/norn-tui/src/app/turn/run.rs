@@ -5,7 +5,6 @@ use std::time::Instant;
 
 use termina::Event;
 use tokio::sync::{broadcast, mpsc};
-use tokio_util::sync::CancellationToken;
 
 use norn::agent_loop::active_input_channel;
 use norn::agent_loop::inbound::{ChannelMessage, InboundChannel};
@@ -21,7 +20,9 @@ use crate::terminal::setup::TerminalGuard;
 
 use crate::app::child_results::{recv_child_result, render_child_result_batch};
 use crate::app::dispatch::{finalise_turn, write_error_line};
-use crate::app::event_loop::{ChildResultState, RENDER_TICK, RuntimeRefs, is_ctrl_c};
+use crate::app::event_loop::{
+    ChildResultState, RENDER_TICK, RuntimeRefs, is_ctrl_c, turn_cancel_token,
+};
 use crate::app::helpers::{checkpoint_session, flush_pending};
 use crate::app::render::{
     redraw_panel, redraw_streaming_tick, render_input, with_scroll_region_cursor,
@@ -218,7 +219,10 @@ async fn run_turn(
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut step_result: Option<Result<AgentStepResult, norn::error::NornError>> = None;
     let mut cancel_requested = false;
-    let cancel = CancellationToken::new();
+    // Turn-local, but rooted: cancelling it ends this step only, while an
+    // app-exit cancel of the root ends this step and every descendant's
+    // run with it (D7).
+    let cancel = turn_cancel_token(&runtime.root_cancel);
     let (active_input_tx, active_input_rx, mut active_delivery_rx) = active_input_channel();
     let mut active_delivery_closed = false;
     let mut terminal_closed = false;

@@ -1,5 +1,6 @@
 mod prompt_authority;
 mod signal;
+mod spawn_cancellation;
 mod spawn_compaction;
 mod spawn_persistence;
 mod spawn_policy;

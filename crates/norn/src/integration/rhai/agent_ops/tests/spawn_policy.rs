@@ -65,9 +65,15 @@ async fn spawn_agent_grants_host_loop_config() -> TestResult {
         },
     ]]));
     let mut ctx = build_context_with_provider(Arc::<MockProvider>::clone(&provider));
+    // The granted linger is now genuinely SERVED by a script child: it
+    // carries a real cancellation token (a child of the spawning host's,
+    // retry-forever DESIGN D4/C3), so the linger wake set is no longer
+    // structurally empty and no longer short-circuits. The fixture's
+    // linger is therefore kept well inside `wait_for_terminal`'s deadline
+    // — it is a grant-propagation test, not a linger-duration test.
     let granted = ChildLoopConfig {
         step_timeout_secs: Some(300),
-        linger_secs: Some(30),
+        linger_secs: Some(1),
         context_window: None,
     };
     ctx.child_policy.loop_config = Some(granted);

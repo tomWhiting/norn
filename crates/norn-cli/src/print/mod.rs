@@ -8,6 +8,7 @@ pub mod orchestrator;
 pub mod output;
 pub mod provider;
 mod provider_trace;
+mod signals;
 mod step_output;
 pub mod stream_renderer;
 mod tracing_setup;

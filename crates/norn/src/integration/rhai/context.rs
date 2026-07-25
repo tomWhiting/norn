@@ -53,10 +53,13 @@ pub struct NornRhaiContext {
     /// Id of the agent invoking the script (sender for `signal_agent`).
     ///
     /// Must be the embedding host's own id — never the id of a
-    /// tool-spawned agent. Script children registered under this id carry
-    /// no cancellation token (`cancel: None`), so aliasing a tool-spawned
-    /// agent's id would plant cascade-unreachable children inside a
-    /// subtree `close_agent` truthfully reports as `cancelling` (W3.5).
+    /// tool-spawned agent. Script children are registered under this id
+    /// and their run tokens descend from the token the host publishes on
+    /// its shared tool context
+    /// ([`AgentCancellation`](crate::tools::agent::AgentCancellation)),
+    /// so aliasing a tool-spawned agent's id would place children in the
+    /// registry under a parent whose cancellation lineage they do not
+    /// actually belong to (W3.5).
     pub agent_id: Uuid,
     /// Tokio runtime handle to bridge sync Rhai into async work.
     pub runtime: tokio::runtime::Handle,

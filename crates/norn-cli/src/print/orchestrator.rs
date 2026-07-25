@@ -53,6 +53,7 @@ use super::error::preserve_run_failure;
 use super::jsonrpc::{DrivenRun, SharedRunDriver};
 use super::output::{StopInfo, drain_diagnostics, extract_output_and_usage};
 use super::provider::build_provider;
+use super::signals::SignalWatch;
 use super::step_output::{
     StepOutput, driven_result_value, emit_error_envelope, emit_error_envelope_on_stream,
     write_handled_locally, write_output,
@@ -401,7 +402,30 @@ pub(super) async fn orchestrate(
         Err(err) => (None, Some(err)),
     };
 
-    let result = match sink_error {
+    // Headless signal handling (D5). Installed BEFORE the run and held
+    // until after the terminal envelope is written: the first SIGINT /
+    // SIGTERM trips the very token the step runs under (and that every
+    // spawned descendant's token descends from), producing the ordinary
+    // graceful `Cancelled` path; a second one leaves immediately with
+    // 128 + the signal's number. Installation failure is fatal — a
+    // headless run under an unbounded retry policy that nobody can signal
+    // is a run nobody can stop.
+    //
+    // Not installed when the sink already failed: the run will not start,
+    // and a signal error must not mask the failure that is the real cause.
+    let (signal_watch, install_error) = if sink_error.is_none() {
+        match SignalWatch::install(assembly.parts.cancel.clone()) {
+            Ok(watch) => (Some(watch), None),
+            // Routed through the same funnel as every other post-assembly
+            // failure so the machine formats still get the typed error
+            // envelope (owner ruling R2), not just a stderr line.
+            Err(error) => (None, Some(PrintError::Agent(error.to_string()))),
+        }
+    } else {
+        (None, None)
+    };
+
+    let result = match sink_error.or(install_error) {
         Some(err) => Err(err),
         None => {
             orchestrate_run(
@@ -425,6 +449,10 @@ pub(super) async fn orchestrate(
             stream_sink.as_ref(),
         );
     }
+    // Explicit, and deliberately last: the watcher stays live through the
+    // terminal envelope write, so a signal arriving during the wind-down
+    // still escalates instead of landing on a handler nobody is behind.
+    drop(signal_watch);
     result
 }
 

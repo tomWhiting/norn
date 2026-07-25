@@ -178,11 +178,12 @@ fn collect_subtree(registry: &AgentRegistry, root: Uuid) -> Vec<Uuid> {
 /// not race it for the entry, so it reports the truth and moves on.
 /// (`cascade_cancelled` is only ever set for registry *descendants* of
 /// a handle-held target; every such descendant was launched by
-/// `spawn_agent`/`fork`, whose token lineage is unbroken by
-/// construction. The one launch path with no token at all — rhai
-/// script children, `cancel: None` — registers children only under
-/// script hosts, which hold no `AgentHandles` and therefore can never
-/// trigger a cascade in the first place.)
+/// `spawn_agent`/`fork` or by a Rhai script's `spawn_agent`, and every
+/// one of those paths derives its run token from its spawner's
+/// published [`AgentCancellation`](crate::tools::agent::AgentCancellation),
+/// so the lineage is unbroken by construction. Script children carry a
+/// real token as of the retry-forever cancellation plumbing — they are
+/// no longer a cascade-unreachable island.)
 ///
 /// **Without a handle, no cascade** — the closer cannot stop the
 /// target's task, so it must not touch a live entry either: marking a

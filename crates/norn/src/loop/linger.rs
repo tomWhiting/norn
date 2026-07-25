@@ -304,12 +304,22 @@ async fn await_linger_wake(
 ) -> LingerWake {
     // Structurally empty wake set: no cancel token, no child-result
     // channel, no inbound channel — nothing can EVER arrive, so the
-    // sleep would be pure dead wall-clock at every would-stop boundary
-    // (acute on the rhai surface, whose script children run with none
-    // of the three). Expire immediately instead of serving the full
-    // deadline; the boundary sweep after the wake is still a no-op-safe
-    // pass (REVIEW R5 MEDIUM-1). The grant itself stays visible in the
-    // registry — this short-circuits the wait, not the policy.
+    // sleep would be pure dead wall-clock at every would-stop boundary.
+    // Expire immediately instead of serving the full deadline; the
+    // boundary sweep after the wake is still a no-op-safe pass (REVIEW
+    // R5 MEDIUM-1). The grant itself stays visible in the registry —
+    // this short-circuits the wait, not the policy.
+    //
+    // Rhai script children used to be the acute case (they carried none
+    // of the three). They now carry a real cancellation token — a child
+    // of their spawning host's, so an ancestor cancel reaches them
+    // (retry-forever DESIGN D4/C3) — so a script child whose host
+    // granted `linger_secs` now SERVES that linger, interruptibly,
+    // instead of short-circuiting it. Nothing but the cancel can arrive
+    // there, so the wait is interruptible dead time rather than a wake
+    // set; narrowing this gate to work-sources only (`child_rx` /
+    // `inbound`) is a live design question, deliberately NOT decided
+    // here because it changes linger semantics for every driver.
     if cancel.is_none() && child_rx.is_none() && inbound.is_none() {
         return LingerWake::DeadlineExpired;
     }

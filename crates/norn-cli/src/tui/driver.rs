@@ -276,6 +276,14 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         agent_event_rx,
         root_inbound: parts.inbound.take(),
         mcp_control: parts.mcp_control.take(),
+        // The builder's root token — the same one it published on the
+        // shared tool context as `AgentCancellation`, so every spawned
+        // descendant's run token already descends from it. The TUI mints
+        // each turn's token beneath it and cancels it on app exit
+        // (retry-forever DESIGN D7); before this it was assembled and then
+        // dropped on the floor, leaving children's retry loops with no
+        // ancestor that could ever stop them.
+        root_cancel: parts.cancel.clone(),
     };
     startup_trace.mark("handoff_to_tui_app");
 

@@ -90,8 +90,15 @@ stays (defense in depth); the inner token makes the property explicit.
 
 Call sites currently passing `cancel: None` that would otherwise host
 an uninterruptible unbounded loop get real tokens:
-- Rhai script children: child token of the spawner's `AgentCancellation`.
-- Schedule executor turns: token wired to executor shutdown.
+- Rhai script children: child token of the spawner's `AgentCancellation`,
+  published on the child context so grandchildren chain under it.
+- ~~Schedule executor turns~~ — STRUCK (C3 implementation finding,
+  2026-07-25): the recon cite pointed into `schedule/executor.rs`'s test
+  module; the production executor delivers channel messages only and
+  never runs agent steps, so there is no in-flight scheduled turn to
+  orphan and no consumer for a token. Its shutdown remains
+  `ScheduleExecutorGuard::drop → abort()`, which is safe at its only
+  await points (sleep/notify).
 
 `step_timeout` remains a valid terminator: it is user-configured, so it
 counts as user intent. The rustdoc contract states this explicitly.
@@ -234,6 +241,17 @@ cancel token.
 - **Durable failure rows / usage from failed attempts**: deferral 1e
   remains the home; unbounded retry sharpens the case but does not gate.
 - **Mid-retry state across restarts**: ratified out (spec point 6).
+- **Linger gate semantics for newly-tokened script children** (C3
+  finding, needs an owner/reviewer ruling): `linger.rs`'s short-circuit
+  skips a granted linger only when a child has no cancel, no child_rx,
+  and no inbound. Rhai children previously had none of the three and
+  short-circuited; now that they carry a cancel token they serve a
+  granted `linger_secs` in full (interruptibly). Narrowing the gate to
+  work-sources only (`child_rx`/`inbound` — a cancel ends a linger, it
+  never fills one) would restore the short-circuit but changes linger
+  behavior for every driver. Blast radius today: only hosts that
+  explicitly grant `linger_secs` to script children. Parked for the
+  working session.
 
 ## Commit plan (each red-first)
 

@@ -106,11 +106,84 @@ pub struct TuiInputs {
     pub root_inbound: Option<InboundChannel>,
     /// Session-scoped live MCP control for `/mcp`.
     pub mcp_control: Option<McpControlHandle>,
+    /// The run tree's ROOT cancellation token — the builder's
+    /// `AgentParts::cancel`, the same token published to every spawned
+    /// descendant as `AgentCancellation`.
+    ///
+    /// The TUI uses it in exactly two places (retry-forever DESIGN D7):
+    /// every turn runs on a `child_token` of it, and
+    /// [`RootCancelOnExit`] cancels it when the app returns, so no
+    /// descendant's retry loop outlives the TUI. Callers that assemble
+    /// through `AgentBuilder` pass `parts.cancel`; an embedder without
+    /// one passes a fresh token and gets exit-cancellation of nothing —
+    /// honest, never a silent half-wiring.
+    pub root_cancel: tokio_util::sync::CancellationToken,
 }
 
 /// Render-tick cadence — 120 fps for tear-free panel redraws and
 /// immediate input painting during streaming.
 pub(super) const RENDER_TICK: Duration = Duration::from_millis(8);
+
+/// Cancels the run tree's ROOT token when the TUI app returns — by ANY
+/// path (retry-forever DESIGN D7).
+///
+/// The root token is the builder's `AgentParts::cancel`, published to every
+/// spawned descendant as `AgentCancellation`, so cancelling it ends every
+/// child's and grandchild's in-flight run. With the loop's retry policy
+/// unbounded by default, a descendant abandoned at TUI exit is not merely
+/// an idle task: it is a retry loop that keeps calling the provider with
+/// nobody watching. The single exit seam is therefore the guard's `Drop`
+/// rather than a list of `return` sites — quit, terminal EOF, a fatal
+/// terminal I/O error, and an unwinding panic all pass through it, and no
+/// future exit path can forget to.
+///
+/// Per-turn cancellation is deliberately NOT this token: each turn runs on
+/// a `child_token` of it (`turn::run::turn_cancel_token`), so Ctrl+C
+/// mid-turn stays turn-local while exit cascades.
+pub(super) struct RootCancelOnExit(tokio_util::sync::CancellationToken);
+
+impl RootCancelOnExit {
+    /// Take ownership of the root token for the app's lifetime.
+    pub(super) fn new(root: tokio_util::sync::CancellationToken) -> Self {
+        Self(root)
+    }
+
+    /// The guarded root token — cloned into [`RuntimeRefs`] so each turn
+    /// can mint its child token from it.
+    pub(super) fn token(&self) -> &tokio_util::sync::CancellationToken {
+        &self.0
+    }
+}
+
+impl Drop for RootCancelOnExit {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
+/// Mint the cancellation token for one turn — the other half of D7.
+///
+/// The turn's token is a
+/// [`child_token`](tokio_util::sync::CancellationToken::child_token) of the
+/// run tree's ROOT token, which makes the two directions explicit and
+/// opposite:
+///
+/// - **Ctrl+C during a turn stays turn-local**: cancelling the returned
+///   token ends this step only. The root — and therefore every spawned
+///   child, which the operator closes through `close_agent` — is untouched.
+/// - **App exit cascades**: [`RootCancelOnExit`] cancels the root, which
+///   cancels this turn and every descendant's run with it, so no child's
+///   retry loop outlives the TUI.
+///
+/// It lives here rather than in the turn module deliberately: the turn
+/// module then needs no `CancellationToken` in scope at all, so a turn
+/// cannot quietly go back to minting a free-standing token (which is
+/// exactly the defect this replaced).
+pub(super) fn turn_cancel_token(
+    root: &tokio_util::sync::CancellationToken,
+) -> tokio_util::sync::CancellationToken {
+    root.child_token()
+}
 
 /// Drive the TUI to completion.
 ///
@@ -124,6 +197,12 @@ pub(super) const RENDER_TICK: Duration = Duration::from_millis(8);
 /// [`TuiError::UnsupportedTerminal`] if the terminal cannot meet hard
 /// requirements during capability detection.
 pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
+    // FIRST statement, so it is also the LAST drop: every exit from this
+    // function — clean quit, terminal EOF, a `?` on terminal setup, an
+    // unwinding panic — cancels the root token and with it every spawned
+    // descendant's run (D7). Declared before the terminal guard so the
+    // cascade fires after the terminal is restored.
+    let root_cancel = RootCancelOnExit::new(inputs.root_cancel);
     TerminalCaps::check_hard_requirements()?;
     let mut guard = TerminalGuard::new()?;
     // Clear screen, home the cursor, and save the initial scroll-region
@@ -179,6 +258,7 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         root_inbound: inputs.root_inbound,
         mcp_control: inputs.mcp_control,
         mcp_command: None,
+        root_cancel: root_cancel.token().clone(),
     };
 
     // The TUI owns the child-result receiver so it can surface final
@@ -280,6 +360,11 @@ pub(super) struct RuntimeRefs {
     pub(super) root_inbound: Option<InboundChannel>,
     pub(super) mcp_control: Option<McpControlHandle>,
     pub(super) mcp_command: Option<McpCommandTask>,
+    /// The run tree's root cancellation token (see
+    /// [`TuiInputs::root_cancel`]). Every turn's own token is minted from
+    /// this one via
+    /// [`turn_cancel_token`](crate::app::turn::turn_cancel_token).
+    pub(super) root_cancel: tokio_util::sync::CancellationToken,
 }
 
 /// TUI-owned child-result delivery state.
@@ -758,6 +843,88 @@ mod tests {
         state.display_toggles.toggle();
         assert!(state.display_toggles.thinking_visible);
         assert!(state.display_toggles.secondary_fields_visible);
+    }
+
+    /// D7 exit seam: the app returning — by any path — cancels the ROOT
+    /// token, which is what every spawned descendant's run token descends
+    /// from. Pre-fix nothing in the TUI ever touched the root token, so a
+    /// quit left children retrying against the provider forever.
+    #[test]
+    fn root_cancel_guard_cancels_the_root_token_on_app_exit() {
+        let root = tokio_util::sync::CancellationToken::new();
+        {
+            let guard = RootCancelOnExit::new(root.clone());
+            assert!(
+                !guard.token().is_cancelled(),
+                "the token must stay live while the app runs",
+            );
+        }
+        assert!(
+            root.is_cancelled(),
+            "leaving the app must cancel the root token",
+        );
+    }
+
+    /// D7: the per-turn token descends from the root token, so an app-exit
+    /// cancel of the root reaches a turn that is still in flight. Pre-fix
+    /// `run_turn` minted a free-standing `CancellationToken::new()` and the
+    /// builder's root token was never used by the TUI at all.
+    #[test]
+    fn turn_token_is_cancelled_by_the_root_token() {
+        let root = tokio_util::sync::CancellationToken::new();
+        let turn = turn_cancel_token(&root);
+        assert!(!turn.is_cancelled());
+
+        root.cancel();
+
+        assert!(
+            turn.is_cancelled(),
+            "an app-exit root cancel must reach the in-flight turn",
+        );
+    }
+
+    /// The other direction must NOT hold: Ctrl+C cancels the turn only.
+    /// Making the turn token a child (not a clone) of the root is exactly
+    /// what keeps mid-turn cancellation turn-local while still cascading
+    /// on exit.
+    #[test]
+    fn cancelling_a_turn_leaves_the_root_and_the_next_turn_alive() {
+        let root = tokio_util::sync::CancellationToken::new();
+        let first = turn_cancel_token(&root);
+
+        first.cancel();
+
+        assert!(
+            !root.is_cancelled(),
+            "a mid-turn Ctrl+C must not tear down the whole app tree",
+        );
+        let second = turn_cancel_token(&root);
+        assert!(
+            !second.is_cancelled(),
+            "the next turn starts from a live token",
+        );
+    }
+
+    /// The two D7 halves composed: a turn in flight when the app exits is
+    /// cancelled, and so is a child the turn spawned — because both
+    /// descend from the root token the exit guard cancels.
+    #[test]
+    fn app_exit_cancels_an_in_flight_turn_and_its_descendants() {
+        let root = tokio_util::sync::CancellationToken::new();
+        let guard = RootCancelOnExit::new(root);
+        let turn = turn_cancel_token(guard.token());
+        // A spawned child chains its own token under its spawner's,
+        // exactly as `spawn_agent`/`fork` do from the published
+        // `AgentCancellation`.
+        let descendant = turn.child_token();
+
+        drop(guard);
+
+        assert!(turn.is_cancelled(), "the in-flight turn must be cancelled");
+        assert!(
+            descendant.is_cancelled(),
+            "no descendant retry loop may outlive the app",
+        );
     }
 
     #[test]
