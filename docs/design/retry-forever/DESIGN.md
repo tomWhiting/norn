@@ -213,7 +213,8 @@ accumulation across unbounded attempts).
 Evidence, not assertion:
 - Paused-clock structural test: across a simulated multi-hour outage,
   attempt count and timer count are exactly N (no spin, no extra polls).
-- Measured harness (`scripts/` + evidence artifact): the real binary
+- Measured harness (`docs/design/retry-forever/harness/` + evidence
+  artifact, colocated with EVIDENCE.md): the real binary
   against a mock provider that fails every request for 10+ minutes;
   RSS sampled flat, CPU ~0 between attempts. The artifact records the
   norn binary version/commit and toolchain (version-skew discipline).
