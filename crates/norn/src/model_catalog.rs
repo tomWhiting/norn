@@ -70,8 +70,11 @@ pub struct ModelEntry {
     pub context_window: u64,
     /// Maximum context window available through this backend.
     pub max_context_window: u64,
-    /// Default reasoning effort.
-    pub default_reasoning_effort: &'static str,
+    /// Provider-defined default reasoning effort, when one is documented.
+    ///
+    /// `None` means the backend owns the default and the caller must omit an
+    /// effort override rather than inventing one.
+    pub default_reasoning_effort: Option<&'static str>,
     /// Supported reasoning effort identifiers.
     pub supported_reasoning_efforts: &'static [&'static str],
     /// Default reasoning summary mode.
@@ -263,7 +266,11 @@ mod tests {
                 assert_eq!(resolve_model_alias(entry.alias), Some(model), "{model}");
                 assert_eq!(entry.context_window, 372_000, "{model}");
                 assert_eq!(entry.max_context_window, 372_000, "{model}");
-                assert_eq!(entry.default_reasoning_effort, default_effort, "{model}");
+                assert_eq!(
+                    entry.default_reasoning_effort,
+                    Some(default_effort),
+                    "{model}"
+                );
                 assert!(
                     entry.supported_reasoning_efforts.contains(&"max"),
                     "{model}"
@@ -293,6 +300,30 @@ mod tests {
             assert_eq!(resolve_model_alias(canonical_id), Some(canonical_id));
         }
         assert_eq!(resolve_model_alias("not-in-catalog"), None);
+    }
+
+    #[test]
+    fn claude_five_models_have_subscription_catalog_metadata() {
+        let efforts = &["low", "medium", "high", "xhigh", "max"];
+        for model in ["claude-opus-5", "claude-opus-5[1m]", "claude-sonnet-5"] {
+            let entry = find_model("anthropic", "claude_code_subscription", model);
+            assert!(
+                entry.is_some(),
+                "{model} must be in the Claude Code catalog"
+            );
+            if let Some(entry) = entry {
+                assert_eq!(entry.alias, model, "{model}");
+                assert_eq!(resolve_model_alias(entry.alias), Some(model), "{model}");
+                assert_eq!(entry.context_window, 1_000_000, "{model}");
+                assert_eq!(entry.max_context_window, 1_000_000, "{model}");
+                assert_eq!(entry.supported_reasoning_efforts, efforts, "{model}");
+                assert!(
+                    !entry.supported_reasoning_efforts.contains(&"none"),
+                    "{model} must not expose an unsupported none effort",
+                );
+                assert_eq!(entry.default_reasoning_effort, None, "{model}");
+            }
+        }
     }
 
     #[test]

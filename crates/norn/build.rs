@@ -206,7 +206,7 @@ fn generate_catalog(root: &Value) -> Result<String, String> {
                     &mut out,
                     format_args!(
                         "                            default_reasoning_effort: {},\n",
-                        rust_str(required_str(model_obj, "default_reasoning_effort")?)
+                        rust_option_str(optional_str(model_obj, "default_reasoning_effort")?)
                     ),
                 )?;
                 out.push_str("                            supported_reasoning_efforts: ");
@@ -433,6 +433,19 @@ fn required_str<'a>(
         .ok_or_else(|| format!("{field} must be a string"))
 }
 
+fn optional_str<'a>(
+    value: &'a serde_json::Map<String, Value>,
+    field: &str,
+) -> Result<Option<&'a str>, String> {
+    value
+        .get(field)
+        .map(|item| {
+            item.as_str()
+                .ok_or_else(|| format!("{field} must be a string when present"))
+        })
+        .transpose()
+}
+
 fn required_array<'a>(
     value: &'a serde_json::Map<String, Value>,
     field: &str,
@@ -459,6 +472,10 @@ fn required_str_array<'a>(
 
 fn rust_str(value: &str) -> String {
     format!("{value:?}")
+}
+
+fn rust_option_str(value: Option<&str>) -> String {
+    value.map_or_else(|| "None".to_string(), |value| format!("Some({value:?})"))
 }
 
 fn rust_u64(value: u64) -> String {
@@ -594,5 +611,35 @@ mod tests {
         }));
 
         assert!(validate_model_aliases(&providers).is_ok());
+    }
+
+    #[test]
+    fn optional_strings_distinguish_absence_from_invalid_values() {
+        let absent = json!({}).as_object().unwrap().clone();
+        assert_eq!(optional_str(&absent, "default_reasoning_effort"), Ok(None));
+
+        let present = json!({"default_reasoning_effort": "medium"})
+            .as_object()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            optional_str(&present, "default_reasoning_effort"),
+            Ok(Some("medium")),
+        );
+
+        let invalid = json!({"default_reasoning_effort": null})
+            .as_object()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            optional_str(&invalid, "default_reasoning_effort"),
+            Err("default_reasoning_effort must be a string when present".to_string()),
+        );
+    }
+
+    #[test]
+    fn rust_optional_strings_render_explicitly() {
+        assert_eq!(rust_option_str(None), "None");
+        assert_eq!(rust_option_str(Some("high")), "Some(\"high\")");
     }
 }
