@@ -75,7 +75,7 @@ fn default_has_no_components() {
     assert!(ctx.slash_commands.is_none());
     assert!(ctx.prompt_commands.is_empty());
     assert!(ctx.prompt_command_cache.is_empty());
-    assert_eq!(ctx.retry_policy.max_retries, 2);
+    assert_eq!(ctx.retry_policy.max_attempts, None);
     assert!(ctx.token_estimator.is_none());
     assert!(ctx.variables.is_none());
     assert!(ctx.context_edits.is_none());

@@ -34,7 +34,7 @@ use crate::config::{
     AppliedOverrides, CliProfileSource, ConfigOverrides, apply_config_overrides_to_loop,
     apply_loop_config_overrides, apply_settings_to_agent_config, default_agent_loop_config,
     load_rule_engine, merge_event_schemas, parse_inline_or_file, parse_kv,
-    resolve_index_lock_deadline,
+    resolve_index_lock_deadline, retry_policy_from_settings_and_overrides,
 };
 use crate::runtime::build_write_tool;
 
@@ -153,6 +153,17 @@ pub fn builder_from_cli(
         agent_config.output_schema = Some(schema);
     }
     builder = builder.agent_config(agent_config);
+
+    // Retry policy: same two-layer fold as the agent-loop config (settings
+    // first, `-c retry_*` on top). Setting it explicitly is load-bearing —
+    // the runtime base resolves the `[retry]` settings section but has no
+    // view of `-c` overrides, so without this the `-c retry_max` /
+    // `-c retry_backoff_ceiling` / `-c retry_jitter` knobs would parse and
+    // then be silently discarded.
+    builder = builder.retry_policy(retry_policy_from_settings_and_overrides(
+        settings,
+        &config_overrides,
+    )?);
 
     if let Some(schemas) = event_schemas {
         builder = builder.event_schemas(schemas);

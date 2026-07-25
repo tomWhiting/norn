@@ -3,7 +3,7 @@ use std::time::Duration;
 use super::super::*;
 use super::cli_from;
 use crate::cli::BuildError;
-use crate::config::ConfigOverrides;
+use crate::config::{ConfigOverrides, RetryAttempts};
 use norn::agent_loop::config::ConversationStateMode;
 use norn::config::NornSettings;
 
@@ -127,20 +127,50 @@ fn retry_policy_combines_settings_then_cli() {
     use norn::config::{NornSettings, RetrySettings};
     let settings = NornSettings {
         retry: Some(RetrySettings {
-            max_retries: Some(5),
+            max_attempts: Some(5),
             base_delay: Some("3s".to_owned()),
             backoff_multiplier: Some(1.5),
+            backoff_ceiling: Some("2m".to_owned()),
+            jitter: Some(true),
         }),
         ..NornSettings::default()
     };
     let cli = ConfigOverrides {
-        retry_max: Some(9),
+        retry_max: Some(RetryAttempts::Total(9)),
+        retry_backoff_ceiling: Some(Duration::from_secs(30)),
+        retry_jitter: Some(false),
         ..ConfigOverrides::default()
     };
     let policy = retry_policy_from_settings_and_overrides(&settings, &cli).unwrap();
-    assert_eq!(policy.max_retries, 9, "CLI -c retry_max wins");
+    assert_eq!(policy.max_attempts, Some(9), "CLI -c retry_max wins");
     assert_eq!(policy.initial_backoff, Duration::from_secs(3));
     assert!((policy.backoff_multiplier - 1.5).abs() < f64::EPSILON);
+    assert_eq!(
+        policy.backoff_ceiling,
+        Duration::from_secs(30),
+        "CLI -c retry_backoff_ceiling wins",
+    );
+    assert!(!policy.jitter, "CLI -c retry_jitter wins");
+}
+
+/// `-c retry_max=unbounded` is an explicit choice of the unbounded
+/// policy and must beat a bounded budget from settings.
+#[test]
+fn cli_unbounded_retry_max_beats_a_bounded_setting() {
+    use norn::config::{NornSettings, RetrySettings};
+    let settings = NornSettings {
+        retry: Some(RetrySettings {
+            max_attempts: Some(3),
+            ..RetrySettings::default()
+        }),
+        ..NornSettings::default()
+    };
+    let cli = ConfigOverrides {
+        retry_max: Some(RetryAttempts::Unbounded),
+        ..ConfigOverrides::default()
+    };
+    let policy = retry_policy_from_settings_and_overrides(&settings, &cli).unwrap();
+    assert_eq!(policy.max_attempts, None);
 }
 
 #[test]
@@ -148,19 +178,25 @@ fn retry_policy_settings_only_when_no_cli() {
     use norn::config::{NornSettings, RetrySettings};
     let settings = NornSettings {
         retry: Some(RetrySettings {
-            max_retries: Some(7),
+            max_attempts: Some(7),
             base_delay: Some("250ms".to_owned()),
             backoff_multiplier: Some(3.0),
+            backoff_ceiling: Some("90s".to_owned()),
+            jitter: Some(false),
         }),
         ..NornSettings::default()
     };
     let cli = ConfigOverrides::default();
     let policy = retry_policy_from_settings_and_overrides(&settings, &cli).unwrap();
-    assert_eq!(policy.max_retries, 7);
+    assert_eq!(policy.max_attempts, Some(7));
     assert_eq!(policy.initial_backoff, Duration::from_millis(250));
     assert!((policy.backoff_multiplier - 3.0).abs() < f64::EPSILON);
+    assert_eq!(policy.backoff_ceiling, Duration::from_secs(90));
+    assert!(!policy.jitter);
 }
 
+/// No settings and no overrides leaves the ratified engine defaults
+/// (owner-ratified 2026-07-25): unbounded retry, 60s ceiling, jitter on.
 #[test]
 fn retry_policy_default_when_no_inputs() {
     let policy = retry_policy_from_settings_and_overrides(
@@ -168,9 +204,33 @@ fn retry_policy_default_when_no_inputs() {
         &ConfigOverrides::default(),
     )
     .unwrap();
-    assert_eq!(policy.max_retries, 2);
+    assert_eq!(policy.max_attempts, None);
     assert_eq!(policy.initial_backoff, Duration::from_secs(1));
     assert!((policy.backoff_multiplier - 2.0).abs() < f64::EPSILON);
+    assert_eq!(policy.backoff_ceiling, Duration::from_secs(60));
+    assert!(policy.jitter);
+}
+
+/// An invalid `retry.backoff_ceiling` is a typed argument error naming
+/// the field, never a silently ignored setting.
+#[test]
+fn invalid_retry_backoff_ceiling_is_a_typed_error() {
+    use norn::config::{NornSettings, RetrySettings};
+    let settings = NornSettings {
+        retry: Some(RetrySettings {
+            backoff_ceiling: Some("not-a-duration".to_owned()),
+            ..RetrySettings::default()
+        }),
+        ..NornSettings::default()
+    };
+    let err = retry_policy_from_settings_and_overrides(&settings, &ConfigOverrides::default())
+        .unwrap_err();
+    match err {
+        BuildError::Argument(reason) => {
+            assert!(reason.contains("retry.backoff_ceiling"), "reason: {reason}");
+        }
+        other @ BuildError::Auth(_) => panic!("expected Argument, got {other:?}"),
+    }
 }
 
 #[test]

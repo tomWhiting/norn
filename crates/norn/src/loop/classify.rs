@@ -2,6 +2,7 @@
 
 use futures_util::StreamExt;
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 
 use crate::error::{NornError, ProviderError, SessionError};
 use crate::integration::hooks::HookRegistry;
@@ -9,7 +10,10 @@ use crate::r#loop::assembly::{AssembledResponse, assemble_response};
 use crate::r#loop::compaction::{InFlightPartial, SharedTimeoutState};
 use crate::r#loop::config::TruncationKind;
 use crate::r#loop::helpers::append_and_notify;
-use crate::r#loop::response_audio_capture::ResponseAudioCapture;
+use crate::r#loop::response_audio_capture::{
+    AttemptArtifactSlot, ResponseAudioCapture, discard_abandoned_attempt_artifact,
+};
+use crate::r#loop::retry::RetryOutcome;
 use crate::r#loop::schema::validate_against_schema;
 use crate::provider::agent_event::{AgentEventSender, AgentStreamRetry};
 use crate::provider::events::{ProviderEvent, StopReason};
@@ -217,6 +221,21 @@ pub(super) fn classify_response(
     }
 }
 
+/// The observers and durable sinks one provider call writes into.
+///
+/// Grouped so the call signature stays readable as the retry brain grows:
+/// each field is independently optional, and the whole set is shared
+/// unchanged by every attempt of one logical call.
+#[derive(Clone, Copy)]
+pub(super) struct ProviderCallSinks<'sink> {
+    /// Live event broadcast, when observers are attached.
+    pub(super) event_tx: Option<&'sink AgentEventSender>,
+    /// Shared in-flight capture mirrored for hard-cut recovery (Gap 7).
+    pub(super) partial_capture: Option<&'sink SharedTimeoutState>,
+    /// Response-audio sidecar store for this session, when one exists.
+    pub(super) audio_store: Option<&'sink ResponseAudioStore>,
+}
+
 /// Call the provider with a prebuilt request, collect all streaming events,
 /// forward to broadcast channel if present, and assemble the response.
 ///
@@ -241,11 +260,15 @@ pub(super) async fn call_provider(
     provider: &dyn Provider,
     request: ProviderRequest,
     turn_context: ProviderTurnContext,
-    event_tx: Option<&AgentEventSender>,
-    partial_capture: Option<&SharedTimeoutState>,
-    audio_store: Option<&ResponseAudioStore>,
+    sinks: &ProviderCallSinks<'_>,
     attempt: u32,
+    audio_slot: Option<&AttemptArtifactSlot>,
 ) -> Result<AssembledResponse, NornError> {
+    let ProviderCallSinks {
+        event_tx,
+        partial_capture,
+        audio_store,
+    } = *sinks;
     if let Some(state) = partial_capture {
         // A fresh attempt discards any previous attempt's partials — the
         // durable analogue of the live `StreamRetry` reset marker.
@@ -253,7 +276,7 @@ pub(super) async fn call_provider(
     }
     let mut stream = provider.stream_with_context(request, turn_context)?;
     let mut events: Vec<ProviderEvent> = Vec::new();
-    let mut audio = ResponseAudioCapture::new(audio_store, attempt);
+    let mut audio = ResponseAudioCapture::new(audio_store, attempt, audio_slot);
 
     while let Some(result) = stream.next().await {
         let event = result?;
@@ -340,52 +363,71 @@ pub(super) async fn call_provider(
 
 /// [`call_provider`] under the loop's retry policy.
 ///
-/// Each retry replays the full request, and the failed attempt may have
-/// already forwarded partial stream deltas to observers on `event_tx`.
-/// A typed [`AgentStreamRetry`] marker is broadcast immediately before
-/// every retry attempt's stream begins, so observers reset the failed
-/// attempt's partial output instead of rendering the replay appended to
-/// it. The in-flight `partial_capture` resets the same way — each
-/// attempt starts a fresh capture inside [`call_provider`].
+/// Each attempt replays the frozen request, and the failed attempt may
+/// have already forwarded partial stream deltas to observers on
+/// `event_tx`. A typed [`AgentStreamRetry`] marker is broadcast by the
+/// retry loop immediately **before** the inter-attempt wait, so observers
+/// reset the failed attempt's partial output (and can surface the pending
+/// wait) instead of rendering the replay appended to it. The in-flight
+/// `partial_capture` resets the same way — each attempt starts a fresh
+/// capture inside [`call_provider`] — and the abandoned attempt's
+/// unsealed response-audio sidecar is discarded before the replay, so an
+/// unbounded retry streak leaves at most one unsealed artifact on disk.
 ///
-/// # Errors
-///
-/// Returns the final [`NornError`] after the retry budget is exhausted,
-/// or the first non-retryable error encountered.
+/// `cancel` makes the inter-attempt wait interruptible in its own right;
+/// the caller's outer select stays as defence in depth. Cancellation
+/// returns [`RetryOutcome::Cancelled`], never a provider failure.
 pub(super) async fn call_provider_with_retry(
     policy: &crate::r#loop::retry::RetryPolicy,
     provider: &dyn Provider,
     request: ProviderRequest,
     turn_context: &ProviderTurnContext,
-    event_tx: Option<&AgentEventSender>,
-    partial_capture: Option<&SharedTimeoutState>,
-    audio_store: Option<&ResponseAudioStore>,
-) -> Result<AssembledResponse, NornError> {
+    sinks: &ProviderCallSinks<'_>,
+    cancel: Option<&CancellationToken>,
+) -> RetryOutcome {
+    let ProviderCallSinks {
+        event_tx,
+        partial_capture,
+        audio_store,
+    } = *sinks;
     let attempts = std::sync::atomic::AtomicU32::new(0);
-    crate::r#loop::retry::retry_with_backoff(policy, || {
-        let req = request.clone();
-        let turn_context = turn_context.clone();
-        let attempt = attempts
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            .saturating_add(1);
-        async move {
-            if attempt > 1
-                && let Some(sender) = event_tx
-            {
-                sender.send_stream_retry(AgentStreamRetry { attempt });
+    let audio_slot = AttemptArtifactSlot::default();
+    let audio_slot = &audio_slot;
+    crate::r#loop::retry::retry_with_backoff(
+        policy,
+        cancel,
+        |notice| {
+            if let Some(sender) = event_tx {
+                sender.send_stream_retry(AgentStreamRetry {
+                    attempt: notice.next_attempt,
+                    max_attempts: notice.max_attempts,
+                    delay_ms: u64::try_from(notice.delay.as_millis()).unwrap_or(u64::MAX),
+                    error_class: notice.error_class.to_owned(),
+                });
             }
-            call_provider(
-                provider,
-                req,
-                turn_context,
-                event_tx,
-                partial_capture,
-                audio_store,
-                attempt,
-            )
-            .await
-        }
-    })
+        },
+        || {
+            let req = request.clone();
+            let turn_context = turn_context.clone();
+            let attempt = attempts
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                .saturating_add(1);
+            async move {
+                // The previous attempt is now definitively abandoned: drop
+                // its unsealed sidecar before opening this attempt's.
+                discard_abandoned_attempt_artifact(audio_slot, audio_store, partial_capture);
+                call_provider(
+                    provider,
+                    req,
+                    turn_context,
+                    sinks,
+                    attempt,
+                    Some(audio_slot),
+                )
+                .await
+            }
+        },
+    )
     .await
 }
 
@@ -589,6 +631,7 @@ mod tests {
 
     use futures_util::stream;
 
+    use crate::error::TransientKind;
     use crate::provider::agent_event::{AgentEvent, AgentEventKind};
     use crate::provider::mock::MockProvider;
     use crate::provider::tools::ProviderCapabilities;
@@ -607,6 +650,12 @@ mod tests {
             Self {
                 attempts: Mutex::new(attempts),
             }
+        }
+
+        /// Scripted attempts not yet consumed — proof that a stopped loop
+        /// really stopped instead of quietly making one more call.
+        fn remaining_attempts(&self) -> usize {
+            self.attempts.lock().expect("scripted provider lock").len()
         }
     }
 
@@ -671,10 +720,13 @@ mod tests {
             &provider,
             empty_request(),
             ProviderTurnContext::default(),
-            None,
-            None,
-            None,
+            &ProviderCallSinks {
+                event_tx: None,
+                partial_capture: None,
+                audio_store: None,
+            },
             1,
+            None,
         )
         .await
         .expect_err("in-band Error event must fail the call");
@@ -684,12 +736,40 @@ mod tests {
         }
     }
 
-    /// Regression (retry re-broadcast with no marker): a retryable
-    /// mid-stream failure after partial deltas must broadcast a typed
-    /// [`AgentStreamRetry`] marker *before* the replay's events, so
-    /// observers reset the failed attempt's partial output.
-    #[tokio::test]
-    async fn retry_broadcasts_stream_retry_marker_before_replay() -> Result<(), NornError> {
+    fn completed(outcome: RetryOutcome) -> AssembledResponse {
+        match outcome {
+            RetryOutcome::Completed(response) => *response,
+            other => panic!("expected a completed provider call, got {other:?}"),
+        }
+    }
+
+    fn drain(rx: &mut tokio::sync::broadcast::Receiver<AgentEvent>) -> Vec<AgentEventKind> {
+        let mut received = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            received.push(event.event);
+        }
+        received
+    }
+
+    fn retry_markers(events: &[AgentEventKind]) -> Vec<AgentStreamRetry> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                AgentEventKind::StreamRetry(retry) => Some(retry.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Regression (retry re-broadcast with no marker), now carrying the
+    /// enriched D8 payload: a retryable mid-stream failure after partial
+    /// deltas must broadcast a typed [`AgentStreamRetry`] marker *before*
+    /// the replay's events, so observers reset the failed attempt's
+    /// partial output — and the marker must describe the wait that is
+    /// about to happen, not merely the attempt index.
+    #[tokio::test(start_paused = true)]
+    async fn retry_broadcasts_enriched_stream_retry_marker_before_replay() -> Result<(), NornError>
+    {
         let provider = ScriptedResultProvider::new(vec![
             vec![
                 Ok(ProviderEvent::TextDelta {
@@ -707,28 +787,31 @@ mod tests {
             ],
         ]);
         let policy = crate::r#loop::retry::RetryPolicy {
-            initial_backoff: std::time::Duration::from_millis(1),
+            initial_backoff: std::time::Duration::from_secs(4),
+            jitter: false,
             ..crate::r#loop::retry::RetryPolicy::default()
         };
         let (tx, mut rx) = tokio::sync::broadcast::channel::<AgentEvent>(32);
         let sender = AgentEventSender::new(tx, uuid::Uuid::nil(), "root".to_owned());
 
-        let response = call_provider_with_retry(
-            &policy,
-            &provider,
-            empty_request(),
-            &ProviderTurnContext::default(),
-            Some(&sender),
-            None,
-            None,
-        )
-        .await?;
+        let response = completed(
+            call_provider_with_retry(
+                &policy,
+                &provider,
+                empty_request(),
+                &ProviderTurnContext::default(),
+                &ProviderCallSinks {
+                    event_tx: Some(&sender),
+                    partial_capture: None,
+                    audio_store: None,
+                },
+                None,
+            )
+            .await,
+        );
         assert_eq!(response.text, "full answer");
 
-        let mut received = Vec::new();
-        while let Ok(event) = rx.try_recv() {
-            received.push(event.event);
-        }
+        let received = drain(&mut rx);
         assert!(
             matches!(
                 &received[0],
@@ -737,13 +820,21 @@ mod tests {
             ),
             "first broadcast must be the failed attempt's partial delta",
         );
-        assert!(
-            matches!(
-                &received[1],
-                AgentEventKind::StreamRetry(AgentStreamRetry { attempt: 2 }),
-            ),
-            "the retry marker must precede the replay, got {received:?}",
-        );
+        match &received[1] {
+            AgentEventKind::StreamRetry(retry) => {
+                assert_eq!(retry.attempt, 2);
+                assert_eq!(
+                    retry.max_attempts, None,
+                    "the default policy is unbounded, which the marker reports as absent",
+                );
+                assert_eq!(
+                    retry.delay_ms, 4_000,
+                    "the marker carries the actual wait about to be taken",
+                );
+                assert_eq!(retry.error_class, "connection_reset");
+            }
+            other => panic!("the retry marker must precede the replay, got {other:?}"),
+        }
         assert!(
             matches!(
                 &received[2],
@@ -760,6 +851,57 @@ mod tests {
         Ok(())
     }
 
+    /// Exactly one marker per wait. The pre-sleep emission inside the
+    /// retry loop replaced the old post-sleep emission at this call site;
+    /// a surviving second emitter would double every marker.
+    #[tokio::test(start_paused = true)]
+    async fn each_retry_wait_broadcasts_exactly_one_marker() {
+        let failure = || {
+            vec![Err(ProviderError::StreamError {
+                reason: "HTTP 503: bad day".to_owned(),
+                transient: Some(TransientKind::ServerError { status: 503 }),
+            })]
+        };
+        let provider =
+            ScriptedResultProvider::new(vec![failure(), failure(), failure(), failure()]);
+        let policy = crate::r#loop::retry::RetryPolicy {
+            max_attempts: Some(4),
+            initial_backoff: std::time::Duration::from_secs(1),
+            jitter: false,
+            ..crate::r#loop::retry::RetryPolicy::default()
+        };
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<AgentEvent>(32);
+        let sender = AgentEventSender::new(tx, uuid::Uuid::nil(), "root".to_owned());
+
+        let outcome = call_provider_with_retry(
+            &policy,
+            &provider,
+            empty_request(),
+            &ProviderTurnContext::default(),
+            &ProviderCallSinks {
+                event_tx: Some(&sender),
+                partial_capture: None,
+                audio_store: None,
+            },
+            None,
+        )
+        .await;
+        assert!(matches!(outcome, RetryOutcome::Failed(_)));
+
+        let markers = retry_markers(&drain(&mut rx));
+        assert_eq!(
+            markers.iter().map(|m| m.attempt).collect::<Vec<_>>(),
+            vec![2, 3, 4],
+            "one marker per wait, none after the last attempt",
+        );
+        assert!(markers.iter().all(|m| m.max_attempts == Some(4)));
+        assert_eq!(
+            markers.iter().map(|m| m.delay_ms).collect::<Vec<_>>(),
+            vec![1_000, 2_000, 4_000],
+        );
+        assert!(markers.iter().all(|m| m.error_class == "server_error"));
+    }
+
     /// A first-attempt success must broadcast no retry marker.
     #[tokio::test]
     async fn successful_first_attempt_emits_no_retry_marker() -> Result<(), NornError> {
@@ -773,24 +915,75 @@ mod tests {
         let (tx, mut rx) = tokio::sync::broadcast::channel::<AgentEvent>(32);
         let sender = AgentEventSender::new(tx, uuid::Uuid::nil(), "root".to_owned());
 
-        let response = call_provider_with_retry(
+        let response = completed(
+            call_provider_with_retry(
+                &policy,
+                &provider,
+                empty_request(),
+                &ProviderTurnContext::default(),
+                &ProviderCallSinks {
+                    event_tx: Some(&sender),
+                    partial_capture: None,
+                    audio_store: None,
+                },
+                None,
+            )
+            .await,
+        );
+        assert_eq!(response.text, "clean");
+        assert!(
+            retry_markers(&drain(&mut rx)).is_empty(),
+            "no retry marker may be broadcast on a clean first attempt",
+        );
+        Ok(())
+    }
+
+    /// Cancelling during an inter-attempt wait stops the call at once and
+    /// surfaces as `Cancelled` — never a provider failure, and never a
+    /// further attempt against the provider.
+    #[tokio::test(start_paused = true)]
+    async fn cancel_during_the_retry_wait_yields_a_cancelled_outcome() {
+        let failure = || {
+            vec![Err(ProviderError::StreamError {
+                reason: "HTTP 503: bad day".to_owned(),
+                transient: Some(TransientKind::ServerError { status: 503 }),
+            })]
+        };
+        let provider = ScriptedResultProvider::new(vec![failure(), failure()]);
+        let policy = crate::r#loop::retry::RetryPolicy {
+            initial_backoff: std::time::Duration::from_secs(600),
+            jitter: false,
+            ..crate::r#loop::retry::RetryPolicy::default()
+        };
+        let token = tokio_util::sync::CancellationToken::new();
+        let canceller = {
+            let token = token.clone();
+            async move {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                token.cancel();
+            }
+        };
+        let started = tokio::time::Instant::now();
+        let turn_context = ProviderTurnContext::default();
+        let call = call_provider_with_retry(
             &policy,
             &provider,
             empty_request(),
-            &ProviderTurnContext::default(),
-            Some(&sender),
-            None,
-            None,
-        )
-        .await?;
-        assert_eq!(response.text, "clean");
-
-        while let Ok(event) = rx.try_recv() {
-            assert!(
-                !matches!(event.event, AgentEventKind::StreamRetry(_)),
-                "no retry marker may be broadcast on a clean first attempt",
-            );
-        }
-        Ok(())
+            &turn_context,
+            &ProviderCallSinks {
+                event_tx: None,
+                partial_capture: None,
+                audio_store: None,
+            },
+            Some(&token),
+        );
+        let (outcome, ()) = tokio::join!(call, canceller);
+        assert!(matches!(outcome, RetryOutcome::Cancelled));
+        assert_eq!(started.elapsed(), std::time::Duration::from_secs(3));
+        assert_eq!(
+            provider.remaining_attempts(),
+            1,
+            "the second scripted attempt must never be consumed",
+        );
     }
 }

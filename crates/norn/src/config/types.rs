@@ -255,8 +255,9 @@ pub struct ProviderSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<String>,
 
-    /// Provider-level maximum retry count (distinct from
-    /// [`RetrySettings::max_retries`], which governs the agent-loop retry
+    /// Provider-level maximum retry count for the server-directed `429`
+    /// `Retry-After` loop (distinct from
+    /// [`RetrySettings::max_attempts`], which governs the agent-loop retry
     /// policy). Maps to `ConfigOverrides.max_retries`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_retries: Option<u32>,
@@ -576,23 +577,49 @@ pub struct AgentSettings {
 /// Retry-policy settings consumed by [`crate::agent_loop::retry`].
 ///
 /// Distinct from [`ProviderSettings::max_retries`]: the provider layer
-/// retries connection-level failures, while [`RetrySettings`] governs the
-/// agent-loop's response to provider-reported errors.
+/// owns the server-directed `429` `Retry-After` loop, while
+/// [`RetrySettings`] governs the agent loop's response to every transient
+/// provider error — connectivity faults, `5xx`, and an exhausted
+/// rate-limit budget alike.
+///
+/// Every field is optional and every absent field defers to the ratified
+/// default in [`RetryPolicy`](crate::agent_loop::retry::RetryPolicy):
+/// unbounded attempts, 1s initial backoff, 2x growth, a 60s ceiling, and
+/// full jitter on.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RetrySettings {
-    /// Maximum retry attempts. Overrides the hardcoded `2` in
-    /// `loop/retry.rs:16`.
+    /// Total provider attempts per call, **including the first**. Absent
+    /// means unbounded — the default — so a transient outage is waited
+    /// out rather than fatal. `1` disables retry. `0` is rejected by
+    /// [`validate_settings`](crate::config::validate_settings): a call
+    /// that is never attempted cannot succeed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_retries: Option<u32>,
+    pub max_attempts: Option<u32>,
 
-    /// Base delay between retries as a `humantime` duration string (e.g.
-    /// `"1s"`). Overrides the hardcoded `1s` backoff in `loop/retry.rs:18`.
+    /// Base delay before the first retry, as a `humantime` duration
+    /// string (e.g. `"1s"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_delay: Option<String>,
 
     /// Exponential backoff multiplier applied between successive retries.
+    /// Must be at least `1.0` — a shrinking schedule would retry harder
+    /// the longer a backend stays sick.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backoff_multiplier: Option<f64>,
+
+    /// Saturation ceiling for the computed backoff base, as a `humantime`
+    /// duration string. The base grows exponentially until it reaches this
+    /// value and then stays there, so an unbounded loop settles into a
+    /// steady whisper. Must be non-zero. A server-supplied `Retry-After`
+    /// is deliberately *not* clamped by this ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backoff_ceiling: Option<String>,
+
+    /// Whether to apply full jitter (`wait = uniform(0, base]`) to each
+    /// computed backoff base. On by default; `false` waits the exact
+    /// base.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jitter: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1142,9 +1169,11 @@ mod tests {
         assert!(agent.index_lock_deadline_ms.is_none());
 
         let retry = RetrySettings::default();
-        assert!(retry.max_retries.is_none());
+        assert!(retry.max_attempts.is_none());
         assert!(retry.base_delay.is_none());
         assert!(retry.backoff_multiplier.is_none());
+        assert!(retry.backoff_ceiling.is_none());
+        assert!(retry.jitter.is_none());
 
         let perm = PermissionSettings::default();
         assert!(perm.allow.is_none());
@@ -1379,9 +1408,11 @@ mod tests {
                 index_lock_deadline_ms: Some(10_000),
             }),
             retry: Some(RetrySettings {
-                max_retries: Some(5),
+                max_attempts: Some(5),
                 base_delay: Some("2s".to_owned()),
                 backoff_multiplier: Some(1.5),
+                backoff_ceiling: Some("90s".to_owned()),
+                jitter: Some(false),
             }),
             permissions: Some(PermissionSettings {
                 allow: Some(vec!["read".to_owned(), "edit".to_owned()]),
@@ -1491,8 +1522,11 @@ mod tests {
         assert_eq!(ra.index_lock_deadline_ms, oa.index_lock_deadline_ms);
         let rr = roundtripped.retry.as_ref().unwrap();
         let or_ = original.retry.as_ref().unwrap();
-        assert_eq!(rr.max_retries, or_.max_retries);
+        assert_eq!(rr.max_attempts, or_.max_attempts);
         assert_eq!(rr.base_delay, or_.base_delay);
+        assert_eq!(rr.backoff_multiplier, or_.backoff_multiplier);
+        assert_eq!(rr.backoff_ceiling, or_.backoff_ceiling);
+        assert_eq!(rr.jitter, or_.jitter);
         let rperm = roundtripped.permissions.as_ref().unwrap();
         let operm = original.permissions.as_ref().unwrap();
         assert_eq!(rperm.deny, operm.deny);

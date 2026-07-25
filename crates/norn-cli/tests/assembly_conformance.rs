@@ -25,7 +25,7 @@ use norn::agent::child_policy::CoordinationEnvelope;
 use norn::agent::registry::AgentRegistry;
 use norn::agent::{AgentBuilder, AgentParts};
 use norn::agent_loop::retry::{
-    DEFAULT_BACKOFF_MULTIPLIER, DEFAULT_INITIAL_BACKOFF, DEFAULT_MAX_RETRIES,
+    DEFAULT_BACKOFF_CEILING, DEFAULT_BACKOFF_MULTIPLIER, DEFAULT_INITIAL_BACKOFF, DEFAULT_JITTER,
 };
 use norn::agent_loop::runner::ToolExecutor;
 use norn::config::NornSettings;
@@ -165,9 +165,13 @@ fn run_snapshot() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Retry policy resolves to the runtime-base default in the hermetic
-    // environment (no settings override the 2-retry / 1s / 2x policy).
+    // environment (no settings override the ratified unbounded / 1s / 2x /
+    // 60s-ceiling / jitter-on policy).
     let retry = &base_parts.loop_context.retry_policy;
-    assert_eq!(retry.max_retries, DEFAULT_MAX_RETRIES, "base: retry count");
+    assert_eq!(
+        retry.max_attempts, None,
+        "base: retry is unbounded by default",
+    );
     assert_eq!(
         retry.initial_backoff, DEFAULT_INITIAL_BACKOFF,
         "base: retry backoff",
@@ -176,6 +180,11 @@ fn run_snapshot() -> Result<(), Box<dyn std::error::Error>> {
         (retry.backoff_multiplier - DEFAULT_BACKOFF_MULTIPLIER).abs() < f64::EPSILON,
         "base: retry multiplier",
     );
+    assert_eq!(
+        retry.backoff_ceiling, DEFAULT_BACKOFF_CEILING,
+        "base: retry backoff ceiling",
+    );
+    assert_eq!(retry.jitter, DEFAULT_JITTER, "base: retry jitter");
 
     // No `--fast` / `--service-tier` and no profile / settings tier: the
     // service tier resolves to `None`.
@@ -253,6 +262,56 @@ fn run_snapshot() -> Result<(), Box<dyn std::error::Error>> {
         config_json.get("max_iterations"),
         Some(&serde_json::json!(7)),
         "-c max_turns=7 sets the agent-loop max_iterations (config: {config_json})",
+    );
+
+    // The `-c retry_*` knobs reach the assembled loop context. Without the
+    // explicit `retry_policy` wiring in `builder_from_cli` these parse and
+    // are then silently discarded, leaving the unbounded default in place —
+    // which is exactly what an operator asking for a bounded budget must
+    // not get.
+    let bounded_retry = Cli::parse_from([
+        "norn",
+        "-m",
+        "gpt-5.5",
+        "--no-session",
+        "-c",
+        "retry_max=3",
+        "-c",
+        "retry_backoff_ceiling=90s",
+        "-c",
+        "retry_jitter=false",
+    ]);
+    let bounded_retry_policy = build_parts(&bounded_retry)?.loop_context.retry_policy;
+    assert_eq!(
+        bounded_retry_policy.max_attempts,
+        Some(3),
+        "-c retry_max=3 bounds the loop's total attempts",
+    );
+    assert_eq!(
+        bounded_retry_policy.backoff_ceiling,
+        std::time::Duration::from_secs(90),
+        "-c retry_backoff_ceiling reaches the loop context",
+    );
+    assert!(
+        !bounded_retry_policy.jitter,
+        "-c retry_jitter=false reaches the loop context",
+    );
+
+    let unbounded_retry = Cli::parse_from([
+        "norn",
+        "-m",
+        "gpt-5.5",
+        "--no-session",
+        "-c",
+        "retry_max=unbounded",
+    ]);
+    assert_eq!(
+        build_parts(&unbounded_retry)?
+            .loop_context
+            .retry_policy
+            .max_attempts,
+        None,
+        "-c retry_max=unbounded selects the unbounded policy",
     );
 
     // --reasoning-effort high lands on the loop context.

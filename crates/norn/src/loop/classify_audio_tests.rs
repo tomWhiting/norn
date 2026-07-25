@@ -7,10 +7,11 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 use tempfile::tempdir;
 
-use super::classify::{call_provider, call_provider_with_retry};
+use super::assembly::AssembledResponse;
+use super::classify::{ProviderCallSinks, call_provider, call_provider_with_retry};
 use super::compaction::{InFlightPartial, shared_timeout_state};
 use super::config::AgentStepResult;
-use super::retry::RetryPolicy;
+use super::retry::{RetryOutcome, RetryPolicy};
 use super::stop_records::{PARTIAL_OUTPUT_EVENT_TYPE, StepStopContext, record_abnormal_step_stop};
 use super::summarization::request_compaction_summary;
 use crate::error::{NornError, ProviderError};
@@ -162,6 +163,24 @@ fn audio_store(
         .ok_or_else(|| std::io::Error::other("managed session had no response-audio store"))
 }
 
+fn completed(outcome: RetryOutcome) -> Result<AssembledResponse, std::io::Error> {
+    match outcome {
+        RetryOutcome::Completed(response) => Ok(*response),
+        other => Err(std::io::Error::other(format!(
+            "expected a completed provider call, got {other:?}"
+        ))),
+    }
+}
+
+fn failed(outcome: RetryOutcome) -> Result<NornError, std::io::Error> {
+    match outcome {
+        RetryOutcome::Failed(error) => Ok(error),
+        other => Err(std::io::Error::other(format!(
+            "expected a failed provider call, got {other:?}"
+        ))),
+    }
+}
+
 #[tokio::test]
 async fn successful_call_seals_and_returns_readable_audio_reference() -> TestResult {
     let directory = tempdir()?;
@@ -190,10 +209,13 @@ async fn successful_call_seals_and_returns_readable_audio_reference() -> TestRes
         &provider,
         empty_request(),
         crate::provider::ProviderTurnContext::default(),
-        None,
-        None,
-        Some(store),
+        &ProviderCallSinks {
+            event_tx: None,
+            partial_capture: None,
+            audio_store: Some(store),
+        },
         1,
+        None,
     )
     .await?;
     let reference = required(response.response_audio, "response omitted audio reference")?;
@@ -210,8 +232,16 @@ async fn successful_call_seals_and_returns_readable_audio_reference() -> TestRes
     Ok(())
 }
 
+/// D10: an abandoned attempt's sidecar is discarded before the replay.
+///
+/// Under unbounded retry, retaining every failed attempt's unsealed
+/// sidecar would accumulate one file per attempt for the life of an
+/// outage. The loop therefore discards the abandoned artifact at the top
+/// of each replay, leaving only the successful attempt's sealed sidecar.
+/// (Replaces `retry_keeps_failed_attempt_unsealed_and_success_distinct_and_sealed`,
+/// which pinned the bounded-retry era's retain-everything contract.)
 #[tokio::test]
-async fn retry_keeps_failed_attempt_unsealed_and_success_distinct_and_sealed() -> TestResult {
+async fn retry_discards_the_abandoned_attempt_sidecar_and_seals_only_the_success() -> TestResult {
     let directory = tempdir()?;
     let manager = SessionManager::new(directory.path());
     let opened = manager.create_with_id("audio-retry", options(), DurabilityPolicy::Flush)?;
@@ -240,46 +270,116 @@ async fn retry_keeps_failed_attempt_unsealed_and_success_distinct_and_sealed() -
         ScriptedAttempt::Complete(second),
     ]);
     let policy = RetryPolicy {
-        max_retries: 1,
+        max_attempts: Some(2),
         initial_backoff: std::time::Duration::ZERO,
         backoff_multiplier: 1.0,
         ..RetryPolicy::default()
     };
 
-    let response = call_provider_with_retry(
-        &policy,
-        &provider,
-        empty_request(),
-        &crate::provider::ProviderTurnContext::default(),
-        None,
-        None,
-        Some(store),
-    )
-    .await?;
+    let response = completed(
+        call_provider_with_retry(
+            &policy,
+            &provider,
+            empty_request(),
+            &crate::provider::ProviderTurnContext::default(),
+            &ProviderCallSinks {
+                event_tx: None,
+                partial_capture: None,
+                audio_store: Some(store),
+            },
+            None,
+        )
+        .await,
+    )?;
     let sealed_reference = required(
         response.response_audio,
         "successful retry omitted audio reference",
     )?;
-    let mut artifacts = store
+    let artifacts = store
         .list()?
         .into_iter()
         .map(|reference| store.read(reference))
         .collect::<Result<Vec<_>, _>>()?;
-    artifacts.sort_by_key(|artifact| artifact.attempt);
-    let mut artifacts = artifacts.into_iter();
-    let failed = required(artifacts.next(), "failed-attempt artifact missing")?;
-    let succeeded = required(artifacts.next(), "successful-attempt artifact missing")?;
 
-    assert!(artifacts.next().is_none());
-    assert_eq!(failed.attempt, 1);
-    assert_eq!(failed.audio, b"a");
-    assert_eq!(failed.state, ResponseAudioArtifactState::Unsealed);
-    assert_eq!(succeeded.attempt, 2);
-    assert_eq!(succeeded.audio, b"b");
-    assert_eq!(succeeded.state, ResponseAudioArtifactState::Sealed);
-    assert_ne!(failed.reference, succeeded.reference);
-    assert_eq!(succeeded.reference, sealed_reference);
+    assert_eq!(
+        artifacts.len(),
+        1,
+        "the abandoned attempt's sidecar must not survive the replay",
+    );
+    let sealed = &artifacts[0];
+    assert_eq!(sealed.attempt, 2);
+    assert_eq!(sealed.audio, b"b");
+    assert_eq!(sealed.state, ResponseAudioArtifactState::Sealed);
+    assert_eq!(sealed.reference, sealed_reference);
     assert_eq!(provider.call_count(), 2);
+    Ok(())
+}
+
+/// The bound is per-call, not per-policy: a long failure streak under an
+/// unbounded policy still leaves exactly one sidecar behind — the sealed
+/// success — because each replay discards its predecessor.
+#[tokio::test(start_paused = true)]
+async fn a_long_failure_streak_never_accumulates_unsealed_sidecars() -> TestResult {
+    let directory = tempdir()?;
+    let manager = SessionManager::new(directory.path());
+    let opened = manager.create_with_id("audio-streak", options(), DurabilityPolicy::Flush)?;
+    let store = audio_store(&opened)?;
+    let mut attempts = Vec::new();
+    for _ in 0..8 {
+        let mut failing = Vec::new();
+        push_audio(
+            &mut failing,
+            "response.audio.delta",
+            1,
+            &json!({"delta": "YQ=="}),
+        )?;
+        failing.push(Err(ProviderError::StreamInterrupted {
+            reason: "scripted interruption".to_owned(),
+        }));
+        attempts.push(ScriptedAttempt::Complete(failing));
+    }
+    let mut success = Vec::new();
+    push_audio(
+        &mut success,
+        "response.audio.delta",
+        1,
+        &json!({"delta": "Yg=="}),
+    )?;
+    push_audio(&mut success, "response.audio.done", 2, &json!({}))?;
+    success.push(Ok(done(Some("resp_streak_success"))));
+    attempts.push(ScriptedAttempt::Complete(success));
+    let provider = ScriptedProvider::new(attempts);
+    let policy = RetryPolicy::default();
+    assert_eq!(policy.max_attempts, None, "the streak runs unbounded");
+
+    let response = completed(
+        call_provider_with_retry(
+            &policy,
+            &provider,
+            empty_request(),
+            &crate::provider::ProviderTurnContext::default(),
+            &ProviderCallSinks {
+                event_tx: None,
+                partial_capture: None,
+                audio_store: Some(store),
+            },
+            None,
+        )
+        .await,
+    )?;
+
+    assert_eq!(provider.call_count(), 9);
+    let artifacts = store.list()?;
+    assert_eq!(
+        artifacts.len(),
+        1,
+        "nine attempts must leave exactly one sidecar on disk",
+    );
+    assert_eq!(
+        store.read(artifacts[0])?.state,
+        ResponseAudioArtifactState::Sealed,
+    );
+    assert_eq!(response.response_audio, Some(artifacts[0]));
     Ok(())
 }
 
@@ -307,24 +407,27 @@ async fn local_sidecar_failure_is_terminal_and_never_provider_retried() -> TestR
         ScriptedAttempt::Complete(attempt),
     ]);
     let policy = RetryPolicy {
-        max_retries: 1,
+        max_attempts: Some(2),
         initial_backoff: std::time::Duration::ZERO,
         backoff_multiplier: 1.0,
         ..RetryPolicy::default()
     };
 
-    let error = call_provider_with_retry(
-        &policy,
-        &provider,
-        empty_request(),
-        &crate::provider::ProviderTurnContext::default(),
-        None,
-        None,
-        Some(&stale),
-    )
-    .await
-    .err()
-    .ok_or_else(|| std::io::Error::other("stale sidecar authority was accepted"))?;
+    let error = failed(
+        call_provider_with_retry(
+            &policy,
+            &provider,
+            empty_request(),
+            &crate::provider::ProviderTurnContext::default(),
+            &ProviderCallSinks {
+                event_tx: None,
+                partial_capture: None,
+                audio_store: Some(&stale),
+            },
+            None,
+        )
+        .await,
+    )?;
 
     assert!(matches!(error, NornError::Session(_)));
     assert_eq!(provider.call_count(), 1);
@@ -374,14 +477,18 @@ async fn dropped_pending_call_keeps_unsealed_reference_in_timeout_state() -> Tes
     let timeout_state = shared_timeout_state();
 
     {
+        let sinks = ProviderCallSinks {
+            event_tx: None,
+            partial_capture: Some(&timeout_state),
+            audio_store: Some(store),
+        };
         let call = call_provider(
             &provider,
             empty_request(),
             crate::provider::ProviderTurnContext::default(),
-            None,
-            Some(&timeout_state),
-            Some(store),
+            &sinks,
             1,
+            None,
         );
         tokio::pin!(call);
         assert!(matches!(futures_util::poll!(&mut call), Poll::Pending));

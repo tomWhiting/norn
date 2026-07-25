@@ -134,6 +134,42 @@ impl ResponseAudioStore {
         })
     }
 
+    /// Remove an unsealed sidecar an abandoned provider attempt left behind.
+    ///
+    /// Retry replays the whole request, so a failed attempt's partially
+    /// written sidecar is unreachable: nothing links it, and its content is a
+    /// prefix of a response that never completed. Under unbounded retry those
+    /// files would otherwise accumulate one per attempt for the life of an
+    /// outage, so the retry loop discards each one before replaying.
+    ///
+    /// A sidecar that is already gone is not an error — the caller's intent
+    /// (no such artifact remains) is satisfied.
+    pub(crate) fn discard(
+        &self,
+        reference: ResponseAudioArtifactRef,
+    ) -> Result<(), SessionPersistError> {
+        if !reference.is_uuid_v4() {
+            return Err(invalid(reference, "artifact reference was not a UUID v4"));
+        }
+        let _descriptor_permit = DescriptorGovernor::global()?.try_acquire(1)?;
+        with_registered_generation(
+            &self.data_dir,
+            &self.registered,
+            self.index_lock_deadline,
+            |root| {
+                match root.remove_file(&self.artifact_path(reference)) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                    Err(error) => return Err(SessionPersistError::from(error)),
+                }
+                if self.fsync {
+                    root.sync_dir(&self.response_audio_dir())?;
+                }
+                Ok(())
+            },
+        )
+    }
+
     /// Revalidate and, under an fsyncing session policy, durably checkpoint an
     /// unsealed sidecar before a hard-cut event publishes its reference.
     pub(crate) fn checkpoint_reference(

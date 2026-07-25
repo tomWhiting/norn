@@ -213,10 +213,11 @@ async fn turn_context_survives_retry_and_continuation_but_not_the_next_step() ->
     let mut loop_context = LoopContext::new("system");
     loop_context.variables = Some(Arc::new(variables));
     loop_context.retry_policy = RetryPolicy {
-        max_retries: 1,
+        max_attempts: Some(2),
         initial_backoff: Duration::ZERO,
         backoff_multiplier: 1.0,
         retryable_errors: vec![RetryableError::ConnectionReset],
+        ..RetryPolicy::default()
     };
 
     let first_result = run_step(&provider, &store, &mut loop_context, "first prompt").await?;

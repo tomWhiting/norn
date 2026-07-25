@@ -386,9 +386,16 @@ pub(crate) fn agent_event_to_value(
             "type": "usage_estimate",
             "input_tokens": estimate.input_tokens,
         })),
+        // Flat wire shape. `max_attempts` is `Option<u32>` and serializes
+        // as JSON `null` under an unbounded policy — never a sentinel
+        // number, never an omitted key, so a consumer can always read the
+        // field and distinguish "unbounded" from "bounded at N".
         norn::provider::AgentEventKind::StreamRetry(retry) => Some(json!({
             "type": "stream_retry",
             "attempt": retry.attempt,
+            "max_attempts": retry.max_attempts,
+            "delay_ms": retry.delay_ms,
+            "error_class": retry.error_class,
         })),
         norn::provider::AgentEventKind::Compaction(compaction) => {
             // Serialize the typed payload verbatim, tagged for the driven
@@ -486,6 +493,82 @@ mod tests {
     /// over [`provider_event_to_value`]: the wire form is `Value::to_string`.
     fn provider_event_to_ndjson(event: &ProviderEvent) -> Option<String> {
         provider_event_to_value(event).map(|value| value.to_string())
+    }
+
+    fn stream_retry_event(retry: norn::provider::AgentStreamRetry) -> norn::provider::AgentEvent {
+        norn::provider::AgentEvent {
+            agent_id: uuid::Uuid::nil(),
+            agent_role: std::sync::Arc::from("root"),
+            event: norn::provider::AgentEventKind::StreamRetry(retry),
+        }
+    }
+
+    /// The stream-json wire shape for a bounded policy: a flat object
+    /// carrying the full D8 payload.
+    #[test]
+    fn stream_retry_maps_to_the_flat_enriched_wire_shape() {
+        let value = agent_event_to_value(
+            &stream_retry_event(norn::provider::AgentStreamRetry {
+                attempt: 3,
+                max_attempts: Some(5),
+                delay_ms: 4_000,
+                error_class: "server_error".to_owned(),
+            }),
+            true,
+        )
+        .expect("stream_retry must have a wire representation");
+        assert_eq!(
+            value,
+            json!({
+                "type": "stream_retry",
+                "attempt": 3,
+                "max_attempts": 5,
+                "delay_ms": 4_000,
+                "error_class": "server_error",
+            }),
+        );
+    }
+
+    /// Reviewer ruling (2026-07-25): an unbounded policy renders
+    /// `max_attempts` as JSON `null` — never a sentinel number, never an
+    /// omitted key. Asserted on the serialized text, not just the `Value`,
+    /// because that is what a consumer parses.
+    #[test]
+    fn unbounded_stream_retry_serializes_max_attempts_as_null() {
+        let value = agent_event_to_value(
+            &stream_retry_event(norn::provider::AgentStreamRetry {
+                attempt: 2,
+                max_attempts: None,
+                delay_ms: 1_000,
+                error_class: "rate_limited".to_owned(),
+            }),
+            true,
+        )
+        .expect("stream_retry must have a wire representation");
+        assert_eq!(value["max_attempts"], json!(null));
+        assert_eq!(
+            value.to_string(),
+            r#"{"type":"stream_retry","attempt":2,"max_attempts":null,"delay_ms":1000,"error_class":"rate_limited"}"#,
+        );
+        let object = value.as_object().expect("wire shape is an object");
+        assert!(
+            object.contains_key("max_attempts"),
+            "the key is always present, even when unbounded",
+        );
+    }
+
+    /// The marker is progress, not output: it must survive the
+    /// `partial: false` delta filter, which only ever drops provider
+    /// deltas.
+    #[test]
+    fn stream_retry_survives_the_non_partial_filter() {
+        let event = stream_retry_event(norn::provider::AgentStreamRetry {
+            attempt: 2,
+            max_attempts: None,
+            delay_ms: 1_000,
+            error_class: "timeout".to_owned(),
+        });
+        assert!(agent_event_to_value(&event, false).is_some());
     }
 
     fn diag_warning() -> NornDiagnostic {

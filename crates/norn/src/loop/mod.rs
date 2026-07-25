@@ -25,7 +25,9 @@ pub use crate::r#loop::iteration::{
 pub use crate::r#loop::linger::LingerPolicy;
 pub use crate::r#loop::loop_context::LoopContext;
 
-pub use crate::r#loop::retry::{RetryPolicy, RetryableError, retry_with_backoff};
+pub use crate::r#loop::retry::{
+    RetryNotice, RetryOutcome, RetryPolicy, RetryableError, error_class_label, retry_with_backoff,
+};
 
 pub use crate::r#loop::tokens::{SimpleTokenEstimator, TokenEstimator, estimate_prompt_tokens};
 

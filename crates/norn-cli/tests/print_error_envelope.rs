@@ -66,7 +66,7 @@ const AGENT_FAILURE_ARGS: &[&str] = &[
     "-c",
     "max_retries=0",
     "-c",
-    "retry_max=0",
+    "retry_max=1",
     "--no-session",
 ];
 
@@ -355,7 +355,7 @@ fn driven_mode_failure_answers_error_response_without_envelope() {
             "-c",
             "max_retries=0",
             "-c",
-            "retry_max=0",
+            "retry_max=1",
             "--no-session",
         ])
         .env("NORN_HOME", home.path())

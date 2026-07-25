@@ -240,11 +240,11 @@ pub(super) fn merge_retry(
     let mut lcl = lcl.take().unwrap_or_default();
     let mut ovr = ovr.take().unwrap_or_default();
     Some(RetrySettings {
-        max_retries: pick_scalar(
-            &mut usr.max_retries,
-            &mut prj.max_retries,
-            &mut lcl.max_retries,
-            &mut ovr.max_retries,
+        max_attempts: pick_scalar(
+            &mut usr.max_attempts,
+            &mut prj.max_attempts,
+            &mut lcl.max_attempts,
+            &mut ovr.max_attempts,
         ),
         base_delay: pick_scalar(
             &mut usr.base_delay,
@@ -257,6 +257,18 @@ pub(super) fn merge_retry(
             &mut prj.backoff_multiplier,
             &mut lcl.backoff_multiplier,
             &mut ovr.backoff_multiplier,
+        ),
+        backoff_ceiling: pick_scalar(
+            &mut usr.backoff_ceiling,
+            &mut prj.backoff_ceiling,
+            &mut lcl.backoff_ceiling,
+            &mut ovr.backoff_ceiling,
+        ),
+        jitter: pick_scalar(
+            &mut usr.jitter,
+            &mut prj.jitter,
+            &mut lcl.jitter,
+            &mut ovr.jitter,
         ),
     })
 }

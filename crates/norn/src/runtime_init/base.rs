@@ -372,17 +372,28 @@ fn apply_settings_to_agent_config(
     Ok(())
 }
 
+/// Fold the merged `retry` section onto the ratified default policy.
+///
+/// An absent `max_attempts` deliberately leaves [`RetryPolicy::max_attempts`]
+/// at `None` (unbounded retry) rather than substituting a bound: absent
+/// means "the ratified default", and the ratified default is unbounded.
 fn retry_policy_from_settings(settings: &NornSettings) -> Result<RetryPolicy, NornError> {
     let mut policy = RetryPolicy::default();
     if let Some(retry) = settings.retry.as_ref() {
-        if let Some(max) = retry.max_retries {
-            policy.max_retries = max;
+        if let Some(max) = retry.max_attempts {
+            policy.max_attempts = Some(max);
         }
         if let Some(base) = retry.base_delay.as_deref() {
             policy.initial_backoff = parse_settings_duration("retry.base_delay", base)?;
         }
         if let Some(mult) = retry.backoff_multiplier {
             policy.backoff_multiplier = mult;
+        }
+        if let Some(ceiling) = retry.backoff_ceiling.as_deref() {
+            policy.backoff_ceiling = parse_settings_duration("retry.backoff_ceiling", ceiling)?;
+        }
+        if let Some(jitter) = retry.jitter {
+            policy.jitter = jitter;
         }
     }
     Ok(policy)
@@ -1236,6 +1247,70 @@ mod tests {
         assert_eq!(resolved.rate_limit_interval, Some(Duration::from_secs(90)));
         assert_eq!(resolved.retry_backoff, Some(Duration::from_millis(500)));
         assert_eq!(resolved.retry_after_ceiling, Some(Duration::from_mins(2)));
+    }
+
+    /// Every `retry` field threads onto the policy, and an absent field
+    /// leaves the ratified default in place — absent never means
+    /// "substitute a bound".
+    #[test]
+    fn retry_settings_thread_onto_the_policy() {
+        use crate::config::RetrySettings;
+        let defaulted = retry_policy_from_settings(&NornSettings::default())
+            .expect("empty settings resolve to the ratified defaults");
+        assert_eq!(defaulted.max_attempts, None);
+        assert_eq!(defaulted.initial_backoff, Duration::from_secs(1));
+        assert_eq!(defaulted.backoff_ceiling, Duration::from_secs(60));
+        assert!(defaulted.jitter);
+
+        let partial = retry_policy_from_settings(&NornSettings {
+            retry: Some(RetrySettings {
+                base_delay: Some("250ms".to_owned()),
+                ..RetrySettings::default()
+            }),
+            ..NornSettings::default()
+        })
+        .expect("partial settings resolve");
+        assert_eq!(partial.initial_backoff, Duration::from_millis(250));
+        assert_eq!(
+            partial.max_attempts, None,
+            "an absent max_attempts stays unbounded",
+        );
+        assert_eq!(partial.backoff_ceiling, Duration::from_secs(60));
+        assert!(partial.jitter);
+
+        let full = retry_policy_from_settings(&NornSettings {
+            retry: Some(RetrySettings {
+                max_attempts: Some(4),
+                base_delay: Some("2s".to_owned()),
+                backoff_multiplier: Some(3.0),
+                backoff_ceiling: Some("5m".to_owned()),
+                jitter: Some(false),
+            }),
+            ..NornSettings::default()
+        })
+        .expect("full settings resolve");
+        assert_eq!(full.max_attempts, Some(4));
+        assert_eq!(full.initial_backoff, Duration::from_secs(2));
+        assert!((full.backoff_multiplier - 3.0).abs() < f64::EPSILON);
+        assert_eq!(full.backoff_ceiling, Duration::from_secs(300));
+        assert!(!full.jitter);
+    }
+
+    #[test]
+    fn retry_backoff_ceiling_rejects_a_malformed_duration() {
+        use crate::config::RetrySettings;
+        let err = retry_policy_from_settings(&NornSettings {
+            retry: Some(RetrySettings {
+                backoff_ceiling: Some("not-a-duration".to_owned()),
+                ..RetrySettings::default()
+            }),
+            ..NornSettings::default()
+        })
+        .expect_err("a malformed ceiling must be rejected");
+        assert!(
+            err.to_string().contains("retry.backoff_ceiling"),
+            "the error must name the field: {err}",
+        );
     }
 
     #[test]

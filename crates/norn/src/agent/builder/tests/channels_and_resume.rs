@@ -181,7 +181,15 @@ fn default_retry_policy_is_two_one_second_two_x() {
         .working_dir(std::env::temp_dir())
         .build()
         .expect("build succeeds");
-    assert_eq!(agent.loop_context.retry_policy.max_retries, 2);
+    assert_eq!(
+        agent.loop_context.retry_policy.max_attempts, None,
+        "the ratified default is unbounded retry",
+    );
+    assert_eq!(
+        agent.loop_context.retry_policy.backoff_ceiling,
+        std::time::Duration::from_secs(60),
+    );
+    assert!(agent.loop_context.retry_policy.jitter);
     assert_eq!(
         agent.loop_context.retry_policy.initial_backoff,
         std::time::Duration::from_secs(1),
@@ -199,12 +207,12 @@ fn retry_policy_setter_applies_to_loop_context() {
         .context_window_limit(TEST_CONTEXT_WINDOW)
         .working_dir(std::env::temp_dir())
         .retry_policy(RetryPolicy {
-            max_retries: 7,
+            max_attempts: Some(7),
             ..RetryPolicy::default()
         })
         .build()
         .expect("build succeeds");
-    assert_eq!(agent.loop_context.retry_policy.max_retries, 7);
+    assert_eq!(agent.loop_context.retry_policy.max_attempts, Some(7));
 }
 
 #[tokio::test]

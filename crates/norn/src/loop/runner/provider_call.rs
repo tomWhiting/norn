@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::error::{HookType, NornError, SessionError};
 use crate::integration::hooks::{HookOutcome, LlmCallSummary};
 use crate::r#loop::assembly::AssembledResponse;
-use crate::r#loop::classify::call_provider_with_retry;
+use crate::r#loop::classify::{ProviderCallSinks, call_provider_with_retry};
 use crate::r#loop::config::AgentStepResult;
 use crate::r#loop::helpers::handle_iteration_signals;
 use crate::r#loop::iteration::evaluate_iteration;
@@ -15,6 +15,7 @@ use crate::r#loop::programmatic_calling::validate_programmatic_callers;
 use crate::r#loop::response_publication::{
     append_response_publication, notify_response_publication,
 };
+use crate::r#loop::retry::RetryOutcome;
 use crate::provider::events::StopReason;
 use crate::provider::request::{AssistantToolCall, Message, MessageRole, ProviderRequest};
 use crate::session::events::{
@@ -42,42 +43,54 @@ impl StepMachine<'_> {
             });
         }
 
-        // Race the provider call (including its retry-with-backoff
-        // wrapper) against cancellation when a token is supplied. The
-        // `biased` select gives the cancel arm priority so a token that
-        // fires while the provider future is also ready resolves as
-        // cancellation. Dropping the provider future cleanly aborts the
-        // in-flight HTTP stream (reqwest is cancel-safe). When `cancel`
-        // is `None` the call falls through to a direct await with no
-        // select overhead (R3 acceptance).
-        let response = {
+        // The retry brain owns cancellation now: the token is threaded
+        // into `call_provider_with_retry`, which re-checks it before every
+        // attempt and races it against every inter-attempt wait. This
+        // outer `biased` select stays as defence in depth — it also covers
+        // the window *inside* a streaming attempt, where dropping the
+        // provider future cleanly aborts the in-flight HTTP stream
+        // (reqwest is cancel-safe). When `cancel` is `None` the call falls
+        // through to a direct await with no select overhead (R3
+        // acceptance).
+        let sinks = ProviderCallSinks {
+            event_tx: self.event_tx,
+            // Mirror in-flight deltas into the shared timeout state so a
+            // hard cut (step timeout dropping this future, or the cancel
+            // arm below winning the select) leaves the partial content
+            // recoverable for the exit path's `loop.partial_output`
+            // record (Gap 7).
+            partial_capture: Some(&self.timeout_state),
+            audio_store: self.store.response_audio(),
+        };
+        let outcome = {
             let provider_fut = call_provider_with_retry(
                 &self.loop_context.retry_policy,
                 self.provider,
                 request,
                 &self.provider_turn_context,
-                self.event_tx,
-                // Mirror in-flight deltas into the shared timeout state so
-                // a hard cut (step timeout dropping this future, or the
-                // cancel arm below winning the select) leaves the partial
-                // content recoverable for the exit path's
-                // `loop.partial_output` record (Gap 7).
-                Some(&self.timeout_state),
-                self.store.response_audio(),
+                &sinks,
+                self.cancel.as_ref(),
             );
             match self.cancel.as_ref() {
                 Some(token) => tokio::select! {
                     biased;
-                    () = token.cancelled() => {
-                        return Ok(StepFlow::Done(AgentStepResult::Cancelled {
-                            usage: std::mem::take(&mut self.total_usage),
-                            children_usage: self.loop_context.children_usage.snapshot(),
-                        }));
-                    }
-                    result = provider_fut => result?,
+                    () = token.cancelled() => RetryOutcome::Cancelled,
+                    outcome = provider_fut => outcome,
                 },
-                None => provider_fut.await?,
+                None => provider_fut.await,
             }
+        };
+        let response = match outcome {
+            RetryOutcome::Completed(response) => *response,
+            // Cancellation is a stop outcome, never a provider failure and
+            // never a further attempt.
+            RetryOutcome::Cancelled => {
+                return Ok(StepFlow::Done(AgentStepResult::Cancelled {
+                    usage: std::mem::take(&mut self.total_usage),
+                    children_usage: self.loop_context.children_usage.snapshot(),
+                }));
+            }
+            RetryOutcome::Failed(error) => return Err(error),
         };
 
         self.total_usage += response.usage.clone();

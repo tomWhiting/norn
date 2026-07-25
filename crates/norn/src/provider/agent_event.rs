@@ -324,15 +324,35 @@ pub struct AgentUsageEstimate {
 /// The failed attempt may already have broadcast partial
 /// [`ProviderEvent`] deltas; the retry attempt re-streams the turn from
 /// the start, so without this marker observers would render the replayed
-/// deltas appended to the failed attempt's partials. Emitted immediately
-/// **before** the retry attempt's first event: observers discard any
-/// partial output accumulated for this agent's current turn (a no-op
-/// when the failed attempt emitted nothing).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// deltas appended to the failed attempt's partials. Emitted by the retry
+/// loop immediately **before** the inter-attempt wait — so a surface can
+/// say "retrying in Ns" while the wait is still running — and therefore
+/// before the retry attempt's first event: observers discard any partial
+/// output accumulated for this agent's current turn (a no-op when the
+/// failed attempt emitted nothing).
+///
+/// [`Self::error_class`] is a stable `snake_case` label projected from the
+/// error taxonomy
+/// ([`error_class_label`](crate::agent_loop::retry::error_class_label)) —
+/// `"timeout"`, `"connection_reset"`, `"server_error"`, `"rate_limited"`.
+/// It never carries provider free text: reasons belong to the loud
+/// terminal error, which is house-sanitized, not to the always-on event
+/// stream.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentStreamRetry {
     /// 1-based index of the provider attempt about to start (`2` is the
     /// first retry).
     pub attempt: u32,
+    /// Total attempts the loop's policy allows, including the first.
+    /// `None` means unbounded retry — the default — and serializes as
+    /// JSON `null`, never as a sentinel number and never omitted.
+    pub max_attempts: Option<u32>,
+    /// The actual wait, in milliseconds, between the failed attempt and
+    /// the one this marker announces: the sampled jittered backoff with
+    /// any server-supplied `Retry-After` applied as a floor.
+    pub delay_ms: u64,
+    /// Stable `snake_case` taxonomy class of the failure being retried.
+    pub error_class: String,
 }
 
 /// How a committed context-compaction summary was produced.
@@ -520,9 +540,9 @@ impl AgentEventSender {
     }
 
     /// Tag and broadcast a stream-retry marker. Emitted by the loop's
-    /// provider-retry wrapper immediately before a retry attempt begins,
-    /// so observers can discard the failed attempt's partial deltas
-    /// before the replay streams in.
+    /// provider-retry wrapper immediately before the inter-attempt wait,
+    /// so observers can discard the failed attempt's partial deltas and
+    /// surface the pending wait before the replay streams in.
     pub fn send_stream_retry(&self, retry: AgentStreamRetry) {
         let _ = self.tx.send(AgentEvent {
             agent_id: self.agent_id,
@@ -655,6 +675,34 @@ mod tests {
                 input_tokens: 12_345
             })
         ));
+    }
+
+    /// The enriched marker carries the attempt index, the (possibly
+    /// unbounded) budget, the actual sampled wait, and a taxonomy class
+    /// label — the full D8 payload, tagged with the emitting agent.
+    #[test]
+    fn send_stream_retry_carries_the_enriched_payload() {
+        let (tx, mut rx) = broadcast::channel::<AgentEvent>(16);
+        let agent_id = Uuid::from_u128(5);
+        let sender = AgentEventSender::new(tx, agent_id, "root".to_string());
+        sender.send_stream_retry(AgentStreamRetry {
+            attempt: 4,
+            max_attempts: None,
+            delay_ms: 8_000,
+            error_class: "server_error".to_string(),
+        });
+
+        let received = rx.try_recv().unwrap();
+        assert_eq!(received.agent_id, agent_id);
+        match received.event {
+            AgentEventKind::StreamRetry(retry) => {
+                assert_eq!(retry.attempt, 4);
+                assert_eq!(retry.max_attempts, None, "unbounded stays absent");
+                assert_eq!(retry.delay_ms, 8_000);
+                assert_eq!(retry.error_class, "server_error");
+            }
+            other => panic!("expected a stream-retry marker, got {other:?}"),
+        }
     }
 
     #[test]

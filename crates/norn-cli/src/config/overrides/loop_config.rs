@@ -94,17 +94,25 @@ pub fn apply_settings_to_agent_config(
 
 /// Build a retry policy from merged settings and explicit overrides.
 ///
+/// Layering is settings-then-overrides, each field independently: an
+/// absent field at both layers keeps the engine's ratified default
+/// (unbounded attempts, 1s initial backoff, 2x growth, 60s ceiling, full
+/// jitter on). `-c retry_max=unbounded` is an explicit selection of the
+/// unbounded policy, so it must beat a bounded `retry.max_attempts` from
+/// settings — hence the typed [`RetryAttempts`] rather than a bare `u32`.
+///
 /// # Errors
 ///
-/// Returns [`BuildError::Argument`] when `retry.base_delay` is invalid.
+/// Returns [`BuildError::Argument`] when `retry.base_delay` or
+/// `retry.backoff_ceiling` is not a valid duration.
 pub fn retry_policy_from_settings_and_overrides(
     settings: &NornSettings,
     overrides: &ConfigOverrides,
 ) -> Result<RetryPolicy, BuildError> {
     let mut policy = RetryPolicy::default();
     if let Some(retry) = settings.retry.as_ref() {
-        if let Some(max) = retry.max_retries {
-            policy.max_retries = max;
+        if let Some(max) = retry.max_attempts {
+            policy.max_attempts = Some(max);
         }
         if let Some(base) = retry.base_delay.as_deref() {
             policy.initial_backoff = parse_settings_duration("retry.base_delay", base)?;
@@ -112,12 +120,24 @@ pub fn retry_policy_from_settings_and_overrides(
         if let Some(mult) = retry.backoff_multiplier {
             policy.backoff_multiplier = mult;
         }
+        if let Some(ceiling) = retry.backoff_ceiling.as_deref() {
+            policy.backoff_ceiling = parse_settings_duration("retry.backoff_ceiling", ceiling)?;
+        }
+        if let Some(jitter) = retry.jitter {
+            policy.jitter = jitter;
+        }
     }
-    if let Some(max) = overrides.retry_max {
-        policy.max_retries = max;
+    if let Some(attempts) = overrides.retry_max {
+        policy.max_attempts = attempts.max_attempts();
     }
     if let Some(delay) = overrides.retry_base_delay {
         policy.initial_backoff = delay;
+    }
+    if let Some(ceiling) = overrides.retry_backoff_ceiling {
+        policy.backoff_ceiling = ceiling;
+    }
+    if let Some(jitter) = overrides.retry_jitter {
+        policy.jitter = jitter;
     }
     Ok(policy)
 }

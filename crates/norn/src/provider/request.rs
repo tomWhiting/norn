@@ -320,6 +320,11 @@ pub struct ProviderConfig {
     /// one layer up by the agent loop's
     /// [`RetryPolicy`](crate::agent_loop::retry::RetryPolicy).
     ///
+    /// Exhausting this budget is not terminal either: the resulting
+    /// [`ProviderError::RateLimited`] is in the loop policy's default
+    /// retryable set, and the loop honours the server's `Retry-After` as a
+    /// floor on its own backoff.
+    ///
     /// [`ProviderError`]: crate::error::ProviderError
     pub max_retries: u32,
     /// Provider-specific construction options.

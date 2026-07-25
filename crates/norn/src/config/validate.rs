@@ -73,10 +73,19 @@ fn validate_durations(settings: &NornSettings) -> Result<(), ConfigError> {
             check_duration("agent.prompt_command_timeout", prompt)?;
         }
     }
-    if let Some(retry) = settings.retry.as_ref()
-        && let Some(base) = retry.base_delay.as_deref()
-    {
-        check_duration("retry.base_delay", base)?;
+    if let Some(retry) = settings.retry.as_ref() {
+        // Both knobs must be non-zero: a zero base delay makes
+        // `backoff_base` return zero for every attempt (jitter samples
+        // zero from a zero base), and a zero ceiling clamps every
+        // computed backoff to nothing — either way an unbounded policy
+        // degrades into a zero-wait request hammer against a sick
+        // backend instead of the gentle retry whisper.
+        if let Some(base) = retry.base_delay.as_deref() {
+            check_nonzero_duration("retry.base_delay", base)?;
+        }
+        if let Some(ceiling) = retry.backoff_ceiling.as_deref() {
+            check_nonzero_duration("retry.backoff_ceiling", ceiling)?;
+        }
     }
     Ok(())
 }
@@ -183,6 +192,37 @@ fn validate_numeric_ranges(settings: &NornSettings) -> Result<(), ConfigError> {
                 });
             }
         }
+    }
+    validate_retry_ranges(settings)?;
+    Ok(())
+}
+
+fn validate_retry_ranges(settings: &NornSettings) -> Result<(), ConfigError> {
+    let Some(retry) = settings.retry.as_ref() else {
+        return Ok(());
+    };
+    // `max_attempts` counts TOTAL attempts including the first, so zero
+    // describes a call that is never made — unreachable intent, not a
+    // "no retry" setting (that is `1`).
+    if retry.max_attempts == Some(0) {
+        return Err(ConfigError::InvalidConfig {
+            reason: "invalid value for retry.max_attempts: 0 (max_attempts counts total \
+                     attempts including the first; use 1 to disable retry, or omit the key \
+                     for unbounded retry)"
+                .to_string(),
+        });
+    }
+    // Below 1.0 the schedule shrinks with every failure — a sick backend
+    // would be retried harder the longer it stays sick.
+    if let Some(multiplier) = retry.backoff_multiplier
+        && (multiplier.is_nan() || multiplier < 1.0)
+    {
+        return Err(ConfigError::InvalidConfig {
+            reason: format!(
+                "invalid value for retry.backoff_multiplier: {multiplier} (must be at least \
+                 1.0 so the backoff never shrinks)",
+            ),
+        });
     }
     Ok(())
 }
@@ -857,6 +897,120 @@ mod tests {
         };
         assert!(reason.contains("retry.base_delay"));
         assert!(reason.contains("???"));
+    }
+
+    fn retry_settings_error(retry: RetrySettings) -> String {
+        let settings = NornSettings {
+            retry: Some(retry),
+            ..NornSettings::default()
+        };
+        let ConfigError::InvalidConfig { reason } =
+            validate_settings(&settings).expect_err("the retry setting must be rejected")
+        else {
+            panic!("expected InvalidConfig variant");
+        };
+        reason
+    }
+
+    /// `max_attempts` counts total attempts including the first, so zero
+    /// describes a call that is never made. Rejected at config time; the
+    /// loop's defensive clamp is a second line, not the contract.
+    #[test]
+    fn zero_retry_max_attempts_caught() {
+        let reason = retry_settings_error(RetrySettings {
+            max_attempts: Some(0),
+            ..RetrySettings::default()
+        });
+        assert!(reason.contains("retry.max_attempts"), "{reason}");
+        assert!(reason.contains("total attempts"), "{reason}");
+    }
+
+    #[test]
+    fn one_retry_max_attempt_is_accepted_as_no_retry() {
+        let settings = NornSettings {
+            retry: Some(RetrySettings {
+                max_attempts: Some(1),
+                ..RetrySettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        validate_settings(&settings).expect("a single attempt disables retry, it is not invalid");
+    }
+
+    #[test]
+    fn absent_retry_max_attempts_is_accepted_as_unbounded() {
+        let settings = NornSettings {
+            retry: Some(RetrySettings::default()),
+            ..NornSettings::default()
+        };
+        validate_settings(&settings).expect("an absent budget means the unbounded default");
+    }
+
+    /// A zero base delay under an unbounded policy is a zero-wait request
+    /// hammer: `backoff_base` returns zero for every attempt, jitter
+    /// samples zero, and the loop fires continuously against a sick
+    /// backend — the opposite of the gentle retry whisper.
+    #[test]
+    fn zero_retry_base_delay_caught() {
+        let reason = retry_settings_error(RetrySettings {
+            base_delay: Some("0s".to_owned()),
+            ..RetrySettings::default()
+        });
+        assert!(reason.contains("retry.base_delay"), "{reason}");
+        assert!(reason.contains("greater than zero"), "{reason}");
+    }
+
+    #[test]
+    fn zero_retry_backoff_ceiling_caught() {
+        let reason = retry_settings_error(RetrySettings {
+            backoff_ceiling: Some("0s".to_owned()),
+            ..RetrySettings::default()
+        });
+        assert!(reason.contains("retry.backoff_ceiling"), "{reason}");
+        assert!(reason.contains("greater than zero"), "{reason}");
+    }
+
+    #[test]
+    fn invalid_retry_backoff_ceiling_caught() {
+        let reason = retry_settings_error(RetrySettings {
+            backoff_ceiling: Some("???".to_owned()),
+            ..RetrySettings::default()
+        });
+        assert!(reason.contains("retry.backoff_ceiling"), "{reason}");
+        assert!(reason.contains("???"), "{reason}");
+    }
+
+    /// A multiplier below `1.0` shrinks the schedule with every failure,
+    /// so a backend that stays sick gets hit harder over time. NaN is
+    /// rejected on the same branch.
+    #[test]
+    fn sub_unit_and_nan_backoff_multipliers_caught() {
+        for multiplier in [0.5_f64, 0.0, -2.0, f64::NAN] {
+            let reason = retry_settings_error(RetrySettings {
+                backoff_multiplier: Some(multiplier),
+                ..RetrySettings::default()
+            });
+            assert!(
+                reason.contains("retry.backoff_multiplier"),
+                "multiplier {multiplier}: {reason}",
+            );
+            assert!(
+                reason.contains("at least 1.0"),
+                "multiplier {multiplier}: {reason}",
+            );
+        }
+    }
+
+    #[test]
+    fn unit_backoff_multiplier_is_accepted_as_a_flat_schedule() {
+        let settings = NornSettings {
+            retry: Some(RetrySettings {
+                backoff_multiplier: Some(1.0),
+                ..RetrySettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        validate_settings(&settings).expect("a flat 1.0 schedule is a valid choice");
     }
 
     #[test]

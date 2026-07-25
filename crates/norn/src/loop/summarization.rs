@@ -110,10 +110,15 @@ pub(super) async fn request_compaction_summary(
         provider,
         request,
         crate::provider::ProviderTurnContext::default(),
-        None,
-        None,
-        None,
+        &crate::r#loop::classify::ProviderCallSinks {
+            event_tx: None,
+            partial_capture: None,
+            audio_store: None,
+        },
         1,
+        // No retry wrapper here yet, so no attempt is ever abandoned and
+        // there is nothing for an artifact slot to hand to a replay.
+        None,
     )
     .await?;
     Ok(SummarizationResponse {

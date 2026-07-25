@@ -12,7 +12,9 @@ mod provider_auth;
 pub mod provider_selection;
 pub mod rules;
 
-pub use assembly::{ConfigOverrides, ProviderConfigOverrides, parse_duration, parse_kv};
+pub use assembly::{
+    ConfigOverrides, ProviderConfigOverrides, RetryAttempts, parse_duration, parse_kv,
+};
 pub use event_schemas::{merge_event_schemas, parse_inline_or_file};
 pub use extensions::{collect_extension_servers, collect_extension_uris};
 pub use model_aliases::{ResolvedModelSelection, resolve_model_alias, resolve_model_selection};

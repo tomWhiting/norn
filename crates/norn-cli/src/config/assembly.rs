@@ -64,6 +64,51 @@ pub fn parse_duration(input: &str) -> Result<Duration, BuildError> {
     })
 }
 
+/// The literal `-c retry_max` value that selects unbounded retry.
+const RETRY_MAX_UNBOUNDED: &str = "unbounded";
+
+/// Total-attempt budget selected by `-c retry_max`.
+///
+/// The value counts **total** attempts including the first, matching
+/// `RetryPolicy::max_attempts`: `1` disables retry, `3` allows two
+/// replays, and the literal `unbounded` retries transient failures
+/// forever (the engine default).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetryAttempts {
+    /// Retry transient failures indefinitely.
+    Unbounded,
+    /// Allow exactly this many total attempts, the first included.
+    Total(u32),
+}
+
+impl RetryAttempts {
+    /// Project onto `RetryPolicy::max_attempts`, where `None` is unbounded.
+    #[must_use]
+    pub const fn max_attempts(self) -> Option<u32> {
+        match self {
+            Self::Unbounded => None,
+            Self::Total(total) => Some(total),
+        }
+    }
+}
+
+/// Parse the `-c retry_max` value: a positive total-attempt count or the
+/// literal `unbounded`.
+fn parse_retry_attempts(value: &str) -> Result<RetryAttempts, BuildError> {
+    if value.eq_ignore_ascii_case(RETRY_MAX_UNBOUNDED) {
+        return Ok(RetryAttempts::Unbounded);
+    }
+    let total = parse_typed::<u32>("retry_max", "u32 or 'unbounded'", value)?;
+    if total == 0 {
+        return Err(BuildError::Argument(
+            "invalid value for retry_max: 0 (retry_max counts total attempts including the \
+             first; use 1 to disable retry, or 'unbounded' to retry forever)"
+                .to_string(),
+        ));
+    }
+    Ok(RetryAttempts::Total(total))
+}
+
 /// Typed `-c key=value` overrides drawn from the NC20 mapping table.
 ///
 /// Each field corresponds to a row in DESIGN.md NC20 and stays `Option`
@@ -142,10 +187,14 @@ pub struct ConfigOverrides {
     pub retry_after_ceiling: Option<Duration>,
 
     // -- RetryPolicy fields ----------------------------------------------
-    /// `-c retry_max=<u32>` → [`RetryPolicy::max_retries`].
-    pub retry_max: Option<u32>,
-    /// `-c retry_base_delay=<duration>` → [`RetryPolicy::initial_backoff`].
+    /// `-c retry_max=<u32>|unbounded` → `RetryPolicy::max_attempts`.
+    pub retry_max: Option<RetryAttempts>,
+    /// `-c retry_base_delay=<duration>` → `RetryPolicy::initial_backoff`.
     pub retry_base_delay: Option<Duration>,
+    /// `-c retry_backoff_ceiling=<duration>` → `RetryPolicy::backoff_ceiling`.
+    pub retry_backoff_ceiling: Option<Duration>,
+    /// `-c retry_jitter=<bool>` → `RetryPolicy::jitter`.
+    pub retry_jitter: Option<bool>,
 
     // -- Per-tool override fields ----------------------------------------
     /// `-c write.max_code_lines=<usize>` → [`LengthLimit::default`] for the
@@ -346,10 +395,16 @@ impl ConfigOverrides {
                 self.retry_after_ceiling = Some(parse_duration(value)?);
             }
             "retry_max" => {
-                self.retry_max = Some(parse_typed::<u32>(key, "u32", value)?);
+                self.retry_max = Some(parse_retry_attempts(value)?);
             }
             "retry_base_delay" => {
                 self.retry_base_delay = Some(parse_duration(value)?);
+            }
+            "retry_backoff_ceiling" => {
+                self.retry_backoff_ceiling = Some(parse_duration(value)?);
+            }
+            "retry_jitter" => {
+                self.retry_jitter = Some(parse_typed::<bool>(key, "bool", value)?);
             }
             "provider_options" => {
                 let parsed: Value = serde_json::from_str(value).map_err(|err| {
@@ -503,6 +558,8 @@ mod tests {
         assert!(overrides.api_key_env.is_none());
         assert!(overrides.retry_max.is_none());
         assert!(overrides.retry_base_delay.is_none());
+        assert!(overrides.retry_backoff_ceiling.is_none());
+        assert!(overrides.retry_jitter.is_none());
         assert!(overrides.write_max_code_lines.is_none());
         assert!(overrides.debug_dump_dir.is_none());
         assert!(overrides.rate_limit_interval.is_none());
@@ -734,14 +791,61 @@ mod tests {
         assert_eq!(overrides.request_timeout, Some(Duration::from_secs(10)));
     }
 
+    /// `retry_max` counts TOTAL attempts including the first (the
+    /// retry-forever contract), not retries-after-the-first.
     #[test]
     fn parse_retry_max_is_loop_layer() {
         let overrides = ConfigOverrides::parse(&["retry_max=4".to_owned()]).unwrap();
-        assert_eq!(overrides.retry_max, Some(4));
+        assert_eq!(overrides.retry_max, Some(RetryAttempts::Total(4)));
+        assert_eq!(overrides.retry_max.unwrap().max_attempts(), Some(4));
         assert_eq!(
             overrides.max_retries, None,
             "retry_max and max_retries are distinct layers",
         );
+    }
+
+    #[test]
+    fn parse_retry_max_unbounded_selects_forever() {
+        for literal in ["retry_max=unbounded", "retry_max=UNBOUNDED"] {
+            let overrides = ConfigOverrides::parse(&[literal.to_owned()]).unwrap();
+            assert_eq!(overrides.retry_max, Some(RetryAttempts::Unbounded));
+            assert_eq!(
+                overrides.retry_max.unwrap().max_attempts(),
+                None,
+                "unbounded maps onto the policy's None",
+            );
+        }
+    }
+
+    #[test]
+    fn parse_retry_max_zero_is_rejected() {
+        let err = ConfigOverrides::parse(&["retry_max=0".to_owned()]).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("retry_max"), "{message}");
+        assert!(
+            message.contains("total attempts"),
+            "the error must explain the counting change: {message}",
+        );
+    }
+
+    #[test]
+    fn parse_retry_max_rejects_other_words() {
+        let err = ConfigOverrides::parse(&["retry_max=forever".to_owned()]).unwrap_err();
+        assert!(err.to_string().contains("unbounded"), "{err}");
+    }
+
+    #[test]
+    fn parse_retry_backoff_ceiling_and_jitter() {
+        let overrides = ConfigOverrides::parse(&[
+            "retry_backoff_ceiling=90s".to_owned(),
+            "retry_jitter=false".to_owned(),
+        ])
+        .unwrap();
+        assert_eq!(
+            overrides.retry_backoff_ceiling,
+            Some(Duration::from_secs(90)),
+        );
+        assert_eq!(overrides.retry_jitter, Some(false));
     }
 
     #[test]

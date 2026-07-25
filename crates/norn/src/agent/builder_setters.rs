@@ -298,7 +298,8 @@ impl AgentBuilder {
     }
 
     /// Configure provider retry. Defaults to [`RetryPolicy::default`]
-    /// (2 retries, 1s initial backoff, 2x multiplier) when unset.
+    /// — unbounded retry, 1s initial backoff, 2x multiplier, 60s ceiling,
+    /// full jitter — when unset.
     #[must_use]
     pub fn retry_policy(mut self, policy: RetryPolicy) -> Self {
         self.retry_policy = Some(policy);

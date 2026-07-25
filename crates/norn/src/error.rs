@@ -197,10 +197,12 @@ pub enum ProviderError {
     /// The provider returned a rate limit response.
     ///
     /// Classification: [`ErrorClass::RateLimited`], carrying `retry_after`
-    /// so engines can honour the provider's delay hint. The loop's default
-    /// [`RetryPolicy`](crate::agent_loop::retry::RetryPolicy) deliberately does
-    /// **not** retry it (the provider layer owns 429 retry internally), but
-    /// the class tells embedders a delayed retry can succeed.
+    /// so engines can honour the provider's delay hint. It surfaces only
+    /// after the provider layer's own server-directed 429 budget is
+    /// exhausted, and the loop's default
+    /// [`RetryPolicy`](crate::agent_loop::retry::RetryPolicy) **does**
+    /// retry it — a rate limit is transient, and the loop uses
+    /// `retry_after` as a floor on its jittered backoff.
     #[error("rate limited")]
     RateLimited {
         /// Duration to wait before retrying, if provided by the provider.
