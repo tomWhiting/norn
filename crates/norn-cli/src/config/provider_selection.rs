@@ -39,8 +39,32 @@ pub fn resolve_provider_selection(
                     .to_owned(),
             ));
         }
+        if let Some(catalog) = model_selection.catalog {
+            let catalog_kind = provider_kind_for_catalog(catalog)?;
+            if kind != catalog_kind {
+                return Err(BuildError::Argument(format!(
+                    "model '{}' belongs to catalog provider/backend '{}/{}', which selects \
+                     --provider {}; conflicting --provider {} was supplied",
+                    model_selection.model,
+                    catalog.provider,
+                    catalog.backend,
+                    provider_kind_label(catalog_kind),
+                    provider_kind_label(kind),
+                )));
+            }
+        }
         return Ok(ProviderSelection {
             kind,
+            profile_name: None,
+        });
+    }
+
+    if let Some(catalog) = model_selection.catalog
+        && cli.provider_profile.is_none()
+        && cli.api_shape.is_none()
+    {
+        return Ok(ProviderSelection {
+            kind: provider_kind_for_catalog(catalog)?,
             profile_name: None,
         });
     }
@@ -48,10 +72,56 @@ pub fn resolve_provider_selection(
     let profile_name = selected_provider_profile_name(cli, model_selection)?;
     let profile = selected_provider_profile(profile_name.as_deref(), settings)?;
     let shape = resolve_api_shape(cli, model_selection, profile)?;
-    Ok(ProviderSelection {
-        kind: provider_kind_for_shape(shape)?,
-        profile_name,
-    })
+    let kind = provider_kind_for_shape(shape)?;
+    if let Some(catalog) = model_selection.catalog {
+        let catalog_kind = provider_kind_for_catalog(catalog)?;
+        if kind != catalog_kind {
+            return Err(catalog_provider_conflict(
+                model_selection,
+                catalog,
+                catalog_kind,
+                kind,
+            ));
+        }
+    }
+    Ok(ProviderSelection { kind, profile_name })
+}
+
+fn provider_kind_for_catalog(
+    selection: norn::model_catalog::CatalogModelSelection,
+) -> Result<ProviderKind, BuildError> {
+    match (selection.provider, selection.backend) {
+        ("anthropic", "claude_code_subscription") => Ok(ProviderKind::ClaudeRunner),
+        ("openai", "codex_subscription") => Ok(ProviderKind::Openai),
+        (provider, backend) => Err(BuildError::Argument(format!(
+            "catalog provider/backend '{provider}/{backend}' has no runtime provider mapping",
+        ))),
+    }
+}
+
+fn provider_kind_label(kind: ProviderKind) -> &'static str {
+    match kind {
+        ProviderKind::Openai => "openai",
+        ProviderKind::OpenaiCompatible => "openai-compatible",
+        ProviderKind::ClaudeRunner => "claude-runner",
+    }
+}
+
+fn catalog_provider_conflict(
+    model_selection: &ResolvedModelSelection,
+    catalog: norn::model_catalog::CatalogModelSelection,
+    catalog_kind: ProviderKind,
+    selected_kind: ProviderKind,
+) -> BuildError {
+    BuildError::Argument(format!(
+        "model '{}' belongs to catalog provider/backend '{}/{}', which selects provider {}; \
+         the explicit provider profile/API shape selects conflicting provider {}",
+        model_selection.model,
+        catalog.provider,
+        catalog.backend,
+        provider_kind_label(catalog_kind),
+        provider_kind_label(selected_kind),
+    ))
 }
 
 fn selected_provider_profile_name(
@@ -185,6 +255,7 @@ mod tests {
             model: "gpt-5.5".to_owned(),
             provider_profile: None,
             api_shape: None,
+            catalog: None,
         };
         let selection =
             resolve_provider_selection(&cli(&["norn"]), &NornSettings::default(), &model).unwrap();
@@ -198,6 +269,7 @@ mod tests {
             model: "local".to_owned(),
             provider_profile: None,
             api_shape: None,
+            catalog: None,
         };
         let selection = resolve_provider_selection(
             &cli(&["norn", "--api-shape", "openai-chat-completions"]),
@@ -226,6 +298,7 @@ mod tests {
             model: "google/gemma-4-e4b".to_owned(),
             provider_profile: None,
             api_shape: None,
+            catalog: None,
         };
         let selection = resolve_provider_selection(
             &cli(&["norn", "--provider-profile", "lmstudio"]),
@@ -255,6 +328,7 @@ mod tests {
             model: "google/gemma-4-e4b".to_owned(),
             provider_profile: Some("lmstudio".to_owned()),
             api_shape: None,
+            catalog: None,
         };
         let selection = resolve_provider_selection(&cli(&["norn"]), &settings, &model).unwrap();
         assert_eq!(selection.kind, ProviderKind::OpenaiCompatible);
@@ -267,6 +341,7 @@ mod tests {
             model: "gpt-5.5".to_owned(),
             provider_profile: None,
             api_shape: None,
+            catalog: None,
         };
         let err = resolve_provider_selection(
             &cli(&["norn", "--api-shape", "anthropic-messages"]),
@@ -275,5 +350,88 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, BuildError::Argument(_)));
+    }
+
+    #[test]
+    fn claude_catalog_model_selects_claude_runner() {
+        let model =
+            crate::config::resolve_model_selection("claude-opus-5", &NornSettings::default())
+                .unwrap();
+        let selection =
+            resolve_provider_selection(&cli(&["norn"]), &NornSettings::default(), &model).unwrap();
+        assert_eq!(selection.kind, ProviderKind::ClaudeRunner);
+    }
+
+    #[test]
+    fn conflicting_explicit_provider_is_rejected_for_catalog_model() {
+        let model =
+            crate::config::resolve_model_selection("claude-sonnet-5", &NornSettings::default())
+                .unwrap();
+        let error = resolve_provider_selection(
+            &cli(&["norn", "--provider", "openai"]),
+            &NornSettings::default(),
+            &model,
+        )
+        .unwrap_err();
+        let rendered = error.to_string();
+        assert!(rendered.contains("claude-sonnet-5"));
+        assert!(rendered.contains("claude-runner"));
+        assert!(rendered.contains("conflicting --provider openai"));
+    }
+
+    #[test]
+    fn conflicting_explicit_api_shape_is_rejected_for_catalog_model() {
+        let model =
+            crate::config::resolve_model_selection("claude-opus-5", &NornSettings::default())
+                .unwrap();
+        let error = resolve_provider_selection(
+            &cli(&["norn", "--api-shape", "openai-responses"]),
+            &NornSettings::default(),
+            &model,
+        )
+        .unwrap_err();
+        let rendered = error.to_string();
+        assert!(rendered.contains("claude-opus-5"));
+        assert!(rendered.contains("explicit provider profile/API shape"));
+        assert!(rendered.contains("conflicting provider openai"));
+    }
+
+    #[test]
+    fn conflicting_explicit_provider_profile_is_rejected_for_catalog_model() {
+        let mut profiles = BTreeMap::new();
+        profiles.insert(
+            "openai".to_owned(),
+            ProviderProfileSettings {
+                api_shape: Some("openai_responses".to_owned()),
+                provider: ProviderSettings::default(),
+            },
+        );
+        let settings = NornSettings {
+            provider_profiles: Some(profiles),
+            ..NornSettings::default()
+        };
+        let model = crate::config::resolve_model_selection("claude-sonnet-5", &settings).unwrap();
+        let error = resolve_provider_selection(
+            &cli(&["norn", "--provider-profile", "openai"]),
+            &settings,
+            &model,
+        )
+        .unwrap_err();
+        let rendered = error.to_string();
+        assert!(rendered.contains("claude-sonnet-5"));
+        assert!(rendered.contains("conflicting provider openai"));
+    }
+
+    #[test]
+    fn consistent_explicit_api_shape_is_allowed_for_catalog_model() {
+        let model = crate::config::resolve_model_selection("gpt-5.6-sol", &NornSettings::default())
+            .unwrap();
+        let selection = resolve_provider_selection(
+            &cli(&["norn", "--api-shape", "openai-responses"]),
+            &NornSettings::default(),
+            &model,
+        )
+        .unwrap();
+        assert_eq!(selection.kind, ProviderKind::Openai);
     }
 }

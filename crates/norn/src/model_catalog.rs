@@ -29,6 +29,17 @@ pub struct ModelSelection {
     pub model: &'static str,
 }
 
+/// Catalog provenance for a resolved model identifier or alias.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CatalogModelSelection {
+    /// Provider containing the selected model.
+    pub provider: &'static str,
+    /// Backend containing the selected model.
+    pub backend: &'static str,
+    /// Canonical model identifier.
+    pub model: &'static str,
+}
+
 /// Provider entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProviderEntry {
@@ -149,6 +160,45 @@ pub fn find_model(provider: &str, backend: &str, model: &str) -> Option<&'static
         .find(|entry| entry.id == model)
 }
 
+/// Resolve a canonical model identifier or alias within one backend.
+#[must_use]
+pub fn resolve_model_alias_at(provider: &str, backend: &str, model: &str) -> Option<&'static str> {
+    let models = find_backend(provider, backend)?.models;
+    models
+        .iter()
+        .find(|entry| entry.id == model)
+        .or_else(|| models.iter().find(|entry| entry.alias == model))
+        .map(|entry| entry.id)
+}
+
+/// Resolve a canonical model identifier or alias with its catalog provenance.
+///
+/// Canonical identifiers take precedence over aliases. Alias uniqueness is
+/// enforced by the catalog generator, while the returned provider/backend
+/// keeps callers from silently validating or dispatching through the default
+/// `OpenAI` backend when a model belongs to another provider.
+#[must_use]
+pub fn resolve_catalog_model(model: &str) -> Option<CatalogModelSelection> {
+    let models = || {
+        catalog().providers.iter().flat_map(|provider| {
+            provider.backends.iter().flat_map(move |backend| {
+                backend
+                    .models
+                    .iter()
+                    .map(move |entry| (provider.id, backend.id, entry))
+            })
+        })
+    };
+    models()
+        .find(|(_, _, entry)| entry.id == model)
+        .or_else(|| models().find(|(_, _, entry)| entry.alias == model))
+        .map(|(provider, backend, entry)| CatalogModelSelection {
+            provider,
+            backend,
+            model: entry.id,
+        })
+}
+
 /// Resolve a canonical model identifier or catalog alias.
 ///
 /// Canonical identifiers take precedence and resolve to themselves. Alias
@@ -157,18 +207,7 @@ pub fn find_model(provider: &str, backend: &str, model: &str) -> Option<&'static
 /// model is available through multiple backends.
 #[must_use]
 pub fn resolve_model_alias(model: &str) -> Option<&'static str> {
-    let models = || {
-        catalog()
-            .providers
-            .iter()
-            .flat_map(|provider| provider.backends)
-            .flat_map(|backend| backend.models)
-    };
-
-    models()
-        .find(|entry| entry.id == model)
-        .or_else(|| models().find(|entry| entry.alias == model))
-        .map(|entry| entry.id)
+    resolve_catalog_model(model).map(|selection| selection.model)
 }
 
 /// Return the smallest catalogued context window for a model id.
@@ -300,6 +339,34 @@ mod tests {
             assert_eq!(resolve_model_alias(canonical_id), Some(canonical_id));
         }
         assert_eq!(resolve_model_alias("not-in-catalog"), None);
+    }
+
+    #[test]
+    fn catalog_resolution_preserves_provider_and_backend() {
+        assert_eq!(
+            resolve_catalog_model("claude-opus-5"),
+            Some(CatalogModelSelection {
+                provider: "anthropic",
+                backend: "claude_code_subscription",
+                model: "claude-opus-5",
+            }),
+        );
+        assert_eq!(
+            resolve_catalog_model("sol"),
+            Some(CatalogModelSelection {
+                provider: "openai",
+                backend: "codex_subscription",
+                model: "gpt-5.6-sol",
+            }),
+        );
+        assert_eq!(
+            resolve_model_alias_at("anthropic", "claude_code_subscription", "claude-sonnet-5",),
+            Some("claude-sonnet-5"),
+        );
+        assert_eq!(
+            resolve_model_alias_at("openai", "codex_subscription", "claude-sonnet-5"),
+            None,
+        );
     }
 
     #[test]

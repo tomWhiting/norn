@@ -13,6 +13,9 @@ pub struct ResolvedModelSelection {
     pub provider_profile: Option<String>,
     /// Optional API shape selected by the alias.
     pub api_shape: Option<String>,
+    /// Provider/backend provenance when selection came from the bundled
+    /// catalog rather than an explicitly routed user alias.
+    pub catalog: Option<norn::model_catalog::CatalogModelSelection>,
 }
 
 /// Resolve `model` through the configured and bundled model aliases.
@@ -38,8 +41,10 @@ pub fn resolve_model_selection(
     model: &str,
     settings: &NornSettings,
 ) -> Result<ResolvedModelSelection, BuildError> {
-    if is_catalog_model(model) {
-        return Ok(model_only_selection(model));
+    if let Some(catalog) = norn::model_catalog::resolve_catalog_model(model)
+        && catalog.model == model
+    {
+        return Ok(catalog_selection(catalog));
     }
 
     if let Some(target) = settings
@@ -47,15 +52,22 @@ pub fn resolve_model_selection(
         .as_ref()
         .and_then(|aliases| aliases.get(model))
     {
-        return Ok(ResolvedModelSelection {
-            model: target.model().to_owned(),
-            provider_profile: target.provider_profile().map(str::to_owned),
-            api_shape: target.api_shape().map(str::to_owned),
-        });
+        let provider_profile = target.provider_profile().map(str::to_owned);
+        let api_shape = target.api_shape().map(str::to_owned);
+        if provider_profile.is_some() || api_shape.is_some() {
+            return Ok(ResolvedModelSelection {
+                model: target.model().to_owned(),
+                provider_profile,
+                api_shape,
+                catalog: None,
+            });
+        }
+        return Ok(norn::model_catalog::resolve_catalog_model(target.model())
+            .map_or_else(|| model_only_selection(target.model()), catalog_selection));
     }
 
-    let canonical = norn::model_catalog::resolve_model_alias(model).unwrap_or(model);
-    Ok(model_only_selection(canonical))
+    Ok(norn::model_catalog::resolve_catalog_model(model)
+        .map_or_else(|| model_only_selection(model), catalog_selection))
 }
 
 fn model_only_selection(model: &str) -> ResolvedModelSelection {
@@ -63,16 +75,19 @@ fn model_only_selection(model: &str) -> ResolvedModelSelection {
         model: model.to_owned(),
         provider_profile: None,
         api_shape: None,
+        catalog: None,
     }
 }
 
-fn is_catalog_model(model: &str) -> bool {
-    norn::model_catalog::catalog()
-        .providers
-        .iter()
-        .flat_map(|provider| provider.backends)
-        .flat_map(|backend| backend.models)
-        .any(|entry| entry.id == model)
+fn catalog_selection(
+    catalog: norn::model_catalog::CatalogModelSelection,
+) -> ResolvedModelSelection {
+    ResolvedModelSelection {
+        model: catalog.model.to_owned(),
+        provider_profile: None,
+        api_shape: None,
+        catalog: Some(catalog),
+    }
 }
 
 #[cfg(test)]
@@ -113,6 +128,14 @@ mod tests {
         assert_eq!(selection.model, "gpt-5.6-sol");
         assert!(selection.provider_profile.is_none());
         assert!(selection.api_shape.is_none());
+        assert_eq!(
+            selection.catalog,
+            Some(norn::model_catalog::CatalogModelSelection {
+                provider: "openai",
+                backend: "codex_subscription",
+                model: "gpt-5.6-sol",
+            }),
+        );
     }
 
     #[test]
@@ -171,5 +194,41 @@ mod tests {
             selection.api_shape.as_deref(),
             Some("openai_chat_completions"),
         );
+        assert!(selection.catalog.is_none());
+    }
+
+    #[test]
+    fn claude_catalog_model_preserves_subscription_route() {
+        let selection = resolve_model_selection("claude-opus-5", &NornSettings::default()).unwrap();
+        assert_eq!(selection.model, "claude-opus-5");
+        assert_eq!(
+            selection.catalog,
+            Some(norn::model_catalog::CatalogModelSelection {
+                provider: "anthropic",
+                backend: "claude_code_subscription",
+                model: "claude-opus-5",
+            }),
+        );
+    }
+
+    #[test]
+    fn explicitly_routed_user_alias_does_not_inherit_catalog_route() {
+        let mut aliases = BTreeMap::new();
+        aliases.insert(
+            "private-claude".to_owned(),
+            ModelAliasSettings::Selection(ModelAliasSelection {
+                provider_profile: Some("private".to_owned()),
+                api_shape: Some("openai_chat_completions".to_owned()),
+                model: "claude-opus-5".to_owned(),
+            }),
+        );
+        let settings = NornSettings {
+            model_aliases: Some(aliases),
+            ..NornSettings::default()
+        };
+        let selection = resolve_model_selection("private-claude", &settings).unwrap();
+        assert_eq!(selection.model, "claude-opus-5");
+        assert_eq!(selection.provider_profile.as_deref(), Some("private"));
+        assert!(selection.catalog.is_none());
     }
 }

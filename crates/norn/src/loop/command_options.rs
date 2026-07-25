@@ -66,12 +66,19 @@ pub fn service_tier_supported_for_model(model: &str, tier: ServiceTier) -> bool 
 /// Whether `effort` is declared for `model` in the generated model catalog.
 #[must_use]
 pub fn reasoning_effort_supported_for_model(model: &str, effort: ReasoningEffort) -> bool {
-    crate::model_catalog::find_model(
-        crate::model_catalog::DEFAULT_PROVIDER,
-        crate::model_catalog::DEFAULT_BACKEND,
-        model,
-    )
-    .is_some_and(|entry| entry.supported_reasoning_efforts.contains(&effort.as_str()))
+    let Some(canonical) = crate::model_catalog::resolve_model_alias(model) else {
+        return false;
+    };
+    let mut entries = crate::model_catalog::catalog()
+        .providers
+        .iter()
+        .flat_map(|provider| provider.backends)
+        .flat_map(|backend| backend.models)
+        .filter(|entry| entry.id == canonical);
+    entries
+        .next()
+        .is_some_and(|entry| entry.supported_reasoning_efforts.contains(&effort.as_str()))
+        && entries.all(|entry| entry.supported_reasoning_efforts.contains(&effort.as_str()))
 }
 
 /// Standard unsupported-reasoning-effort diagnostic.
@@ -84,4 +91,29 @@ pub fn unsupported_reasoning_effort_message(model: &str, effort: &str) -> String
 #[must_use]
 pub fn unsupported_service_tier_message(model: &str, tier: &str) -> String {
     format!("norn: service tier '{tier}' is not supported for model '{model}'")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generic_effort_lookup_covers_non_default_catalog_providers() {
+        for effort in [
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+            ReasoningEffort::XHigh,
+            ReasoningEffort::Max,
+        ] {
+            assert!(reasoning_effort_supported_for_model(
+                "claude-opus-5",
+                effort
+            ));
+        }
+        assert!(!reasoning_effort_supported_for_model(
+            "claude-opus-5",
+            ReasoningEffort::None,
+        ));
+    }
 }

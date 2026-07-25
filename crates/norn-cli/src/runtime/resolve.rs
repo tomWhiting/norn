@@ -134,14 +134,18 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         ));
     }
     profile.model.clone_from(&model_selection.model);
-    validate_reasoning_effort_for_model(&profile)?;
+
+    // Resolve the provider before validating effort so a catalogued Claude
+    // model is checked against its Claude Code backend rather than the
+    // default OpenAI backend.
+    let provider_selection = resolve_provider_selection(cli, &settings, &model_selection)?;
+    validate_reasoning_effort_for_model(&profile, &model_selection)?;
 
     let mut config_overrides = ConfigOverrides::parse(&cli.config)?;
     if let Some(debug_api) = &cli.debug_api {
         config_overrides.debug_dump_dir = Some(resolve_debug_api_dir(debug_api)?);
     }
 
-    let provider_selection = resolve_provider_selection(cli, &settings, &model_selection)?;
     let mut provider_overrides = provider_overrides_from_settings(&settings)?;
     if let Some(profile_name) = provider_selection.profile_name.as_deref() {
         let profile_overrides = settings
@@ -213,11 +217,21 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
 /// Reject a `--reasoning-effort` the resolved model does not support, so
 /// the failure surfaces as an argument error instead of an opaque
 /// provider rejection mid-run.
-fn validate_reasoning_effort_for_model(profile: &Profile) -> Result<(), BuildError> {
+fn validate_reasoning_effort_for_model(
+    profile: &Profile,
+    model_selection: &crate::config::ResolvedModelSelection,
+) -> Result<(), BuildError> {
     let Some(effort) = profile.reasoning_effort else {
         return Ok(());
     };
-    if reasoning_effort_supported_for_model(&profile.model, effort) {
+    let supported = model_selection.catalog.map_or_else(
+        || reasoning_effort_supported_for_model(&profile.model, effort),
+        |catalog| {
+            norn::model_catalog::find_model(catalog.provider, catalog.backend, &profile.model)
+                .is_some_and(|entry| entry.supported_reasoning_efforts.contains(&effort.as_str()))
+        },
+    );
+    if supported {
         return Ok(());
     }
     Err(BuildError::Argument(unsupported_reasoning_effort_message(
@@ -320,6 +334,81 @@ mod tests {
         assert_eq!(resolved.model, "gpt-5.6-sol");
         assert_eq!(resolved.profile.model, "gpt-5.6-sol");
         assert_eq!(resolved.provider_kind, ProviderKind::Openai);
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_invocation_selects_claude_runner_for_claude_catalog_model() {
+        let _environment = IsolatedResolutionEnvironment::new();
+        let cli = Cli::try_parse_from(["norn", "--model", "claude-opus-5"]).unwrap();
+        let resolved = resolve_invocation(&cli).unwrap();
+
+        assert_eq!(resolved.model, "claude-opus-5");
+        assert_eq!(resolved.provider_kind, ProviderKind::ClaudeRunner);
+        assert!(resolved.profile.reasoning_effort.is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_invocation_accepts_current_claude_efforts() {
+        for effort in ["low", "medium", "high", "xhigh", "max"] {
+            let _environment = IsolatedResolutionEnvironment::new();
+            let cli = Cli::try_parse_from([
+                "norn",
+                "--model",
+                "claude-sonnet-5",
+                "--reasoning-effort",
+                effort,
+            ])
+            .unwrap();
+            let resolved = resolve_invocation(&cli).unwrap();
+            assert_eq!(
+                resolved.provider_kind,
+                ProviderKind::ClaudeRunner,
+                "{effort}"
+            );
+            assert_eq!(
+                resolved
+                    .profile
+                    .reasoning_effort
+                    .map(|value| value.as_str()),
+                Some(effort),
+                "{effort}",
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_invocation_rejects_explicit_none_for_claude() {
+        let _environment = IsolatedResolutionEnvironment::new();
+        let cli = Cli::try_parse_from([
+            "norn",
+            "--model",
+            "claude-opus-5",
+            "--reasoning-effort",
+            "none",
+        ])
+        .unwrap();
+        let Err(error) = resolve_invocation(&cli) else {
+            panic!("explicit none effort unexpectedly passed");
+        };
+        let error = error.to_string();
+        assert!(error.contains("reasoning effort 'none'"));
+        assert!(error.contains("claude-opus-5"));
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_invocation_rejects_conflicting_provider_for_claude() {
+        let _environment = IsolatedResolutionEnvironment::new();
+        let cli = Cli::try_parse_from(["norn", "--model", "claude-opus-5", "--provider", "openai"])
+            .unwrap();
+        let Err(error) = resolve_invocation(&cli) else {
+            panic!("conflicting provider unexpectedly passed");
+        };
+        let error = error.to_string();
+        assert!(error.contains("conflicting --provider openai"));
     }
 
     #[test]
