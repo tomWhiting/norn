@@ -3,15 +3,19 @@
 pub mod content;
 pub mod fixed_panel;
 pub mod markdown;
+pub mod retry_status;
 pub mod scroll_region;
+pub mod streaming_indicator;
 pub mod style;
 pub mod syntax;
 pub mod text;
 pub mod thinking;
 
-pub use fixed_panel::{FixedPanel, StatusBar, StreamingIndicator};
+pub use fixed_panel::{FixedPanel, StatusBar};
 pub use markdown::MarkdownRenderer;
+pub use retry_status::{RETRY_ACTIVITY_PREFIX, retry_status_label, retry_wait_secs};
 pub use scroll_region::{write_separator, write_to_scroll};
+pub use streaming_indicator::{StreamingIndicator, ToolUseInFlight};
 pub use style::{
     colour_for, colour_spec, hyperlink, italic, italic_off, nearest_256, newline_key_hint,
     sync_render,

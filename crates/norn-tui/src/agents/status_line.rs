@@ -36,6 +36,7 @@ use uuid::Uuid;
 use norn::agent::PendingAgentMessages;
 use norn::agent::registry::{AgentEntry, AgentRegistry, AgentStatus};
 
+use crate::render::retry_status::RETRY_ACTIVITY_PREFIX;
 use crate::render::style::colour_for;
 
 type TerminalRecoveryProbe = dyn Fn(Uuid) -> bool + Send + Sync;
@@ -110,8 +111,14 @@ impl ActivityEntry {
 fn can_replace_with_transient(activity: Option<&AgentActivity>) -> bool {
     match activity {
         None | Some(AgentActivity::Idle) => true,
+        // A retry label announces a wait that ends: once the replayed
+        // attempt streams anything, the wait is over and the row must say
+        // so. Tool labels stay sticky — they are the stable intent
+        // signal — but a stale "retrying in 8s" is a lie.
         Some(AgentActivity::Running(label)) => {
-            matches!(label.as_str(), "writing" | "thinking") || label.starts_with("msg:")
+            matches!(label.as_str(), "writing" | "thinking")
+                || label.starts_with("msg:")
+                || label.starts_with(RETRY_ACTIVITY_PREFIX)
         }
         Some(AgentActivity::Result(label)) => {
             matches!(label.as_str(), "completed") || label.starts_with("msg delivered")
@@ -736,6 +743,27 @@ mod tests {
 
     fn fresh_registry() -> Arc<RwLock<AgentRegistry>> {
         AgentRegistry::shared()
+    }
+
+    /// C6: a retry label is live progress, not a tool intent. The next
+    /// attempt's first text/thinking delta must be able to replace it —
+    /// otherwise the row keeps announcing a wait that already ended.
+    #[test]
+    fn retry_activity_is_replaceable_by_the_next_attempts_transient_label() {
+        let retrying =
+            AgentActivity::Running("retrying in 8s (attempt 3 of 5, server_error)".to_string());
+        assert!(
+            can_replace_with_transient(Some(&retrying)),
+            "the retry label must clear when the next attempt starts",
+        );
+    }
+
+    /// A tool label is still sticky — the retry carve-out must not widen
+    /// into "any Running label is replaceable".
+    #[test]
+    fn tool_activity_stays_sticky_against_transient_labels() {
+        let tool = AgentActivity::Running("bash".to_string());
+        assert!(!can_replace_with_transient(Some(&tool)));
     }
 
     fn confirm_root(registry: &Arc<RwLock<AgentRegistry>>) -> Uuid {

@@ -98,9 +98,10 @@ fn agent_event_needs_panel_redraw(state: &AppState, agent_ev: &AgentEvent) -> bo
         | AgentEventKind::Message(_)
         | AgentEventKind::UsageEstimate(_)
         // Compaction pushes an activity-log row: the panel must repaint.
-        | AgentEventKind::Compaction(_) => true,
-        // Consumed as a deliberate no-op in `handle_agent_event`.
-        AgentEventKind::StreamRetry(_) => false,
+        | AgentEventKind::Compaction(_)
+        // A retry paints the wait onto the agent row and (for the root)
+        // onto the status row, which also grows the panel by one row.
+        | AgentEventKind::StreamRetry(_) => true,
     }
 }
 
@@ -237,11 +238,89 @@ pub(super) fn handle_active_input_delivery(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use norn::provider::agent_event::AgentStreamRetry;
     use norn::provider::openai::response_stream_event::ResponseStreamEvent;
     use norn::provider::request::ToolCallKind;
     use norn::provider::response_audio::ResponseAudioEvent;
+
+    /// An `AppState` over a registry holding a confirmed root agent —
+    /// enough for the redraw-decision tests, which only read `root_id`.
+    fn state_with_root() -> AppState {
+        let registry = norn::agent::registry::AgentRegistry::shared();
+        let guard = norn::agent::registry::AgentRegistry::reserve(
+            &registry,
+            "/root".to_string(),
+            "lead".to_string(),
+            "claude".to_string(),
+            None,
+            norn::agent::child_policy::ChildPolicy {
+                messaging: norn::agent::child_policy::MessagingScope::SiblingsAndParent,
+                delegation: norn::agent::child_policy::DelegationBudget {
+                    remaining_depth: 5,
+                    max_concurrent_children: 32,
+                },
+                inbound_capacity: 32,
+                loop_config: None,
+            },
+            None,
+        )
+        .unwrap();
+        let root_id = guard.id();
+        guard.confirm().unwrap();
+        AppState::new(
+            crate::terminal::caps::TerminalCaps::baseline(),
+            crate::input::history::InputHistory::in_memory(),
+            registry,
+            root_id,
+            crate::render::fixed_panel::StatusBar::default(),
+        )
+    }
+
+    /// C6: the retry marker paints the retry status row, so the panel MUST
+    /// repaint for it. Pre-C6 the arm returned `false` (the event was a
+    /// deliberate no-op) and the wait was invisible.
+    #[test]
+    fn stream_retry_forces_panel_redraw() {
+        let state = state_with_root();
+        let event = AgentEvent {
+            agent_id: state.tab_state.root_id(),
+            agent_role: Arc::from("root"),
+            event: AgentEventKind::StreamRetry(AgentStreamRetry {
+                attempt: 3,
+                max_attempts: Some(5),
+                delay_ms: 8_000,
+                error_class: "server_error".to_string(),
+            }),
+        };
+
+        assert!(
+            agent_event_needs_panel_redraw(&state, &event),
+            "a retry wait must repaint the panel that shows it"
+        );
+    }
+
+    /// A child agent's retry paints its status row, so it repaints too.
+    #[test]
+    fn child_stream_retry_forces_panel_redraw() {
+        let state = state_with_root();
+        let event = AgentEvent {
+            agent_id: uuid::Uuid::from_u128(77),
+            agent_role: Arc::from("spawn/worker"),
+            event: AgentEventKind::StreamRetry(AgentStreamRetry {
+                attempt: 2,
+                max_attempts: None,
+                delay_ms: 1_000,
+                error_class: "timeout".to_string(),
+            }),
+        };
+
+        assert!(agent_event_needs_panel_redraw(&state, &event));
+    }
 
     #[test]
     fn root_text_deltas_do_not_force_panel_redraw() {

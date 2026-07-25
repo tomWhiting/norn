@@ -15,7 +15,7 @@ use norn::agent_loop::runner::{
 
 use crate::TuiError;
 use crate::render::MarkdownRenderer;
-use crate::render::fixed_panel::StreamingIndicator;
+use crate::render::streaming_indicator::StreamingIndicator;
 use crate::terminal::setup::TerminalGuard;
 
 use crate::app::child_results::{recv_child_result, render_child_result_batch};

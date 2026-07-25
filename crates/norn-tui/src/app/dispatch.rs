@@ -17,7 +17,8 @@ use std::time::{Duration, Instant};
 use norn::agent_loop::config::AgentStepResult;
 use norn::error::{NornError, ProviderError};
 use norn::provider::agent_event::{
-    AgentEvent, AgentEventKind, AgentMessageLifecycle, SubagentKind, SubagentLifecycle,
+    AgentEvent, AgentEventKind, AgentMessageLifecycle, AgentStreamRetry, SubagentKind,
+    SubagentLifecycle,
 };
 use norn::provider::events::ProviderEvent;
 use norn::provider::usage::Usage;
@@ -26,8 +27,9 @@ use crate::TuiError;
 use crate::agents::activity_log::ActivityLogEntry;
 use crate::agents::status_line::AgentActivity;
 use crate::render::MarkdownRenderer;
-use crate::render::fixed_panel::StreamingIndicator;
+use crate::render::retry_status::retry_status_label;
 use crate::render::scroll_region::write_to_scroll;
+use crate::render::streaming_indicator::StreamingIndicator;
 use crate::terminal::setup::TerminalGuard;
 
 use super::helpers::{
@@ -89,9 +91,15 @@ pub fn handle_agent_event(
         }
         // Provider stream retry: the replay re-streams the whole turn.
         // The TUI paints deltas append-only into the scroll region, so
-        // there is no buffered partial to reset — the typed marker is
-        // consumed here (deliberate ignore, not an unknown event).
-        AgentEventKind::StreamRetry(_) => {}
+        // there is no buffered partial to reset — but the wait itself
+        // must be visible, or an unbounded retry looks like a hang.
+        AgentEventKind::StreamRetry(retry) => handle_stream_retry(
+            state,
+            agent_event.agent_id,
+            &agent_event.agent_role,
+            &retry,
+            Instant::now(),
+        ),
         // Auto-compaction rewrote the conversation: log it so the history
         // change is explained rather than mysterious.
         AgentEventKind::Compaction(compaction) => {
@@ -110,6 +118,53 @@ pub fn handle_agent_event(
         }
     }
     Ok(())
+}
+
+/// Surface one provider-retry wait (retry-forever DESIGN D8).
+///
+/// Three surfaces, one label ([`retry_status_label`]):
+///
+/// - the retrying agent's row in the status panel, so a child retrying
+///   inside a subtree is visible without stealing the root's status line;
+/// - the root's streaming status row, which counts the wait down — the
+///   root agent has no panel row in a single-agent session, and that is
+///   exactly the session where an invisible wait reads as a hang;
+/// - the activity log, as the backing trail every other lifecycle-shaped
+///   event leaves.
+///
+/// `retry.error_class` is the engine's taxonomy label and is carried
+/// through verbatim; no provider text reaches any of these surfaces.
+fn handle_stream_retry(
+    state: &mut AppState,
+    agent_id: uuid::Uuid,
+    agent_role: &str,
+    retry: &AgentStreamRetry,
+    now: Instant,
+) {
+    let delay = Duration::from_millis(retry.delay_ms);
+    let label = retry_status_label(retry.attempt, retry.max_attempts, delay, &retry.error_class);
+    // set_activity, not set_transient_activity: a retry outranks the tool
+    // label it interrupts, and the next attempt's first delta clears it
+    // again (the panel treats the retry prefix as replaceable).
+    state
+        .agent_panel
+        .set_activity(agent_id, AgentActivity::Running(label.clone()));
+    state.activity_log.push(ActivityLogEntry {
+        agent_role: agent_role.to_string(),
+        tool_name: label,
+        description: None,
+        at: now,
+    });
+    if agent_id == state.tab_state.root_id() {
+        state.note_retry(
+            retry.attempt,
+            retry.max_attempts,
+            delay,
+            retry.error_class.clone(),
+            now,
+        );
+        state.sync_indicator_into_panel();
+    }
 }
 
 /// Build the activity-log row for an inter-agent message event.
@@ -1070,6 +1125,144 @@ mod tests {
         let entry = state.activity_log.entries().back().unwrap();
         assert_eq!(entry.tool_name, "error");
         assert!(entry.description.as_deref().unwrap().contains("network"));
+    }
+
+    // ---------------- Retry visibility (C6 / DESIGN D8) ----------------
+
+    fn retry(
+        attempt: u32,
+        max_attempts: Option<u32>,
+        delay_ms: u64,
+        class: &str,
+    ) -> AgentStreamRetry {
+        AgentStreamRetry {
+            attempt,
+            max_attempts,
+            delay_ms,
+            error_class: class.to_string(),
+        }
+    }
+
+    /// A root retry paints the status row AND the root's panel row, so
+    /// the wait is legible in a single-agent session (no panel rows) and
+    /// in a subtree alike.
+    #[test]
+    fn root_retry_surfaces_on_the_status_row_and_the_agent_row() {
+        let (mut state, root_id, _child_id) = state_with_one_child();
+        let now = Instant::now();
+
+        handle_stream_retry(
+            &mut state,
+            root_id,
+            "root",
+            &retry(3, Some(5), 8_000, "server_error"),
+            now,
+        );
+
+        let shown = matches!(
+            &state.streaming_indicator,
+            StreamingIndicator::Retrying { attempt: 3, max_attempts: Some(5), error_class, remaining, .. }
+                if error_class == "server_error" && *remaining == Duration::from_millis(8_000)
+        );
+        assert!(
+            shown,
+            "the root's status row must carry the wait: {:?}",
+            state.streaming_indicator
+        );
+        let out = render_agent_panel(&mut state);
+        assert!(
+            out.contains("retrying in 8s (attempt 3 of 5, server_error)"),
+            "the root row must carry the wait too: {out:?}"
+        );
+        let entry = state.activity_log.entries().back().unwrap();
+        assert_eq!(
+            entry.tool_name,
+            "retrying in 8s (attempt 3 of 5, server_error)"
+        );
+    }
+
+    /// A child's retry belongs to the child's row: it must NOT hijack the
+    /// root's status row, which is reporting the root's own turn.
+    #[test]
+    fn child_retry_stays_on_the_child_row() {
+        let (mut state, _root_id, child_id) = state_with_one_child();
+        let now = Instant::now();
+        state.note_event_received(now);
+
+        handle_stream_retry(
+            &mut state,
+            child_id,
+            "spawn/haiku",
+            &retry(2, None, 1_000, "rate_limited"),
+            now,
+        );
+
+        assert!(
+            matches!(
+                state.streaming_indicator,
+                StreamingIndicator::Generating { .. }
+            ),
+            "a child's retry must not take over the root status row: {:?}",
+            state.streaming_indicator
+        );
+        let out = render_agent_panel(&mut state);
+        assert!(
+            out.contains("retrying in 1s (attempt 2, unbounded, rate_limited)"),
+            "got: {out:?}"
+        );
+    }
+
+    /// The retry label clears when the replayed attempt starts streaming
+    /// — no stale "retrying in 8s" left on the row.
+    #[test]
+    fn the_replayed_attempts_first_delta_clears_the_retry_label() {
+        let (mut state, _root_id, child_id) = state_with_one_child();
+        handle_stream_retry(
+            &mut state,
+            child_id,
+            "spawn/haiku",
+            &retry(2, None, 8_000, "timeout"),
+            Instant::now(),
+        );
+        assert!(render_agent_panel(&mut state).contains("retrying in 8s"));
+
+        handle_child_event(
+            &mut state,
+            child_id,
+            "spawn/haiku",
+            ProviderEvent::TextDelta {
+                text: "back".to_string(),
+            },
+        );
+
+        let out = render_agent_panel(&mut state);
+        assert!(
+            !out.contains("retrying"),
+            "the wait is over; the row must stop announcing it: {out:?}"
+        );
+        assert!(out.contains("writing"), "got: {out:?}");
+    }
+
+    /// The label carries the taxonomy class verbatim and nothing else —
+    /// provider free text never reaches this surface (it has no route
+    /// here: the event itself only carries the class).
+    #[test]
+    fn the_retry_label_carries_only_the_taxonomy_class() {
+        let (mut state, root_id, _child_id) = state_with_one_child();
+        handle_stream_retry(
+            &mut state,
+            root_id,
+            "root",
+            &retry(2, None, 1_000, "connection_reset"),
+            Instant::now(),
+        );
+        let entry = state.activity_log.entries().back().unwrap();
+        assert!(
+            entry.tool_name.ends_with(", connection_reset)"),
+            "got: {}",
+            entry.tool_name
+        );
+        assert!(entry.description.is_none());
     }
 
     #[test]

@@ -18,8 +18,8 @@ use crate::agents::status_line::{AgentStatusRenderContext, height_from_view};
 use crate::input::editor::InputEditor;
 use crate::input::wrap;
 use crate::render::MarkdownRenderer;
-use crate::render::fixed_panel::StreamingIndicator;
 use crate::render::scroll_region::write_to_scroll;
+use crate::render::streaming_indicator::StreamingIndicator;
 use crate::render::text::{terminal_safe_input_text, truncate_to_width};
 use crate::terminal::setup::TerminalGuard;
 
@@ -535,7 +535,8 @@ mod tests {
     use super::*;
     use crate::input::autocomplete::{AutocompletePopup, SlashCandidate, SourceTag};
     use crate::input::history::InputHistory;
-    use crate::render::fixed_panel::{StatusBar, StreamingIndicator};
+    use crate::render::fixed_panel::StatusBar;
+    use crate::render::streaming_indicator::StreamingIndicator;
     use crate::terminal::caps::TerminalCaps;
 
     fn fresh_state() -> Result<AppState, Box<dyn std::error::Error>> {

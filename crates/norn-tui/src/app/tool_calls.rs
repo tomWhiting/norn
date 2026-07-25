@@ -10,8 +10,8 @@ use serde_json::Value;
 use termina::style::RgbColor;
 
 use crate::TuiError;
-use crate::render::fixed_panel::ToolUseInFlight;
 use crate::render::scroll_region::write_to_scroll;
+use crate::render::streaming_indicator::ToolUseInFlight;
 use crate::render::{MarkdownRenderer, colour_for};
 use crate::terminal::setup::TerminalGuard;
 use crate::tools::VerbosityState;

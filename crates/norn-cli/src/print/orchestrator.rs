@@ -49,10 +49,11 @@ use serde_json::Value;
 use super::driven::{
     driven_background_failure, execute_driven, finish_intervene_loop, spawn_intervene_loop,
 };
-use super::error::preserve_run_failure;
+use super::error::{merge_background_failures, preserve_run_failure};
 use super::jsonrpc::{DrivenRun, SharedRunDriver};
 use super::output::{StopInfo, drain_diagnostics, extract_output_and_usage};
 use super::provider::build_provider;
+use super::retry_watch::{finish_watch, push_rollup_for_format, watch_for_invocation};
 use super::signals::SignalWatch;
 use super::step_output::{
     StepOutput, driven_result_value, emit_error_envelope, emit_error_envelope_on_stream,
@@ -644,6 +645,12 @@ async fn orchestrate_run(
             (None, None)
         };
 
+        // The human retry surfaces (D8 / C6): for text and json — the
+        // formats with no event wire of their own — this subscriber is
+        // the only thing standing between an operator and a run that
+        // looks hung while it retries.
+        let retry_watch = watch_for_invocation(&tx, cli, format, driven.is_some());
+
         // Driven-mode WRITE direction: while the run is in flight,
         // concurrently read in-band `intervene/*` requests off the same
         // stdin reader and map them onto Norn's control channel — inject via
@@ -716,21 +723,27 @@ async fn orchestrate_run(
         } else {
             None
         };
-        let result = preserve_run_failure(
-            result,
+        // Stop the retry watch on the same seam and for the same reason:
+        // it drains what is already buffered, so a notice broadcast late
+        // in the run is still reported before the terminal envelope.
+        let (retry_rollup, retry_watch_error) = finish_watch(retry_watch).await;
+        let background = merge_background_failures(
             driven_background_failure(intervene_error.as_ref(), emitter_error.as_ref()),
-        )?;
+            retry_watch_error,
+        );
+        let result = preserve_run_failure(result, background)?;
 
         // The diagnostic collector the builder wired onto the loop context
         // (via `load_runtime_base`) is the one runtime post-checks report
         // into; drain it for the output envelope. Absent only on a
         // library agent built without the runtime base — never here.
-        let diagnostics = parts
+        let mut diagnostics = parts
             .loop_context
             .diagnostics
             .as_ref()
             .map(drain_diagnostics)
             .unwrap_or_default();
+        push_rollup_for_format(&mut diagnostics, format, &retry_rollup);
         // The attached `JsonlSink` already wrote every event of this turn
         // through to disk (write-through) and — being index-registered —
         // accumulated the matching index delta (event count, token

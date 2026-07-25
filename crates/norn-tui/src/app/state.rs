@@ -28,7 +28,8 @@ use crate::input::autocomplete::AutocompletePopup;
 use crate::input::editor::InputEditor;
 use crate::input::history::InputHistory;
 use crate::render::SyntaxHighlighter;
-use crate::render::fixed_panel::{FixedPanel, StatusBar, StreamingIndicator, ToolUseInFlight};
+use crate::render::fixed_panel::{FixedPanel, StatusBar};
+use crate::render::streaming_indicator::{StreamingIndicator, ToolUseInFlight};
 use crate::terminal::caps::TerminalCaps;
 use crate::tools::VerbosityState;
 
@@ -221,6 +222,13 @@ impl AppState {
     /// estimate starts at zero. Subsequent calls within the same turn
     /// preserve `turn_start` and only refresh the indicator's
     /// `elapsed` and `est_output_tokens` snapshot against `now`.
+    ///
+    /// A retry wait counts as a boundary: the replayed attempt re-streams
+    /// the turn from the start, so the failed attempt's byte estimate and
+    /// in-flight tool are discarded here exactly as they are between
+    /// turns — and the retry row is replaced by the live generating
+    /// state, which is how the wait disappears the moment the next
+    /// attempt produces anything.
     pub fn note_event_received(&mut self, now: Instant) {
         let turn_boundary = !matches!(
             self.streaming_indicator,
@@ -241,13 +249,56 @@ impl AppState {
         };
     }
 
+    /// Record the provider-retry marker the engine emits immediately
+    /// BEFORE the backoff wait it announces.
+    ///
+    /// The indicator becomes the retry row for the duration of the wait,
+    /// counting down from `delay` against `now`. The turn is not over —
+    /// `turn_start` is preserved so the divider keeps its elapsed segment
+    /// — and any completion hold is cleared, because a retry means the
+    /// turn is running again.
+    ///
+    /// `error_class` is the engine's taxonomy label, carried through
+    /// verbatim; this method never sees provider free text.
+    pub fn note_retry(
+        &mut self,
+        attempt: u32,
+        max_attempts: Option<u32>,
+        delay: Duration,
+        error_class: String,
+        now: Instant,
+    ) {
+        let start = self.turn_start.unwrap_or(now);
+        self.turn_start = Some(start);
+        self.complete_at = None;
+        // The failed attempt's partial output never lands in the
+        // transcript, so its running estimate and in-flight tool go with
+        // it — the replay starts the turn again from the top.
+        self.est_output_bytes = 0;
+        self.current_tool_use = None;
+        self.streaming_indicator = StreamingIndicator::Retrying {
+            attempt,
+            max_attempts,
+            error_class,
+            // A delay that overflows the monotonic clock (only reachable
+            // from an absurd `delay_ms`) degrades the countdown to "now"
+            // rather than wrapping into the past; the announced
+            // `remaining` below is still painted as the engine stated it.
+            wait_until: now.checked_add(delay).unwrap_or(now),
+            remaining: delay,
+            elapsed: now.saturating_duration_since(start),
+        };
+    }
+
     /// Refresh the streaming indicator's elapsed time on a render tick.
     ///
     /// While generating, recomputes the elapsed time against `now` and
     /// refreshes the token estimate + in-flight tool snapshot from the
-    /// dispatch-layer state. While complete, transitions back to idle
-    /// once [`STREAMING_COMPLETE_HOLD`] has passed. While idle, this is
-    /// a no-op.
+    /// dispatch-layer state. While retrying, counts the announced wait
+    /// down against `now` (and keeps the turn's elapsed current) so the
+    /// row stays honest for a wait that can be minutes long. While
+    /// complete, transitions back to idle once [`STREAMING_COMPLETE_HOLD`]
+    /// has passed. While idle, this is a no-op.
     pub fn tick(&mut self, now: Instant) {
         match self.streaming_indicator {
             StreamingIndicator::Generating { .. } => {
@@ -258,6 +309,26 @@ impl AppState {
                         in_flight: self.current_tool_use.clone(),
                     };
                 }
+            }
+            StreamingIndicator::Retrying {
+                attempt,
+                max_attempts,
+                ref error_class,
+                wait_until,
+                ..
+            } => {
+                let error_class = error_class.clone();
+                let elapsed = self
+                    .turn_start
+                    .map_or(Duration::ZERO, |start| now.saturating_duration_since(start));
+                self.streaming_indicator = StreamingIndicator::Retrying {
+                    attempt,
+                    max_attempts,
+                    error_class,
+                    wait_until,
+                    remaining: wait_until.saturating_duration_since(now),
+                    elapsed,
+                };
             }
             StreamingIndicator::Complete { .. } => {
                 if let Some(at) = self.complete_at
@@ -674,6 +745,136 @@ mod tests {
         let status = state.fixed_panel.status_bar();
         assert_eq!(status.input_tokens, 0);
         assert_eq!(status.output_tokens, 0);
+    }
+
+    // ---------------- Retry visibility (C6 / DESIGN D8) ----------------
+
+    /// The marker arrives BEFORE the wait, so the row must show the full
+    /// announced delay immediately — and keep the turn running.
+    #[test]
+    fn note_retry_shows_the_announced_wait_and_keeps_the_turn_alive() {
+        let mut state = fresh_state();
+        let t0 = Instant::now();
+        state.note_event_received(t0);
+        state.note_retry(
+            3,
+            Some(5),
+            Duration::from_secs(8),
+            "server_error".to_string(),
+            t0 + Duration::from_secs(2),
+        );
+
+        let shown = matches!(
+            &state.streaming_indicator,
+            StreamingIndicator::Retrying {
+                attempt: 3,
+                max_attempts: Some(5),
+                error_class,
+                remaining,
+                ..
+            } if error_class == "server_error" && *remaining == Duration::from_secs(8)
+        );
+        assert!(
+            shown,
+            "expected the announced 8s wait, got {:?}",
+            state.streaming_indicator
+        );
+        assert_eq!(
+            state.turn_start,
+            Some(t0),
+            "a retry is the same turn, not a new one"
+        );
+        assert!(state.complete_at.is_none());
+    }
+
+    /// A long wait counts down on the render tick instead of freezing at
+    /// the announced value.
+    #[test]
+    fn tick_counts_the_retry_wait_down_and_then_reads_as_now() {
+        let mut state = fresh_state();
+        let t0 = Instant::now();
+        state.note_event_received(t0);
+        state.note_retry(2, None, Duration::from_secs(30), "timeout".to_string(), t0);
+
+        state.tick(t0 + Duration::from_secs(20));
+        let counted_down = matches!(
+            &state.streaming_indicator,
+            StreamingIndicator::Retrying { remaining, elapsed, .. }
+                if *remaining == Duration::from_secs(10) && *elapsed == Duration::from_secs(20)
+        );
+        assert!(
+            counted_down,
+            "expected 10s remaining after 20s, got {:?}",
+            state.streaming_indicator
+        );
+
+        state.tick(t0 + Duration::from_secs(45));
+        let elapsed_wait = matches!(
+            &state.streaming_indicator,
+            StreamingIndicator::Retrying { remaining, .. } if remaining.is_zero()
+        );
+        assert!(
+            elapsed_wait,
+            "a wait that has run out must not go negative or vanish: {:?}",
+            state.streaming_indicator
+        );
+    }
+
+    /// Each whole second of the countdown repaints the panel; sub-second
+    /// tick noise does not.
+    #[test]
+    fn retry_countdown_repaints_once_per_second() {
+        let mut state = fresh_state();
+        let t0 = Instant::now();
+        state.note_retry(2, None, Duration::from_secs(30), "timeout".to_string(), t0);
+
+        assert!(
+            !state.tick_indicator_repaint_needed(t0 + Duration::from_millis(8), 80),
+            "sub-second countdown movement must not repaint"
+        );
+        assert!(
+            state.tick_indicator_repaint_needed(t0 + Duration::from_secs(1), 80),
+            "each second of the wait must repaint the countdown"
+        );
+    }
+
+    /// The wait vanishes the moment the replayed attempt produces
+    /// anything — and the failed attempt's estimate goes with it.
+    #[test]
+    fn the_next_attempts_first_event_clears_the_retry_row() {
+        let mut state = fresh_state();
+        let t0 = Instant::now();
+        state.note_event_received(t0);
+        state.est_output_bytes = 4_000;
+        state.note_retry(2, None, Duration::from_secs(5), "timeout".to_string(), t0);
+        assert_eq!(
+            state.est_output_bytes, 0,
+            "the failed attempt's output never landed; its estimate must not carry over"
+        );
+
+        state.note_event_received(t0 + Duration::from_secs(5));
+        assert!(
+            matches!(
+                state.streaming_indicator,
+                StreamingIndicator::Generating { .. }
+            ),
+            "got {:?}",
+            state.streaming_indicator
+        );
+    }
+
+    /// Success ends the turn: the retry row is replaced by the usage
+    /// summary, never left behind.
+    #[test]
+    fn completion_replaces_the_retry_row() {
+        let mut state = fresh_state();
+        let t0 = Instant::now();
+        state.note_retry(2, None, Duration::from_secs(5), "timeout".to_string(), t0);
+        state.mark_complete("[1 in / 2 out, 0.5s]".to_string(), t0);
+        assert!(matches!(
+            state.streaming_indicator,
+            StreamingIndicator::Complete { .. }
+        ));
     }
 
     #[test]

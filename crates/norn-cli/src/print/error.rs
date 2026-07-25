@@ -122,6 +122,24 @@ pub(crate) fn preserve_primary_failure<T>(
     }
 }
 
+/// Combine two background (shutdown-time) failures into the single one
+/// [`preserve_run_failure`] takes.
+///
+/// The FIRST failure keeps its classification — it is the earlier link in
+/// the shutdown chain — and the second is appended to its message, so
+/// neither is dropped and neither silently rewrites the other's exit
+/// class.
+pub(crate) fn merge_background_failures(
+    first: Option<PrintError>,
+    second: Option<PrintError>,
+) -> Option<PrintError> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(first.with_related_failure(second)),
+        (Some(only), None) | (None, Some(only)) => Some(only),
+        (None, None) => None,
+    }
+}
+
 /// Preserve an already-failed provider/run result as the exit-code authority
 /// while retaining a background failure discovered during shutdown.
 pub(crate) fn preserve_run_failure<T, E>(
@@ -221,6 +239,29 @@ mod tests {
             assert!(rendered.contains(expected), "error: {rendered}");
         }
         assert_eq!(error.exit_code(), ExitCode::AuthError);
+    }
+
+    /// Two background failures both survive, and the first one's class
+    /// decides the exit — neither is dropped on the floor.
+    #[test]
+    fn merged_background_failures_keep_the_first_class_and_both_messages() {
+        let merged = merge_background_failures(
+            Some(PrintError::Io("event emitter torn".to_owned())),
+            Some(PrintError::Agent("retry visibility task failed".to_owned())),
+        );
+        assert!(merged.is_some(), "two failures must merge into one");
+        let Some(error) = merged else { return };
+        assert!(matches!(&error, PrintError::Io(_)), "error: {error:?}");
+        let rendered = error.to_string();
+        assert!(rendered.contains("event emitter torn"), "{rendered}");
+        assert!(
+            rendered.contains("retry visibility task failed"),
+            "{rendered}"
+        );
+
+        assert!(merge_background_failures(None, None).is_none());
+        let only = merge_background_failures(None, Some(PrintError::Agent("solo".to_owned())));
+        assert!(matches!(only, Some(PrintError::Agent(_))));
     }
 
     #[test]
