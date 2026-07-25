@@ -65,6 +65,28 @@ impl ErrorClass {
         matches!(self, Self::Retryable { .. } | Self::RateLimited { .. })
     }
 
+    /// Stable `snake_case` label for this class.
+    ///
+    /// A closed vocabulary with no provider-supplied text in it, so a
+    /// label is always safe on an always-on event stream or a durable
+    /// record under house disclosure law: reasons belong to the loud
+    /// terminal error (already house-sanitized), classes belong here.
+    /// Single source of truth for every surface that names a class —
+    /// retry visibility events, spawned-worker turn failures.
+    #[must_use]
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Retryable { kind } => match kind {
+                TransientKind::Timeout => "timeout",
+                TransientKind::ConnectionReset => "connection_reset",
+                TransientKind::ServerError { .. } => "server_error",
+            },
+            Self::RateLimited { .. } => "rate_limited",
+            Self::Auth => "auth",
+            Self::Terminal => "terminal",
+        }
+    }
+
     /// The provider-supplied retry delay, when the error is
     /// [`ErrorClass::RateLimited`] and the provider sent one.
     #[must_use]

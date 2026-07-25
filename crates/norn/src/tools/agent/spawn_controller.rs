@@ -22,9 +22,10 @@ use super::spawn_completion::{
     reclaim_after_result_delivery,
 };
 use super::spawn_outcome::{
-    extract_outcome_summary, mark_terminal_in_registry, panic_outcome_summary,
+    extract_outcome_summary, mark_terminal_in_registry, panic_outcome_summary, record_turn_failure,
 };
 use crate::agent::message_router::MessageRouter;
+use crate::agent::output::AgentStopReason;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::agent::result_channel::ChildResultSender;
 use crate::agent::{PendingAgentMessages, PendingMailboxLease};
@@ -167,10 +168,46 @@ impl SpawnController {
                     panic_outcome_summary(message, delivered_children.snapshot())
                 }
             };
+            // D6 loudness ruling: a hard turn failure is reported on
+            // three surfaces — the result channel and the parent's
+            // `subagent.completed` audit record (both below, both
+            // carrying the typed stop), and the worker's OWN timeline
+            // here. Without this record a surviving worker's failure
+            // would be invisible on the session it survives on, which
+            // is exactly the silent park the ruling bans. The store
+            // fault path degrades the record, never the report: the
+            // other two surfaces are unconditional.
+            if let Some(AgentStopReason::TurnFailed { class }) = summary.stop.as_ref() {
+                let error = summary.error.as_deref().unwrap_or_default();
+                tracing::error!(
+                    child_id = %child_id,
+                    error_class = %class,
+                    %error,
+                    "spawn_agent turn failed with a non-transient error",
+                );
+                if let Err(persist_error) = record_turn_failure(store.as_ref(), class, error) {
+                    tracing::error!(
+                        child_id = %child_id,
+                        error_class = %class,
+                        %persist_error,
+                        "failed to record the turn failure on the child's own timeline; \
+                         the failure is still delivered on the result channel and the \
+                         parent's subagent.completed audit record",
+                    );
+                }
+            }
             #[cfg(test)]
             if let Some(gate) = terminal_transition_gate.as_ref() {
                 gate.hold().await;
             }
+            // A one-shot child ends after its single run; a cancelled
+            // run ends because the operator said so. The third clause is
+            // the poisoned-worker gate: `{Failed, stop: None}` is now
+            // reachable only from a caught panic, because every other
+            // non-completion — including a hard turn failure — carries a
+            // typed stop (design D6). A failed turn therefore falls
+            // through to `mark_idle` + `IdlePark` with the mailbox and
+            // route intact, and the worker takes its next message.
             let base_will_terminate = !persistent
                 || run_cancel.is_cancelled()
                 || (summary.status == AgentStatus::Failed && summary.stop.is_none());

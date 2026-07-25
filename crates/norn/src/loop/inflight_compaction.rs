@@ -37,7 +37,8 @@ use std::collections::HashSet;
 
 use crate::error::SessionError;
 use crate::r#loop::compaction::{
-    AutoCompactArgs, CompactionState, CompactionSummarySource, maybe_auto_compact,
+    AutoCompactArgs, AutoCompactDecision, CompactionState, CompactionSummarySource,
+    maybe_auto_compact,
 };
 use crate::r#loop::config::AgentLoopConfig;
 use crate::r#loop::conversation_state::{ConversationRequestState, event_produces_prompt_message};
@@ -105,6 +106,21 @@ pub(super) struct PreflightArgs<'a> {
     pub(super) event_tx: Option<&'a AgentEventSender>,
 }
 
+/// What the preflight decided, reported back to the runner.
+///
+/// Cancellation is a first-class arm: the auto-compaction summarization
+/// call runs under the retry brain with the step's token (design D11),
+/// and a token that fires there ends the step as cancelled rather than
+/// letting it build and send a request the operator already cancelled.
+#[must_use]
+pub(super) enum PreflightDecision {
+    /// The preflight ran to completion.
+    Ran(PreflightOutcome),
+    /// The step's cancellation token fired during the preflight's
+    /// summarization call. Nothing was committed.
+    Cancelled,
+}
+
 /// What the preflight did, reported back to the runner.
 #[derive(Debug, Default)]
 pub(super) struct PreflightOutcome {
@@ -130,16 +146,24 @@ pub(super) struct PreflightOutcome {
 /// The caller must build its request message list *after* this returns.
 /// With no token estimator configured this is a no-op.
 ///
+/// A fired compaction summarizes through the provider under the step's
+/// retry policy and cancellation token; a token that fires there returns
+/// [`PreflightDecision::Cancelled`] with nothing committed, which the
+/// caller turns into the step's cancelled outcome.
+///
 /// # Errors
 ///
 /// Propagates [`SessionError`] from event appends and from
 /// [`maybe_auto_compact`].
 pub(super) async fn run_context_preflight(
     args: PreflightArgs<'_>,
-) -> Result<PreflightOutcome, SessionError> {
+) -> Result<PreflightDecision, SessionError> {
     let Some(estimator) = args.loop_context.token_estimator.clone() else {
-        return Ok(PreflightOutcome::default());
+        return Ok(PreflightDecision::Ran(PreflightOutcome::default()));
     };
+    // Read before the mutable borrow of `loop_context` below, exactly
+    // like `hooks`: the summarization call obeys the step's own policy.
+    let retry_policy = args.loop_context.retry_policy.clone();
 
     // R3: client-side token estimation runs immediately before the provider
     // call. Advisory only — the call still proceeds. Both the warning and
@@ -188,18 +212,18 @@ pub(super) async fn run_context_preflight(
     // `context_management` contract and must not reset the anchor to replay a
     // locally rewritten view whose stored reasoning may be unavailable.
     if args.conversation_state.store() {
-        return Ok(PreflightOutcome {
+        return Ok(PreflightDecision::Ran(PreflightOutcome {
             request_input_estimate: Some(estimated),
             summarization_usage: None,
-        });
+        }));
     }
 
     // R4: auto-compaction trigger fires once per step when
     // `max(estimate, usage_floor)` crosses
     // `context_window_limit − auto_compact_reserve_tokens`.
     // NH-006 R6: the CompactionHook chain runs inside `maybe_auto_compact`;
-    // a Block returns Ok(None) and the trigger is skipped (logged inside).
-    let run = maybe_auto_compact(AutoCompactArgs {
+    // a Block returns `NotFired` and the trigger is skipped (logged inside).
+    let decision = maybe_auto_compact(AutoCompactArgs {
         state: args.compaction_state,
         edits: args.loop_context.context_edits.as_mut(),
         store: args.store,
@@ -212,13 +236,23 @@ pub(super) async fn run_context_preflight(
         keep_recent_turns: args.config.auto_compact_keep_recent_turns,
         hooks: hooks.as_deref(),
         cancel: args.cancel,
+        retry_policy: &retry_policy,
+        event_tx: args.event_tx,
     })
     .await?;
-    let Some(run) = run else {
-        return Ok(PreflightOutcome {
-            request_input_estimate: Some(request_input_estimate),
-            summarization_usage: None,
-        });
+    let run = match decision {
+        AutoCompactDecision::Fired(run) => *run,
+        AutoCompactDecision::NotFired => {
+            return Ok(PreflightDecision::Ran(PreflightOutcome {
+                request_input_estimate: Some(request_input_estimate),
+                summarization_usage: None,
+            }));
+        }
+        // Nothing was committed and the trigger is still armed. The step
+        // ends here as cancelled: building the request from a prompt view
+        // the operator cancelled mid-rewrite would be work nobody asked
+        // for, and reporting it as a failure would be a lie.
+        AutoCompactDecision::Cancelled => return Ok(PreflightDecision::Cancelled),
     };
     tracing::debug!(
         freed_token_estimate = run.freed_token_estimate,
@@ -326,10 +360,10 @@ pub(super) async fn run_context_preflight(
         });
     }
 
-    Ok(PreflightOutcome {
+    Ok(PreflightDecision::Ran(PreflightOutcome {
         request_input_estimate: Some(request_input_estimate),
         summarization_usage,
-    })
+    }))
 }
 
 /// Rewrite the live message list to reflect a just-fired compaction:

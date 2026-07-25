@@ -23,6 +23,100 @@ fn seed_compaction_history(store: &EventStore) -> TestResult {
     Ok(())
 }
 
+/// Provider whose every stream fails with a transient 5xx, counting the
+/// calls. Stands in for a backend having a bad minute.
+struct AlwaysTransientProvider {
+    calls: AtomicUsize,
+}
+
+impl Provider for AlwaysTransientProvider {
+    fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Err(ProviderError::StreamError {
+            reason: "HTTP 503: backend having a moment".to_string(),
+            transient: Some(crate::error::TransientKind::ServerError { status: 503 }),
+        })
+    }
+}
+
+/// D11: when the step's token fires while the compaction summarizer is
+/// waiting between retry attempts, the step ends as `Cancelled` — it does
+/// not commit a mechanical digest on its way out, and it does not carry on
+/// to send the request the operator just cancelled.
+///
+/// Before the wrap, the transient failure was not retried at all: it went
+/// straight to the digest fallback, which rewrote the conversation of a
+/// step that was about to be cancelled anyway.
+#[tokio::test(start_paused = true)]
+async fn cancellation_during_summarization_retry_ends_the_step_as_cancelled() -> TestResult {
+    let store = EventStore::new();
+    seed_compaction_history(&store)?;
+    let provider = AlwaysTransientProvider {
+        calls: AtomicUsize::new(0),
+    };
+    let executor = MockToolExecutor::empty();
+
+    let mut loop_ctx = LoopContext::new("system");
+    loop_ctx.context_edits = Some(crate::session::context_edit::ContextEdits::new());
+    loop_ctx.token_estimator = Some(std::sync::Arc::new(crate::r#loop::SimpleTokenEstimator));
+    // A minute of backoff against a token that fires in a second: under
+    // the paused clock the earlier timer wins deterministically, so the
+    // cancel always lands inside the summarizer's inter-attempt wait.
+    loop_ctx.retry_policy = crate::r#loop::retry::RetryPolicy {
+        initial_backoff: Duration::from_secs(60),
+        jitter: false,
+        ..crate::r#loop::retry::RetryPolicy::default()
+    };
+
+    let config = AgentLoopConfig {
+        context_window_limit: Some(100),
+        auto_compact_reserve_tokens: Some(50),
+        auto_compact_keep_recent_turns: 1,
+        ..AgentLoopConfig::default()
+    };
+
+    let token = CancellationToken::new();
+    let trigger = token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        trigger.cancel();
+    });
+
+    let result = run_agent_step(AgentStepRequest {
+        provider: &provider,
+        executor: &executor,
+        store: &store,
+        user_prompt: "prompt",
+        tools: &[],
+        output_schema: None,
+        model: "test-model",
+        config: &config,
+        event_tx: None,
+        inbound: None,
+        loop_context: &mut loop_ctx,
+        cancel: Some(token.clone()),
+    })
+    .await?;
+
+    assert!(
+        matches!(result, AgentStepResult::Cancelled { .. }),
+        "a cancelled summarization retry must end the step as cancelled, got {result:?}",
+    );
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        1,
+        "the step stops at the cancelled summarization: no main request is sent",
+    );
+    assert!(
+        store
+            .events()
+            .iter()
+            .all(|event| !matches!(event, SessionEvent::Compaction { .. })),
+        "a cancelled step must not rewrite the conversation on its way out",
+    );
+    Ok(())
+}
+
 // -- REVIEW item 6b: compaction must affect the in-flight request ------
 
 #[tokio::test]

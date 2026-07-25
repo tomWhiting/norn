@@ -9,7 +9,7 @@ use crate::error::NornError;
 use crate::r#loop::expansion::{expand_system_instruction, expand_tool_descriptions};
 use crate::r#loop::helpers::apply_rule_injections;
 use crate::r#loop::inflight_compaction::{
-    InFlightPromptLayout, PreflightArgs, run_context_preflight,
+    InFlightPromptLayout, PreflightArgs, PreflightDecision, run_context_preflight,
 };
 use crate::provider::agent_event::AgentUsageEstimate;
 use crate::provider::request::{Message, MessageRole, ProviderRequest, ToolCallCaller};
@@ -201,7 +201,7 @@ impl StepMachine<'_> {
         //
         // Read into a local before the args block mutably borrows the state.
         let layout_prefix_len = self.conversation_state.prefix_len();
-        let preflight = run_context_preflight(PreflightArgs {
+        let preflight = match run_context_preflight(PreflightArgs {
             store: self.store,
             provider: self.provider,
             model: self.model,
@@ -220,7 +220,16 @@ impl StepMachine<'_> {
             cancel: self.cancel.as_ref(),
             event_tx: self.event_tx,
         })
-        .await?;
+        .await?
+        {
+            PreflightDecision::Ran(outcome) => outcome,
+            // The step's token fired while the preflight's compaction
+            // summarization was in flight (or waiting between its retry
+            // attempts). Cancellation is a stop outcome, never a provider
+            // failure and never a silent carry-on: end the step here,
+            // carrying the usage accumulated so far.
+            PreflightDecision::Cancelled => return Ok(StepFlow::Done(self.cancelled_result())),
+        };
         // Summarization tokens are real provider spend: account them
         // exactly like any other provider call in this step.
         if let Some(usage) = preflight.summarization_usage {

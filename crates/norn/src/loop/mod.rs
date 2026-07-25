@@ -16,8 +16,9 @@ pub use crate::r#loop::commands::{
     unsupported_service_tier_message,
 };
 pub use crate::r#loop::compaction::{
-    AutoCompactArgs, AutoCompactionRun, CompactionState, CompactionSummarySource,
-    ManualCompactionEstimate, TimeoutState, estimate_manual_compaction, maybe_auto_compact,
+    AutoCompactArgs, AutoCompactDecision, AutoCompactionRun, CompactionState,
+    CompactionSummarySource, ManualCompactionEstimate, TimeoutState, estimate_manual_compaction,
+    maybe_auto_compact,
 };
 pub use crate::r#loop::iteration::{
     IterationMonitorConfig, IterationMonitorState, IterationSignal, QualitySignal,

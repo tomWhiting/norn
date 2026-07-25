@@ -11,9 +11,25 @@
 //! Failure policy lives in the caller ([`super::compaction`]): a failed or
 //! unusable summarization response is logged and the mechanical digest is
 //! committed instead, explicitly marked as a non-semantic fallback.
+//!
+//! The call runs under the loop's own retry brain (design D11). It used to
+//! be the one provider call in the step with zero retries — and it runs in
+//! the request-build preflight, *before* the retry brain gets control, so a
+//! transient `5xx` during auto-compaction degraded the model's continuity
+//! to a mechanical digest for no better reason than a bad minute on the
+//! backend. Now a transient failure retries indefinitely under the step's
+//! [`RetryPolicy`] and cancellation token, exactly like every other
+//! provider call; the digest fallback stays for the failures retrying
+//! cannot fix (non-transient errors, truncated or empty responses).
+
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use tokio_util::sync::CancellationToken;
 
 use crate::error::NornError;
-use crate::r#loop::classify::call_provider;
+use crate::r#loop::classify::{ProviderCallSinks, broadcast_retry_notice, call_provider};
+use crate::r#loop::retry::{RetryOutcome, RetryPolicy, retry_with_backoff};
+use crate::provider::agent_event::AgentEventSender;
 use crate::provider::events::StopReason;
 use crate::provider::request::{Message, MessageRole, ProviderRequest};
 use crate::provider::traits::Provider;
@@ -64,6 +80,42 @@ impl SummarizationResponse {
     }
 }
 
+/// The retry brain's inputs for one summarization call: the step's own
+/// policy, its cancellation token, and the live event channel the retry
+/// markers are broadcast on.
+#[derive(Clone, Copy)]
+pub(super) struct SummarizationRetry<'a> {
+    /// The step's retry policy — the same one every other provider call
+    /// in the step obeys.
+    pub(super) policy: &'a RetryPolicy,
+    /// The step's cooperative cancellation token. Without one the
+    /// inter-attempt wait is uninterruptible by design, so the callers
+    /// that host this unbounded loop supply a real token.
+    pub(super) cancel: Option<&'a CancellationToken>,
+    /// Live agent-event channel for the enriched `AgentStreamRetry`
+    /// markers. This is *only* the retry marker: the summarization's own
+    /// stream deltas stay unbroadcast (see [`request_compaction_summary`]).
+    pub(super) event_tx: Option<&'a AgentEventSender>,
+}
+
+/// Terminal outcome of a summarization call, mirroring
+/// [`RetryOutcome`] so cancellation stays a first-class outcome rather
+/// than being flattened into a failure.
+pub(super) enum SummarizationOutcome {
+    /// The provider produced an assembled response. Whether it is
+    /// *usable* is the caller's judgement
+    /// ([`SummarizationResponse::usable_summary`]).
+    Completed(SummarizationResponse),
+    /// The step's cancellation token fired before or during the call.
+    /// Nothing was produced and no further attempt was made; the caller
+    /// must end the step as cancelled — never commit a compaction and
+    /// never report a provider failure.
+    Cancelled,
+    /// The call failed with an error no retry can fix (the retry brain
+    /// already exhausted every attempt that could have helped).
+    Failed(NornError),
+}
+
 /// Ask `provider`/`model` to summarize the events about to be elided.
 ///
 /// The request is deliberately isolated from the step's conversation
@@ -71,16 +123,18 @@ impl SummarizationResponse {
 /// `store` false), no cache key, and no reasoning overrides — every knob
 /// defers to the provider's own defaults.
 ///
-/// # Errors
-///
-/// Propagates the [`NornError`] from the provider call; the caller maps
-/// any error to the mechanical-digest fallback rather than aborting the
-/// agent step.
+/// Transient failures retry under `retry.policy` until the call succeeds,
+/// fails non-transiently, or `retry.cancel` fires (design D11). Each wait
+/// is announced on `retry.event_tx` through the same enriched
+/// [`AgentStreamRetry`](crate::provider::agent_event::AgentStreamRetry)
+/// marker the main provider call uses, so a stalled compaction is visible
+/// instead of looking like a hang.
 pub(super) async fn request_compaction_summary(
     provider: &dyn Provider,
     model: &str,
     elided: &[SessionEvent],
-) -> Result<SummarizationResponse, NornError> {
+    retry: SummarizationRetry<'_>,
+) -> SummarizationOutcome {
     let transcript = render_transcript(elided);
     let request = ProviderRequest {
         messages: vec![
@@ -101,31 +155,56 @@ pub(super) async fn request_compaction_summary(
         store: false,
         context_management: None,
     };
-    // event_tx is deliberately None: streaming summarization deltas to
-    // observers would be indistinguishable from assistant output. The
-    // partial capture is None for the same reason — a hard-cut
-    // summarization call is not assistant output and must not be
-    // persisted as the step's partial content.
-    let response = call_provider(
-        provider,
-        request,
-        crate::provider::ProviderTurnContext::default(),
-        &crate::r#loop::classify::ProviderCallSinks {
-            event_tx: None,
-            partial_capture: None,
-            audio_store: None,
+    // The sinks' event_tx is deliberately None: streaming summarization
+    // deltas to observers would be indistinguishable from assistant
+    // output. The partial capture is None for the same reason — a
+    // hard-cut summarization call is not assistant output and must not
+    // be persisted as the step's partial content. The retry markers do
+    // reach observers, on `retry.event_tx` below: a wait nobody can see
+    // is exactly the silent stall D8 forbids.
+    let sinks = ProviderCallSinks {
+        event_tx: None,
+        partial_capture: None,
+        audio_store: None,
+    };
+    let sinks = &sinks;
+    let attempts = AtomicU32::new(0);
+    let outcome = retry_with_backoff(
+        retry.policy,
+        retry.cancel,
+        |notice| broadcast_retry_notice(retry.event_tx, notice),
+        || {
+            // Each attempt replays the frozen request: the provider's
+            // stream consumes it. No audio slot is passed because the
+            // summarization sinks carry no audio store, so an abandoned
+            // attempt leaves no unsealed sidecar to discard.
+            let request = request.clone();
+            let attempt = attempts.fetch_add(1, Ordering::Relaxed).saturating_add(1);
+            async move {
+                call_provider(
+                    provider,
+                    request,
+                    crate::provider::ProviderTurnContext::default(),
+                    sinks,
+                    attempt,
+                    None,
+                )
+                .await
+            }
         },
-        1,
-        // No retry wrapper here yet, so no attempt is ever abandoned and
-        // there is nothing for an artifact slot to hand to a replay.
-        None,
     )
-    .await?;
-    Ok(SummarizationResponse {
-        text: response.text,
-        usage: response.usage,
-        stop_reason: response.stop_reason,
-    })
+    .await;
+    match outcome {
+        RetryOutcome::Completed(response) => {
+            SummarizationOutcome::Completed(SummarizationResponse {
+                text: response.text,
+                usage: response.usage,
+                stop_reason: response.stop_reason,
+            })
+        }
+        RetryOutcome::Cancelled => SummarizationOutcome::Cancelled,
+        RetryOutcome::Failed(error) => SummarizationOutcome::Failed(error),
+    }
 }
 
 /// Render the elided events to a labelled plain-text transcript.
@@ -204,10 +283,93 @@ fn text_message(role: MessageRole, content: String) -> Message {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    use futures_util::stream;
+
     use super::*;
+    use crate::error::{ProviderError, TransientKind};
     use crate::provider::events::ProviderEvent;
     use crate::provider::mock::MockProvider;
+    use crate::provider::request::ProviderRequest;
+    use crate::provider::traits::ProviderStream;
     use crate::session::events::{EventBase, EventUsage, ToolCallEvent};
+
+    /// Retry inputs for a call that is not expected to retry at all.
+    fn no_retry_needed() -> SummarizationRetry<'static> {
+        static POLICY: std::sync::LazyLock<RetryPolicy> =
+            std::sync::LazyLock::new(|| RetryPolicy {
+                jitter: false,
+                ..RetryPolicy::default()
+            });
+        SummarizationRetry {
+            policy: &POLICY,
+            cancel: None,
+            event_tx: None,
+        }
+    }
+
+    /// Scripted provider whose `stream()` calls pop pre-built
+    /// `Result<ProviderEvent, ProviderError>` sequences, so a test can
+    /// script transport-level failures mid-stream (which
+    /// [`MockProvider`] cannot).
+    struct ScriptedResultProvider {
+        attempts: Mutex<Vec<Vec<Result<ProviderEvent, ProviderError>>>>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl ScriptedResultProvider {
+        fn new(attempts: Vec<Vec<Result<ProviderEvent, ProviderError>>>) -> Self {
+            Self {
+                attempts: Mutex::new(attempts),
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl Provider for ScriptedResultProvider {
+        fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut attempts = self.attempts.lock().expect("scripted provider lock");
+            if attempts.is_empty() {
+                return Err(ProviderError::StreamError {
+                    reason: "scripted provider exhausted".to_owned(),
+                    transient: None,
+                });
+            }
+            let events = attempts.remove(0);
+            Ok(Box::pin(stream::iter(events)))
+        }
+    }
+
+    fn transient_failure() -> Vec<Result<ProviderEvent, ProviderError>> {
+        vec![Err(ProviderError::StreamError {
+            reason: "HTTP 503: backend having a moment".to_owned(),
+            transient: Some(TransientKind::ServerError { status: 503 }),
+        })]
+    }
+
+    fn summary_attempt(text: &str) -> Vec<Result<ProviderEvent, ProviderError>> {
+        vec![
+            Ok(ProviderEvent::TextDelta {
+                text: text.to_owned(),
+            }),
+            Ok(ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage {
+                    input_tokens: 12,
+                    output_tokens: 3,
+                    ..Usage::default()
+                },
+                response_id: None,
+            }),
+        ]
+    }
 
     fn user_event(content: &str) -> SessionEvent {
         SessionEvent::UserMessage {
@@ -373,9 +535,11 @@ mod tests {
         ]]);
         let events = vec![user_event("hello")];
 
-        let response = request_compaction_summary(&provider, "step-model", &events)
-            .await
-            .expect("summarization call succeeds");
+        let SummarizationOutcome::Completed(response) =
+            request_compaction_summary(&provider, "step-model", &events, no_retry_needed()).await
+        else {
+            panic!("summarization call succeeds");
+        };
 
         assert_eq!(response.usable_summary(), Some("a fine summary"));
         assert_eq!(response.usage.input_tokens, 42);
@@ -397,6 +561,179 @@ mod tests {
                 .as_deref()
                 .is_some_and(|c| c.contains("hello")),
             "transcript must be embedded in the user message",
+        );
+    }
+
+    /// D11: a transient failure inside the compaction summarizer retries
+    /// under the step's policy and succeeds — it no longer costs the
+    /// model its semantic continuity. Before the wrap this call had zero
+    /// retries: the 503 went straight to the caller and the mechanical
+    /// digest replaced the conversation.
+    #[tokio::test(start_paused = true)]
+    async fn transient_summarization_failure_retries_and_succeeds() {
+        let provider = ScriptedResultProvider::new(vec![
+            transient_failure(),
+            summary_attempt("the conversation so far"),
+        ]);
+        let policy = RetryPolicy {
+            initial_backoff: Duration::from_secs(4),
+            jitter: false,
+            ..RetryPolicy::default()
+        };
+
+        let outcome = request_compaction_summary(
+            &provider,
+            "step-model",
+            &[user_event("hello")],
+            SummarizationRetry {
+                policy: &policy,
+                cancel: None,
+                event_tx: None,
+            },
+        )
+        .await;
+
+        let SummarizationOutcome::Completed(response) = outcome else {
+            panic!("a transient failure must be retried, not surfaced");
+        };
+        assert_eq!(response.usable_summary(), Some("the conversation so far"));
+        assert_eq!(response.usage.input_tokens, 12);
+        assert_eq!(
+            provider.calls(),
+            2,
+            "the failed attempt and its replay both really happened",
+        );
+    }
+
+    /// D11: the retry markers ride the live channel so a compaction
+    /// stalled on a flaky backend is visible instead of looking like a
+    /// hang — while the summarization's own stream deltas stay off the
+    /// channel, where they would be indistinguishable from assistant
+    /// output.
+    #[tokio::test(start_paused = true)]
+    async fn summarization_retry_broadcasts_the_marker_but_not_its_deltas() {
+        use crate::provider::agent_event::{AgentEvent, AgentEventKind, AgentEventSender};
+
+        let provider = ScriptedResultProvider::new(vec![
+            transient_failure(),
+            summary_attempt("the conversation so far"),
+        ]);
+        let policy = RetryPolicy {
+            initial_backoff: Duration::from_secs(4),
+            jitter: false,
+            ..RetryPolicy::default()
+        };
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<AgentEvent>(32);
+        let sender = AgentEventSender::new(tx, uuid::Uuid::nil(), "root".to_owned());
+
+        let outcome = request_compaction_summary(
+            &provider,
+            "step-model",
+            &[user_event("hello")],
+            SummarizationRetry {
+                policy: &policy,
+                cancel: None,
+                event_tx: Some(&sender),
+            },
+        )
+        .await;
+        assert!(matches!(outcome, SummarizationOutcome::Completed(_)));
+
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event.event);
+        }
+        assert_eq!(events.len(), 1, "only the retry marker is broadcast");
+        match &events[0] {
+            AgentEventKind::StreamRetry(retry) => {
+                assert_eq!(retry.attempt, 2);
+                assert_eq!(retry.max_attempts, None, "the default policy is unbounded");
+                assert_eq!(retry.delay_ms, 4_000);
+                assert_eq!(retry.error_class, "server_error");
+            }
+            other => panic!("expected the retry marker, got {other:?}"),
+        }
+    }
+
+    /// D11: cancellation during a summarization retry is a first-class
+    /// outcome — never a provider failure, never a swallowed carry-on.
+    /// The caller turns it into the step's `Cancelled` result.
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_during_a_summarization_retry_surfaces_as_cancelled() {
+        let provider = ScriptedResultProvider::new(vec![
+            transient_failure(),
+            summary_attempt("never reached"),
+        ]);
+        // A minute of backoff against a token that fires in a second:
+        // under the paused clock the earlier timer wins deterministically,
+        // so the cancel always lands *inside* the inter-attempt wait.
+        let policy = RetryPolicy {
+            initial_backoff: Duration::from_secs(60),
+            jitter: false,
+            ..RetryPolicy::default()
+        };
+        let token = CancellationToken::new();
+        let trigger = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            trigger.cancel();
+        });
+
+        let outcome = request_compaction_summary(
+            &provider,
+            "step-model",
+            &[user_event("hello")],
+            SummarizationRetry {
+                policy: &policy,
+                cancel: Some(&token),
+                event_tx: None,
+            },
+        )
+        .await;
+
+        assert!(
+            matches!(outcome, SummarizationOutcome::Cancelled),
+            "a cancelled retry wait is cancellation, not failure",
+        );
+        assert_eq!(
+            provider.calls(),
+            1,
+            "no attempt may start after the token fires",
+        );
+    }
+
+    /// D11 boundary: a non-transient failure is not retried at all. It
+    /// surfaces immediately so the caller can commit the marked
+    /// mechanical digest — today's failure policy, unchanged.
+    #[tokio::test(start_paused = true)]
+    async fn non_transient_summarization_failure_is_reported_without_retrying() {
+        let provider = ScriptedResultProvider::new(vec![
+            vec![Err(ProviderError::StreamError {
+                reason: "malformed response envelope".to_owned(),
+                transient: None,
+            })],
+            summary_attempt("never reached"),
+        ]);
+
+        let outcome = request_compaction_summary(
+            &provider,
+            "step-model",
+            &[user_event("hello")],
+            no_retry_needed(),
+        )
+        .await;
+
+        let SummarizationOutcome::Failed(error) = outcome else {
+            panic!("a terminal failure must surface, not retry forever");
+        };
+        assert!(
+            error.to_string().contains("malformed response envelope"),
+            "{error}",
+        );
+        assert_eq!(
+            provider.calls(),
+            1,
+            "a terminal error must never be replayed",
         );
     }
 

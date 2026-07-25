@@ -22,6 +22,7 @@ mod started_audit;
 mod terminal_mailbox;
 mod usage_rollup;
 mod variants;
+mod worker_survival;
 
 use close_and_routes::ParkedProvider;
 use grandchildren::idle_grandchild_entry;

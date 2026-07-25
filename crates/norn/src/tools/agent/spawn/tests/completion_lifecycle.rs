@@ -1,10 +1,14 @@
 use super::*;
 
-/// R7: the hard-error path still marks the registry `Failed` and still
-/// sends a result through the child result channel with
-/// `succeeded: false`.
+/// R7 + design D6: the hard-error path sends a result through the child
+/// result channel with `succeeded: false` and the typed turn-failure
+/// stop — and the persistent worker SURVIVES it, parking idle instead of
+/// dying. (Before D6 this path marked the registry `Failed`: a hard
+/// error mapped to `{Failed, stop: None}`, the controller's
+/// poisoned-worker shape. After the retry brain, a hard error means the
+/// turn failed, not that the worker is unusable.)
 #[tokio::test]
-async fn child_failure_marks_failed_and_sends_result() -> TestResult {
+async fn child_failure_reports_typed_failure_and_survives_as_idle() -> TestResult {
     // Empty MockProvider — the first `stream()` call errors, so the
     // child's `run_agent_step` returns Err.
     let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
@@ -30,20 +34,27 @@ async fn child_failure_marks_failed_and_sends_result() -> TestResult {
     )
     .await;
 
-    // Terminal transition retains the entry with Failed status; the
-    // result channel carries the failure.
+    // The worker survives the failed turn as an idle, wakeable actor;
+    // the result channel carries the failure with its typed class.
     assert_eq!(
         agent_registry
             .read()
             .get(child_id)
             .ok_or("required test value")?
             .status,
-        AgentStatus::Failed,
+        AgentStatus::Idle,
     );
     let result = rx.try_recv()?;
     assert_eq!(result.agent_id, child_id);
     assert!(!result.succeeded, "child must report failure");
     assert!(result.error.is_some(), "error message present on failure");
+    assert_eq!(
+        result.stop,
+        Some(crate::agent::output::AgentStopReason::TurnFailed {
+            class: "terminal".to_string(),
+        }),
+        "the failure is typed, so the parent can tell it from a dead worker",
+    );
     Ok(())
 }
 

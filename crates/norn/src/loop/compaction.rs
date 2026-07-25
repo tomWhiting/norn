@@ -5,10 +5,15 @@
 //! [`ContextEdits`]. When the trigger fires, the loop asks the step's own
 //! provider and model for an LLM-written summary of the events being
 //! elided (the loop summarization module); the summary becomes the
-//! compaction record's content so the model keeps semantic continuity. A
-//! summarization failure never aborts the step: it is logged at `warn`
-//! and the mechanical event digest is committed instead, explicitly
-//! marked as a non-semantic fallback. The trigger fires once per
+//! compaction record's content so the model keeps semantic continuity.
+//! That call runs under the step's own retry policy and cancellation
+//! token (design D11), so a transient backend fault is waited out rather
+//! than costing the model its continuity. A summarization failure no
+//! retry can fix never aborts the step: it is logged at `warn` and the
+//! mechanical event digest is committed instead, explicitly marked as a
+//! non-semantic fallback. A cancelled call commits nothing at all and
+//! reports [`AutoCompactDecision::Cancelled`], which ends the step as
+//! cancelled. The trigger fires once per
 //! `run_agent_step` call — the runner threads a [`CompactionState`]
 //! through the loop body so a second over-threshold iteration is a no-op.
 //!
@@ -19,8 +24,12 @@
 
 use crate::error::SessionError;
 use crate::integration::hooks::{HookOutcome, HookRegistry};
-use crate::r#loop::summarization::request_compaction_summary;
+use crate::r#loop::retry::RetryPolicy;
+use crate::r#loop::summarization::{
+    SummarizationOutcome, SummarizationRetry, request_compaction_summary,
+};
 use crate::r#loop::tokens::TokenEstimator;
+use crate::provider::agent_event::AgentEventSender;
 use crate::provider::traits::Provider;
 use crate::provider::usage::Usage;
 use crate::session::context_edit::{AutoCompactionOutcome, ContextEdits, build_compaction_digest};
@@ -66,6 +75,30 @@ pub struct AutoCompactionRun {
     /// empty responses that were rejected, because those tokens were
     /// still spent. `None` only when the call failed before assembly.
     pub summarization_usage: Option<Usage>,
+}
+
+/// What the auto-compaction trigger did.
+///
+/// Cancellation is a first-class arm, distinct from "did not fire": the
+/// summarization call runs under the retry brain with the step's token
+/// (design D11), and a cancelled step must end as
+/// [`AgentStepResult::Cancelled`](crate::agent_loop::config::AgentStepResult),
+/// never as a step that quietly carried on with an uncompacted prompt.
+#[derive(Debug)]
+#[must_use]
+pub enum AutoCompactDecision {
+    /// The trigger did not fire: unconfigured, below threshold, already
+    /// fired this step, no tracker, nothing to compact, or a
+    /// [`CompactionHook`](crate::integration::hooks::CompactionHook)
+    /// blocked it. Nothing was committed.
+    NotFired,
+    /// Compaction ran: the summary is committed and the prompt view is
+    /// rewritten.
+    Fired(Box<AutoCompactionRun>),
+    /// The step's cancellation token fired before the summary could be
+    /// committed. Nothing was committed and the once-per-step guard
+    /// stays un-fired, so a later step can still compact.
+    Cancelled,
 }
 
 /// Mechanical estimate for manual compaction surfaces such as `/compact`.
@@ -214,6 +247,16 @@ pub struct AutoCompactArgs<'a> {
     /// out a full LLM completion; a cancelled trigger commits nothing and
     /// stays un-fired.
     pub cancel: Option<&'a tokio_util::sync::CancellationToken>,
+    /// The step's retry policy, applied to the summarization provider
+    /// call exactly as it is to every other provider call in the step
+    /// (design D11): transient failures retry until the call succeeds or
+    /// `cancel` fires, instead of degrading the model's continuity to a
+    /// mechanical digest over a bad minute on the backend.
+    pub retry_policy: &'a RetryPolicy,
+    /// Live agent-event channel used to broadcast the retry markers of
+    /// the summarization call. The call's own stream deltas are never
+    /// broadcast (they are not assistant output); only the waits are.
+    pub event_tx: Option<&'a AgentEventSender>,
 }
 
 /// Decide whether auto-compaction should fire and run it if so.
@@ -230,27 +273,30 @@ pub struct AutoCompactArgs<'a> {
 ///   effect: the tracker mutates).
 ///
 /// When it fires, the events below the cut are summarized through the
-/// step's provider and model; on summarization failure the mechanical
-/// digest is committed instead (logged, marked — see
-/// [`CompactionSummarySource`]). Returns `Ok(Some(AutoCompactionRun))` if
-/// compaction ran, otherwise `Ok(None)`.
+/// step's provider and model, under the step's retry policy and
+/// cancellation token; a summarization failure no retry can fix commits
+/// the mechanical digest instead (logged, marked — see
+/// [`CompactionSummarySource`]). The three outcomes are the arms of
+/// [`AutoCompactDecision`].
 ///
 /// # Errors
 ///
 /// Propagates any [`SessionError`] from committing the compaction plan.
 /// Summarization-call failures are *not* errors: they degrade to the
-/// digest fallback.
+/// digest fallback. Cancellation is not an error either: it is
+/// [`AutoCompactDecision::Cancelled`], which the caller turns into the
+/// step's cancelled outcome.
 pub async fn maybe_auto_compact(
     args: AutoCompactArgs<'_>,
-) -> Result<Option<AutoCompactionRun>, SessionError> {
+) -> Result<AutoCompactDecision, SessionError> {
     if args.state.fired {
-        return Ok(None);
+        return Ok(AutoCompactDecision::NotFired);
     }
     let Some(limit) = args.context_window_limit else {
-        return Ok(None);
+        return Ok(AutoCompactDecision::NotFired);
     };
     let Some(reserve) = args.reserve_tokens else {
-        return Ok(None);
+        return Ok(AutoCompactDecision::NotFired);
     };
     if limit == 0 {
         tracing::warn!(
@@ -258,7 +304,7 @@ pub async fn maybe_auto_compact(
             "auto-compaction context_window_limit is 0; the trigger cannot \
              compute a threshold — trigger disabled",
         );
-        return Ok(None);
+        return Ok(AutoCompactDecision::NotFired);
     }
     if reserve >= limit {
         tracing::warn!(
@@ -267,7 +313,7 @@ pub async fn maybe_auto_compact(
             "auto-compaction reserve_tokens is at or above context_window_limit; \
              every step would trigger compaction — trigger disabled",
         );
-        return Ok(None);
+        return Ok(AutoCompactDecision::NotFired);
     }
     // `reserve < limit` here, so the subtraction cannot underflow.
     let threshold = limit - reserve;
@@ -276,20 +322,20 @@ pub async fn maybe_auto_compact(
         .usage_floor
         .map_or(estimated, |floor| estimated.max(floor));
     if effective <= threshold {
-        return Ok(None);
+        return Ok(AutoCompactDecision::NotFired);
     }
     let Some(edits) = args.edits else {
-        return Ok(None);
+        return Ok(AutoCompactDecision::NotFired);
     };
     let Some(plan) = edits.plan_auto_compaction(args.store, args.keep_recent_turns) else {
-        return Ok(None);
+        return Ok(AutoCompactDecision::NotFired);
     };
 
     // NH-006 R6 / C58: CompactionHook fires before the compaction event is
     // appended (and before any summarization tokens are spent). The event
     // count passed to the hook is the current number of events in the
-    // store. A Block returns Ok(None) without compacting — this is not an
-    // error, the operator explicitly chose to skip this trigger.
+    // store. A Block returns `NotFired` without compacting — this is not
+    // an error, the operator explicitly chose to skip this trigger.
     if let Some(hooks) = args.hooks
         && let HookOutcome::Block { reason } = hooks.run_pre_compaction(args.store.len()).await
     {
@@ -297,7 +343,7 @@ pub async fn maybe_auto_compact(
             reason = %reason,
             "compaction skipped by CompactionHook block",
         );
-        return Ok(None);
+        return Ok(AutoCompactDecision::NotFired);
     }
 
     // Freed estimate anchors on the same effective count as the trigger:
@@ -309,70 +355,111 @@ pub async fn maybe_auto_compact(
 
     let events = args.store.events();
     let elided = &events[..plan.cut_exclusive()];
-    // Race the summarization call against the step's cancellation token:
-    // the inline LLM call runs in preflight, outside the runner's own
-    // provider-call select, and must not hold a cancelled step hostage
-    // for a full completion. On cancel the trigger aborts without
-    // committing and without consuming the once-per-step guard — the
-    // runner observes the token at its next gate and returns `Cancelled`.
+    // The summarization call owns cancellation in its own right: the
+    // retry brain re-checks the token before every attempt and races it
+    // against every inter-attempt wait (design D11). This outer select
+    // stays as defence in depth — it also covers the window *inside* a
+    // streaming attempt, where dropping the provider future cleanly
+    // aborts the in-flight HTTP stream. Both routes end in the same
+    // place: nothing committed, the once-per-step guard left un-fired,
+    // and a `Cancelled` decision the caller turns into the step's
+    // cancelled outcome.
     let summarized = match args.cancel {
         Some(token) => {
             tokio::select! {
                 biased;
                 () = token.cancelled() => None,
-                result = summarize_or_fall_back(
-                    args.provider,
-                    args.model,
+                result = summarize_or_fall_back(SummarizeArgs {
+                    provider: args.provider,
+                    model: args.model,
                     elided,
                     token_estimate_freed,
-                ) => Some(result?),
+                    retry: SummarizationRetry {
+                        policy: args.retry_policy,
+                        cancel: args.cancel,
+                        event_tx: args.event_tx,
+                    },
+                }) => result?,
             }
         }
-        None => Some(
-            summarize_or_fall_back(args.provider, args.model, elided, token_estimate_freed).await?,
-        ),
+        None => {
+            summarize_or_fall_back(SummarizeArgs {
+                provider: args.provider,
+                model: args.model,
+                elided,
+                token_estimate_freed,
+                retry: SummarizationRetry {
+                    policy: args.retry_policy,
+                    cancel: None,
+                    event_tx: args.event_tx,
+                },
+            })
+            .await?
+        }
     };
     let Some((summary, summary_source, summarization_usage)) = summarized else {
         tracing::info!(
             "auto-compaction summarization cancelled mid-call; \
              compaction skipped and the trigger left armed",
         );
-        return Ok(None);
+        return Ok(AutoCompactDecision::Cancelled);
     };
 
     let outcome = edits.commit_compaction_plan(args.store, plan, summary)?;
     args.state.fired = true;
-    Ok(Some(AutoCompactionRun {
+    Ok(AutoCompactDecision::Fired(Box::new(AutoCompactionRun {
         outcome,
         freed_token_estimate: token_estimate_freed,
         summary_source,
         summarization_usage,
-    }))
+    })))
+}
+
+/// Borrowed inputs for [`summarize_or_fall_back`].
+struct SummarizeArgs<'a> {
+    /// The step's provider, issuing the summarization call.
+    provider: &'a dyn Provider,
+    /// The step's resolved model.
+    model: &'a str,
+    /// The events about to be elided from the prompt view.
+    elided: &'a [SessionEvent],
+    /// Freed-token estimate carried into the fallback digest.
+    token_estimate_freed: usize,
+    /// Retry brain inputs for the summarization call.
+    retry: SummarizationRetry<'a>,
 }
 
 /// Produce the compaction summary: the LLM-written summary when the
 /// provider call succeeds, otherwise the mechanical digest explicitly
 /// marked as a non-semantic fallback (with the failure logged at `warn`).
 ///
+/// `Ok(None)` means the step was cancelled during the call — not a
+/// failure, and explicitly not a reason to commit a digest: a cancelled
+/// step must not rewrite the conversation on its way out.
+///
 /// # Errors
 ///
 /// Returns [`SessionError::EventAppendFailed`] only if the fallback
 /// digest cannot be serialised to JSON.
 async fn summarize_or_fall_back(
-    provider: &dyn Provider,
-    model: &str,
-    elided: &[SessionEvent],
-    token_estimate_freed: usize,
-) -> Result<(String, CompactionSummarySource, Option<Usage>), SessionError> {
-    let (failure, usage) = match request_compaction_summary(provider, model, elided).await {
-        Ok(response) => {
+    args: SummarizeArgs<'_>,
+) -> Result<Option<(String, CompactionSummarySource, Option<Usage>)>, SessionError> {
+    let SummarizeArgs {
+        provider,
+        model,
+        elided,
+        token_estimate_freed,
+        retry,
+    } = args;
+    let (failure, usage) = match request_compaction_summary(provider, model, elided, retry).await {
+        SummarizationOutcome::Completed(response) => {
             let usage = response.usage.clone();
             if let Some(summary) = response.usable_summary() {
-                return Ok((
+                return Ok(Some((
                     summary.to_string(),
                     CompactionSummarySource::Llm,
                     Some(usage),
-                ));
+                )));
             }
             (
                 format!(
@@ -383,7 +470,10 @@ async fn summarize_or_fall_back(
                 Some(usage),
             )
         }
-        Err(error) => (format!("summarization call failed: {error}"), None),
+        SummarizationOutcome::Cancelled => return Ok(None),
+        SummarizationOutcome::Failed(error) => {
+            (format!("summarization call failed: {error}"), None)
+        }
     };
 
     tracing::warn!(
@@ -393,11 +483,11 @@ async fn summarize_or_fall_back(
          mechanical digest as a non-semantic fallback",
     );
     let digest = fallback_digest(elided, token_estimate_freed, &failure)?;
-    Ok((
+    Ok(Some((
         digest,
         CompactionSummarySource::MechanicalDigestFallback { error: failure },
         usage,
-    ))
+    )))
 }
 
 /// Build the marked fallback digest for a failed summarization.
@@ -637,6 +727,31 @@ mod tests {
         Ok(())
     }
 
+    /// The default policy with jitter off: these tests script exactly
+    /// one provider outcome per trigger, so a retry would consume a
+    /// sequence that is not there. Non-transient failures — the only
+    /// kind they script — are never retried by any policy anyway.
+    fn no_retry_policy() -> crate::r#loop::retry::RetryPolicy {
+        crate::r#loop::retry::RetryPolicy {
+            jitter: false,
+            ..crate::r#loop::retry::RetryPolicy::default()
+        }
+    }
+
+    /// Project the decision onto the fired/not-fired option these tests
+    /// assert on. `Cancelled` is unreachable for a trigger configured
+    /// without a cancellation token, and is asserted rather than
+    /// silently folded into "did not fire".
+    fn fired(decision: AutoCompactDecision) -> Option<AutoCompactionRun> {
+        match decision {
+            AutoCompactDecision::Fired(run) => Some(*run),
+            AutoCompactDecision::NotFired => None,
+            AutoCompactDecision::Cancelled => {
+                panic!("this trigger has no cancellation token and cannot be cancelled")
+            }
+        }
+    }
+
     fn summary_events(text: &str) -> Vec<ProviderEvent> {
         vec![
             ProviderEvent::TextDelta {
@@ -679,8 +794,11 @@ mod tests {
             keep_recent_turns: 10,
             hooks,
             cancel: None,
+            retry_policy: &no_retry_policy(),
+            event_tx: None,
         })
         .await
+        .map(fired)
     }
 
     #[tokio::test]
@@ -815,13 +933,18 @@ mod tests {
                 keep_recent_turns: 10,
                 hooks: None,
                 cancel: Some(&token),
+                retry_policy: &no_retry_policy(),
+                event_tx: None,
             }),
         )
         .await
         .expect("a cancelled summarization must end the trigger promptly")
         .expect("cancellation is not an error");
 
-        assert!(run.is_none(), "a cancelled trigger commits nothing");
+        assert!(
+            matches!(run, AutoCompactDecision::Cancelled),
+            "a cancelled trigger commits nothing and says so",
+        );
         assert!(
             !state.has_fired(),
             "the once-per-step guard stays un-fired so a later step can compact",
@@ -993,8 +1116,11 @@ mod tests {
             keep_recent_turns: 10,
             hooks: None,
             cancel: None,
+            retry_policy: &no_retry_policy(),
+            event_tx: None,
         })
         .await
+        .map(fired)
     }
 
     /// The trigger fires strictly *above* `limit − reserve`: at exactly the

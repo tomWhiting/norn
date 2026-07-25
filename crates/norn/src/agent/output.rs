@@ -77,6 +77,30 @@ pub enum AgentStopReason {
         /// Completed provider iterations, including the truncated one.
         iterations: u32,
     },
+
+    /// The turn failed with an error the loop could not resolve.
+    ///
+    /// Produced only where a driver projects a hard
+    /// [`NornError`](crate::error::NornError) from the runner onto a
+    /// stop reason — the spawned-worker result surface. It exists so a
+    /// turn failure is *typed*: under the retry-forever law (design D6)
+    /// the loop already retried every transient class indefinitely, so
+    /// reaching this variant means a failure no replay can fix. A
+    /// persistent worker survives it (mailbox and route preserved) and
+    /// reports it here rather than dying, so the distinction between "a
+    /// turn failed" and "the worker is gone" is legible to the parent.
+    ///
+    /// [`RunOutcome::Stopped`] never carries this: a builder-level run
+    /// surfaces a hard error as `Err`, not as a stop.
+    TurnFailed {
+        /// House taxonomy class label of the failure, from
+        /// [`ErrorClass::label`](crate::error::ErrorClass::label) — a
+        /// closed vocabulary (`timeout`, `connection_reset`,
+        /// `server_error`, `rate_limited`, `auth`, `terminal`). Never
+        /// provider free text; the human-readable reason travels on the
+        /// accompanying error string, which is already house-sanitized.
+        class: String,
+    },
 }
 
 /// The payload of a run: final (or partial) output value, accumulated

@@ -13,9 +13,53 @@ use uuid::Uuid;
 use super::reclaim::log_terminal_transition_violation;
 use crate::agent::output::AgentStopReason;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
-use crate::error::NornError;
+use crate::error::{NornError, SessionError};
 use crate::r#loop::runner::AgentStepResult;
 use crate::provider::usage::Usage;
+use crate::session::events::{EventBase, SessionEvent};
+use crate::session::store::EventStore;
+
+/// `event_type` of the [`SessionEvent::Custom`] record a worker writes
+/// to its OWN timeline when one of its turns fails hard (design D6).
+///
+/// The record exists because a surviving worker's failure would
+/// otherwise leave no trace on the session it survives on: the parent
+/// sees the failure on the result channel and the `subagent.completed`
+/// audit record, but the child's own timeline — the thing a resume or
+/// an audit replays — would show a turn that simply produced nothing.
+/// A silent park is banned.
+pub(crate) const TURN_FAILED_EVENT_TYPE: &str = "agent.turn_failed";
+
+/// Append the [`TURN_FAILED_EVENT_TYPE`] record for a hard turn failure
+/// to the worker's own session store.
+///
+/// `class` is the closed-vocabulary
+/// [`ErrorClass::label`](crate::error::ErrorClass::label) of the
+/// failure; `error` is the typed error's `Display`, which is already
+/// house-sanitized and is the same text the parent receives on the
+/// result channel.
+///
+/// # Errors
+///
+/// The store's own append error when the write-through persist fails.
+/// The caller logs it loudly: the failure is still reported on the
+/// parent's `subagent.completed` audit record and on the result
+/// channel, so a store fault degrades the record, never the report.
+pub(super) fn record_turn_failure(
+    store: &EventStore,
+    class: &str,
+    error: &str,
+) -> Result<(), SessionError> {
+    store.append(SessionEvent::Custom {
+        base: EventBase::new(store.last_event_id()),
+        event_type: TURN_FAILED_EVENT_TYPE.to_owned(),
+        data: serde_json::json!({
+            "class": class,
+            "error": error,
+        }),
+    })?;
+    Ok(())
+}
 
 /// Mark the child's terminal registry status without touching the
 /// outcome. Split from [`extract_outcome_summary`] (NH-006 R5) so a
@@ -67,8 +111,13 @@ pub(crate) struct ChildOutcomeSummary {
     /// Explanatory error (including any partial output) when the child did
     /// not complete.
     pub(crate) error: Option<String>,
-    /// Typed stop reason when the child's run stopped early; `None` on
-    /// completion or hard error.
+    /// Typed stop reason for every non-completion the child's run can
+    /// report: the early-stop arms carry their own reason, and a hard
+    /// [`NornError`] carries [`AgentStopReason::TurnFailed`] with the
+    /// failure's taxonomy class (design D6). `None` means exactly two
+    /// things: the run completed, or the run was cut down by a panic —
+    /// which is not a stop at all, and is deliberately the shape
+    /// [`super::spawn_controller`] treats as worker-fatal.
     pub(crate) stop: Option<AgentStopReason>,
     /// Accumulated token usage across every provider call the child
     /// made — populated on every [`AgentStepResult`] arm. On the hard
@@ -271,11 +320,19 @@ pub(crate) fn extract_outcome_summary(
         // panic path
         // (`panicked_mid_tree_child_still_rolls_up_delivered_grandchild_usage`
         // in spawn.rs) — the two paths read the identical snapshot.
+        //
+        // The stop reason is TYPED (design D6): after the retry brain,
+        // a hard error is a failure no replay can fix, and it carries
+        // the house taxonomy class so the parent — and the controller's
+        // terminate predicate — can tell a failed turn from a dead
+        // worker.
         Err(err) => ChildOutcomeSummary {
             status: AgentStatus::Failed,
             output_text: None,
+            stop: Some(AgentStopReason::TurnFailed {
+                class: err.class().label().to_owned(),
+            }),
             error: Some(err.to_string()),
-            stop: None,
             usage: Usage::default(),
             children_usage: delivered_children_usage,
         },
@@ -284,6 +341,12 @@ pub(crate) fn extract_outcome_summary(
 
 /// Project a caught panic message onto the same failure summary as a
 /// panicked inner task.
+///
+/// The absent stop reason is load-bearing (design D6, reviewer ruling
+/// 2026-07-25): a panic is not an early stop, and `{Failed, stop: None}`
+/// is precisely the shape [`super::spawn_controller`] treats as
+/// worker-fatal. A poisoned worker must never idle-park, so this arm
+/// must never grow a typed stop.
 pub(super) fn panic_outcome_summary(
     message: String,
     delivered_children_usage: Usage,
@@ -561,10 +624,11 @@ mod tests {
         assert_eq!(summary.children_usage.output_tokens, 3);
     }
 
-    /// A loop error maps to failure with the error text preserved and no
-    /// stop reason (the run errored; it did not stop early). Own usage
-    /// is unknown-zeros, but delivered grandchild subtrees still fold in
-    /// from the wrapper's accumulator snapshot (W3.6).
+    /// A loop error maps to failure with the error text preserved and
+    /// the TYPED turn-failure stop carrying the error's taxonomy class
+    /// (design D6) — the shape that keeps a persistent worker alive.
+    /// Own usage is unknown-zeros, but delivered grandchild subtrees
+    /// still fold in from the wrapper's accumulator snapshot (W3.6).
     #[test]
     fn outcome_summary_loop_error_is_failure() {
         let summary = extract_outcome_summary(
@@ -578,7 +642,13 @@ mod tests {
         assert_eq!(summary.status, AgentStatus::Failed);
         assert!(summary.output_text.is_none());
         assert!(summary.error.unwrap_or_default().contains("disk gone"));
-        assert!(summary.stop.is_none());
+        assert_eq!(
+            summary.stop,
+            Some(AgentStopReason::TurnFailed {
+                class: "terminal".to_owned(),
+            }),
+            "a hard error is a typed turn failure, never the worker-fatal shape",
+        );
         assert_eq!(
             summary.usage.input_tokens, 0,
             "hard errors carry no usage on the runner's Err path — zeros mean unknown"
@@ -587,5 +657,61 @@ mod tests {
             summary.children_usage.input_tokens, 7,
             "the hard-error arm must take children_usage from the delivered snapshot",
         );
+    }
+
+    /// The class label on the turn failure comes from the shared
+    /// taxonomy, not from a second mapping table living here: a
+    /// provider-classified error reports its own class, so an observer
+    /// can tell a credential failure from a deterministic fault without
+    /// parsing the message.
+    #[test]
+    fn outcome_summary_loop_error_carries_the_taxonomy_class() {
+        let summary = extract_outcome_summary(
+            Err(NornError::Provider(
+                crate::error::ProviderError::AuthenticationFailed {
+                    reason: "token expired".to_owned(),
+                },
+            )),
+            Usage::default(),
+        );
+        assert_eq!(
+            summary.stop,
+            Some(AgentStopReason::TurnFailed {
+                class: "auth".to_owned(),
+            }),
+        );
+    }
+
+    /// The typed record a surviving worker writes to its own timeline
+    /// carries the class and the house-sanitized reason, under the
+    /// stable event type replay and audit tooling reads.
+    #[test]
+    fn recorded_turn_failure_carries_class_and_reason() -> Result<(), SessionError> {
+        let store = EventStore::new();
+        record_turn_failure(
+            &store,
+            "auth",
+            "provider error: authentication failed: expired",
+        )?;
+        let events = store.events();
+        assert_eq!(events.len(), 1);
+        let SessionEvent::Custom {
+            event_type, data, ..
+        } = &events[0]
+        else {
+            return Err(SessionError::StorageError {
+                reason: format!(
+                    "expected the Custom turn-failure record, got {:?}",
+                    events[0]
+                ),
+            });
+        };
+        assert_eq!(event_type, TURN_FAILED_EVENT_TYPE);
+        assert_eq!(data["class"], "auth");
+        assert_eq!(
+            data["error"],
+            "provider error: authentication failed: expired",
+        );
+        Ok(())
     }
 }

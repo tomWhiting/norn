@@ -203,19 +203,12 @@ fn classify_provider_error(err: &ProviderError) -> Option<RetryableError> {
 /// with no provider-supplied text in it. This is what retry visibility
 /// events carry: house disclosure law keeps provider free text out of the
 /// always-on event stream, where reasons belong only to the loud terminal
-/// error (already house-sanitized).
+/// error (already house-sanitized). The vocabulary itself lives on
+/// [`ErrorClass::label`], so every surface that names a class — retry
+/// events, spawned-worker turn failures — reads the identical label.
 #[must_use]
 pub fn error_class_label(err: &ProviderError) -> &'static str {
-    match err.class() {
-        ErrorClass::Retryable { kind } => match kind {
-            TransientKind::Timeout => "timeout",
-            TransientKind::ConnectionReset => "connection_reset",
-            TransientKind::ServerError { .. } => "server_error",
-        },
-        ErrorClass::RateLimited { .. } => "rate_limited",
-        ErrorClass::Auth => "auth",
-        ErrorClass::Terminal => "terminal",
-    }
+    err.class().label()
 }
 
 /// Facts about one retry decision, handed to the observer immediately

@@ -13,7 +13,7 @@ use super::compaction::{InFlightPartial, shared_timeout_state};
 use super::config::AgentStepResult;
 use super::retry::{RetryOutcome, RetryPolicy};
 use super::stop_records::{PARTIAL_OUTPUT_EVENT_TYPE, StepStopContext, record_abnormal_step_stop};
-use super::summarization::request_compaction_summary;
+use super::summarization::{SummarizationOutcome, SummarizationRetry, request_compaction_summary};
 use crate::error::{NornError, ProviderError};
 use crate::provider::events::{ProviderEvent, StopReason};
 use crate::provider::openai::response_stream_event::ResponseStreamEvent;
@@ -447,16 +447,30 @@ async fn summarization_rejects_audio_with_typed_unsupported_media_error() -> Tes
     events.push(Ok(done(None)));
     let provider = ScriptedProvider::new([ScriptedAttempt::Complete(events)]);
 
-    let error = request_compaction_summary(&provider, "audio-test-model", &[])
-        .await
-        .err()
-        .ok_or_else(|| std::io::Error::other("sinkless summarization accepted audio"))?;
+    let outcome = request_compaction_summary(
+        &provider,
+        "audio-test-model",
+        &[],
+        SummarizationRetry {
+            policy: &RetryPolicy::default(),
+            cancel: None,
+            event_tx: None,
+        },
+    )
+    .await;
 
+    let SummarizationOutcome::Failed(error) = outcome else {
+        return Err(std::io::Error::other("sinkless summarization accepted audio").into());
+    };
     assert!(matches!(
         error,
         NornError::Provider(ProviderError::UnsupportedResponseMedia)
     ));
-    assert_eq!(provider.call_count(), 1);
+    assert_eq!(
+        provider.call_count(),
+        1,
+        "an unsupported-media error is terminal: the retry brain must not replay it",
+    );
     Ok(())
 }
 

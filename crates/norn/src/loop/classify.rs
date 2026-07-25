@@ -236,6 +236,32 @@ pub(super) struct ProviderCallSinks<'sink> {
     pub(super) audio_store: Option<&'sink ResponseAudioStore>,
 }
 
+/// Broadcast the enriched retry marker for one retry decision.
+///
+/// The single place [`RetryNotice`](crate::r#loop::retry::RetryNotice) is
+/// projected onto [`AgentStreamRetry`], shared by every call site that
+/// runs a provider call under the retry brain — the step's own call and
+/// the compaction summarizer — so the two can never drift into
+/// different-looking retry events. Emitted immediately *before* the wait
+/// it describes, so observers reset the failed attempt's partial output
+/// and can surface the pending wait.
+///
+/// With no channel installed this is a no-op: the marker is a live
+/// visibility surface, not a durable record.
+pub(super) fn broadcast_retry_notice(
+    event_tx: Option<&AgentEventSender>,
+    notice: &crate::r#loop::retry::RetryNotice,
+) {
+    if let Some(sender) = event_tx {
+        sender.send_stream_retry(AgentStreamRetry {
+            attempt: notice.next_attempt,
+            max_attempts: notice.max_attempts,
+            delay_ms: u64::try_from(notice.delay.as_millis()).unwrap_or(u64::MAX),
+            error_class: notice.error_class.to_owned(),
+        });
+    }
+}
+
 /// Call the provider with a prebuilt request, collect all streaming events,
 /// forward to broadcast channel if present, and assemble the response.
 ///
@@ -396,16 +422,7 @@ pub(super) async fn call_provider_with_retry(
     crate::r#loop::retry::retry_with_backoff(
         policy,
         cancel,
-        |notice| {
-            if let Some(sender) = event_tx {
-                sender.send_stream_retry(AgentStreamRetry {
-                    attempt: notice.next_attempt,
-                    max_attempts: notice.max_attempts,
-                    delay_ms: u64::try_from(notice.delay.as_millis()).unwrap_or(u64::MAX),
-                    error_class: notice.error_class.to_owned(),
-                });
-            }
-        },
+        |notice| broadcast_retry_notice(event_tx, notice),
         || {
             let req = request.clone();
             let turn_context = turn_context.clone();
