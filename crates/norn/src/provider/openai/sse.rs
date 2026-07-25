@@ -20,8 +20,8 @@ use serde::Deserialize;
 use super::sse_completed_item::map_completed_item;
 pub use super::sse_parser::{SseEvent, SseParseError, SseParser};
 use super::sse_types::{
-    ApiErrorDetail, ResponseFailedPayload, classify_failed_error, classify_standalone_error,
-    incomplete_stop_reason,
+    ResponseFailedPayload, classify_failed_error, classify_standalone_error,
+    incomplete_stop_reason, standalone_error_detail,
 };
 use crate::error::ProviderError;
 use crate::provider::events::ProviderEvent;
@@ -191,22 +191,20 @@ pub(crate) fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, Pr
         }
 
         "error" => {
-            // Standalone `ResponseErrorEvent`: `code`/`message`/`param`/
-            // `sequence_number` at the TOP level, unlike `response.failed`
-            // which nests under `response.error`. The raw frame is preserved
-            // in the log (turn-state redacted, same redactor as the debug
-            // dump) because discarding exactly this payload made the
-            // 2026-07-24 stream-death incident undiagnosable from local
+            // Standalone `ResponseErrorEvent`. Two captured wire shapes
+            // exist — `code`/`message` at the TOP level (2026-07-24 strike)
+            // and nested under `error` (2026-07-25 burst) — and
+            // `standalone_error_detail` accepts both. The raw frame is
+            // preserved in the log (turn-state redacted, same redactor as
+            // the debug dump) because discarding exactly this payload made
+            // the 2026-07-24 stream-death incident undiagnosable from local
             // evidence.
             let redacted = crate::provider::turn::redact_codex_turn_state(&event.data);
             tracing::error!(
                 frame = %redacted,
                 "provider emitted a standalone Responses error event"
             );
-            let detail = ApiErrorDetail::deserialize(&event.data).unwrap_or(ApiErrorDetail {
-                code: None,
-                message: None,
-            });
+            let detail = standalone_error_detail(&event.data);
             Some(Err(classify_standalone_error(&detail)))
         }
 
@@ -507,8 +505,56 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         );
     }
 
-    /// A standalone error event with no code stays terminal and names the
-    /// event instead of losing the payload entirely.
+    /// Replays the captured 2026-07-25 burst frame (request id
+    /// ec6f1a33-9d1e-4a12-a7d5-46bae17f7911, session
+    /// claude-dev-lane-handshake-20260725T183349Z): a standalone `error`
+    /// event whose detail rides NESTED under `error` — the raw
+    /// HTTP-error-body shape on the SSE channel — with no top-level
+    /// `code`/`message`. The 2026-07-24 strike (the fixture above) carried
+    /// them at the top level; both shapes are live wire reality and both
+    /// must classify through the shared code table. Before this fix the
+    /// nested shape deserialized to a codeless detail and died terminal
+    /// ("without an error code") despite carrying `code":"server_error"`.
+    #[test]
+    fn standalone_error_nested_error_object_classifies_through_the_code_table() {
+        let raw = concat!(
+            "event: error\n",
+            "data: {\"type\":\"error\",\"error\":{\"type\":\"server_error\",",
+            "\"code\":\"server_error\",\"message\":\"An error occurred while processing your ",
+            "request. You can retry your request, or contact us through our help center at ",
+            "help.openai.com if the error persists. Please include the request ID ",
+            "ec6f1a33-9d1e-4a12-a7d5-46bae17f7911 in your message.\",\"param\":null},",
+            "\"sequence_number\":2}\n\n"
+        );
+        let events = parse_sse_bytes(raw);
+        assert_eq!(events.len(), 1);
+        let Some(Err(error)) = map_sse_event(&events[0]) else {
+            panic!("nested standalone error event did not map to a provider error");
+        };
+        let ProviderError::StreamError { reason, transient } = &error else {
+            panic!("nested standalone error did not classify as a stream error: {error:?}");
+        };
+        assert_eq!(
+            *transient,
+            Some(TransientKind::ServerError { status: 0 }),
+            "the nested server_error code must reach the shared table: {reason}"
+        );
+        assert!(
+            reason.contains("ec6f1a33-9d1e-4a12-a7d5-46bae17f7911"),
+            "bounded request-id token survives into the reason: {reason}"
+        );
+        assert!(
+            !reason.contains("help.openai.com"),
+            "provider free-text message is not disclosed wholesale: {reason}"
+        );
+        assert!(
+            crate::r#loop::retry::RetryPolicy::default().classifies_as_retryable(&error),
+            "the default retry policy absorbs the nested-shape burst strike"
+        );
+    }
+
+    /// A standalone error event with no code IN EITHER SHAPE stays terminal
+    /// and names the event instead of losing the payload entirely.
     #[test]
     fn standalone_error_without_code_stays_terminal_and_named() {
         let raw = concat!(

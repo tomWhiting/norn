@@ -111,11 +111,49 @@ pub(super) fn classify_failed_error(detail: &ApiErrorDetail) -> ProviderError {
     classify_error_code(detail, "response.failed")
 }
 
+/// Extracts the standalone `error` event's detail from either live wire
+/// shape.
+///
+/// Two shapes are captured wire reality, one specimen each:
+///
+/// * **Top-level** `code`/`message` (2026-07-24 strike, request id
+///   `09e64991-…`) — the documented `ResponseErrorEvent` shape.
+/// * **Nested** under `error` (2026-07-25 burst, request id `ec6f1a33-…`) —
+///   the raw HTTP-error-body shape riding the SSE channel, with only
+///   `type`/`sequence_number` at the top level.
+///
+/// The top-level shape wins when it carries a code; otherwise the nested
+/// object is consulted, so a frame is only ever classified "without an
+/// error code" when NEITHER shape carries one. When neither does, the
+/// top-level message (falling back to the nested one) is preserved for the
+/// terminal diagnosis path.
+pub(super) fn standalone_error_detail(data: &Value) -> ApiErrorDetail {
+    let absent = || ApiErrorDetail {
+        code: None,
+        message: None,
+    };
+    let top = ApiErrorDetail::deserialize(data).unwrap_or_else(|_source| absent());
+    if top.code.is_some() {
+        return top;
+    }
+    let Some(nested_value) = data.get("error") else {
+        return top;
+    };
+    let nested = ApiErrorDetail::deserialize(nested_value).unwrap_or_else(|_source| absent());
+    if nested.code.is_some() {
+        return nested;
+    }
+    ApiErrorDetail {
+        code: None,
+        message: top.message.or(nested.message),
+    }
+}
+
 /// Classifies a standalone `error` SSE event (`ResponseErrorEvent`).
 ///
-/// The standalone event carries `code`/`message`/`param`/`sequence_number`
-/// at the TOP level — unlike `response.failed`, which nests its detail under
-/// `response.error`. It rides the same code table as `response.failed` so a
+/// The detail arrives via [`standalone_error_detail`], which accepts both
+/// captured wire shapes (top-level and `error`-nested `code`/`message`).
+/// It rides the same code table as `response.failed` so a
 /// given provider code classifies identically regardless of which wire
 /// envelope delivered it. Before this classifier existed, the standalone arm
 /// discarded the payload and hard-coded `transient: None` — which turned the
