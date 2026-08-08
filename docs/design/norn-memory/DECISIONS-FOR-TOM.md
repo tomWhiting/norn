@@ -13,6 +13,23 @@ one is the only one that blocks the others.
 
 ---
 
+## Settled by you today (8 Aug, after the compaction) — folded in, nothing to do
+
+- **Lanterns are declared, not automatic.** An agent lights one on purpose, at
+  a moment of completion, success, or learning. Fork finishes still leave
+  their automatic record, but that record isn't a lantern by itself.
+- **Notes grow over time.** A note is never rewritten — later entries get
+  added to it, so you can see what wound up happening. That trail is also how
+  ancestors' mistakes become learnable.
+- **Vectors are in**, for the one job only they can do: finding the ancestor
+  who fought the same *kind* of problem in a *different place*. Guards: exact
+  matches always rank first, offers show titles only, and we record whether
+  agents actually use them.
+
+These added **two new questions: 9 and 10 below.**
+
+---
+
 ## 1. Where the truth lives — the only one that blocks anything
 
 **The question:** when an agent records something, is the permanent record the
@@ -84,17 +101,21 @@ guessing.
 
 ---
 
-## 5. Similarity search — my advice is to wait
+## 5. Similarity search — you've ruled it in; here's what that means
 
-**The question:** do we wait for haematite to grow proper search, or build our
-own now?
+**You said today vectors have value, and I agree on one specific job:** they're
+the only way to find the ancestor who fought the same kind of problem
+somewhere else — different file, different names. That's usually where the
+mistake you're about to repeat lives.
 
-**I'd say: wait.** Building our own means building the thing haematite's own
-design says should live inside it. And there's a middle option that needs
-neither — ordinary word matching, which may actually work better for our kind
-of text.
+**The good news:** at our size this needs **no new database at all**. A few
+thousand notes — plain arithmetic over a small file does it exactly. The
+haematite question I'd flagged before doesn't come up.
 
-**If you say nothing:** we wait. This one is safe to leave.
+**Ordinary word matching still goes in first**, and we measure both. If the
+word matching turns out to catch everything, the numbers will show it.
+
+**What's left of this one is question 9 below.**
 
 ---
 
@@ -130,6 +151,32 @@ earlier spec, and three that are documentation only.
 
 **I'd say: land the three documentation ones whenever convenient, and hold the
 design ones until you've ruled above** — so what lands matches what you decided.
+
+---
+
+## 9. Which model turns text into vectors
+
+**The question:** the vector search needs a model to do the comparing. Which
+one — something running on your machines, or a paid service?
+
+**Why it matters to you:** it's a cost, and it decides whether agents'
+work-notes ever leave the machine. Both are your calls, not mine.
+
+**If you say nothing:** the word-matching version ships and the vector part
+waits with this question.
+
+---
+
+## 10. Telling agents when to light a lantern
+
+**The question:** for agents to declare lanterns at the right moments, we have
+to change the standing instructions every agent gets. May I?
+
+**Why it matters to you:** it changes what every agent writes down, across the
+whole estate, from that day on. It's a one-time switch and it should be thrown
+by you, on purpose — not slipped in by me.
+
+**If you say nothing:** nothing changes, and no lanterns get lit.
 
 ---
 

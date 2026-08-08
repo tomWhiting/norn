@@ -706,12 +706,18 @@ it is his to set rather than mine to guess.
   `ANNOTATION-UNIFICATION.md` §5 and should be made once, for both.**
 - **R5.** The resonance budget as a share of the context window — set the
   share.
-- **R6.** Vectors: **answered in part** (§5.2) — haematite has none, the design
-  for one exists on paper and is structurally the right home, and it is not
-  built. The remaining ruling is whether arm 3 waits for that or proceeds on an
-  external index. **Recommendation: wait.** Arms 1 and 2 do not need it, and
-  building an external index now means building the thing haematite's own
-  design says should be a derived tree.
+- **R6.** Vectors: **SUPERSEDED by owner steer 2026-08-08** — Tom ruled that
+  vector-based resonance has value ("memories aware of time and space making
+  themselves known"). The revised position lives in
+  `MEMORY-AND-LANTERNS.md` §6.1a: embeddings are in, as the **kinship tier**
+  (same class of problem, different place — the case no other arm can see),
+  ranked below exact/structural/lexical, titles-only on push,
+  engagement-measured from v1. **The engine question this ruling used to ask
+  dissolves at v1 scale:** thousands of notes need exact brute-force
+  similarity over a flat derived sidecar, not an ANN index — so nothing is
+  built that haematite's design wants to own, and §5.1's boundary problem is
+  not entered. The one genuinely new owner value is the **embedding model
+  choice** (M9 there).
 - **R7.** **Process topology** (§5.2, new — no prior version of this design
   considered it). An out-of-process index cannot be notified of writes by any
   mechanism that exists. **Priced in §5.2.1, and it resolves:** each process
@@ -723,12 +729,15 @@ it is his to set rather than mine to guess.
   multi-process appends reuse the existing H18 lock pattern rather than a new
   mechanism.
 
-## 8. Recommendation
+## 8. Recommendation *(amended under the 2026-08-08 owner steers)*
 
 Build arms 1 and 2 — exact path match and structural neighbourhood — with
 churn-based brightness computed at read time, notes as separate objects
-anchored to lanterns, and no new storage engine. That is a complete, useful
-feature with no embedding model, no invented constants, and no consistency
-problem. Then measure engagement from the log, which is the only real evidence
-that any of this works, and let the observed gap decide whether arm 3 and the
-intent field are worth their cost.
+anchored to lanterns, and no new storage engine. Add the lexical arm (3) over
+the intent corpus, and — per the owner's steer — the kinship arm (4) as a flat
+derived vector sidecar under the guards in `MEMORY-AND-LANTERNS.md` §6.1a:
+tiered never blended, titles-only on push, engagement-logged from the first
+version. Declaration is deliberate (owner-ruled), which is what keeps the
+landscape small enough for ambient arrival to be worth listening to. The
+engagement ledger — not this document — settles whether the lexical or the
+kinship arm earns its keep.

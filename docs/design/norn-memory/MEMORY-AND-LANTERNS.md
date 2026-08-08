@@ -1,10 +1,12 @@
 # Memories and lanterns: two systems, and one of them already exists
 
 **Author:** Sable Nightwick
-**Date:** 2026-08-08
+**Date:** 2026-08-08 (second-round owner steers folded in — see §1a)
 **Status:** Design response to owner steer — rulings in §9
 **Supersedes:** `RESONANCE.md` §3 (the authorship-based distinction) and
 `ANNOTATION-UNIFICATION.md` §1, both replaced by the owner's definition in §1.
+Also supersedes `RESONANCE.md` R6's "wait" on vectors (§6) and this document's
+own first-round §4(c) recommendation (§4).
 
 ---
 
@@ -26,7 +28,7 @@ carries a resumable session reference:**
 | What it is | text anchored to a referent | text anchored to a referent **+ a resumable point in a session** |
 | Retrieval returns | the text | the text, **or a conversation with the ancestor** |
 | Cost to use | tokens for the text | tokens, **or a whole fork** |
-| Declared | deliberately, any time | where a branch returns (§4) |
+| Declared | deliberately, any time | **deliberately, at moments of completion, success, or learning** (§4, owner-ruled) |
 | Decays with code churn | **no** | **yes** (§3) |
 
 This is implementable in a way the authorship split was not, because "does it
@@ -35,9 +37,39 @@ judgement about intent.
 
 ---
 
-## 2. The finding: lanterns already exist in norn, and already fire
+## 1a. The second steer (2026-08-08, after compaction)
 
-**`SessionEvent::ForkComplete` is a lantern.** Verified at
+Tom returned with three steers. Paraphrased faithfully, load-bearing phrases
+his:
+
+1. **Vectors are in.** There is *"value in vector-based [retrieval] for
+   resonance"* — it allows *"memories that are aware of time and space to make
+   themselves known"*, the point being to *"learn from your ancestors, both
+   from their mistakes and from their experience."* (§6 revised.)
+2. **Notes grow.** A note goes with each lantern, and *"we can update those
+   notes over time so you can see what wound up happening."* (§4.2, new.)
+3. **Lanterns are declared, not automatic.** *"I don't think lanterns are just
+   something we want when a sub-agent finishes"* — they should be *"declared
+   at moments of completion or success or … learnings … more than just
+   automatically assigning it to an agent finishing."* (§4 revised; overturns
+   this document's own first-round recommendation.)
+
+**These three cohere better than they first appear.** Deliberate declaration
+(3) keeps the lantern landscape small and high-value, which is precisely the
+condition under which ambient arrival (1) escapes the measured failure mode in
+§4's evidence — the flood of cheap auto-authored entries nobody reads. And
+appendable notes (2) are what make ancestors' *mistakes* learnable at all: a
+mistake teaches only if someone later wrote down how it ended.
+
+*"Aware of time"* is read consistently with the earlier no-time-decay ruling:
+time here is **position in the work's history** — the session tree and the
+commit lineage — never wall-clock age.
+
+---
+
+## 2. The finding: the lantern substrate already exists in norn
+
+**`SessionEvent::ForkComplete` has the exact shape of a lantern.** Verified at
 `crates/norn/src/session/events.rs`:
 
 ```rust
@@ -69,7 +101,14 @@ ChildBranch {
 
 **So the annotation, the portal, and the join point are already written,
 already durable, and already tree-structured.** Every fork that completes emits
-one, today, with no new mechanism and no significance classifier.
+one, today.
+
+**Under the second steer (§1a.3) the reading changes: `ForkComplete` is the
+automatic *record*, not itself a lit lantern.** It proves the shape works, it
+keeps being written for every fork at no cost, and a lantern may be declared
+*on* one — promoting a completed branch at the moment of return, when the
+parent can see what the child achieved. But the lantern itself is now a
+deliberate act (§4), and most `ForkComplete` events will never become one.
 
 **What is missing is one thing: a code anchor.** `ForkComplete` records what
 the child *produced*, not what it *touched*. That is derivable from the child's
@@ -124,7 +163,7 @@ Dimming should therefore rank it lower, never delete it.
 
 ---
 
-## 4. Declaration — and the measured argument against the current spec
+## 4. Declaration, and the life of a note
 
 `DESIGN.md` line 100 specifies that **the runtime lights lanterns on detecting
 significance.** There is now measured evidence that this is the mechanism most
@@ -158,23 +197,93 @@ Tier 1 whisper. Their measurement:
 
 | | Cost to declare | Volume | Quality | Risk |
 |---|---|---|---|---|
-| **(a) Runtime-detected** (current spec) | none | high | unknown — needs a significance heuristic we would have to invent | measured low pull rate; an invented classifier |
-| **(b) Agent-declared** | a tool call | low | high — a considered act | agents under-declare, as people under-document |
-| **(c) At branch return** — **recommended** | **none** | moderate, structurally bounded | **high** | requires branches to be used |
+| **(a) Runtime-detected** (original spec) | none | high | unknown — needs a significance heuristic we would have to invent | measured low pull rate; an invented classifier |
+| **(b) Agent-declared** — **owner-ruled 2026-08-08** | a tool call | low | high — a considered act | agents under-declare, as people under-document |
+| **(c) At branch return** (this document's first-round pick) | none | moderate, structurally bounded | high | **rejected by owner: automatic volume is not the point** |
 
-**(c) is recommended and it is not a compromise.** Context-Folding (2510.11967)
-and AgentFold (2510.24699) both establish that an agent completing a
-sub-trajectory produces a deliberate, high-density summary at the moment of
-return — the `return` action that "summarises the outcome and rejoins the main
-thread". **norn already has that moment, and already writes it: `ForkComplete`.**
+**The owner ruled (b): lanterns are declared, at moments of completion,
+success, or learning — never assigned automatically to a finishing agent.**
+This document first recommended (c) for its zero cost and structural trigger;
+the steer overturns that, and on reflection the steer is right about the thing
+that matters most here: **a lantern's value comes from someone having chosen to
+light it.** Automatic declaration makes lanterns plentiful and meaningless in
+the same stroke — and §4's own evidence says exactly that: cheap auto-authored
+entries sit unused. A curated landscape is a *precondition* for resonance
+(§6.1), not a nicety.
 
-So the significant moment is **identified structurally, not detected
-heuristically.** No classifier, no invented threshold, no new agent effort, and
-the summary is produced by the agent that did the work, at the moment it
-finished, while it still knew why.
+**The significance classifier stays dead.** Significance is judged by the
+declaring agent in the moment — an authored act — never by a runtime heuristic
+with an invented threshold. Nothing in (b) requires one.
 
-**Memories keep mechanism (b)** — deliberate, cheap, any time. Two objects, two
-declaration mechanisms, which is a further argument that they are two systems.
+### What (b) buys that (c) could not
+
+**The portal generalises.** A moment of learning is not confined to a fork
+boundary — it can happen mid-session, in a root session, anywhere. Because the
+session log is a tree (`EventBase { id, parent_id }`) and forks are
+history-seeded (`ChildBranchKind::Fork`), **a lantern declared at any point in
+any session carries its portal for free: the declaration event's own position
+in the tree is the resumable coordinate.** Walking through the portal means
+forking from that anchor and talking to the self as it was at that moment. No
+separate session reference is needed for the self-declared case; the
+`ForkComplete` promotion case (§2) references the child instead.
+
+**Two declaration paths, one mechanism:**
+
+1. **Anywhere:** the agent declares a lantern; the event's own tree position is
+   the portal.
+2. **At branch return:** the parent promotes a just-completed `ForkComplete`;
+   the child session is the portal. The fold moment stays privileged — it is
+   where Context-Folding (2510.11967) and AgentFold (2510.24699) locate the
+   deliberate high-density summary — it just stops being *sufficient*.
+
+### The honest risk, and its measurement
+
+**(b)'s known failure mode is under-declaration** — agents under-document, as
+people do. Two mitigations, neither invented:
+
+- **Guidance names the owner's moments.** The system prompt tells agents to
+  declare at completion, success, and hard-won learning — the owner's own
+  words. ⚠️ **This is the "big intervention" flagged in the first round:** it
+  changes what every agent in the estate writes, on every session, and
+  invalidates any baseline measured before it. It should be made once,
+  deliberately, with owner sign-off (§9 M8) — not drift in.
+- **Declaration rate is measured from v1** via the engagement log that is
+  already non-negotiable (§6.1). If lanterns are not being lit, that is a
+  visible number, not a silent absence.
+
+**Memories keep the same mechanism** — deliberate, cheap, any time. Both
+objects are now authored acts; what still separates them is the portal (§1),
+which is the owner's discriminator, not the declaration path.
+
+---
+
+### 4.2 Notes accrete: the epilogue chain (owner steer §1a.2)
+
+*"We can update those notes over time so you can see what wound up happening."*
+
+**Mechanism: a note is never edited in place — it is appended to.** A lantern
+(or memory) carries its original note plus a chain of addenda, each stamped
+with who wrote it, from which session and event, at which commit. Under
+log-as-truth this needs no mutable store: **an addendum is an event, written in
+whatever session authored it, and the derived index joins the chain by the
+lantern's id.** A lantern's history may span many session files; the view
+assembles it; nothing is ever rewritten.
+
+Three consequences, all load-bearing:
+
+1. **The epilogue is the hand-written half of the "welcome to the future"
+   briefing.** §3.1 established that churn on the lantern's paths is the
+   automatic half. The epilogue chain — *"we tried X"* … *"X held up"* / *"X
+   broke, here's why"* — is the deliberate half, and together they are what a
+   visitor hands the frozen ancestor on arrival.
+2. **This is how mistakes become learnable.** The owner's aim is to learn from
+   ancestors' mistakes as well as their experience (§1a.1). A mistake is only
+   visible as a mistake in retrospect; without an appended outcome, every
+   lantern reads as a success. The epilogue is not decoration — it is the
+   error signal.
+3. **Decay is untouched.** The note side does not decay (§3); the portal side
+   still dims with churn. An epilogue briefs the *visitor*; it cannot repair
+   the *ancestor*, whose world-model stays frozen at the moment of lighting.
 
 ---
 
@@ -232,34 +341,77 @@ embeddings.
 pre-select, because nobody asked. **This is also the mode with the poor
 measured track record** (§4).
 
-> **Recommendation: make pull excellent and keep push minimal.**
+> **Recommendation: make pull excellent and keep push precise.**
 >
 > - **Pull:** a programmatic handle over memories and lanterns. This is where
 >   the measured wins are.
-> - **Push:** the narrowest, highest-precision signal only — **exact anchor
->   match**, titles without content. *"3 memories and 1 lantern on this file."*
->   A handful of tokens, near-zero false positives.
+> - **Push:** targeted signals only, titles without content, every offer
+>   engagement-logged. Two arms: **exact anchor match** (*"3 memories and 1
+>   lantern on this file"* — near-zero false positives) and, per the owner's
+>   steer, **the kinship tier below.**
 
-**Where that leaves embeddings.** Embeddings improve *ranking under
-uncertainty* — which is the push problem. **They are the thing you would add to
-make the weaker mode smarter, so they are the last addition, not the first.**
-And before them sits the lexical arm (`RESONANCE.md` §4.4.2): a classical
-inverted index over the intent corpus, no model, no vector store, no
-branch-consistency problem — on a corpus that is mostly rare identifiers, where
-embeddings blur exactly what discriminates.
+### 6.1a Revised under the second steer: the kinship tier (§1a.1)
 
-**HYPOTHESIS, mine, testable:** on this corpus lexical beats semantic. Settle
-it by measurement, not argument.
+The first round of this document placed embeddings last, possibly never. **The
+owner steered that vector-based resonance has value — memories aware of time
+and space making themselves known, to learn from ancestors' mistakes and
+experience. The revised position: embeddings are in the design, for the one
+job only they can do, under guards that keep the evidence honest.**
 
-### 6.2 What this costs the original vision — stated plainly
+**The reconciliation with §4's evidence is real, not diplomatic.** What
+Continual Harness measured failing was an **untargeted flood**: the full
+catalog of cheap auto-authored entries, surfaced free in every prompt. The
+owner's push is the opposite on both axes — **targeted** (anchored in space
+and in work-history) over a **curated** corpus (lanterns are now deliberate
+acts, §4). The evidence condemns the flood, not the arrival. Deliberate
+declaration is what re-opens the door to ambient resonance.
 
-`DESIGN.md`'s poetry is *"the agent doesn't query for memory; the memory comes
-to the agent."* Under this recommendation, **most of the value arrives by
-pull.** The vision's substance — communal, inherited, no transcript reading,
-knowledge living in the landscape rather than the walker — survives completely,
-and §4's evidence *supports* it. What does not survive is the claim that
-**passive arrival** is the primary channel. That part has been measured, by
-someone else, and it did not work.
+**What embeddings uniquely buy: kinship without shared vocabulary.** The
+ancestor who fought the same *class* of problem in a different crate, under
+different identifiers, is invisible to every other arm — no shared path
+(arm 1), no import edge (arm 2), no shared rare token for BM25 to weight up
+(arm 3). And *"learn from your ancestors"* mostly lives exactly there: **the
+mistake you are about to repeat is usually not in the file you are editing.**
+
+**The guards:**
+
+1. **Tiers are preserved.** The kinship tier ranks below exact, structural,
+   and lexical — never blended, no coefficients invented. The obvious match
+   always wins.
+2. **Push offers titles only**, never content; the agent chooses whether to
+   pull.
+3. **Engagement-logged from v1.** The kinship tier must earn its keep in the
+   same ledger as everything else. The lexical-beats-semantic hypothesis
+   (below) stops being a reason to defer and becomes a thing the ledger
+   *settles*.
+
+**Infrastructure honesty: embeddings are not a vector database.** The corpus
+is lantern and memory notes plus their intent sentences — thousands of items,
+not millions. **Exact brute-force similarity over a flat sidecar of vectors is
+sufficient at this scale**: no ANN structure, no engine capability, no new
+store — derived, rebuildable, and carrying a coverage point exactly like the
+lexical index (`RESONANCE.md` §5.2.1). The haematite boundary question
+(`RESONANCE.md` §5.1) stays deferred because nothing here builds the index the
+engine's design wants to own.
+
+**One new owner value is required: the embedding model itself** — which model,
+local or API. That is a real choice with real properties (cost, availability,
+privacy of intent text leaving the machine) and it will not be invented here
+(§9 M9).
+
+**HYPOTHESIS, mine, testable, unchanged:** on this corpus lexical beats
+semantic — the signal is rare identifiers, which embeddings blur toward
+general language and BM25 weights up. Now settled by measurement inside the
+running system, not by argument in this document.
+
+### 6.2 What this costs the original vision — restated
+
+The first round said passive arrival did not survive as the primary channel.
+**The second steer partially restores it, on honest terms:** ambient arrival
+returns as a *measured, curated, targeted* channel — small, deliberate corpus;
+titles only; every offer logged. Pull remains where the measured wins are. The
+vision's substance — communal, inherited, knowledge living in the landscape
+rather than the walker — was never in question and §4's evidence supports it.
 
 ---
 
@@ -332,19 +484,31 @@ to hold. It should be written down as such.
 
 - **M1.** Confirm §1's split: memory = note + referent; lantern = note +
   referent + portal. Everything else follows from it.
-- **M2.** Accept §2: **lanterns are `ForkComplete` events plus a derived code
-  anchor**, not a new object. This is the "use what exists" answer and it makes
-  declaration free.
-- **M3.** Accept §4(c): lanterns declared **at branch return**; memories
-  declared **deliberately**. Reject `DESIGN.md`'s runtime significance
-  detector, which would require inventing a classifier and has a measured poor
-  outcome.
-- **M4.** Accept §6.1: **pull-first, push-minimal**, with embeddings last and
-  the lexical arm before them. This is a real change of emphasis from
-  `DESIGN.md` and should be an explicit decision, not a drift.
+- **M2.** *(revised under §1a.3)* Accept §2 as revised: **`ForkComplete` is
+  the automatic record and the promotable substrate; a lit lantern is a
+  first-class declaration event whose own tree position is its portal.** Still
+  the "use what exists" answer — the portal comes free from the session tree.
+- **M3.** ✅ **RULED by owner, 2026-08-08 (§1a.3):** lanterns declared
+  **deliberately, at moments of completion, success, or learning** — never
+  automatic at fork finish. Memories deliberate as before. The runtime
+  significance detector stays rejected. Folded into §4.
+- **M4.** *(revised under §1a.1)* Accept §6.1/§6.1a: **pull-first; push =
+  exact-anchor arm + kinship (embeddings) arm**, titles only, tiered never
+  blended, engagement-logged from v1. The owner has steered that vectors are
+  in; this ruling now covers the *guards*, not the *whether*.
 - **M5.** **The retention hazard (§7.2)** — rule how child sessions are
   retained before lanterns ship. A dead portal that looks alive is the exact
-  failure class this estate has spent the day removing.
-- **M6.** Does memory get a first-class session-event variant, or ride
-  `Custom`? (§8)
+  failure class this estate has spent the day removing. **Sharpened by §4: any
+  session carrying a declared lantern must be retained, not only children.**
+- **M6.** Do memory/lantern declarations and epilogue addenda get first-class
+  session-event variants, or ride `Custom`? (§8 — first-class is this
+  document's instinct, and deliberate declaration strengthens it.)
 - **M7.** Do you want the session-format audit as its own piece of work? (§8)
+- **M8.** *(new)* **Sign off the estate-wide guidance change** telling agents
+  when to declare (§4). It alters what every agent writes on every session and
+  invalidates prior baselines — an owner switch, not a drift.
+- **M9.** *(new)* **Choose the embedding model** for the kinship tier (§6.1a)
+  — local vs API, and which. A real value; not invented here.
+- **M10.** *(new)* Confirm the epilogue mechanics (§4.2): notes append-only,
+  addenda provenance-stamped (author, session/event, commit), chains assembled
+  by the derived index across session files.
