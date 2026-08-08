@@ -255,10 +255,67 @@ merge semantics:
 All three are one shape: **a derived view that does not honour the boundary its
 source honours.** Referred to haematite's owner (Apollo Biscuit) with the
 question put as *is branch-consistent similarity search something haematite
-could coherently own, or is it structurally the wrong place for it?* — because
-an ANN index is global over all vectors, and "global" and "per-branch" are
-close to contradictory. If the answer is "wrong place", arm 3 proceeds with the
-violation **bounded and documented**, not discovered later.
+could coherently own, or is it structurally the wrong place for it?*
+
+### 5.2 The engine owner's answer, and what it changes here
+
+**Answered 2026-08-08. Summary: structurally the right place, and not built.**
+
+- **No vector capability exists** — source sweep for ANN/embedding/similarity
+  terms returns only unrelated senses of "embedding"; no `hnsw`/`faiss`/
+  `usearch`/`annoy`/`simsimd` in any manifest. Independently re-verified by
+  this seat. Caution recorded by both seats: haematite's docs use "vector" in
+  a different sense entirely (`committed_root_vector() -> Vec<CommittedRoot>`,
+  "the coverage vector") — those are `Vec<Hash>` per shard, **not embeddings**,
+  and must not be read as roadmap.
+- **The design thinking does exist** (`DATABASE-DIRECTIONS.md` §5) and already
+  answers §5.1's three consequences: a vector index is itself a derived tree
+  carrying the root `R` it was built at; a query is ANN over the index plus
+  brute force over `diff(R, head)`. Fork is an O(1) metadata act, point-in-time
+  search is querying any historical `(R, root)` pair, and merge is merge-then-
+  fold. Paper only — never built, and the owner explicitly does not claim it
+  is sound.
+
+**The binding constraint for norn — CONFIRMED at haematite's bytes by this
+seat, not taken on report:**
+
+> There is no branch-head-advance event. The root-advance seam
+> (`db/root_advance.rs`) is shard-level and its subscriber registry is a
+> `Vec` of `Arc<dyn Fn(RootAdvance)>` callbacks, described in its own header
+> as *"a DOORBELL, not a log… Nothing here touches disk, ever"* and
+> *"never persisted, never replicated"*.
+
+**Therefore: an index living in a different process from the writer is never
+notified at all.** This is not a gap that later work closes; it is a different
+problem. It constrains the resonance engine's **process topology**, which no
+version of this design had considered: either the index is built in the
+writer's process, or it polls, or it is rebuilt on demand. That question should
+be settled before any daemon-shaped plan assumes notification is available.
+
+### 5.3 Record the coverage point — adopted, with one translation
+
+The engine owner's recommendation: build the external index recording **the
+root it was built at**, even though nothing consumes that field yet. One field.
+It converts *"the index may have drifted, rebuild it"* into *"the index is
+exact as of `R`, and the gap is exactly `diff(R, head)`"*.
+
+**Adopted — but translated, because v1 has no haematite in it.** The advice
+assumes haematite is the source of truth; under §5 the sources of truth are the
+session log and git. The faithful translation is:
+
+> **The derived index records its coverage point against every source it
+> derives from: the session-log position it has consumed up to, and the git
+> commit its churn calculations were computed at.**
+
+Same property, same cheapness, no haematite dependency. Staleness stops being
+an unknown and becomes a computable difference. If the index later moves onto
+haematite, the field gains a third component and nothing else changes.
+
+This is also the exact form of the "name and bound the violation" this document
+asked for in §5.1. The violation was never *"the index is stale"* — it was
+**"the index's coverage is implicit and unrecorded."** Recording it is the fix,
+and it is available now, at the cost of one field, before any of the rest of
+this is built.
 
 ---
 
@@ -298,8 +355,17 @@ it is his to set rather than mine to guess.
   `ANNOTATION-UNIFICATION.md` §5 and should be made once, for both.**
 - **R5.** The resonance budget as a share of the context window — set the
   share.
-- **R6.** Vectors: defer arm 3 pending haematite's owner (§5.1), or commit now
-  to an external index with the boundary violation documented?
+- **R6.** Vectors: **answered in part** (§5.2) — haematite has none, the design
+  for one exists on paper and is structurally the right home, and it is not
+  built. The remaining ruling is whether arm 3 waits for that or proceeds on an
+  external index. **Recommendation: wait.** Arms 1 and 2 do not need it, and
+  building an external index now means building the thing haematite's own
+  design says should be a derived tree.
+- **R7.** **Process topology** (§5.2, new — no prior version of this design
+  considered it). An out-of-process index cannot be notified of writes by any
+  mechanism that exists. Decide whether the resonance index is built in the
+  session's own process, polls, or is rebuilt on demand — **before** any
+  daemon-shaped plan assumes notification it cannot have.
 
 ## 8. Recommendation
 
