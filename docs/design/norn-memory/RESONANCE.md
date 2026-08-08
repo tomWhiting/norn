@@ -15,7 +15,71 @@ open problem.
 
 ## 1. Two premises checked before building on them
 
-### 1.1 The per-call intent signal does not exist — CONFIRMED
+### 1.1 RETRACTED IN FULL — the per-call intent signal **does** exist
+
+> **🔴 THIS SECTION WAS WRONG. Owner correction, 2026-08-08.**
+> Everything below the retraction line is preserved as the record of an error,
+> not as a finding. **`tool_use_description` is a required, model-authored,
+> per-call intent field on every tool call in norn**, and it is durably
+> recorded. The corpus this design said did not exist has been accumulating
+> all along.
+
+**The mechanism, verified at the tree:**
+
+- `tool/envelope.rs:22` — `pub const ENVELOPE_DESCRIPTION_KEY: &str =
+  "tool_use_description"`, documented as **reserved across the whole tool
+  surface**.
+- `inject_envelope_fields` adds it to **every** tool's schema (and to every
+  `oneOf` variant), typed `string`, described to the model as *"Brief
+  description of what you are doing with this tool call and why."*
+- **It is pushed into `required`.** The model must supply it on every call. This
+  is not an optional annotation that agents may skip — it is mandatory,
+  uniform, and already paid for.
+- A sibling field `tool_use_metadata` is injected too: an optional object for
+  *"tags, task references, or annotations"*. **A second signal this design had
+  no idea existed.**
+- `split_envelope_fields` strips both before the tool sees its arguments, and
+  deliberately preserves a non-string description as its JSON rendering rather
+  than dropping it (`envelope.rs:55-60`).
+- Durability is covered by test:
+  `child_tool_use_description_recorded_in_event_store`
+  (`tools/agent/spawn/tests/permissions.rs:138`).
+
+**Two real examples supplied by the owner**, which show the quality of the
+corpus better than any description of it:
+
+> *"Record implementation decisions, exact name substitution/validation,
+> checker parity, gate results, and the out-of-fence stale-default test failure
+> required by the brief."*
+
+> *"Audit the final dirty tree, scope boundaries, diff size, and all untracked
+> #136 deliverables before handoff."*
+
+These state **purpose**, not mechanics. That is exactly the "song" `DESIGN.md`
+posited — and `DESIGN.md:147` was **right** to say it already exists. The claim
+retracted here is mine, not Pythagoras's.
+
+**How I got it wrong, stated plainly because the shape matters.** I read
+`BashArgs` — the per-tool, model-supplied argument struct — found no
+description field, and concluded about the whole tool-call surface. But the
+field is injected **at the envelope layer, generically**, so it cannot appear
+in any per-tool struct and no amount of reading those structs would ever have
+found it. **I measured one layer and stated a conclusion about another.** That
+is the same *aboutness* error I made earlier the same day with haematite's
+consumer set, and it reached a design document labelled CONFIRMED. The lesson
+is not "check more carefully" — I checked carefully. It is **check that what
+you measured is the thing you are about to make a claim about.**
+
+**Consequence: R3 is withdrawn.** There is nothing to add and no token cost to
+weigh. The signal is mandatory, free, high quality, and durable, and the design
+should be built around it rather than around its absence.
+
+---
+
+<details>
+<summary><b>Superseded text, retained as the record of the error</b></summary>
+
+### The per-call intent signal does not exist — ~~CONFIRMED~~ **WRONG**
 
 `DESIGN.md` §Singing (line 37) assumes every tool call emits "brief intent
 (derived from the tool call's purpose)", and §Integration (line 147) states
@@ -46,6 +110,8 @@ capability the mechanism does not implement.** It belongs with `MissingNode`,
 runs on signals that *do* exist (§4), or a per-call intent field is added to
 the tool schemas — a real change, touching every tool, and an owner decision
 (R3).
+
+</details>
 
 ### 1.2 Grafeo remains unverified
 
@@ -167,11 +233,13 @@ churn onto exactly the content that should outlive churn.
 
 | Signal | Status | Strength |
 |---|---|---|
-| Repo-relative path | **Exists**, robust (§4.2) | **Strong** — exact |
-| Tool name | Exists | Weak alone, useful as a filter |
+| **Per-call agent intent** (`tool_use_description`) | **Exists, REQUIRED on every call, durable** (§1.1) | **Strong** — model-authored purpose, free |
+| Per-call open metadata (`tool_use_metadata`) | Exists, optional | Unknown — nothing populates it deliberately yet |
+| Repo-relative path | Exists, robust (§4.2) | **Strong** — exact |
+| Tool arguments (paths, commands, content) | Exists | Strong — the concrete referent of the intent |
 | Import / dependency graph | Exists via `tools/ast.rs`, `tools/lsp/` | **Strong** — exact, structural |
+| Tool name | Exists | Weak alone, useful as a filter |
 | Session log (engagement, sequence) | Exists | Strong for §2.3 |
-| Per-call agent intent | **Does not exist** (§1.1) | — |
 
 ### 4.2 Identity normalisation across worktrees and clones — VERIFIED
 
@@ -218,6 +286,93 @@ are real; neither is solved here.
 
 **Arms 1 and 2 need no embedding model and no vector store.** They can be built
 now. Arm 3 is a separate decision.
+
+---
+
+## 4.4 How resonance is actually measured
+
+The owner's question. Answered in three parts: **what is compared**, **how the
+comparison is scored without inventing weights**, and **how we know it works**.
+
+### 4.4.1 What is compared
+
+A lantern and the present moment are both, concretely, **a set of tool calls**.
+Each call carries a required natural-language statement of purpose
+(`tool_use_description`), the arguments it acted on, and the paths it touched.
+
+So resonance compares **intent text against intent text**, anchored by
+**paths against paths**. Not file contents, not diffs, not embeddings of code —
+the sentences agents wrote about *why* they were doing what they did.
+
+That corpus has properties worth noticing:
+
+- **It is already written**, on every call, at no additional cost, and durably.
+- **It is unusually clean.** Purpose-shaped prose, one or two sentences,
+  written by the agent at the moment of acting, with no retrospection.
+- **It is dense in rare, discriminating tokens** — `stale-default`, `scaffold`,
+  `AWL`, `out-of-fence`, `handoff`, crate and symbol names.
+
+### 4.4.2 A retrieval ladder, cheapest first
+
+1. **Exact structural match.** Same repo-relative path. A fact, not a score.
+2. **Structural neighbourhood.** Same crate; what this file imports (exact,
+   from existing AST/LSP tooling).
+3. **Lexical match over intent text.** A classical inverted index with BM25 or
+   TF-IDF ranking over the `tool_use_description` corpus. **No embedding model,
+   no GPU, no API, no vector store, no consistency problem** — and it is
+   incrementally updatable, which suits an append-only source exactly.
+4. **Semantic match (embeddings).** Buys paraphrase: *"fix the flaky test"*
+   against *"stabilise the intermittent failure"*. Real, and the only arm that
+   needs the machinery §5.2 describes.
+
+**HYPOTHESIS, labelled as such and testable cheaply:** for *this* corpus,
+lexical retrieval may outperform semantic retrieval. The discriminating signal
+lives in rare technical tokens — identifiers, crate names, project jargon —
+which embeddings tend to blur toward their nearest general-language neighbour,
+and which BM25 weights *up* precisely because they are rare. This is a claim
+about a specific corpus, not a general claim about retrieval, and the honest
+way to settle it is to build arm 3 and measure §4.4.4 against arm 4 later.
+
+**Consequence: the gap between "no similarity search" and "embeddings" is not
+empty.** The earlier framing of this document treated arm 3 as the vector arm
+and therefore as blocked. It is not. There is a substantial, cheap,
+dependency-free retrieval arm sitting between them, and it operates on the
+richest signal we have.
+
+### 4.4.3 Scoring without inventing weights
+
+A weighted score — `0.5 × structural + 0.3 × lexical + 0.2 × recency` — would
+be three invented constants, which `CLAUDE.md` forbids and which nothing in the
+system could ever justify.
+
+**So do not combine them. Order them.** The arms are **categorical tiers**, not
+addends:
+
+> Surface exact structural matches first, then structural neighbours, then
+> lexical matches, each tier exhausted before the next is considered, until the
+> budget (§6) is spent.
+
+Ranking *within* a tier uses that tier's own native measure — BM25 has its own
+score, path distance is a count of hops — and **no cross-tier coefficient is
+ever needed, because tiers are never compared to each other.** Brightness (§2)
+acts as an ordering within a tier, not as a multiplier across tiers.
+
+This is not a compromise. It is a better design than a tuned blend: it can be
+explained to a user in one sentence, it degrades predictably, and every
+"why did this surface?" has an exact answer.
+
+### 4.4.4 How we know it works — the only real measure
+
+**Engagement.** Did the agent do anything with what surfaced — read its detail,
+follow it, fork to it? That is recorded in the log already (§2.3).
+
+**This must be built in from the first version, not added later.** Without it
+there is no way to distinguish resonance that helps from resonance that merely
+costs tokens, and the failure mode is silent: a landscape of plausible-looking
+memories that nobody ever uses looks exactly like one that works.
+
+It also feeds §2.3's brightness inputs, so the measurement and the mechanism
+are the same data. Nothing extra is stored to obtain it.
 
 ---
 
@@ -425,11 +580,15 @@ it is his to set rather than mine to guess.
   the separation; the decay asymmetry is the consequence and needs confirming.)
 - **R2.** Accept §2: decay computed from commit churn on referenced paths,
   never from elapsed time, never stored. Accept the §2.4 gap as a known limit.
-- **R3.** Add a per-call intent field to the tool schemas, or build resonance
-  on path and structure alone? §1.1 shows the "song" cannot be built as
-  specified without this. **Recommendation: build arms 1 and 2 first without
-  it** — the intent field costs tokens on every call estate-wide and should be
-  justified by a retrieval gap actually observed, not assumed.
+- **R3. WITHDRAWN — the premise was false** (§1.1). `tool_use_description` is
+  already required on every tool call and durably recorded. Nothing to add,
+  no cost to weigh. **Replaced by R8.**
+- **R8.** Accept §4.4: resonance measured as **intent text against intent
+  text, anchored by paths**, retrieved through **categorical tiers rather than
+  a weighted score** (so no coefficient is ever invented), with **engagement
+  logged from the first version** as the only real evidence it works. And
+  accept the lexical arm (§4.4.2 step 3) as part of v1 — it needs no model, no
+  vector store, and no engine capability that does not exist.
 - **R4.** Accept §5: log-as-truth, no new storage engine for v1, index derived
   and rebuildable. **This is the same ruling already pending on
   `ANNOTATION-UNIFICATION.md` §5 and should be made once, for both.**
