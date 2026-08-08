@@ -9,6 +9,10 @@
 
 ## 1. The observation: these are one object, specced twice
 
+> **⚠️ OWNER RULING 2026-08-08 — THIS SECTION'S CENTRAL CLAIM IS REJECTED.**
+> Tom: *"are notes and lanterns the same thing? I'm not sure that they are, but I think they are related."*
+> The unification proposed below **does not stand.** The table's correspondences are real and the two designs must still be reconciled, but they are **two related objects, not one.** The surviving distinction is authorship — a lantern is involuntary and runtime-lit, a note is voluntary and authored — and the relation is that a note anchors *to* a lantern, which supplies its place in space and time. See `RESONANCE.md` §3, and §3.1 there for the argument that **decides** the separation: churn-decay must dim a lantern and must **not** dim a note, so one decay rule cannot serve both. Read the rest of this section as the evidence that the two designs overlap, not as the conclusion that they are identical.
+
 Two designs describe the same thing in different vocabulary.
 
 | | **norn-app R2.4 — annotations** | **norn-memory — lanterns** |
@@ -150,7 +154,7 @@ I have **not** verified Grafeo's concurrency properties, its embedded-writer sem
 
 ## 7. Rulings this needs
 
-1. **Are lanterns and annotations one object?** (§1.) If yes, one cluster owns the design and the other cross-references it; they must not continue to evolve apart.
+1. ~~**Are lanterns and annotations one object?**~~ **RULED 2026-08-08: NO — related, not the same.** (§1.) They must still not evolve apart, but as two objects with a defined relation (note anchors to lantern), not one. The consequence needing confirmation is the decay asymmetry — `RESONANCE.md` R1.
 2. **Storage.** One index or two (§6), and which first. Requires Grafeo facts I do not have.
 3. **Log-as-truth.** Does the estate accept an append-only annotation sidecar as canonical, with engines as derived views? This supersedes R2.4's "haematite as canonical store" and therefore needs an explicit owner decision, not a quiet edit.
 4. **Fork semantics** (§10.1a, open since 2026-07-24) — §3 argues snapshot-inherit-then-diverge, and that it should be implemented as a branch rather than hand-rolled.
