@@ -469,11 +469,40 @@ async fn checked_in_conventions_compile_and_cover_hard_rust_patterns()
                 activation.handling, expected_handling,
                 "rule `{rule_name}` activation of `{pattern_name}` must carry its split handling"
             );
-            assert!(activation.on.contains(&TestTrigger::Tool));
-            assert!(activation.on.contains(&TestTrigger::Stop));
+            // Blocking rules repeat at stop; advisory rules must NOT carry a
+            // stop trigger — the stop hook acts on validation failures alone
+            // and discards advisories, so `stop` on an advisory activation
+            // would be dead configuration advertised as enforcement.
+            match expected_handling {
+                Handling::Block => {
+                    assert_eq!(
+                        activation.on,
+                        vec![TestTrigger::Tool, TestTrigger::Stop],
+                        "blocking `{pattern_name}` in `{rule_name}` fires at tool and stop"
+                    );
+                }
+                Handling::Advise => {
+                    assert_eq!(
+                        activation.on,
+                        vec![TestTrigger::Tool],
+                        "advisory `{pattern_name}` in `{rule_name}` fires at tool only"
+                    );
+                }
+            }
         }
-        assert!(!rule.rule.activations.contains_key("clippy"));
-        assert!(!rule.rule.activations.contains_key("rustfmt"));
+        // The activation table is pinned exhaustively: exactly the nine split
+        // patterns, nothing else — a tenth activation cannot arrive unnoticed.
+        let mut activated: Vec<&str> = rule.rule.activations.keys().map(String::as_str).collect();
+        activated.sort_unstable();
+        let mut expected: Vec<&str> = SPLIT_RUST_PATTERN_HANDLING
+            .iter()
+            .map(|(name, _)| *name)
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(
+            activated, expected,
+            "rule `{rule_name}` must activate exactly the nine split patterns"
+        );
     }
     Ok(())
 }
