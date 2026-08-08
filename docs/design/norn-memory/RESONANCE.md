@@ -527,6 +527,74 @@ descriptors.
 *pattern* is proven here; generalising it to a second log is small real work,
 not free.
 
+### 5.2.2 Graphs: the derived-tree contract generalises, but multi-hop does not
+
+The owner asked whether haematite might be well positioned for graphs as well
+as vectors. **Answered by the engine owner 2026-08-08, and the answer is more
+useful than "yes".**
+
+**The narrow question: the contract is structure-agnostic.** A derived tree is
+*"an ordinary haematite prolly tree, owned by a layer, whose content is a
+function of the golden database's content, carrying its own root `D` and its
+coverage root `R`."* Three requirements, none of which mention rows, keys or
+lookup. Their refusal registry explicitly declines to define index shape as
+consumer-layer content. **A graph qualifies on exactly the terms a vector index
+does** — and their own build list ranks a graph consumer *ahead* of vectors, as
+the more natural first consumer rather than a speculative one.
+
+**The constraint that actually matters, and it discriminates against graphs
+specifically.** Their framework states normatively that
+`R = [(shard_id, root_hash, advance_gen_seen)]` is a **per-shard vector**, and
+that **there is no instant at which `R` is a globally consistent cut of the
+database, and the framework must never claim one.**
+
+- **For a vector index this is harmless.** Similarity is a per-item property:
+  an item is either covered by `R` or it is in the diff. A skewed cut costs
+  ranking at the margin.
+- **For a graph it is not harmless, and the failure is not staleness.** An
+  N-hop traversal crosses shards by construction. Reading edge `A→B` at shard
+  1's coverage and `B→C` at shard 3's later coverage assembles a neighbourhood
+  **that never existed at any single instant.** Not a stale answer — an
+  *incoherent* one, and incoherent in a way that looks entirely normal.
+
+**So the discriminator is not the derived-tree contract. It is the absence of a
+cross-shard cut, and it bites multi-hop queries and nothing else.**
+
+#### BINDING CONSTRAINT — shard count is a correctness property here, not a performance knob
+
+norn has no haematite deployment today (§1.2, §5), so "single-shard" is not yet
+a fact about us — **it is a choice we have not made.** That is precisely why it
+must be recorded before it is made for unrelated reasons:
+
+> **If norn ever stores a derived graph in haematite, the deployment SHALL be
+> single-shard, and the reason SHALL be recorded at the configuration site.**
+> With one shard, `R` is a single root and therefore a genuinely consistent
+> cut, and point-in-time neighbourhood queries become exactly as sound as the
+> vector story. With more than one, multi-hop traversal can return neighbourhoods
+> that never existed.
+
+**Why this needs writing down:** shard count reads like a throughput dial.
+Someone raising it for entirely sensible performance reasons would silently
+break multi-hop coherence, and the breakage produces plausible answers rather
+than errors. The engine owner's documented alternative for anyone who needs
+both is a **quiesced writer** for a cross-shard consistent cut — which is a
+much larger commitment than it appears when written as a config change.
+
+#### And the prior question, asked first: do we need a stored graph at all?
+
+Applying §-the-premise rule before designing around any of it. **For v1, no.**
+"Lanterns touching this file" is an index lookup. The import neighbourhood is
+computable on demand from source we already have, using existing AST and LSP
+tooling. **Computed on demand, there is no coverage vector, so there is no
+coherence problem to solve** — the constraint above never engages.
+
+A stored derived graph becomes justified only when on-demand traversal cost at
+query time stops being acceptable, **and that is a measurement nobody has
+needed to take.** This is the third time in one day the answer has been *the
+mechanism is available and we may not need it* — after vectors and after
+notification. The constraint above exists so that if we ever do need it, we
+inherit the requirement rather than rediscover it.
+
 ### 5.3 Record the coverage point — adopted, with one translation
 
 The engine owner's recommendation: build the external index recording **the
