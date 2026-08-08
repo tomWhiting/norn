@@ -234,12 +234,56 @@ churn onto exactly the content that should outlive churn.
 | Signal | Status | Strength |
 |---|---|---|
 | **Per-call agent intent** (`tool_use_description`) | **Exists, REQUIRED on every call, durable** (§1.1) | **Strong** — model-authored purpose, free |
-| Per-call open metadata (`tool_use_metadata`) | Exists, optional | Unknown — nothing populates it deliberately yet |
+| Per-call open metadata (`tool_use_metadata`) | Exists, optional, **and the model is explicitly instructed to use it for "tags, task references, or annotations"** (§4.1.1) | **Potentially strong** — a task reference *is* a referent |
 | Repo-relative path | Exists, robust (§4.2) | **Strong** — exact |
 | Tool arguments (paths, commands, content) | Exists | Strong — the concrete referent of the intent |
 | Import / dependency graph | Exists via `tools/ast.rs`, `tools/lsp/` | **Strong** — exact, structural |
 | Tool name | Exists | Weak alone, useful as a filter |
 | Session log (engagement, sequence) | Exists | Strong for §2.3 |
+
+### 4.1.1 Two corrections found by auditing the field *next to* the one I got wrong
+
+Method note, because it produced both of these in about two minutes: the
+haematite seat's rule after any correction — ***audit the neighbouring field of
+the same artifact, not the same field elsewhere, because the adjacent one is
+where your attention isn't.*** Applied to §1.1's retraction, it immediately
+found two things.
+
+**(a) My claim about `tool_use_metadata` was wrong.** I wrote "nothing
+populates it deliberately yet" — asserted, never checked, one field over from
+the one I had just been corrected on. In fact `system_prompt/sections.rs:56-63`
+**instructs the model to use it**:
+
+> *"An optional `tool_use_metadata` object can carry **tags, task references,
+> or annotations**."*
+
+**A task reference is a referent**, which is precisely what a memory needs
+(`MEMORY-AND-LANTERNS.md` §1). This may already be an anchoring channel. What
+remains genuinely unknown is whether models *do* populate it in practice —
+that is measurable against real session logs and has not been measured.
+
+**(b) A framing effect on the intent corpus, which is the more important
+find.** The same guidance tells the model what the description is *for*:
+
+> *"briefly state what you are doing with this call and why. **This description
+> is surfaced in the activity log and streaming indicator.**"*
+
+**So the model writes it for a human watching a progress line.** §4.4.1 praises
+this corpus as "purpose-shaped prose written at the moment of acting" — which it
+is — but its shape is set by an audience it was told about, and that audience is
+a live status display, not a future reader searching for prior work.
+
+**Consequence for the design:** if intent text becomes the retrieval corpus,
+either the guidance should say so, or we should expect status-update prose and
+size our expectations accordingly. **This is not a defect; it is a fact about
+what the corpus was optimised for**, and it was invisible to me because I
+verified the field's *existence and mechanism* and never asked what it was
+*for* — the adjacent property of the very field I had been corrected on.
+
+**Do not change the guidance casually if we take this route.** Telling the model
+its descriptions feed a memory system changes what it writes, estate-wide, on
+every call — a larger intervention than it looks, and one that would invalidate
+every measurement taken before it.
 
 ### 4.2 Identity normalisation across worktrees and clones — VERIFIED
 
