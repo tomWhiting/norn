@@ -1,0 +1,79 @@
+{
+  "id": "NTI-003",
+  "cluster": "norn-tools",
+  "title": "Fork and spawn results advertise the action_log re-walk handle",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": [],
+  "stories": [],
+  "purpose": "A completed fork or spawn stays fully queryable for the rest of the session: action_log's scope argument reaches any descendant's ledger (list, detail, context, mutations, events), and finished children remain registered in the ActionLogTree. But nothing tells the parent agent this at the moment it matters. The fork/spawn result frame delivers the structured summary with no pointer back to the child's ledger, and the fork, spawn_agent, and action_log guidance never reference each other. The affordance exists and is invisible — the RLM finding is that a queryable environment only pays off when the model knows the handle exists at the moment of receipt. This brief stitches the two surfaces together: the result frame carries the child's registry path, and the guidance teaches the re-walk (including verifying a child's per-requirement completion claims against its mutations ledger).",
+  "task": "Add the child's registry path to the framed agent_result delivered to the parent, alongside the existing role and UUID attribution. Extend the fork and spawn_agent usage guidance with a short section on re-walking a completed child via action_log scope, including trust-but-verify of requirement claims against the child's mutations ledger. Extend the action_log tool description's scope text to note that completed fork/spawn results carry the path and UUID usable as scope keys. Update the tests that pin the agent_result frame shape.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "agent_result frame carries the child's registry path",
+      "spec": "The framed agent_result delivered to a parent on child completion SHALL carry the child's registry path as a path attribute, alongside the existing from (role) and from_id (UUID) attributes. The path SHALL be the registry ground-truth path used by action_log scope resolution, XML-escaped like every other attribute. WHEN no registry record exists for the child, the attribute SHALL be omitted rather than populated with an invented value.",
+      "acceptance": [
+        "ChildResult carries the child's registry path from both the fork and spawn completion paths",
+        "frame_child_result renders a path attribute when the path is present and omits it when absent",
+        "Existing frame tests updated; a new test pins the path attribute's presence and escaping",
+        "cargo test -p norn passes"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/agent/result_channel.rs",
+          "crates/norn/src/tools/agent/fork_outcome.rs",
+          "crates/norn/src/tools/agent/spawn_completion.rs"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "fork and spawn_agent guidance teach the re-walk",
+      "spec": "The fork and spawn_agent usage guidance SHALL each gain a section stating that a completed child remains queryable for the rest of the session via action_log with scope set to the child's registry path or UUID (both delivered in the result frame): list for its timeline of calls, detail/context for any single call, and mutations for its file-change ledger with live revert status. The fork guidance SHALL additionally state that per-requirement completion claims in the structured output can be checked against the child's mutations ledger. The guidance SHALL NOT overstate scope: it reaches descendants only, never parents or siblings.",
+      "acceptance": [
+        "fork.usage.md documents the re-walk with scope, names the three query levels, and the requirements-vs-mutations verification",
+        "spawn_agent.usage.md documents the re-walk with scope",
+        "Neither file suggests scope can reach a parent or sibling"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/guidance/fork.usage.md",
+          "crates/norn/src/tools/guidance/spawn_agent.usage.md"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "action_log scope documentation names the result-frame keys",
+      "spec": "The action_log tool's schema scope description SHALL state that a completed fork or spawn result frame carries the child's registry path and UUID, and that either is directly usable as the scope argument to re-walk that child.",
+      "acceptance": [
+        "The scope property description in action_log's input schema mentions the result frame's path/UUID as scope keys",
+        "The tool's metadata test still passes"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/action_log.rs"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT change action_log query semantics or scope resolution — this brief is stitching, not machinery",
+    "SHALL NOT change the structured output schema of fork or spawn results",
+    "SHALL NOT relax the scope boundary: descendants only, never upward or sideways",
+    "SHALL NOT invent a path when the registry holds none — absence is stated by omission"
+  ],
+  "verification": [
+    "cargo clippy --workspace --all-targets -- -D warnings produces zero warnings",
+    "cargo fmt --check passes",
+    "cargo test -p norn passes",
+    "grep -n 'path=' crates/norn/src/agent/result_channel.rs shows the attribute rendered from ground truth, not a default"
+  ]
+}

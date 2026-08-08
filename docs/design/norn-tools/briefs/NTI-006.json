@@ -1,0 +1,59 @@
+{
+  "id": "NTI-006",
+  "cluster": "norn-tools",
+  "title": "Compaction summaries stay joined to the action log",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": [],
+  "stories": [],
+  "purpose": "The action log survives compaction and the Compaction event already records replaced_event_ids — the structural join between a summary and what it folded away exists. What is missing is the navigational half: the LLM-written compaction summary cites nothing, so after compaction the agent holds prose with no handles, and nothing at the moment of compaction reminds it that every folded call remains one action_log detail query away. The RLM shape: a summary should be an index into the log it replaced, not a substitute for it. With citations, compaction stops being lossy and becomes a reroute — the detail is still there, addressed by call id.",
+  "task": "Amend the compaction summarization prompt so the model cites tool_call_ids inline for significant elided tool work and closes with the fixed note that cited calls remain retrievable via action_log. Pin the prompt contract in tests. No schema changes, no new events, no change to the compaction plan or commit path.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Summarization prompt requires call-id citations",
+      "spec": "The compaction summarization prompt SHALL instruct the model to cite the tool_call_id inline (in a stable bracketed form) for each significant piece of elided tool work it summarises, and to prefer citing over inlining detail. The prompt SHALL define significant by role — work whose specifics a future turn may need to re-check (mutations, decisions, errors and their resolutions) — not by a numeric threshold this brief would have to invent.",
+      "acceptance": [
+        "The prompt text names tool_call_id citations, shows the bracketed form once, and states the prefer-citing-over-inlining rule",
+        "The prompt's significance guidance is role-based with no invented numeric threshold",
+        "A test pins the presence of the citation instruction in the built prompt"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/loop/summarization.rs"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "The summary closes with the retrieval note",
+      "spec": "The prompt SHALL require the summary to end with one fixed sentence stating that cited calls are retrievable in full via the action_log detail query. The sentence SHALL be specified verbatim in the prompt so it survives into the committed summary deterministically rather than by model paraphrase. The mechanical-digest fallback path (used when LLM summarization is unavailable) SHALL append the same sentence itself, so the retrieval note never depends on which path produced the summary.",
+      "acceptance": [
+        "The prompt contains the verbatim closing sentence requirement",
+        "The mechanical-digest fallback appends the identical sentence",
+        "A test on the fallback path asserts the note's presence in the committed summary"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/loop/summarization.rs"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT change SessionEvent::Compaction — replaced_event_ids already carries the structural join; no new fields",
+    "SHALL NOT change the compaction plan, trigger, or commit path — this brief touches prompt text and the digest fallback only",
+    "SHALL NOT validate or rewrite the model's citations at commit time — a missing citation is a quality shortfall in prose, not a correctness failure to enforce with new machinery",
+    "SHALL NOT invent a significance threshold — the prompt's guidance is role-based"
+  ],
+  "verification": [
+    "cargo clippy --workspace --all-targets -- -D warnings produces zero warnings",
+    "cargo fmt --check passes",
+    "cargo test -p norn passes",
+    "The two prompt-contract tests and the fallback-note test exist and pass"
+  ]
+}

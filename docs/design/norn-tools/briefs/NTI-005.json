@@ -1,0 +1,82 @@
+{
+  "id": "NTI-005",
+  "cluster": "norn-tools",
+  "title": "Transcript rung — read a finished descendant's timeline",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": [],
+  "stories": [],
+  "purpose": "A parent can see everything a fork DID (action_log: calls, outputs, mutations) but nothing of WHY — the child's assistant turns, its narration between calls, live in its session event store and no tool reads a descendant's transcript (verified against the full tool inventory 2026-08-08). The re-walk ladder today is: structured summary (exists), tool ledger (exists), transcript (missing), portal conversation (the norn-memory lantern design). This brief builds the missing rung. It is also shared substrate: the transcript view over a child's timeline is what a lantern portal walk needs before deciding to fork into a conversation with the ancestor — reading is always cheaper than talking.",
+  "task": "Add a transcript query to action_log that returns a descendant's (or the caller's own) session events in timeline order — user and assistant text verbatim, tool calls collapsed to id + tool + tool_use_description (full detail stays one detail query away), subagent lifecycle markers. The scope must resolve to exactly one agent; the caller must bound the page explicitly (no invented default page size); paging continues via the existing since-style cursor. The scope boundary is unchanged: descendants only, never upward or sideways.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "transcript query over one agent's timeline",
+      "spec": "action_log SHALL support a transcript query returning the resolved agent's session events in timeline order. Each returned item SHALL be one of: user text (verbatim), assistant text (verbatim), a tool call rendered as tool_call_id + tool name + tool_use_description + outcome tag, or a subagent lifecycle marker (started/completed with the child's path). The rendering SHALL NOT paraphrase, summarise, or truncate text content; anything elided by shape (tool output bodies) SHALL be named as retrievable via the detail query with the given call id.",
+      "acceptance": [
+        "transcript on self returns the caller's own timeline in order with the four item kinds",
+        "transcript on a finished child returns that child's timeline including assistant text the parent never saw",
+        "Tool-call items carry tool_call_id usable directly in a follow-up detail query",
+        "No item kind truncates silently — text is verbatim"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/action_log.rs",
+          "crates/norn/src/session/action_log.rs",
+          "crates/norn/src/session/action_log_scope.rs"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Single-agent scope, explicit bound, cursor paging",
+      "spec": "The transcript query SHALL require the scope to resolve to exactly one agent: absent/self, or one specific descendant by registry path or UUID. WHEN scope is children or all, the tool SHALL return a typed invalid-arguments failure explaining that a transcript is a single timeline. The caller SHALL bound every page explicitly via filter.last; WHEN filter.last is absent, the tool SHALL return a typed invalid-arguments failure — the page size is the caller's statement of intent, and this brief SHALL NOT invent a default. Paging SHALL continue via filter.since carrying the last-seen event id, matching the existing since cursor contract.",
+      "acceptance": [
+        "transcript with scope children or all fails typed, naming the single-timeline rule",
+        "transcript without filter.last fails typed; with filter.last it returns at most that many items",
+        "filter.since resumes after the named event id; a full walk via repeated pages reproduces the whole timeline exactly once",
+        "Scope resolution reuses the existing machinery: a parent's or sibling's timeline is unreachable"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/action_log.rs",
+          "crates/norn/src/session/action_log_scope.rs"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "The event source is the agent's session store, wired at registration",
+      "spec": "The transcript SHALL be read from the per-agent session event store. The implementation SHALL verify at the wiring site that the store reachable from the ActionLogTree registration for an agent is that agent's full session event store (the one its timeline persists through); IF it is not, the session store handle SHALL be threaded alongside the ActionLog at registration rather than approximated from whatever store is nearest. Finished and reclaimed children SHALL remain transcript-readable for the session lifetime, matching the tree's existing retention.",
+      "acceptance": [
+        "The transcript of a child matches the events persisted in that child's session timeline, not a reconstruction",
+        "A finished, reclaimed child's transcript is still readable for the rest of the session",
+        "The wiring is verified in a test that writes through a child's real store and reads it back via transcript"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/action_log_tree.rs",
+          "crates/norn/src/tools/action_log.rs"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT reach outside the session: no cross-root reads, no other sessions' files — that is the norn-memory portal design's territory",
+    "SHALL NOT relax the scope boundary: descendants only, never upward or sideways",
+    "SHALL NOT invent a default page size, a truncation threshold, or a rendering summary — bounds are caller-stated, text is verbatim",
+    "SHALL NOT duplicate detail/context — tool call items point at the existing queries rather than inlining output bodies"
+  ],
+  "verification": [
+    "cargo clippy --workspace --all-targets -- -D warnings produces zero warnings",
+    "cargo fmt --check passes",
+    "cargo test -p norn passes",
+    "Tests cover: self transcript, finished-child transcript, typed failures (children/all scope, missing last), cursor paging exactness, and upward-reach refusal"
+  ]
+}
