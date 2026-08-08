@@ -22,7 +22,7 @@ use super::post_check::{DiagnosticsPostCheck, run_diagnostics_for_trigger};
 use super::stop_hook::DiagnosticStopHook;
 use crate::integration::hooks::{HookOutcome, StopHook};
 use crate::tool::context::ToolContext;
-use crate::tool::lifecycle::{PostValidateOutcome, RuntimePostValidateCheck};
+use crate::tool::lifecycle::{PostCheckResult, PostValidateOutcome, RuntimePostValidateCheck};
 use crate::tool::traits::ToolOutput;
 use crate::tools::lsp::{
     LspBackend, LspBackendError, LspDiagnostic, LspHover, LspLocation, LspSymbol, TestRunnable,
@@ -30,17 +30,61 @@ use crate::tools::lsp::{
 
 const ADMISSION_HELPER_CHILD: &str = "NORN_DIAGNOSTIC_ADMISSION_HELPER_CHILD";
 const CHECKED_IN_CONVENTIONS: &str = include_str!("../../../../../CONVENTIONS.toml");
-const HARD_RUST_PATTERNS: [&str; 9] = [
-    "allow-attr",
-    "expect-attr",
-    "deny-attr",
-    "cfg-any",
-    "ignore-attr",
-    "silent-var-rename",
-    "fallible-shortcuts",
-    "panic-macros",
-    "todo-markers",
+/// The handling each checked-in Rust pattern must carry, and the side of the
+/// block/advise split it must route to at mutation time.
+///
+/// `deny-attr`, `cfg-any` and `ignore-attr` have zero occurrences in the tree,
+/// so they block. The remaining six scan whole files and cannot see
+/// `#[cfg(test)]`, so blocking them would reject edits to the ruled test-code
+/// exception; they advise until the engine can subtract test-gated spans.
+const SPLIT_RUST_PATTERN_HANDLING: [(&str, Handling); 9] = [
+    ("allow-attr", Handling::Advise),
+    ("expect-attr", Handling::Advise),
+    ("deny-attr", Handling::Block),
+    ("cfg-any", Handling::Block),
+    ("ignore-attr", Handling::Block),
+    ("silent-var-rename", Handling::Advise),
+    ("fallible-shortcuts", Handling::Advise),
+    ("panic-macros", Handling::Advise),
+    ("todo-markers", Handling::Advise),
 ];
+
+/// Handling the split requires for `name`, or an error naming the gap.
+fn split_handling(name: &str) -> Result<Handling, Box<dyn std::error::Error>> {
+    SPLIT_RUST_PATTERN_HANDLING
+        .iter()
+        .find_map(|(pattern, handling)| (*pattern == name).then_some(*handling))
+        .ok_or_else(|| {
+            std::io::Error::other(format!("no split handling declared for pattern `{name}`")).into()
+        })
+}
+
+/// Drive one fixture source through the real post-check pipeline under the
+/// checked-in conventions and return the findings it produced.
+///
+/// The fixture is written to `src/fixture.rs`, which matches `rust-general`
+/// but deliberately not `rust-entrypoints`, so the routing assertions read a
+/// single rule's activations rather than a merge of two.
+async fn checked_in_findings_for_fixture(
+    source: &str,
+) -> Result<PostCheckResult, Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let file = dir.path().join("src/fixture.rs");
+    write_file(&file, source);
+
+    let conventions = ConventionsConfig::load_from_str(CHECKED_IN_CONVENTIONS)?;
+    let ctx = ToolContext::empty();
+    ctx.insert_extension(Arc::new(test_infra(
+        dir.path().to_path_buf(),
+        Some(conventions),
+    )));
+
+    let output = make_output(json!({
+        "path": file.display().to_string(),
+        "bytes_written": source.len(),
+    }));
+    Ok(DiagnosticsPostCheck.check(&output, &ctx).await)
+}
 
 #[test]
 fn descriptor_admission_helpers_reserve_exact_weights() -> Result<(), Box<dyn std::error::Error>> {
@@ -301,8 +345,8 @@ todo_markers = { on = "tool", handling = "block" }
     assert!(result.advisories.is_empty());
 }
 
-#[test]
-fn checked_in_conventions_compile_and_cover_hard_rust_patterns()
+#[tokio::test]
+async fn checked_in_conventions_compile_and_cover_hard_rust_patterns()
 -> Result<(), Box<dyn std::error::Error>> {
     let conventions = ConventionsConfig::load_from_str(CHECKED_IN_CONVENTIONS)?;
     let rust = conventions
@@ -353,15 +397,60 @@ fn checked_in_conventions_compile_and_cover_hard_rust_patterns()
     ];
 
     for (name, source, expected_matches) in fixtures {
+        let expected_handling = split_handling(name)?;
         let pattern = patterns
             .get(name)
             .ok_or_else(|| std::io::Error::other(format!("checked-in pattern `{name}` missing")))?;
-        assert_eq!(pattern.handling, Handling::Block, "pattern `{name}`");
+        assert_eq!(
+            pattern.handling, expected_handling,
+            "pattern `{name}` definition must carry its split handling"
+        );
         assert_eq!(
             pattern.matches(&source, Some("rust"))?.len(),
             expected_matches,
             "pattern `{name}` must cover every fixture shape"
         );
+
+        // Firing is not the claim under test — the routing is. Drive the
+        // fixture through the real pipeline and assert which side it lands on.
+        let result = checked_in_findings_for_fixture(&source).await?;
+        let tag = format!("[pattern:{name}]");
+        match expected_handling {
+            Handling::Block => {
+                let PostValidateOutcome::Fail { errors } = &result.outcome else {
+                    return Err(std::io::Error::other(format!(
+                        "blocking pattern `{name}` did not fail its fixture mutation"
+                    ))
+                    .into());
+                };
+                assert!(
+                    errors.iter().any(|error| error.contains(&tag)),
+                    "blocking pattern `{name}` must emit a validation error: {errors:?}"
+                );
+                assert!(
+                    !result
+                        .advisories
+                        .iter()
+                        .any(|advisory| advisory.message.contains(&tag)),
+                    "blocking pattern `{name}` must not route to advisories: {:?}",
+                    result.advisories
+                );
+            }
+            Handling::Advise => {
+                assert!(
+                    matches!(result.outcome, PostValidateOutcome::Pass),
+                    "advisory pattern `{name}` must not fail the mutation: {:?}",
+                    result.outcome
+                );
+                assert!(
+                    result.advisories.iter().any(|advisory| {
+                        advisory.source == name && advisory.message.contains(&tag)
+                    }),
+                    "advisory pattern `{name}` must emit an advisory: {:?}",
+                    result.advisories
+                );
+            }
+        }
     }
 
     assert!(conventions.lookup_tool("rust", "clippy").is_none());
@@ -370,13 +459,16 @@ fn checked_in_conventions_compile_and_cover_hard_rust_patterns()
         let rule = conventions.rule(rule_name).ok_or_else(|| {
             std::io::Error::other(format!("checked-in rule `{rule_name}` missing"))
         })?;
-        for pattern_name in HARD_RUST_PATTERNS {
+        for (pattern_name, expected_handling) in SPLIT_RUST_PATTERN_HANDLING {
             let activation = rule.rule.activations.get(pattern_name).ok_or_else(|| {
                 std::io::Error::other(format!(
                     "checked-in rule `{rule_name}` does not activate `{pattern_name}`"
                 ))
             })?;
-            assert_eq!(activation.handling, Handling::Block);
+            assert_eq!(
+                activation.handling, expected_handling,
+                "rule `{rule_name}` activation of `{pattern_name}` must carry its split handling"
+            );
             assert!(activation.on.contains(&TestTrigger::Tool));
             assert!(activation.on.contains(&TestTrigger::Stop));
         }
@@ -397,7 +489,10 @@ async fn checked_in_hard_feedback_handles_every_mutator_output_shape_and_stop()
         file.parent()
             .ok_or_else(|| std::io::Error::other("diagnostics fixture path has no parent"))?,
     )?;
-    let forbidden_source = ["fn forbidden() { pan", "ic!(\"stop\"); }\n"].concat();
+    // `ignore-attr` is one of the three rules that still block after the split;
+    // the marker is concatenated so this fixture does not trip the rule on the
+    // test file that carries it.
+    let forbidden_source = ["#[ig", "nore]\nfn forbidden() {}\n"].concat();
     std::fs::write(&file, forbidden_source)?;
 
     let conventions = ConventionsConfig::load_from_str(CHECKED_IN_CONVENTIONS)?;
@@ -435,8 +530,8 @@ async fn checked_in_hard_feedback_handles_every_mutator_output_shape_and_stop()
         match result.outcome {
             PostValidateOutcome::Fail { errors } => assert!(
                 errors.iter().any(|error| {
-                    error.contains("[pattern:panic-macros]")
-                        && error.contains("Return or propagate a typed error")
+                    error.contains("[pattern:ignore-attr]")
+                        && error.contains("An ignored test is not evidence")
                 }),
                 "{tool_name} must return the checked-in hard-pattern feedback: {errors:?}"
             ),
@@ -452,8 +547,8 @@ async fn checked_in_hard_feedback_handles_every_mutator_output_shape_and_stop()
     let hook = DiagnosticStopHook::new(infra);
     match hook.on_stop("done").await {
         HookOutcome::Block { reason } => {
-            assert!(reason.contains("[pattern:panic-macros]"));
-            assert!(reason.contains("Return or propagate a typed error"));
+            assert!(reason.contains("[pattern:ignore-attr]"));
+            assert!(reason.contains("An ignored test is not evidence"));
         }
         HookOutcome::Proceed | HookOutcome::Modify { .. } => {
             return Err(std::io::Error::other(
