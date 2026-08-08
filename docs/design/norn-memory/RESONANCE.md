@@ -319,6 +319,30 @@ computed anyway** — between turns. There is no timer, no daemon, and
 **no poll interval to invent**, which also settles the `CLAUDE.md`
 arbitrary-values problem that a polling design would otherwise have created.
 
+#### BINDING CONSTRAINT — there is no clock, and that is a guarantee
+
+This must be implemented as a **property**, not left as a happy consequence.
+Stated so an implementer cannot delete it without noticing it existed:
+
+> **The resonance index SHALL advance only at the boundary where resonance is
+> computed. It SHALL NOT be driven by any timer, interval, tick, or background
+> task.** Freshness is bounded by *"as of the last turn boundary"* — a
+> statement about causality, not about elapsed time.
+
+**Why it must be written down:** a later reader, wanting it to feel faster,
+adds a timer. Nothing breaks and nothing complains. What they have deleted is:
+(a) the absence of an invented interval, which `CLAUDE.md` forbids and which no
+error will ever surface; (b) the guarantee that a view's contents are a
+function of *what has happened*, not of *when it was asked* — which is what
+makes two agents at the same log position see the same landscape, and makes the
+whole thing reproducible; and (c) the property that costs nothing when idle,
+because nothing runs when nothing is being asked.
+
+**A timer would not be an optimisation. It would be a silent downgrade from a
+deterministic view to an eventually-consistent one**, and it would be
+indistinguishable from working correctly right up until two agents disagreed
+about the landscape.
+
 **Arm A (index built in the writer's process, private) is the one that loses**,
 and it loses on communality: a private index built only from *this* session's
 work is not the landscape, it is a diary. Arm C (rebuild fully on demand)
