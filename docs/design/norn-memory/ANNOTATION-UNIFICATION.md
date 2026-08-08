@@ -47,6 +47,8 @@ The axis that actually matters for a single-writer lock is **how long a writer i
 
 So the *human* path is the dangerous one, and the *agent* path is the well-behaved one — the opposite of the concern I carried to Apollo. Frequency only becomes the binding constraint once hold duration is already short.
 
+**The engine confirms this structurally, not incidentally.** `crates/haematite/src/db.rs` (verified at `2089609`) makes the A4 lock a *field on the `Database` handle*, with its own doc comment: *"the exclusive cross-process writer lock on the data dir, held for this handle's lifetime. Field order keeps it dropped LAST."* Lock occupancy is therefore literally handle lifetime. Nothing about write frequency enters into it. An app that opens a handle and keeps it holds the lock for as long as it runs.
+
 **Consequence:** "is it human-rate or agent-rate" was the wrong question. The right questions are (a) does any process hold a writer open across user think-time, and (b) is there a genuinely high-frequency *mutation* path. §4 shows the second one is avoidable; §5 removes the first.
 
 ---
@@ -63,6 +65,18 @@ Tom asked directly, given haematite has branching, forking and merging.
 2. **It answers the open fork-semantics ruling natively.** §10.1a of the app spec has been open on whether annotations are global-by-event, snapshot-inherit-then-diverge, or session-local. Snapshot-inherit-then-diverge *is* branch-from-parent. The store already implements the semantics we were about to hand-write.
 3. **It answers the fourth option Tom's framing surfaced** — when an agent fork merges back, do notes it made return with it? — as `merge_branches` under an explicit `ConflictPolicy`. That option had no home before; now it has an implementation and a place to state the conflict rule.
 4. **Provenance and time-travel.** "What did the annotation layer look like at time T" is answerable in a versioned store. For an estate that holds itself to audit standards, that is not a luxury.
+
+### 3.1 🔴 BINDING: the merge policy MUST be `Custom`, and the other two arms MUST NOT be used
+
+The recommendation above is only safe with the conflict policy named. Raised by the engine owner and **independently verified by this seat at `2089609`**, in `crates/haematite/src/branch/conflict.rs`:
+
+- **`ConflictPolicy::Lww` does not mean what its name says.** The arm is `Self::Lww => Ok(conflict.branch_value.clone())` — it returns the branch side unconditionally. `ConflictInput` is `{ key, ancestor_value, parent_value, branch_value }` and **carries no timestamp**; the only occurrences of any clock-like word in the entire file are the name of the *other*, unimplemented arm. So "last write wins" is a misnomer for **branch-side-always-wins, decided by position in the merge, not by when anything was written.**
+- **Applied to the merge-back question this document is recommending, `Lww` is silent user-data loss.** Merging a sub-agent's branch into its parent means that for any key both wrote, **the parent's note is destroyed — always, by position, never by recency** — with no error, no conflict report, and a merge that returns success. For notes a person wrote, that is unacceptable in this estate at any severity threshold.
+- **`ConflictPolicy::VectorClock` is exposed but unimplemented**, returning `ConflictError::Unimplemented` at runtime, with a test named `vector_clock_is_exposed_but_deferred` confirming that as deliberate rather than rot.
+
+Of the three arms, **one silently drops data, one errors at runtime, and only `Custom` merges.** The brief SHALL therefore specify `ConflictPolicy::Custom` with a function that **unions both sides** rather than selecting one, and SHALL state why the other two are wrong — because an implementer reading only "under an explicit `ConflictPolicy`" will reach for `Lww`: it sounds like the sensible default and it is the only other arm that does not error.
+
+**Named hazard class, because this is now the second instance in one day.** Both faults share a shape: *an API name asserting a predicate the mechanism does not implement.* `MissingNode` claims absence and delivers "absence **or** I/O failure" (R2.4 (c) in the app spec); `Lww` claims recency and delivers position. Both read as honest, both are load-bearing, and both cost data when trusted at face value. **Any brief in this cluster that relies on a policy-shaped API SHALL verify the mechanism behind the name rather than the name.**
 
 ---
 
@@ -106,6 +120,8 @@ Properties this buys:
 ### 5.1 What this does *not* claim
 It does not satisfy Annabel's ruling that multi-process concurrent read and write is a product requirement. It **avoids needing it here**. That ruling is about the engine and remains entirely live; this proposal simply declines to make one app feature the forcing function for it. The distinction is deliberate and should not be blurred when this is summarised.
 
+**Preserving the demand signal, at the engine owner's request.** The requirement for multi-process writes was not theoretical — it was surfaced *by* a downstream consumer hitting A4, and this was that consumer. If every consumer in turn resolves its case sideways, the demand evaporates from the record and the daemon ends up looking less justified than it actually is, because the evidence for it was only ever visible at the moment of collision. **So, for whoever next sizes the daemon: the need was real here, it was live at the point this document was written, and it was solved sideways rather than withdrawn.** That is a routed-around requirement, not an absent one.
+
 ### 5.2 Costs, honestly
 - **Read-your-own-writes.** A note written but not yet indexed will not appear in a query. Mitigation is the standard one: the writing process overlays its own un-indexed appends. This must be specified, not discovered.
 - **Who indexes.** Opportunistic — whichever process can take the writer. If none can, the index is stale, which is a degraded query, not lost data. The staleness must be *visible*, never silently presented as completeness.
@@ -135,8 +151,9 @@ I have **not** verified Grafeo's concurrency properties, its embedded-writer sem
 2. **Storage.** One index or two (§6), and which first. Requires Grafeo facts I do not have.
 3. **Log-as-truth.** Does the estate accept an append-only annotation sidecar as canonical, with engines as derived views? This supersedes R2.4's "haematite as canonical store" and therefore needs an explicit owner decision, not a quiet edit.
 4. **Fork semantics** (§10.1a, open since 2026-07-24) — §3 argues snapshot-inherit-then-diverge, and that it should be implemented as a branch rather than hand-rolled.
-5. **Merge-back** — the fourth option: do an agent fork's notes return to the parent on merge, and under what `ConflictPolicy`?
+5. **Merge-back** — the fourth option: do an agent fork's notes return to the parent on merge? **The `ConflictPolicy` half is not open: it MUST be `Custom` with a unioning function (§3.1).** What remains for ruling is the union's semantics when both sides edited the same note.
 6. **Binding constraint:** decay computed, reinforcement derived (§4). Cheap to state now, expensive to retrofit.
+7. **If the derived index is built on haematite's `EventStore` rather than plain KV**, two open engine defects touch us — #74 (`read_from` infers `HistoryCompacted` from two non-atomic reads, so a losing concurrent append is misclassified) and #75 (no head read; the capability exists one level down but reaching it by hand has an off-by-one). Both are moot if the rebuild is single-writer and single-threaded, which is the expected shape. **Whoever writes the brief SHALL state which access pattern is used**; the engine owner has offered to read both against it if `EventStore` is chosen.
 
 ## 8. What changes for work already in flight
 
