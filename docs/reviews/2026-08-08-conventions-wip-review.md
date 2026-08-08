@@ -119,7 +119,53 @@ The alternative — blocking only on files outside `tests/` paths — is a
 false comfort: inline `mod tests` dominates, so it would either still seize
 the estate or silently exempt almost nothing. Do not take it.
 
-## 6. What I did not verify
+## 6. Outcome (2026-08-09) — candidate built, verified, and hardened
+
+Owner approved the split and authorized a workflow (four Opus agents: one
+implementer, three parallel verifiers). Candidate: **`land/conventions-truth`
+@ `ff30f70`**, three commits — the WIP cherry-pick (original authorship
+kept), the split, and a fix pass.
+
+**The adversarial verifier earned its seat.** It caught the split commit
+reintroducing the defect class this whole branch exists to remove: the
+activation comment claimed advisory feedback "repeats at stop", but the stop
+hook acts on validation failures alone — `on_stop` reads `result.outcome`
+only, advisories are computed and discarded (`stop_hook.rs`, confirmed at
+bytes by this reviewer). `on = "tool|stop"` on the six advisory rules was
+dead configuration advertised as enforcement. Fix: advisory activations are
+`on = "tool"`; the header states the asymmetry; the gate command is quoted
+exactly as `CLAUDE.md` defines it. Tests now pin per-rule trigger sets
+(block = `[tool, stop]`, advise = `[tool]`) and pin both activation tables
+exhaustively to the nine split patterns. Red-proofed both ways: flipping one
+advisory rule back to `tool|stop` fails the suite, and the pre-fix config
+fails it too.
+
+**Independent re-measurement (second verifier):** all zero-claims re-derived
+from scratch and hold — deny 0, ignore 0, cfg-any 0 real attribute sites
+across 1,155 files; every unwrap/expect/allow hit classified into test code;
+the one non-test grep residual is a doc comment the AST matcher cannot
+match. No advisory rule can block anywhere in the candidate file.
+
+**Gates:** fmt clean; `clippy --workspace --all-targets -D warnings` clean;
+full workspace battery green at the implementer's commit (30 suites, 5,980
+passed, 0 failed); diagnostics suite 57/0 and fd-limit differential clean at
+the fix-pass commit (one `descriptor_retention` failure under post-suite fd
+residue, matching its documented register row — passes on both trees when
+quiet, ran the differential in both directions).
+
+**Follow-ups surfaced by the verifiers, not folded in (scope discipline):**
+
+1. **`norn init conventions` still generates the dead
+   `[rust.diagnostics]`/`[rust.remediation]` tables** — every newly
+   initialised repo receives the exact defect this candidate removes, and
+   the generator's own tests pin that output
+   (`norn-cli/src/commands/init/conventions.rs:265`, tests at `:632`,
+   `:649`, `:758`). Needs its own small brief.
+2. **The chiron engine ask** (§5.2) — cfg(test)-span subtraction so the six
+   advisory rules can graduate to block. To be written up for chiron's
+   owner once this lands.
+
+## 7. What I did not verify
 
 - Whether chiron upstream already has a test-span carve-out in a newer rev
   than the pin (`25161bc`) — worth one look before scoping the engine work.
