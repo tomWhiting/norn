@@ -292,6 +292,62 @@ version of this design had considered: either the index is built in the
 writer's process, or it polls, or it is rebuilt on demand. That question should
 be settled before any daemon-shaped plan assumes notification is available.
 
+### 5.2.1 Topology is a fork in the design, not a constraint — and one arm wins
+
+The engine owner's follow-up correction: the three arms have **different costs
+for norn, not different difficulties**, so this is a choice to be priced, not a
+limitation to be worked around. Priced:
+
+**What decides it is communality, not notification.** Lanterns are communal —
+that is the design's central claim (`DESIGN.md` §Communal Memory) — and norn
+runs many sessions concurrently. So every process needs the *whole* landscape,
+which appears to force a shared index, which reintroduces exactly the
+multi-writer contention that §2.2 had just removed.
+
+It doesn't, because of what the index now is:
+
+> The index is **derived and rebuildable** (§5). Therefore each process can
+> hold its **own private in-memory view** over **shared append-only data**.
+> There is no shared mutable index, so there is nothing to contend on.
+
+Catch-up is *"read the records after my coverage point"* — which §5.3's field
+makes exact, and which is idempotent and cheap because the data is append-only.
+
+**This is why the process-local doorbell (§5.2) does not bind us.** We never
+needed notification. A process catches up **at the boundary where resonance is
+computed anyway** — between turns. There is no timer, no daemon, and
+**no poll interval to invent**, which also settles the `CLAUDE.md`
+arbitrary-values problem that a polling design would otherwise have created.
+
+**Arm A (index built in the writer's process, private) is the one that loses**,
+and it loses on communality: a private index built only from *this* session's
+work is not the landscape, it is a diary. Arm C (rebuild fully on demand)
+degrades with history for no gain, since incremental catch-up is available at
+the same place. What survives is arm B, but "polling" understates it — nothing
+is being polled on a clock; a reader advances its own view when it next needs
+it.
+
+**Consequence worth stating plainly: the resonance engine does not need a
+daemon.** Any plan that assumed one should be re-examined, and the assumption
+that motivated it — that an index must be *told* about writes — was never true
+for a derived view with a recorded coverage point.
+
+**The one genuinely shared mutable thing left is the lantern log itself**
+(appends from many processes). norn has already solved that exact shape and it
+should be reused rather than reinvented — the "simplify first" rule applies
+directly. `session/persistence/lock.rs` (H18) handles multi-process append plus
+read-modify-rewrite over a shared `.jsonl`, and it is hardened in the ways that
+matter: a **separate** lock file so the atomic rename-over never replaces the
+locked inode, `flock` semantics that exclude other threads as well as other
+processes, deadline-bound acquisition with a typed `IndexLockTimeout` instead of
+an unbounded stall, and a process-local gate so local waiters hold no
+descriptors.
+
+**Honest scope note:** that module is `pub(crate)` and hardcoded to
+`INDEX_LOCK_FILE = "index.lock"` (`lock.rs:46`, `lock_index` at `:123`). The
+*pattern* is proven here; generalising it to a second log is small real work,
+not free.
+
 ### 5.3 Record the coverage point — adopted, with one translation
 
 The engine owner's recommendation: build the external index recording **the
@@ -363,9 +419,14 @@ it is his to set rather than mine to guess.
   design says should be a derived tree.
 - **R7.** **Process topology** (§5.2, new — no prior version of this design
   considered it). An out-of-process index cannot be notified of writes by any
-  mechanism that exists. Decide whether the resonance index is built in the
-  session's own process, polls, or is rebuilt on demand — **before** any
-  daemon-shaped plan assumes notification it cannot have.
+  mechanism that exists. **Priced in §5.2.1, and it resolves:** each process
+  holds a private derived view over shared append-only data and advances it at
+  the turn boundary. No shared mutable index, no notification needed, no daemon,
+  and no poll interval to invent. **What needs ruling is the consequence, not
+  the choice: any daemon-shaped plan for this feature should be re-examined,
+  because the assumption motivating it was never true.** The lantern log's
+  multi-process appends reuse the existing H18 lock pattern rather than a new
+  mechanism.
 
 ## 8. Recommendation
 
