@@ -90,7 +90,7 @@ Waffles answered the manifold questions directly (his DM, ~00:17Z) and pointed a
 - **The reverse direction already exists**: `aion-integration-norn` spawns norn as a child process per workflow dispatch (verified in the brief against code). Aion→norn is built; Tom's ask is norn→aion.
 - Read grammar ruled (R-T6): cursor pages that return immediately, **never blocking tails**; every cross-request handle carries its full identity explicitly (the transcript-key/run-axis fusion defect is the cautionary tale).
 - Supervision is ruled aion-native (W-1..W-4): *the server supervises workers; workers supervise agents.* Two layers, no hand-started processes, no launchd.
-- Operational scar to inherit: liminal's ws leg died of an **edge-triggered wake** (fires only on empty→non-empty; one slice behind = starved forever, silently). Any stream surface norn exposes must be **level-triggered and cursor-replayable** — it will otherwise starve exactly when the agent is busiest, which is when you're watching.
+- Operational scar to inherit — **mechanism corrected 2026-08-09 by Hermes's controlled 2x2** (240+ instrumented boots, logs verified present at liminal `gate-logs/p0-55/`, all four cells): the ws starvation was NOT wake semantics — edge vs level made no difference (62/120 vs 64/120 lost). **What decides is the DELIVERY SLICE BUDGET: zero losses out of 192 at budget 256 under both wake rules.** The fix class is budget/cadence under contention, not wake rules. The design guidance survives unchanged: cursor-replayable reads, never blocking tails, bounded inboxes that shed LOUDLY — any stream surface norn exposes sizes its delivery budget for contention, because it starves exactly when the agent is busiest, which is when you're watching.
 
 ## 3b. Survey evidence — manifold + frame (Opus survey, 2026-08-09; cites verified by the surveyor at file:line)
 
@@ -194,7 +194,7 @@ But §3a changes the shape of the answer. **The estate already owns both halves 
 
 What norn must own is therefore tiny, and it is ring-0 *communication*, not a new subsystem:
 
-1. **Present a live session as a cursor-pageable event stream.** Reads return immediately with what exists now (`from_seq`/`limit` → events + next cursor) — the exact R-T6 grammar aion just ratified, and the same read shape the session store already serves. **Level-triggered, cursor-replayable, never a blocking tail** (the edge-triggered ws death is the standing scar).
+1. **Present a live session as a cursor-pageable event stream.** Reads return immediately with what exists now (`from_seq`/`limit` → events + next cursor) — the exact R-T6 grammar aion just ratified, and the same read shape the session store already serves. **Cursor-replayable, never a blocking tail, delivery budget sized for contention** (the ws starvation scar — Hermes's 2x2 at liminal `gate-logs/p0-55/` proved the losses were slice-budget, not wake semantics; §3a).
 2. **Accept an injected message into a live session**, attributed to the injector (actors sign, subjects don't), landing on the timeline as a first-class event.
 3. **Answer "what sessions live under this store, and which have a live process"** — a list read, not a daemon.
 
