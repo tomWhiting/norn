@@ -233,4 +233,18 @@ Each step lands independently; none blocks the memory campaign.
 5. The internal-agents roadmap reversal (§8).
 
 ---
+
+## 11. r2 — Tom's first-round answers (2026-08-09 ~00:48Z, his DM; "let's just keep going, I think we're sort of getting there")
+
+Corrections and steers, folded as rulings-in-progress:
+
+1. **Supervision confirmed optional, attach verbs stand.** A norn *might* be supervised by aion, *might* be kicked off by manifold — "but not every session would be done like that." The three-verb surface (§6) is exactly what serves both the supervised and the bare cases; nothing changes.
+2. **`follow_up`: WIRE IT UP, do not delete.** ~~Delete now: follow_up~~ (§3e) is REVERSED by owner word: "our tool calls definitely produce follow-ups, and the follow-up tool is meant to be able to follow them — if it's just not wired up it probably just needs to be wired up." The follow-up *actions* mechanism (tool/follow_up.rs) is live today; the model-facing tool was simply never registered. It joins the infrastructure family Tom named as the important core: **action_log + follow_up + tool_use_description**.
+3. **The timeline tool.** Tom: the action_log concept "could be extended out to a timeline tool… almost the yang to the memory and lantern tools." And the load-bearing line: **"for norn, anything could be a forkable moment — you don't need to declare a lantern to be able to go back and work back through the timeline and inspect it."** Design reading: the re-walk ladder (NTI-003..006) and the lantern design are two layers over one substrate — the timeline tool is the *complete* record (walk anywhere, inspect any moment, fork from it); lanterns are the *curated* bright spots that resonate unbidden. Declaration buys resonance, never access. This unifies action_log's six query modes, the transcript rung (NTI-005), and fork-from-coordinate into one surface.
+4. **Liminal framing corrected (owner word):** "Liminal doesn't have an extension system — that's not the point. **Liminal IS the extension system.** It has the liminal protocol, and there's a thing for in-process stuff too. It's already got what we need — use the liminal SDK, things speak the liminal protocol. A little under-egged at the moment." §3c's "no extension model" stands as a *fact about manifests/hot-loading*, but the design frame is: extensions = processes speaking the protocol, and the SDK is the door. The worker-front-door profile + WorkerRegister manifest (§3c) are exactly this, already live.
+5. **Inter-agent communication: possibly not norn's to own.** Tom: still really important, "but I wonder if that maybe sits outside of norn or is not a dedicated thing… great if there was just like a liminal tool." Direction: sibling-to-sibling messaging rides the estate bus (a `liminal` tool in norn speaking the protocol) where an estate exists; parent↔child keeps the driven-mode pipe (it IS the channel) and the store's durable pending-delivery for dormant children. The in-norn MessageRouter/wake machinery shrinks accordingly. What norn stays outstanding at (his words): **working its own history, forking itself, and communicating amongst itself and its sub-agents** — with the comms *transport* increasingly liminal's.
+
+Open from round 1, still unruled: search keep/cut (my lean: keep), TUI→client timing, aion campaign timing, roadmap reversal formality.
+
+---
 *Evidence sections §§3a–3e carry the survey facts; every claim there cites either a document read at its bytes or an Opus surveyor's file:line cite. The surveyors' full reports are session artifacts, not committed.*
