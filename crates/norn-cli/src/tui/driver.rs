@@ -314,7 +314,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     };
     startup_trace.mark("handoff_to_tui_app");
 
-    let app_result = norn_tui::run_app(tui_inputs).await;
+    let app_result = Box::pin(norn_tui::run_app(tui_inputs)).await;
 
     // NH-006 R8 / C61: fire on_session_end after the TUI returns, including
     // terminal/runtime errors. The hook is observational; preserve the

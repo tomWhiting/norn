@@ -574,7 +574,7 @@ async fn run_fixture_app() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    norn_tui::run_app(norn_tui::TuiInputs {
+    Box::pin(norn_tui::run_app(norn_tui::TuiInputs {
         model_selection: norn::model_selection::ModelRuntime::new(
             provider.model_catalog_backend(),
             "gpt-5.5",
@@ -614,7 +614,7 @@ async fn run_fixture_app() -> Result<(), Box<dyn std::error::Error>> {
         // descendants to cascade to; a fresh token is the honest stand-in
         // for the builder's `parts.cancel` the real driver passes.
         root_cancel: tokio_util::sync::CancellationToken::new(),
-    })
+    }))
     .await?;
     Ok(())
 }

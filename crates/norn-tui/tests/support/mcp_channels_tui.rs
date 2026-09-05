@@ -101,7 +101,7 @@ pub async fn run(case: &str, address: &str) -> Result<(), TestError> {
         root_cancel.clone(),
     ));
     let (sender, agent_event_rx) = tokio::sync::broadcast::channel(16);
-    let result = norn_tui::run_app(TuiInputs {
+    let result = Box::pin(norn_tui::run_app(TuiInputs {
         model_selection: norn::model_selection::ModelRuntime::new(
             provider.model_catalog_backend(),
             MODEL,
@@ -135,7 +135,7 @@ pub async fn run(case: &str, address: &str) -> Result<(), TestError> {
         root_inbound: None,
         mcp_control: None,
         root_cancel,
-    })
+    }))
     .await;
     // run_app cancels the shared token on every exit, allowing the control owner
     // to drop its actual MCP process without an orphaned task or protocol reader.

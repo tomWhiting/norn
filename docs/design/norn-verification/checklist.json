@@ -29,6 +29,10 @@
         {
           "id": "C7",
           "text": "Every Norn venue leg refuses dirty source and moved HEAD before/after execution, preserves command failure, and records explicit source-witness limits."
+        },
+        {
+          "id": "C8",
+          "text": "Local prerequisites fail observably; live API smoke is explicit, compiled/linted normally and separately receipted when run."
         }
       ],
       "name": "Verification"

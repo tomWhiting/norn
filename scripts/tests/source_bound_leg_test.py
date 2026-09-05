@@ -187,7 +187,8 @@ class SourceBoundLegTest(unittest.TestCase):
     def test_declared_legs_all_use_guard_and_both_python_suites(self):
         declaration = json.loads((SOURCE.parent.parent / "gates.json").read_text())
         self.assertEqual({leg["name"] for leg in declaration["legs"]},
-                         {"fmt", "clippy", "tests", "doctests", "diagnostic-runner"})
+                         {"fmt", "clippy", "live-smoke-build",
+                          "tests", "doctests", "diagnostic-runner"})
         for leg in declaration["legs"]:
             self.assertTrue(leg["cmd"].startswith("python3 scripts/source-bound-leg.py -- "), leg)
         runner = next(leg for leg in declaration["legs"] if leg["name"] == "diagnostic-runner")

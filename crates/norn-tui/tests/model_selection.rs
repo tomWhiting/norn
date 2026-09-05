@@ -406,7 +406,7 @@ async fn run_fixture(
     let root_id = reservation.id();
     reservation.confirm()?;
     let (event_sender, agent_event_rx) = tokio::sync::broadcast::channel(8);
-    norn_tui::run_app(TuiInputs {
+    Box::pin(norn_tui::run_app(TuiInputs {
         provider: Arc::clone(&provider) as Arc<dyn Provider>,
         executor: Arc::new(ToolRegistry::with_context(context)),
         store: Arc::new(EventStore::new()),
@@ -435,7 +435,7 @@ async fn run_fixture(
         root_inbound: None,
         mcp_control: None,
         root_cancel: tokio_util::sync::CancellationToken::new(),
-    })
+    }))
     .await?;
     let observations = provider
         .observations

@@ -6,8 +6,8 @@
   "date": "2026-09-05",
   "timezone": "Australia/Melbourne",
   "base_commit": "cf6c44cad8a534910f614f703a36bbd26a4fdcbc",
-  "branch": "codex/nwp-03-channels",
-  "worktree": "/private/tmp/norn-nwp-03-channels",
+  "branch": "codex/nwp-03-channels-integration",
+  "worktree": "/private/tmp/norn-nwp-03-release",
   "design": "../design.json",
   "depends_on": [
     "NCH-001"

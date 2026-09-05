@@ -1,0 +1,21 @@
+//! Serve only explicitly dispatched live smoke; credentials stay in worker environment.
+worker norn_live_openai_smoke_205
+  action measure(repo_path: String, expected_head: String) -> LiveReceipt
+    runs json command measure_live
+
+type LiveReceipt {
+  expected_head: String,
+  head_commit: String,
+  gates_sha256: String,
+  guard_sha256: String,
+  runner_sha256: String,
+  verdict: String,
+  reason: String,
+  command_exit: Int,
+  test_target: String,
+}
+
+export HOME := "/home/aion"
+
+measure_live repo_path expected_head:
+  python3 {{repo_path}}/scripts/live-openai-smoke.py {{repo_path}} {{expected_head}}

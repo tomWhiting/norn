@@ -20,6 +20,8 @@ pub mod session;
 
 pub mod skill;
 pub mod system_prompt;
+#[cfg(any(test, feature = "live-api-smoke"))]
+pub mod test_prerequisite;
 pub mod tool;
 pub mod tools;
 pub mod util;

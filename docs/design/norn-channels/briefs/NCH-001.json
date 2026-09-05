@@ -3,8 +3,8 @@
   "title": "Channels receiver, typed admission and running-session rollout",
   "status": "R1-R3_verified_R4a_source_written_venue_verification_pending",
   "base_commit": "cf6c44cad8a534910f614f703a36bbd26a4fdcbc",
-  "branch": "codex/nwp-03-channels",
-  "worktree": "/private/tmp/norn-nwp-03-channels",
+  "branch": "codex/nwp-03-channels-integration",
+  "worktree": "/private/tmp/norn-nwp-03-release",
   "design": "../design.json",
   "requirements": [
     {

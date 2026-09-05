@@ -14,7 +14,13 @@
       "name": "clippy",
       "band": "serial",
       "kind": "check",
-      "cmd": "python3 scripts/source-bound-leg.py -- cargo clippy --locked --workspace --all-targets -- -D warnings"
+      "cmd": "python3 scripts/source-bound-leg.py -- cargo clippy --locked --workspace --all-targets --features norn/live-api-smoke -- -D warnings"
+    },
+    {
+      "name": "live-smoke-build",
+      "band": "serial",
+      "kind": "check",
+      "cmd": "python3 scripts/source-bound-leg.py -- cargo test --locked -p norn --features live-api-smoke --test live_openai_smoke --no-run"
     },
     {
       "name": "tests",
@@ -32,7 +38,9 @@
       "name": "diagnostic-runner",
       "band": "fanout",
       "kind": "check",
-      "cmd": "python3 scripts/source-bound-leg.py -- bash -c 'python3 scripts/tests/remote_battery_test.py && python3 scripts/tests/source_bound_leg_test.py'"
+      "cmd": "python3 scripts/source-bound-leg.py -- bash -c 'python3 scripts/tests/remote_battery_test.py && python3 scripts/tests/source_bound_leg_test.py && python3 scripts/tests/live_openai_smoke_test.py'"
     }
-  ]
+  ],
+  "vacuity_marker": "NORN_TEST_PREREQUISITE_UNMET",
+  "coverage_note": "Normal release tests require local Python/permission prerequisites and report missing conditions as test errors. The preexisting credentialed OpenAI hello smoke is an explicit live-api-smoke target: this battery compiles and strictly lints it but does not execute a provider request. Live execution is accepted only by a separate norn_live_openai_smoke Aion receipt; absence of that receipt is unmeasured live API coverage, never a live pass."
 }

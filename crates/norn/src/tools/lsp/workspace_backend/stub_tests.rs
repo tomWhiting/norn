@@ -5,7 +5,7 @@
 //! document-sync notifications, `experimental/runnables`, and the
 //! `shutdown`/`exit` teardown handshake, logging what it receives to a
 //! sidecar file the tests assert against. Tests gate on `python3` being
-//! available at runtime and skip (with a tracing line) when it is not.
+//! available at runtime and return a named prerequisite error when it is not.
 
 #![allow(
     clippy::unwrap_used,
@@ -232,16 +232,18 @@ fn advance_mtime(path: &Path, by: Duration) {
         .expect("set_modified");
 }
 
-const SKIP_MSG: &str = "skipping stub LSP test: python3 not available";
+type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 // ─── test_runnables via experimental/runnables (R2) ────────────────────
 
 #[tokio::test]
-async fn stub_test_runnables_discovers_and_classifies_scopes() {
-    let Some(python) = find_python3() else {
-        tracing::info!("{SKIP_MSG}");
-        return;
-    };
+async fn stub_test_runnables_discovers_and_classifies_scopes() -> TestResult {
+    let python = find_python3().ok_or_else(|| {
+        crate::test_prerequisite::missing(
+            "stub_test_runnables_discovers_and_classifies_scopes",
+            "a runnable python3 is required",
+        )
+    })?;
     let fx = stub_fixture(&python);
     let file = fx.dir.path().join("lib.rs");
     std::fs::write(&file, "fn covered() {}\n").expect("write source");
@@ -325,14 +327,17 @@ async fn stub_test_runnables_discovers_and_classifies_scopes() {
     );
 
     fx.backend.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn stub_test_runnables_empty_response_reports_no_tests() {
-    let Some(python) = find_python3() else {
-        tracing::info!("{SKIP_MSG}");
-        return;
-    };
+async fn stub_test_runnables_empty_response_reports_no_tests() -> TestResult {
+    let python = find_python3().ok_or_else(|| {
+        crate::test_prerequisite::missing(
+            "stub_test_runnables_empty_response_reports_no_tests",
+            "a runnable python3 is required",
+        )
+    })?;
     let fx = stub_fixture(&python);
     let file = fx.dir.path().join("lib.rs");
     std::fs::write(&file, "fn nothing() {}\n").expect("write source");
@@ -346,16 +351,19 @@ async fn stub_test_runnables_empty_response_reports_no_tests() {
     assert!(discovered.is_empty());
 
     fx.backend.shutdown().await;
+    Ok(())
 }
 
 // ─── Sync bookkeeping commits only after didChange succeeds (R3) ───────
 
 #[tokio::test]
-async fn failed_did_change_never_commits_bookkeeping_and_recovers_on_next_access() {
-    let Some(python) = find_python3() else {
-        tracing::info!("{SKIP_MSG}");
-        return;
-    };
+async fn failed_did_change_never_commits_bookkeeping_and_recovers_on_next_access() -> TestResult {
+    let python = find_python3().ok_or_else(|| {
+        crate::test_prerequisite::missing(
+            "failed_did_change_never_commits_bookkeeping_and_recovers_on_next_access",
+            "a runnable python3 is required",
+        )
+    })?;
     let fx = stub_fixture(&python);
     let file = fx.dir.path().join("main.rs");
     std::fs::write(&file, "fn v1() {}\n").expect("write v1");
@@ -439,19 +447,22 @@ async fn failed_did_change_never_commits_bookkeeping_and_recovers_on_next_access
     );
 
     fx.backend.shutdown().await;
+    Ok(())
 }
 
 // ─── One broken tracked file must not poison other calls (R4) ──────────
 
 #[cfg(unix)]
 #[tokio::test]
-async fn unreadable_tracked_file_is_evicted_without_poisoning_other_calls() {
+async fn unreadable_tracked_file_is_evicted_without_poisoning_other_calls() -> TestResult {
     use std::os::unix::fs::PermissionsExt;
 
-    let Some(python) = find_python3() else {
-        tracing::info!("{SKIP_MSG}");
-        return;
-    };
+    let python = find_python3().ok_or_else(|| {
+        crate::test_prerequisite::missing(
+            "unreadable_tracked_file_is_evicted_without_poisoning_other_calls",
+            "a runnable python3 is required",
+        )
+    })?;
     let fx = stub_fixture(&python);
     let file_a = fx.dir.path().join("a.rs");
     let file_b = fx.dir.path().join("b.rs");
@@ -466,8 +477,13 @@ async fn unreadable_tracked_file_is_evicted_without_poisoning_other_calls() {
     advance_mtime(&file_b, Duration::from_secs(5));
     std::fs::set_permissions(&file_b, std::fs::Permissions::from_mode(0o000)).expect("chmod 000 b");
     if std::fs::read_to_string(&file_b).is_ok() {
-        tracing::info!("skipping: running as a user that bypasses file permissions");
-        return;
+        std::fs::set_permissions(&file_b, std::fs::Permissions::from_mode(0o644))?;
+        fx.backend.shutdown().await;
+        return Err(crate::test_prerequisite::missing(
+            "unreadable_tracked_file_is_evicted_without_poisoning_other_calls",
+            "the process must not bypass file permissions",
+        )
+        .into());
     }
 
     // Before the fix this ?-propagated and failed EVERY subsequent call.
@@ -495,17 +511,20 @@ async fn unreadable_tracked_file_is_evicted_without_poisoning_other_calls() {
     assert!(fx.backend.tracked_state(&file_b).await.is_some());
 
     fx.backend.shutdown().await;
+    Ok(())
 }
 
 #[cfg(unix)]
 #[tokio::test]
-async fn unstattable_tracked_file_is_evicted_without_poisoning_other_calls() {
+async fn unstattable_tracked_file_is_evicted_without_poisoning_other_calls() -> TestResult {
     use std::os::unix::fs::PermissionsExt;
 
-    let Some(python) = find_python3() else {
-        tracing::info!("{SKIP_MSG}");
-        return;
-    };
+    let python = find_python3().ok_or_else(|| {
+        crate::test_prerequisite::missing(
+            "unstattable_tracked_file_is_evicted_without_poisoning_other_calls",
+            "a runnable python3 is required",
+        )
+    })?;
     let fx = stub_fixture(&python);
     let subdir = fx.dir.path().join("locked");
     std::fs::create_dir(&subdir).expect("mkdir");
@@ -525,8 +544,12 @@ async fn unstattable_tracked_file_is_evicted_without_poisoning_other_calls() {
     if !stat_fails {
         std::fs::set_permissions(&subdir, std::fs::Permissions::from_mode(0o755))
             .expect("restore perms");
-        tracing::info!("skipping: running as a user that bypasses directory permissions");
-        return;
+        fx.backend.shutdown().await;
+        return Err(crate::test_prerequisite::missing(
+            "unstattable_tracked_file_is_evicted_without_poisoning_other_calls",
+            "the process must not bypass directory permissions",
+        )
+        .into());
     }
 
     let result = fx.backend.diagnostics(&file_a).await;
@@ -542,16 +565,19 @@ async fn unstattable_tracked_file_is_evicted_without_poisoning_other_calls() {
     assert!(fx.backend.tracked_state(&file_a).await.is_some());
 
     fx.backend.shutdown().await;
+    Ok(())
 }
 
 // ─── Graceful shutdown handshake (R6) ──────────────────────────────────
 
 #[tokio::test]
-async fn explicit_shutdown_performs_lsp_handshake() {
-    let Some(python) = find_python3() else {
-        tracing::info!("{SKIP_MSG}");
-        return;
-    };
+async fn explicit_shutdown_performs_lsp_handshake() -> TestResult {
+    let python = find_python3().ok_or_else(|| {
+        crate::test_prerequisite::missing(
+            "explicit_shutdown_performs_lsp_handshake",
+            "a runnable python3 is required",
+        )
+    })?;
     let fx = stub_fixture(&python);
     let file = fx.dir.path().join("lib.rs");
     std::fs::write(&file, "fn x() {}\n").expect("write source");
@@ -566,14 +592,17 @@ async fn explicit_shutdown_performs_lsp_handshake() {
         read_log(&fx.log).contains("shutdown"),
         "server must receive the LSP shutdown request, not just SIGKILL"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn dropping_last_backend_handle_triggers_graceful_shutdown() {
-    let Some(python) = find_python3() else {
-        tracing::info!("{SKIP_MSG}");
-        return;
-    };
+async fn dropping_last_backend_handle_triggers_graceful_shutdown() -> TestResult {
+    let python = find_python3().ok_or_else(|| {
+        crate::test_prerequisite::missing(
+            "dropping_last_backend_handle_triggers_graceful_shutdown",
+            "a runnable python3 is required",
+        )
+    })?;
     let fx = stub_fixture(&python);
     let file = fx.dir.path().join("lib.rs");
     std::fs::write(&file, "fn x() {}\n").expect("write source");
@@ -591,4 +620,5 @@ async fn dropping_last_backend_handle_triggers_graceful_shutdown() {
         "dropping the last backend handle must run the shutdown/exit handshake"
     );
     drop(dir);
+    Ok(())
 }

@@ -21,8 +21,8 @@ The legacy diagnostic script could hide failing legs or reset source, the pinned
 | Path | Note | Brief |
 |------|------|-------|
 | `scripts/remote-battery.sh` | NV-001 R1 exact file wall |  |
-| `scripts/tests/remote_battery_test.py` | NV-001 R2 exact file wall |  |
-| `gates.json` | NV-001 R3 and R7 exact file walls |  |
+| `scripts/tests/remote_battery_test.py` | NV-001 R2 exact file wall / NV-001 R8 exact file wall |  |
+| `gates.json` | NV-001 R3 and R7 exact file walls / NV-001 R8 exact file wall |  |
 | `crates/norn/src/resource/mod.rs` | NV-001 R4 exact file wall |  |
 | `crates/norn/src/resource/descriptor_governor.rs` | NV-001 R4 exact file wall |  |
 | `crates/norn/src/provider/openai_oauth/auth_root.rs` | NV-001 R4 exact file wall |  |
@@ -30,7 +30,19 @@ The legacy diagnostic script could hide failing legs or reset source, the pinned
 | `crates/norn/src/loop/runner/tests/d8_parent_prompt_hot_reload.rs` | NV-001 R5 timestamp fixture repair before edit |  |
 | `crates/norn/src/provider/openai_oauth/account_catalog_tests.rs` | NV-001 R6 account-catalog fault-phase fixture repair before edit |  |
 | `scripts/source-bound-leg.py` | NV-001 R7 exact file wall |  |
-| `scripts/tests/source_bound_leg_test.py` | NV-001 R7 exact file wall |  |
+| `scripts/tests/source_bound_leg_test.py` | NV-001 R7 exact file wall / NV-001 R8 exact file wall |  |
+| `crates/norn/src/test_prerequisite.rs` | NV-001 R8 exact file wall |  |
+| `crates/norn/tests/live_openai_smoke.rs` | NV-001 R8 exact file wall |  |
+| `scripts/live-openai-smoke.py` | NV-001 R8 exact file wall |  |
+| `scripts/tests/live_openai_smoke_test.py` | NV-001 R8 exact file wall |  |
+| `workflows/live-openai-smoke/workflow.awl` | NV-001 R8 exact file wall |  |
+| `workflows/live-openai-smoke/worker.awl` | NV-001 R8 exact file wall |  |
+| `workflows/live-openai-smoke/README.md` | NV-001 R8 exact file wall |  |
+| `crates/norn/Cargo.toml` | NV-001 R8 exact file wall |  |
+| `crates/norn/src/lib.rs` | NV-001 R8 exact file wall |  |
+| `crates/norn/src/provider/openai/provider.rs` | NV-001 R8 exact file wall |  |
+| `crates/norn/src/tools/lsp/workspace_backend/stub_tests.rs` | NV-001 R8 exact file wall |  |
+| `crates/norn/src/tools/search/tool.rs` | NV-001 R8 exact file wall |  |
 
 ## Constraints
 
@@ -40,3 +52,4 @@ The legacy diagnostic script could hide failing legs or reset source, the pinned
 - **V1** — The production same-mtime freshness finding remains separately tracked as NWP-00.5. The fixture correction does not repair it. Aion source binding and the exact-commit landing receipt remain open.
 - **V2** — NV-001 R7 guards every Norn leg before and after execution, with committed declaration and guard digests. This mitigates persistent dirty-source execution for Norn; it does not repair Aion X.1 globally or detect a change restored inside a leg. Landing review must compare the receipt declaration and guard digests with the exact commit and ensure no unreviewed writer shares the run tree.
 - **V3** — Git status is not byte identity: every source witness hashes raw tracked file bytes and symlink targets with the repository object format against HEAD tree object IDs, and verifies executable mode. Unsupported entry types and normalized bytes that differ from committed blobs refuse; no stat-cache or filter assumption silently permits a mismatch.
+- **V4** — The release battery measures deterministic/local prerequisites and compiles/lints the optional live-api-smoke target. Live network execution is a separately dispatched Aion lane with its own credential prerequisite and receipt; compile-only coverage is never described as live-provider proof. Missing local prerequisites are errors emitted through the Rust test harness, not passing tracing-only returns.
