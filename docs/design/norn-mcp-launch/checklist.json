@@ -1,0 +1,23 @@
+{
+  "cluster": "norn-mcp-launch",
+  "title": "MCP launch configuration checklist",
+  "sections": [
+    {
+      "name": "Runtime MCP launch",
+      "items": [
+        {
+          "id": "C1",
+          "text": "Strict typed runtime documents"
+        },
+        {
+          "id": "C2",
+          "text": "Shared interactive and driven startup"
+        },
+        {
+          "id": "C3",
+          "text": "Current user instructions and evidence"
+        }
+      ]
+    }
+  ]
+}

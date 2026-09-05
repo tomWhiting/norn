@@ -981,8 +981,8 @@ pub struct McpServerSettings {
     pub enabled: Option<bool>,
 
     /// Transport identifier (e.g. `"stdio"`, `"sse"`, `"http"`). The MCP
-    /// cluster owns the canonical list of values.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// cluster owns the canonical list of values. `type` is an input alias.
+    #[serde(default, alias = "type", skip_serializing_if = "Option::is_none")]
     pub transport: Option<String>,
 
     /// Subprocess executable path or name (used when

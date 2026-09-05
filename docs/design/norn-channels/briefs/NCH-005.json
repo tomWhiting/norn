@@ -1,10 +1,10 @@
 {
   "id": "NCH-005",
   "title": "R4b authoritative root channel assembly and initial activation",
-  "status": "source_written_venue_verification_pending",
+  "status": "ordinary_message_push_merged_at_911_measured;fresh_review_and_live_adapter_proof_pending",
   "base_commit": "cf6c44cad8a534910f614f703a36bbd26a4fdcbc",
-  "branch": "codex/nwp-03-channels-integration",
-  "worktree": "/private/tmp/norn-nwp-03-release",
+  "branch": "main",
+  "worktree": "/Users/tom/Developer/ablative/stack/norn",
   "design": "../design.json",
   "provenance": [
     {
@@ -88,7 +88,8 @@
       ],
       "stories": [
         "S4"
-      ]
+      ],
+      "status": "implemented_and_measured_at_911;fresh_review_pending"
     }
   ],
   "cluster": "norn-channels",
@@ -99,14 +100,28 @@
     "S4"
   ],
   "purpose": "Bind explicitly opted-in channel sources to the actual registered Norn root and publish their first runtime through the existing serialized MCP actor.",
-  "task": "Implement R4b within the exact file wall; preserve candidate16 model-selection assembly. Parent owns venue compilation, tests, review and commits.",
+  "task": "Current status, 5 September 2026 Melbourne: ordinary Channels message push is merged in main 911 and covered by its exact six-leg 205 receipt. The requirement walls below record that delivered unit; they are not a new implementation dispatch. Fresh Fable review remains pending. Live Cambium/Hammerbarn adapters, optional permission relay and a persistent daemon are not completed by these fixtures. Installed 450bb7a includes later uncommitted NMS-002 defaults with separate focused proof; NML-001 now owns complete MCP launch documents and has no inherited 911 verdict.",
   "depends_on": [
     "NCH-001",
     "NCH-002"
   ],
   "verification": [
-    "Source syntax and formatting checked with rustfmt on the exact wall, skip_children=true; git diff --check clean.",
-    "JSON rendered with design-system-v2/render-brief.py; cluster check-coverage.py passes (shared C4/S4 split is intentional).",
-    "No Cargo, compilation, remote work, commit or review invoked by this row owner. Parent must run the full built-root stdio scenario and other checks on venue205."
-  ]
+    "Exact main911 six-leg205 receipt is green: /private/tmp/nwp-03-proof/channels11-battery/receipt.json;14 leases bind to venue205.",
+    "Later installed NMS-002 working-tree defaults have separate native/focused proof: /private/tmp/nwp-03-proof/astra-defaults-install/installation.json. Neither these defaults nor NML-001 inherit the old receipt.",
+    "Ordinary Rust stdio/TUI fixture evidence is distinct from live Cambium/Hammerbarn acceptance, optional permission relay, persistent daemon, and pending fresh Fable review."
+  ],
+  "status_updated_melbourne": "2026-09-05T18:31:02.879257+10:00",
+  "delivery_status": {
+    "measured_commit": "911eddd07401032a8ce0883392aea7b38ee98fc2",
+    "receipt_sha256": "f5d86f7cb9d029417ca5ba48e9f1004c473acd18e9bc96ffe5e7697a18f8d3f4",
+    "proof": "/private/tmp/nwp-03-proof/channels11-battery/execution-result.json",
+    "scope": "Ordinary stdio channel message push and its existing host/fixture paths; exact six-leg205 battery green.",
+    "review": "Fresh Fable remains pending; no new pass or waiver.",
+    "not_covered": [
+      "Uncommitted NMS-002 defaults installed as450bb7a",
+      "New NML-001 --mcp-config implementation",
+      "Live Cambium/Hammerbarn adapter acceptance",
+      "Optional permission relay or persistent daemon"
+    ]
+  }
 }

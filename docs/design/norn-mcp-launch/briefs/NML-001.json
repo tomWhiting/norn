@@ -1,0 +1,154 @@
+{
+  "id": "NML-001",
+  "cluster": "norn-mcp-launch",
+  "title": "Inline and file MCP configuration for all launch modes",
+  "status": "implemented_local_checks_passed_awaiting_exact205_and_install",
+  "depends_on": [],
+  "checklist": [
+    "C1",
+    "C2",
+    "C3"
+  ],
+  "stories": [
+    "S1",
+    "S2",
+    "S3"
+  ],
+  "design": "../design.json",
+  "purpose": "Make runtime MCP launch configuration complete and consistent without a second client or session lifecycle.",
+  "task": "R1 parser owner; R2 integration owner; R3 documentation owner. No edits outside the named row wall; name amendments first. Parent owns compilation, exact205 verification, installation and final source reconciliation.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Parse named runtime MCP documents without side effects",
+      "spec": "WHEN --mcp-config JSON|PATH is repeated, THE SYSTEM SHALL parse strict mcpServers objects into existing McpServerSettings, accepting the standard type field as an alias for transport. It SHALL reject invalid JSON, unknown fields, duplicate JSON keys and server names, unsupported settings, and collisions with --extension before any MCP subprocess starts. Inline raw JSON SHALL be redacted in Debug and errors. Relative document paths and server commands resolve from the effective --working-dir. No settings file is written.",
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/cli/args.rs",
+          "crates/norn-cli/src/config/mod.rs",
+          "crates/norn/src/config/types.rs"
+        ],
+        "create": [
+          "crates/norn-cli/src/config/mcp_launch.rs",
+          "crates/norn-cli/src/config/mcp_launch_tests.rs"
+        ]
+      },
+      "acceptance": [
+        "Document root is exactly {mcpServers:{name:definition}}; empty maps are allowed, but wrong/unknown shape is refused.",
+        "Repeated documents may contain disjoint names. Duplicate names in a document, across documents, and with URI extensions are refused; no silent last-write wins. Duplicate nested object keys are refused as well.",
+        "Command,args,env,url,headers,enabled and existing limits remain typed by McpServerSettings and existing validate_settings; type/transport double declarations are refused.",
+        "No shell interpretation of arguments, no secret values in parse errors or CLI Debug, no persistent writes, no arbitrary new limits."
+      ],
+      "checklist": [
+        "C1"
+      ],
+      "stories": [
+        "S1"
+      ]
+    },
+    {
+      "id": "R2",
+      "title": "One launch configuration for interactive, print and driven RPC",
+      "spec": "WHEN a launch resolves MCP sources, THE SYSTEM SHALL combine documents and existing named URI extensions in the CLI overlay, above existing disk layers, before channel-source resolution. It SHALL use the same resolved map for MCP control state and runtime startup, including CLI list/inspect and refresh. Driven mode remains one run: flags configure startup; no new run/execute parameters, dynamic RPC endpoints, daemon or permission relay.",
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/runtime/resolve.rs",
+          "crates/norn-cli/src/commands/mcp_config.rs",
+          "crates/norn-cli/Cargo.toml",
+          "crates/norn-cli/src/tui/driver.rs"
+        ],
+        "create": [
+          "crates/norn-cli/tests/mcp_launch.rs",
+          "crates/norn-cli/tests/support/mcp_launch_fixture.rs"
+        ]
+      },
+      "acceptance": [
+        "Real norn process with inline JSON launches a Rust stdio fixture with exact args/env and exposes its tool to a local model stub.",
+        "Same configuration plus --protocol jsonrpc completes initialize/run/execute and emits source-attributed channel input during the active run, with clean JSON-RPC stdout.",
+        "An actual interactive launch resolves the same map (PTY smoke or public shared CLI assembly), including named wake policy.",
+        "Bad configuration in driven mode returns an id-matched run/execute error and does not start a sentinel MCP server; normal startup exits2.",
+        "CLI overlay wins over conflicting saved definition, can disable it, is preserved across reload, and leaves configuration files unchanged."
+      ],
+      "checklist": [
+        "C2"
+      ],
+      "stories": [
+        "S2"
+      ]
+    },
+    {
+      "id": "R3",
+      "title": "Keep operating instructions and programme status current",
+      "spec": "Before implementation begins, document current installed defaults and ordinary Channels scope, distinguishing proven fixtures from live Cambium work. Document launch syntax, configuration precedence, collision/error rules and one-shot driven semantics. Keep old proof historical; do not imply the new source has the old commit battery or Fable pass.",
+      "files": {
+        "modify": [
+          "docs/release-notes/UNRELEASED.md",
+          "docs/design/norn-cli/DRIVEN-PROTOCOL.md",
+          "docs/design/norn-channels/briefs/NCH-001.json",
+          "docs/design/norn-channels/briefs/NCH-001.md",
+          "docs/design/norn-channels/briefs/NCH-002.json",
+          "docs/design/norn-channels/briefs/NCH-002.md",
+          "docs/design/norn-channels/briefs/NCH-003.json",
+          "docs/design/norn-channels/briefs/NCH-003.md",
+          "docs/design/norn-channels/briefs/NCH-004.json",
+          "docs/design/norn-channels/briefs/NCH-004.md",
+          "docs/design/norn-channels/briefs/NCH-005.json",
+          "docs/design/norn-channels/briefs/NCH-005.md"
+        ],
+        "create": [
+          "docs/MCP-LAUNCH.md"
+        ]
+      },
+      "acceptance": [
+        "Guide distinguishes existing Channels message push, unsupported permission relay, and unverified live Cambium bridge.",
+        "Programme index records current installed 450bb7 working-tree defaults and the new work item; all existing IDs remain stable.",
+        "Examples support executable,args,env and HTTP headers with explicit chosen channel limits; no invented operational quotas.",
+        "Documentation, strict fmt/Clippy, focused real-process tests, exact candidate battery and review evidence are reported separately."
+      ],
+      "checklist": [
+        "C3"
+      ],
+      "stories": [
+        "S3"
+      ]
+    }
+  ],
+  "boundaries": [
+    "No new MCP client, permission relay, persistent daemon, RPC mutation method or public installer.",
+    "Preserve inherited NMS-002 defaults and main user-local files.",
+    "No new lint suppressions, ignored tests, library unwrap/expect, or swallowed errors.",
+    "Source review and exact205 battery are separate from local diagnostic passes."
+  ],
+  "verification": [
+    "cargo fmt --all -- --check",
+    "cargo clippy --workspace --all-targets --features norn/live-api-smoke -- -D warnings",
+    "Focused parser and real CLI/stdio/driven fixtures",
+    "Design rendering/coverage and scoped AST policy",
+    "Exact-commit205 battery; Fable review recorded with its actual model and result"
+  ],
+  "wall_amendments": [
+    {
+      "row": "R2",
+      "date": "5 September 2026, Melbourne",
+      "reason": "Name Cargo.toml before adding harness=false registration for the real Rust MCP fixture/test executable. A custom harness prevents Rust test-banner text contaminating MCP stdio; no dependency changes."
+    },
+    {
+      "row": "R2",
+      "date": "5 September 2026, Melbourne",
+      "reason": "Read-only integration review found the TUI startup boundary discarded BuildError argument/auth classifications. Name tui/driver.rs before preserving that existing typed exit mapping; invalid MCP documents must exit2 in every launch mode."
+    }
+  ],
+  "local_verification": {
+    "parser_cases": 12,
+    "real_process_cases": 6,
+    "strict_clippy": "workspace all targets with live-api-smoke feature, -D warnings",
+    "formatting": "cargo fmt --all -- --check",
+    "source_review": "independent read-only integration review; no remaining must-fix finding",
+    "source_policy": "19 changed/new Rust files; no new bypasses; maximum433 production LOC",
+    "evidence_directory": "/private/tmp/nwp-04-proof",
+    "limitations": [
+      "Local checks are not an exact-commit205 receipt.",
+      "No fresh Fable or live provider inference result is claimed."
+    ]
+  }
+}

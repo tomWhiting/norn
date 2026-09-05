@@ -13,6 +13,8 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+use crate::config::McpConfigArg;
+
 use super::mcp_args::McpCmd;
 use super::session_args::SessionCmd;
 
@@ -104,6 +106,10 @@ pub struct Cli {
     /// Connect MCP extension by URI, repeatable.
     #[arg(short = 'e', long = "extension", value_name = "URI")]
     pub extension: Vec<String>,
+
+    /// MCP launch document: inline JSON object or file path, repeatable.
+    #[arg(long = "mcp-config", value_name = "JSON|PATH")]
+    pub mcp_config: Vec<McpConfigArg>,
 
     /// Explicit external-channel admission for this running session.
     #[command(flatten)]

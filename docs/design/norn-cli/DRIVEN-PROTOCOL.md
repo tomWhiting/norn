@@ -99,6 +99,24 @@ Guarantees on the acceptance boundary:
 - If the peer closes stdin before sending `run/execute`, the process exits
   0 with nothing to do.
 
+## MCP configuration at process launch
+
+5 September 2026, Melbourne time. Ordinary stdio Channels push is already implemented for an active driven run. The repeatable `--mcp-config JSON|PATH` flag is available in this source under NML-001. It is absent from historical binary `450bb7a`, installed at 18:09 Melbourne; the final candidate receipt and installation identity are recorded in external programme evidence.
+
+The launch form is:
+
+```sh
+norn --protocol jsonrpc --mcp-config ./mcp-servers.json
+```
+
+The document root is `{ "mcpServers": { "server-name": { ...definition } } }`. It uses existing typed MCP settings, including command, args, env, URL and headers; `type` is an alias for `transport`. Relative document and server-command paths use the effective `--working-dir`. Repeated documents must have disjoint names. Their complete named entries replace saved definitions through the CLI overlay, persist in runtime control state across reload, and do not write configuration files. Duplicate JSON keys/names, collisions with `--extension`, invalid settings and unknown fields are refused before an MCP subprocess starts.
+
+MCP definitions remain launch configuration: `run/execute` still accepts its existing prompt/input parameters, and `initialize` keeps advertising `norn-driven/1` with a `one_shot` lifecycle. No dynamic MCP configuration method or second run is added. Source selection and positive retained limits are still explicit `--channel` launch flags; driven policy is `wake` during the active run only. Neither channel messages nor header metadata grant tool approval or permission-relay authority.
+
+For an accepted `run/execute`, an MCP document-resolution failure follows the existing id-matched error boundary before any MCP server starts. Malformed command-line syntax can still fail before the RPC loop is entered. Raw inline documents and credential values must not be emitted in errors or Debug output, and stdout remains JSON-RPC frames only. The native process fixtures pass for relative JSON/executable startup, active channel delivery, one-shot exit and id-matched invalid-document refusal. Parser, reload, print/TUI refusal and strict formatting/Clippy diagnostics also passed under [NML-001](../norn-mcp-launch/briefs/NML-001.md). These local fixtures are separate from the exact candidate battery, source review, final installation and any live provider or live Cambium acceptance.
+
+See [MCP launch configuration and Channels](../../MCP-LAUNCH.md) for executable/args/env/header examples and the interactive/print/driven policy matrix. This startup addition provides no idle-before-run or post-run listener, persistent daemon, optional permission relay or live Cambium certification.
+
 ## Event notifications
 
 Every `AgentEvent` the run emits is streamed live as a JSON-RPC

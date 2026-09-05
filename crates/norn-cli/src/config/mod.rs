@@ -4,6 +4,7 @@
 pub mod assembly;
 pub mod event_schemas;
 pub mod extensions;
+pub mod mcp_launch;
 pub mod model_aliases;
 pub mod overrides;
 pub mod paths;
@@ -17,6 +18,7 @@ pub use assembly::{
 };
 pub use event_schemas::{merge_event_schemas, parse_inline_or_file};
 pub use extensions::{collect_extension_servers, collect_extension_uris};
+pub use mcp_launch::{McpConfigArg, collect_mcp_launch_servers};
 pub use model_aliases::{ResolvedModelSelection, resolve_model_alias, resolve_model_selection};
 pub use overrides::{
     AppliedOverrides, DEFAULT_INDEX_LOCK_DEADLINE_MS, apply_cli_profile_overrides,

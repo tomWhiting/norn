@@ -1,10 +1,10 @@
 {
   "id": "NCH-001",
   "title": "Channels receiver, typed admission and running-session rollout",
-  "status": "R1-R3_verified_R4a_source_written_venue_verification_pending",
+  "status": "ordinary_message_push_merged_at_911_measured;fresh_review_and_live_adapter_proof_pending",
   "base_commit": "cf6c44cad8a534910f614f703a36bbd26a4fdcbc",
-  "branch": "codex/nwp-03-channels-integration",
-  "worktree": "/private/tmp/norn-nwp-03-release",
+  "branch": "main",
+  "worktree": "/Users/tom/Developer/ablative/stack/norn",
   "design": "../design.json",
   "requirements": [
     {
@@ -13,7 +13,7 @@
         "NWP-03.1"
       ],
       "title": "Public channel wire, startup ordering and trusted framing",
-      "status": "source_written_venue_verification_pending",
+      "status": "implemented_and_measured_at_911;fresh_review_pending",
       "spec": "WHEN an explicitly enabled stdio MCP server declares capabilities.experimental[claude/channel] as an empty object, Norn SHALL retain that declaration and optional initialize instructions, accept notifications/claude/channel with string content and optional string-only metadata, and preserve a notification sent immediately after initialization. The listener SHALL exist before the transport reader starts. Before negotiation succeeds, received channel messages SHALL remain staged and bounded. Model-facing source attribution SHALL come from the configured server name, while all server metadata and instructions SHALL remain untrusted context. Permission relay SHALL NOT be enabled by this capability.",
       "files": {
         "modify": [
@@ -59,7 +59,7 @@
         "NWP-03.3"
       ],
       "title": "Explicit, bounded admission with one recipient and source generations",
-      "status": "source_written_venue_verification_pending",
+      "status": "implemented_and_measured_at_911;fresh_review_pending",
       "spec": "The host SHALL create one recipient-scoped inbox with explicit positive retained-count and retained-byte budgets and explicit source policies Hold, NextTurn or Wake. The synchronous MCP reader SHALL attempt admission without awaiting inbox capacity. All staged, held, queued and claimed-but-unconsumed messages SHALL count against the same budgets until explicitly consumed or denied. A full inbox SHALL report a typed refusal and remain observable while outstanding RPC responses continue. Connecting a replacement SHALL NOT retire the current source until the host activates the new connection. Retirement SHALL fence subsequent emissions from the old connection. Already admitted messages SHALL retain their original source generation. Cancellation of delivery SHALL leave its message retained. No implicit durable admission or upstream acknowledgement SHALL be claimed.",
       "files": {
         "create": [
@@ -104,7 +104,7 @@
         "NWP-03.4"
       ],
       "title": "Rust stdio interoperability fixture",
-      "status": "source_written_venue_verification_pending",
+      "status": "implemented_and_measured_at_911;fresh_review_pending",
       "spec": "A Rust fixture SHALL speak the public MCP initialize/initialized/channel/tools contract over actual subprocess stdio. The integration test SHALL spawn its own compiled test executable in an explicit fixture mode, without a JavaScript runtime, shell protocol implementation or runtime compilation. It SHALL synchronize through protocol messages, not filesystem polling. Test-only deadlines SHALL diagnose a hung test, not become product limits. The test target SHALL set harness=false because libtest writes a non-JSON preamble before test entry; its explicit main dispatches fixture mode before writing stdout and otherwise runs every named case with nonzero failure propagation.",
       "files": {
         "create": [
@@ -142,7 +142,7 @@
         "NWP-03.3"
       ],
       "title": "Running-session owned delivery with exact persistence and push readiness",
-      "status": "source_written_venue_verification_pending",
+      "status": "implemented_and_measured_at_911;fresh_review_pending",
       "spec": "WHEN the existing running LoopContext has its authoritative agent UUID, the owner SHALL install one explicitly bounded MCP channel inbox and receive its host handle. Setup SHALL admit eligible Wake and NextTurn messages as host-framed external UserMessage events without invoking local slash-command or permission-response parsing. Busy and linger boundaries SHALL claim Wake messages only, after every running tool has a result. One prepared event with stable namespaced identity, timestamp and parent SHALL remain attached to its retained delivery claim through append failure; consumption SHALL follow exact idempotent persistence synchronously before cancellation-capable hooks. Charge SHALL remain until consumption. Idle readiness SHALL be push-driven and cancellation-safe. Source messages SHALL not alter model, output schema, recipient or approval authority. This row SHALL NOT connect CLI servers or claim a complete Channels launch feature; runtime publication and operator wiring remain following rows. After the persisted append and consumption, the loop SHALL emit a distinct typed McpChannel delivery observation through the existing bounded AgentEvent broadcast before hooks. It SHALL carry host source/generation/recipient/sequence, raw external text and the exact persisted event ID. No synthetic operator prompt, forged inter-agent lifecycle or second queue SHALL be added.",
       "acceptance": [
         "Installed inbox recipient matches the actual LoopContext.agent_id; absent identity and duplicate install fail by name, and later mismatched identity cannot deliver.",
@@ -195,7 +195,7 @@
         "NWP-03.4"
       ],
       "title": "CLI, driven mode and existing TUI controls",
-      "status": "outline_requires_wall_refresh",
+      "status": "partly_delivered_by_NCH003_NCH004;broader_inbox_controls_open",
       "spec": "OUTLINE ONLY; NOT AN EXECUTABLE FILE WALL. Expose source opt-in, effective policy, retained limits, refusals and inbox release/deny through existing host surfaces, without waiting for the new workspace. Add a push select arm for idle channel readiness; do not piggyback on the TUI render timer. Driven output contracts stay bound to the active request and ordinary channel messages do not approve tools. Candidate anchors: crates/norn/src/config/types.rs, crates/norn/src/config/validate.rs, crates/norn/src/config/mcp.rs, crates/norn-cli/src/cli/mcp_args.rs, crates/norn-cli/src/runtime/mcp.rs, crates/norn-cli/src/runtime/from_cli.rs, crates/norn-cli/src/print/driven.rs, crates/norn-cli/src/print/jsonrpc/run.rs, crates/norn-cli/src/print/jsonrpc/frames.rs, crates/norn-tui/src/app/event_loop.rs, crates/norn-tui/src/app/turn/run.rs, crates/norn-tui/src/app/mcp_slash.rs.",
       "candidate_paths": [
         "crates/norn/src/config/types.rs",
@@ -230,7 +230,7 @@
         "NWP-03.4"
       ],
       "title": "Cambium and Hammerbarn verification and release evidence",
-      "status": "outline_separate_repository_wall",
+      "status": "live_adapter_acceptance_unverified;separate_repository_wall",
       "spec": "OUTLINE ONLY; NOT AN EXECUTABLE FILE WALL. Verify ordinary push and tool replies from the existing Cambium and Hammerbarn MCP adapters. Correct Cambium urgent metadata to a string in a separate brief/repository wall rather than relaxing the public schema silently. Record adapter revisions, fixture source identity and real-session proof. Do not equate a transport write with application processing or advertise exactly-once effects. Candidate anchors: /Users/tom/Developer/ablative/apps/cambium/surface/mcp/src/notifications.ts, /Users/tom/Developer/ablative/apps/cambium/surface/mcp/tests/tools-and-keys.test.ts, /Users/tom/Developer/games/hammerbarn-40k/tests/mcp/bridge.test.ts.",
       "candidate_paths": [
         "/Users/tom/Developer/ablative/apps/cambium/surface/mcp/src/notifications.ts",
@@ -257,7 +257,9 @@
     "No numeric product default or artificial queue limit chosen by an implementer."
   ],
   "verification": [
-    "Parent centralizes all Rust builds and required 205 venue verification; source-bound exact-commit battery and Fable rereview remain separate landing requirements."
+    "Exact main911 six-leg205 receipt is green: /private/tmp/nwp-03-proof/channels11-battery/receipt.json;14 leases bind to venue205.",
+    "Later installed NMS-002 working-tree defaults have separate native/focused proof: /private/tmp/nwp-03-proof/astra-defaults-install/installation.json. Neither these defaults nor NML-001 inherit the old receipt.",
+    "Ordinary Rust stdio/TUI fixture evidence is distinct from live Cambium/Hammerbarn acceptance, optional permission relay, persistent daemon, and pending fresh Fable review."
   ],
   "cluster": "norn-channels",
   "depends_on": [],
@@ -278,6 +280,20 @@
     "S6"
   ],
   "purpose": "Implement the public Claude Code Channels receiver contract in Rust and retain the full owner-requested running-session rollout. Provenance: ../design.json and owner conversation of 5 September 2026, Melbourne time. Branch codex/nwp-03-channels at base cf6c44cad8a534910f614f703a36bbd26a4fdcbc.",
-  "task": "R1-R3 receiver source has coordinator-reported venue proof. Implement R4a owned delivery in its newly registered exact wall. Runtime source publication, CLI/TUI connection and controls remain following work with separate executable walls; receiver and delivery plumbing alone do not constitute the complete requested feature. No landing is implied.",
-  "status_detail": "R1-R3 receiver passed coordinator-reported 205 checks. R4a source and regressions are written, frozen for venue compilation. Runtime startup, CLI controls and TUI wake are recorded in the parallel NCH-002 through NCH-005 briefs."
+  "task": "Current status, 5 September 2026 Melbourne: ordinary Channels message push is merged in main 911 and covered by its exact six-leg 205 receipt. The requirement walls below record that delivered unit; they are not a new implementation dispatch. Fresh Fable review remains pending. Live Cambium/Hammerbarn adapters, optional permission relay and a persistent daemon are not completed by these fixtures. Installed 450bb7a includes later uncommitted NMS-002 defaults with separate focused proof; NML-001 now owns complete MCP launch documents and has no inherited 911 verdict. R5 is partly delivered by NCH-003/NCH-004, with broader held-inbox controls still open; R6 live-adapter acceptance remains unverified.",
+  "status_detail": "R1-R3 receiver passed coordinator-reported 205 checks. R4a source and regressions are written, frozen for venue compilation. Runtime startup, CLI controls and TUI wake are recorded in the parallel NCH-002 through NCH-005 briefs.",
+  "status_updated_melbourne": "2026-09-05T18:31:02.879257+10:00",
+  "delivery_status": {
+    "measured_commit": "911eddd07401032a8ce0883392aea7b38ee98fc2",
+    "receipt_sha256": "f5d86f7cb9d029417ca5ba48e9f1004c473acd18e9bc96ffe5e7697a18f8d3f4",
+    "proof": "/private/tmp/nwp-03-proof/channels11-battery/execution-result.json",
+    "scope": "Ordinary stdio channel message push and its existing host/fixture paths; exact six-leg205 battery green.",
+    "review": "Fresh Fable remains pending; no new pass or waiver.",
+    "not_covered": [
+      "Uncommitted NMS-002 defaults installed as450bb7a",
+      "New NML-001 --mcp-config implementation",
+      "Live Cambium/Hammerbarn adapter acceptance",
+      "Optional permission relay or persistent daemon"
+    ]
+  }
 }

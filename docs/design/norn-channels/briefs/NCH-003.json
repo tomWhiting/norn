@@ -2,12 +2,12 @@
   "id": "NCH-003",
   "title": "Explicit CLI channel policy and registered-root startup",
   "cluster": "norn-channels",
-  "status": "exact_wall_registered",
+  "status": "ordinary_message_push_merged_at_911_measured;fresh_review_and_live_adapter_proof_pending",
   "date": "2026-09-05",
   "timezone": "Australia/Melbourne",
   "base_commit": "cf6c44cad8a534910f614f703a36bbd26a4fdcbc",
-  "branch": "codex/nwp-03-channels-integration",
-  "worktree": "/private/tmp/norn-nwp-03-release",
+  "branch": "main",
+  "worktree": "/Users/tom/Developer/ablative/stack/norn",
   "design": "../design.json",
   "depends_on": [
     "NCH-001"
@@ -50,7 +50,8 @@
       ],
       "stories": [
         "S5"
-      ]
+      ],
+      "status": "implemented_and_measured_at_911;fresh_review_pending"
     },
     {
       "id": "R2",
@@ -83,7 +84,8 @@
       ],
       "stories": [
         "S5"
-      ]
+      ],
+      "status": "implemented_and_measured_at_911;fresh_review_pending"
     },
     {
       "id": "R3",
@@ -108,7 +110,8 @@
       ],
       "stories": [
         "S5"
-      ]
+      ],
+      "status": "implemented_and_measured_at_911;fresh_review_pending"
     },
     {
       "id": "R4",
@@ -142,7 +145,8 @@
       ],
       "stories": [
         "S5"
-      ]
+      ],
+      "status": "implemented_and_measured_at_911;fresh_review_pending"
     }
   ],
   "boundaries": [
@@ -151,7 +155,9 @@
     "No Cargo, commits, venue jobs, production quota defaults, implicit channel opt-in or child inbox propagation."
   ],
   "verification": [
-    "Direct formatting and documentation coverage locally; parent centralizes Rust tests, strict Clippy, Fable review and exact-commit venue battery."
+    "Exact main911 six-leg205 receipt is green: /private/tmp/nwp-03-proof/channels11-battery/receipt.json;14 leases bind to venue205.",
+    "Later installed NMS-002 working-tree defaults have separate native/focused proof: /private/tmp/nwp-03-proof/astra-defaults-install/installation.json. Neither these defaults nor NML-001 inherit the old receipt.",
+    "Ordinary Rust stdio/TUI fixture evidence is distinct from live Cambium/Hammerbarn acceptance, optional permission relay, persistent daemon, and pending fresh Fable review."
   ],
   "documentation_files": {
     "create": [
@@ -163,7 +169,7 @@
       "docs/design/norn-channels/DESIGN.md"
     ]
   },
-  "task": "Implement the explicit CLI configuration and startup rows only. The separate runtime owner supplies registered-root inbox assembly and initial candidate publication; the TUI owner supplies idle wake consumption. C5/S5 are intentionally shared with the NCH-001 rollout outline.",
+  "task": "Current status, 5 September 2026 Melbourne: ordinary Channels message push is merged in main 911 and covered by its exact six-leg 205 receipt. The requirement walls below record that delivered unit; they are not a new implementation dispatch. Fresh Fable review remains pending. Live Cambium/Hammerbarn adapters, optional permission relay and a persistent daemon are not completed by these fixtures. Installed 450bb7a includes later uncommitted NMS-002 defaults with separate focused proof; NML-001 now owns complete MCP launch documents and has no inherited 911 verdict.",
   "wall_amendments": [
     {
       "row": "R3",
@@ -211,5 +217,19 @@
         "Wake"
       ]
     }
-  ]
+  ],
+  "status_updated_melbourne": "2026-09-05T18:31:02.879257+10:00",
+  "delivery_status": {
+    "measured_commit": "911eddd07401032a8ce0883392aea7b38ee98fc2",
+    "receipt_sha256": "f5d86f7cb9d029417ca5ba48e9f1004c473acd18e9bc96ffe5e7697a18f8d3f4",
+    "proof": "/private/tmp/nwp-03-proof/channels11-battery/execution-result.json",
+    "scope": "Ordinary stdio channel message push and its existing host/fixture paths; exact six-leg205 battery green.",
+    "review": "Fresh Fable remains pending; no new pass or waiver.",
+    "not_covered": [
+      "Uncommitted NMS-002 defaults installed as450bb7a",
+      "New NML-001 --mcp-config implementation",
+      "Live Cambium/Hammerbarn adapter acceptance",
+      "Optional permission relay or persistent daemon"
+    ]
+  }
 }

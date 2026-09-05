@@ -2,12 +2,12 @@
   "id": "NCH-004",
   "title": "Push-driven channel wake in the existing terminal session",
   "cluster": "norn-channels",
-  "status": "exact_wall_registered",
+  "status": "ordinary_message_push_merged_at_911_measured;fresh_review_and_live_adapter_proof_pending",
   "date": "2026-09-05",
   "timezone": "Australia/Melbourne",
   "base_commit": "cf6c44cad8a534910f614f703a36bbd26a4fdcbc",
-  "branch": "codex/nwp-03-channels-integration",
-  "worktree": "/private/tmp/norn-nwp-03-release",
+  "branch": "main",
+  "worktree": "/Users/tom/Developer/ablative/stack/norn",
   "design": "../design.json",
   "depends_on": [
     "NCH-001"
@@ -21,7 +21,7 @@
     "S5"
   ],
   "purpose": "Implement the existing TUI consumer of the single channel session owner described in NCH-001 R4a and norn-channels/design.json. The user prioritized a real idle wake into the current interactive Norn session before workspace redesign. This brief owns only the terminal consumer and its public-path regression evidence; root construction, CLI flags, live MCP activation and durable delivery are separate coordinated walls.",
-  "task": "Wire one push-driven idle wake arm and run the established external-message turn lifecycle. Keep channel content as typed persisted external input, preserve the draft composer and root cancellation semantics, and test the real run_app path through a Rust stdio source and pseudo-terminal. Parent owns all Rust builds, venue checks, review and landing.",
+  "task": "Current status, 5 September 2026 Melbourne: ordinary Channels message push is merged in main 911 and covered by its exact six-leg 205 receipt. The requirement walls below record that delivered unit; they are not a new implementation dispatch. Fresh Fable review remains pending. Live Cambium/Hammerbarn adapters, optional permission relay and a persistent daemon are not completed by these fixtures. Installed 450bb7a includes later uncommitted NMS-002 defaults with separate focused proof; NML-001 now owns complete MCP launch documents and has no inherited 911 verdict.",
   "grounding": [
     {
       "path": "crates/norn-tui/src/app/event_loop.rs",
@@ -61,7 +61,7 @@
         "NWP-03.4"
       ],
       "title": "Idle wake without polling or operator-prompt conversion",
-      "status": "exact_wall_registered",
+      "status": "implemented_and_measured_at_911;fresh_review_pending",
       "spec": "WHEN the installed session owner reports published Wake input while the TUI is idle, the terminal event loop SHALL wake through a dedicated push future and start the ordinary external-message turn path without creating or slash-parsing a user prompt. The session owner SHALL perform framed persistence and retained quota release. Hold and NextTurn input alone SHALL NOT wake this idle path. The existing turn-local cancellation, rendering, follow-up prompts and pending child results SHALL remain available. A closed or failed wake owner SHALL return a named typed TUI error rather than spinning or silently falling back. WHEN a channel-triggered turn is interrupted, fails, or stops before completion, the TUI SHALL pause automatic channel wake, preserve retained input and display the reason. The next ordinary operator turn SHALL rearm automatic channel wake; an operator follow-up submitted during that channel turn also rearms it. This state SHALL belong to the TUI event loop and SHALL NOT create a retry timer or drop the inbox.",
       "files": {
         "modify": [
@@ -100,7 +100,7 @@
         "NWP-03.4"
       ],
       "title": "Real terminal session and Rust MCP push regression",
-      "status": "exact_wall_registered",
+      "status": "implemented_and_measured_at_911;fresh_review_pending",
       "spec": "A protocol-clean Rust custom test harness SHALL launch itself as both a stdio MCP fixture and a real run_app process in a pseudo-terminal. Test synchronization SHALL use protocol messages and an owned loopback connection, never filesystem or render-timer polling. The fixture SHALL prove a push arriving after the interactive UI is idle causes a provider call and exact persisted channel event. Test deadlines are hang diagnostics only.",
       "files": {
         "modify": [
@@ -139,7 +139,9 @@
     "These scenarios do not stand in for full Cambium/Hammerbarn adapter proof, independent review or a venue exact-commit battery."
   ],
   "verification": [
-    "Rustfmt and source review locally only. Parent serializes Rust tests and strict Clippy on 205."
+    "Exact main911 six-leg205 receipt is green: /private/tmp/nwp-03-proof/channels11-battery/receipt.json;14 leases bind to venue205.",
+    "Later installed NMS-002 working-tree defaults have separate native/focused proof: /private/tmp/nwp-03-proof/astra-defaults-install/installation.json. Neither these defaults nor NML-001 inherit the old receipt.",
+    "Ordinary Rust stdio/TUI fixture evidence is distinct from live Cambium/Hammerbarn acceptance, optional permission relay, persistent daemon, and pending fresh Fable review."
   ],
   "documentation_files": {
     "create": [
@@ -149,6 +151,20 @@
     "coordinated_by_other_owner": [
       "docs/design/norn-channels/design.json",
       "docs/design/norn-channels/DESIGN.md"
+    ]
+  },
+  "status_updated_melbourne": "2026-09-05T18:31:02.879257+10:00",
+  "delivery_status": {
+    "measured_commit": "911eddd07401032a8ce0883392aea7b38ee98fc2",
+    "receipt_sha256": "f5d86f7cb9d029417ca5ba48e9f1004c473acd18e9bc96ffe5e7697a18f8d3f4",
+    "proof": "/private/tmp/nwp-03-proof/channels11-battery/execution-result.json",
+    "scope": "Ordinary stdio channel message push and its existing host/fixture paths; exact six-leg205 battery green.",
+    "review": "Fresh Fable remains pending; no new pass or waiver.",
+    "not_covered": [
+      "Uncommitted NMS-002 defaults installed as450bb7a",
+      "New NML-001 --mcp-config implementation",
+      "Live Cambium/Hammerbarn adapter acceptance",
+      "Optional permission relay or persistent daemon"
     ]
   }
 }

@@ -9,7 +9,7 @@ use norn::config::{
 };
 
 use crate::cli::{BuildError, Cli, ExitCode, McpPersistenceScope};
-use crate::config::{apply_working_dir, collect_extension_servers};
+use crate::config::{apply_working_dir, collect_mcp_launch_servers};
 
 pub(super) enum ConfigCommand {
     List,
@@ -104,7 +104,7 @@ fn execute_resolved_command(
     command: ConfigCommand,
 ) -> Result<(), BuildError> {
     let overrides = McpRuntimeOverrides {
-        cli: collect_extension_servers(&cli.extension)?,
+        cli: collect_mcp_launch_servers(&cli.mcp_config, &cli.extension)?,
         session: BTreeMap::new(),
     };
     let resolved = norn::config::load_resolved_settings(cwd, &overrides).map_err(config_error)?;
@@ -185,7 +185,11 @@ fn revoke(
 }
 
 fn load_state(cli: &Cli, cwd: &std::path::Path) -> Result<McpConfigState, BuildError> {
-    McpConfigState::load(cwd, collect_extension_servers(&cli.extension)?).map_err(config_error)
+    McpConfigState::load(
+        cwd,
+        collect_mcp_launch_servers(&cli.mcp_config, &cli.extension)?,
+    )
+    .map_err(config_error)
 }
 
 fn persist(

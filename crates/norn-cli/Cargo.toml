@@ -53,3 +53,7 @@ tempfile = { workspace = true }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "mcp_launch"
+harness = false

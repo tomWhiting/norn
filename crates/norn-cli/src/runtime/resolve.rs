@@ -22,7 +22,7 @@ use crate::cli::{BuildError, Cli, ProviderKind};
 use crate::config::{
     AppliedOverrides, CliProfileSource, ConfigOverrides, ProviderConfigOverrides,
     apply_cli_profile_overrides, apply_settings_reasoning_to_profile, apply_working_dir,
-    collect_extension_servers, overlay_cli_provider_overrides, overlay_provider_profile_overrides,
+    collect_mcp_launch_servers, overlay_cli_provider_overrides, overlay_provider_profile_overrides,
     provider_overrides_from_settings, resolve_index_lock_deadline, resolve_model_selection,
     resolve_profile_with_origin, resolve_provider_auth, resolve_provider_selection,
 };
@@ -104,7 +104,7 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
 
     let cwd = std::env::current_dir()?;
     let mcp_overrides = McpRuntimeOverrides {
-        cli: collect_extension_servers(&cli.extension)?,
+        cli: collect_mcp_launch_servers(&cli.mcp_config, &cli.extension)?,
         session: std::collections::BTreeMap::new(),
     };
     let mcp_state = McpConfigState::load(&cwd, mcp_overrides.cli.clone())

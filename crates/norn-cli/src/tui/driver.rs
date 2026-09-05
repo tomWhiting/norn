@@ -19,7 +19,7 @@ use norn_tui::input::history::{InputHistory, default_history_path};
 use norn_tui::render::fixed_panel::StatusBar;
 use norn_tui::terminal::caps::TerminalCaps;
 
-use crate::cli::{Cli, ExitCode, Mode, Protocol};
+use crate::cli::{BuildError, Cli, ExitCode, Mode, Protocol};
 use crate::print::build_provider;
 use crate::runtime::{
     builder_from_cli, cli_coordination_envelope, initialize_cli_channels, prepare_cli_mcp,
@@ -64,7 +64,8 @@ async fn run_async(cli: &Cli) -> ExitCode {
         Ok(code) => code,
         Err(err) => {
             eprintln!("norn: TUI error: {err}");
-            ExitCode::AgentError
+            err.downcast_ref::<BuildError>()
+                .map_or(ExitCode::AgentError, BuildError::exit_code)
         }
     }
 }

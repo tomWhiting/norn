@@ -1,0 +1,27 @@
+{
+  "cluster": "norn-mcp-launch",
+  "title": "MCP launch stories",
+  "personas": [
+    {
+      "name": "Operator or workflow author",
+      "stories": [
+        {
+          "id": "S1",
+          "title": "Supply runtime server definitions",
+          "text": "As an operator, I can provide named MCP servers inline without writing configuration files."
+        },
+        {
+          "id": "S2",
+          "title": "Launch through either interface",
+          "text": "As a workflow author, I can launch driven Norn with the same MCP documents as interactive Norn."
+        },
+        {
+          "id": "S3",
+          "title": "Know what is ready",
+          "text": "As an operator, I can distinguish installed capabilities, verification evidence and remaining work."
+        }
+      ],
+      "role": "operator"
+    }
+  ]
+}
