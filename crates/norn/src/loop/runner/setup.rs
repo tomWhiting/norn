@@ -20,6 +20,7 @@ use crate::r#loop::helpers::{
 use crate::r#loop::inbound::{ChannelMessage, InboundChannel};
 use crate::r#loop::iteration::IterationMonitorState;
 use crate::r#loop::loop_context::DEFAULT_PROMPT_COMMAND_TIMEOUT;
+use crate::r#loop::mcp_channel_delivery::flush_mcp_channel_messages;
 use crate::r#loop::schema::{build_schema_tool, check_reserved_envelope_keys};
 use crate::provider::request::ToolDefinition;
 use crate::provider::turn::ProviderTurnContext;
@@ -293,6 +294,10 @@ impl<'a> StepMachine<'a> {
                 event_tx,
             )
             .await?,
+        );
+
+        injected_event_ids.extend(
+            flush_mcp_channel_messages(store, &mut messages, loop_context, false, event_tx).await?,
         );
 
         let prompt_event_id = if wake_from_external {

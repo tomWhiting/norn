@@ -1,0 +1,534 @@
+{
+  "id": "norn-channels",
+  "title": "Channels-compatible ingress for an owned running Norn session",
+  "date": "2026-09-05",
+  "timezone": "Australia/Melbourne",
+  "status": "R4a_implementation_in_progress",
+  "base_commit": "cf6c44cad8a534910f614f703a36bbd26a4fdcbc",
+  "owner_intent": [
+    "Claude Code Channels wire compatibility is high value and the next feature priority alongside review remediation.",
+    "A stdio MCP server may push an external message into a running Norn session, wake it when permitted, or leave input held for an inbox.",
+    "The feature must work with Rust runtimes and must not depend on the new daemon, Aion or full-screen TUI."
+  ],
+  "source_reference": {
+    "url": "https://code.claude.com/docs/en/channels-reference",
+    "checked": "5 September 2026, Melbourne time",
+    "scope": "Published interface only; no private source or source maps."
+  },
+  "contract": {
+    "capability": "capabilities.experimental[\"claude/channel\"] = {}",
+    "notification": "notifications/claude/channel",
+    "params": {
+      "content": "string",
+      "meta": "optional Record<string,string>; ASCII alphanumeric/underscore keys"
+    },
+    "instructions": "Retained optional initialize string; source-supplied context, not system authority.",
+    "reply": "Normal MCP tools/list and tools/call.",
+    "delivery": "Fire-and-forget upstream notification, no application acknowledgement.",
+    "permission_relay": "Separate capability and out of this slice; never inferred from message text."
+  },
+  "architecture": [
+    "The existing running session remains the single owner. Transport ingress is a capability passed explicitly by that owner; sharing tools across children does not share message reception.",
+    "McpChannelInbox is one recipient-scoped retained queue. Host-supplied positive count and byte budgets cover staged, held, queued and claimed messages. Receipt/state mutations are synchronous short critical sections; delivery waits use Notify/watch, not polling.",
+    "The connection object is installed in ClientProtocolState before spawning the stdio reader. Messages can stage before asynchronous initialize completion; they cannot reach a provider before the capability is verified and host activation publishes that generation.",
+    "A replacement connection is pending until host activation. Activation fences new events from the former connection. Already admitted events retain their original source identity; candidate-only events are explicitly rejected if the candidate is abandoned.",
+    "The RPC reader never awaits inbox capacity. It records a typed refusal when admission is unavailable and continues reading tool responses. No unbounded spill queue or implicit retry task is added.",
+    "The consumer claims, processes/persists, then explicitly settles a retained message. Moving or inspecting it never frees quota. Cancellation returns the claim to the retained queue.",
+    "Source, connection generation, recipient, sequence and local event identity are host-stamped. Sender metadata is stored separately. A supplied meta.source remains untrusted data and cannot replace the configured source attribute.",
+    "Hold waits for explicit release/deny. NextTurn joins independently started work. Wake makes idle work eligible through a push notification; busy work uses a safe provider boundary. These are explicit policy choices, not inferred from urgent metadata.",
+    "R1-R3 source implements the receiver/admission seam and Rust stdio fixture, with venue verification pending. They do not provide a complete Channels launch feature. R4-R6 remain outlines for runtime ownership, current controls, delivery persistence and actual running-session interoperability.",
+    "NCH-003 R4 first CLI release: interactive TUI accepts Wake and NextTurn; plain print (including pipes and terminal fallback) and driven JSON-RPC accept Wake only during the active run. Explicit jsonrpc is always one-shot. Hold is refused until CLI release/deny controls exist; that operator-control work remains open, while the library retains Hold with explicit host release/deny. Unsupported CLI combinations fail before provider/MCP startup with exit 2, a named stderr diagnostic and empty stdout. No daemon, durable inbox, automatic linger or second driven run is introduced."
+  ],
+  "proposed_api": [
+    "McpChannelInbox::new(recipient_id, McpChannelLimits::new(count, bytes)?) -> McpChannelInbox; inbox.host() -> McpChannelHost",
+    "McpChannelHost::attachment(policy: McpChannelPolicy, overflow: McpChannelOverflow) -> McpChannelAttachment",
+    "McpClient::connect_with_channel(config, roots, attachment) -> Result<McpClient, IntegrationError>; config.name and newly minted instance_id bind source and generation before reader spawn.",
+    "McpClient::activate_channel() publishes verified staged input; McpClient::retire_channel() fences further ingress; lifecycle status remains inspectable.",
+    "McpChannelInbox::try_claim()/claim() -> McpChannelDelivery; message() borrows immutable host-attributed data; consume() settles; host.deny(id) settles unclaimed held input; Drop returns an unsettled claim.",
+    "McpChannelHost::status()/subscribe_status() exposes count/bytes and latest typed refusal; McpChannelInbox::wake_ready() observes readiness without draining held input."
+  ],
+  "operator_choices_not_invented": [
+    {
+      "choice": "Source-enable rule and scope",
+      "proposal": "Explicit named session/source opt-in, separate from enabling MCP tools.",
+      "status": "Must be recorded before CLI wiring; first slice requires a caller-created attachment."
+    },
+    {
+      "choice": "Delivery policy",
+      "proposal": "Library callers retain explicit Hold, NextTurn and Wake. CLI launch supports only the actual-mode combinations recorded in NCH-003 R4; no implicit policy or default.",
+      "status": "First CLI release refuses Hold until release/deny controls exist, and refuses NextTurn for one-shot print/driven modes."
+    },
+    {
+      "choice": "Total retained count and bytes",
+      "proposal": "Required positive host-supplied values; existing 32-message coordination setting is not a full lifecycle bound and no byte total is currently ruled.",
+      "status": "No new default. Test budgets are fixture inputs only."
+    },
+    {
+      "choice": "Overflow",
+      "proposal": "Explicit RejectNew policy with visible source/generation/refusal state while RPC continues.",
+      "status": "R1-R3 accept explicit enum choice; operator default not imposed."
+    },
+    {
+      "choice": "Restart and replay",
+      "proposal": "Transport staging is explicitly in-memory. R4 must define persistent accepted events and uncertain-append recovery before advertising durable inbox admission. Upstream IDs remain metadata until a separate dedupe contract is chosen.",
+      "status": "No exactly-once or upstream receipt claim."
+    }
+  ],
+  "compatibility_findings": [
+    {
+      "path": "/Users/tom/Developer/ablative/apps/cambium/surface/mcp/src/notifications.ts",
+      "finding": "urgent is boolean true; official meta requires strings. Existing source metadata must not replace host attribution.",
+      "action": "Separate adapter correction to urgent=\"true\" and tests; preserve source metadata as untrusted data."
+    },
+    {
+      "path": "/Users/tom/Developer/games/hammerbarn-40k/src/mcp/channel.ts",
+      "finding": "String-only metadata with chat_id, message_id, revision and notification_kind is conforming.",
+      "action": "Use equivalent Rust fixture envelopes; no production game edits in R1-R3."
+    }
+  ],
+  "non_goals": [
+    "No new daemon, PTY/multiplexer, TUI workspace, permission relay, hidden gameplay evaluation, private Claude implementation or automatic approval authority.",
+    "No feature-complete claim from a receiver fixture alone.",
+    "No numeric product default or artificial queue limit chosen by an implementer."
+  ],
+  "verification": "Parent centralizes all Rust builds and required 205 venue verification; source-bound exact-commit battery and Fable rereview remain separate landing requirements.",
+  "structure": [
+    {
+      "path": "crates/norn/src/integration/mcp_channel_frame.rs",
+      "note": "NCH-001 exact R1-R3 wall; purpose supplied by numbered row",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_channel_inbox.rs",
+      "note": "NCH-001 exact R1-R3 wall; purpose supplied by numbered row",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_channel_inbox_tests.rs",
+      "note": "NCH-001 exact R1-R3 wall; purpose supplied by numbered row",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_channel_source.rs",
+      "note": "NCH-001 exact R1-R3 wall; purpose supplied by numbered row",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_channel_tests.rs",
+      "note": "NCH-001 exact R1-R3 wall; purpose supplied by numbered row",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_channels.rs",
+      "note": "NCH-001 exact R1-R3 wall; purpose supplied by numbered row",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_client.rs",
+      "note": "NCH-001 exact R1-R3 wall; purpose supplied by numbered row",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_protocol.rs",
+      "note": "NCH-001 exact R1-R3 wall; purpose supplied by numbered row",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_stdio.rs",
+      "note": "NCH-001 exact R1-R3 wall; purpose supplied by numbered row",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_wire.rs",
+      "note": "NCH-001 exact R1-R3 wall; purpose supplied by numbered row",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/integration/mod.rs",
+      "note": "NCH-001 exact R1-R3 wall; purpose supplied by numbered row",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/tests/mcp_channels_stdio.rs",
+      "note": "NCH-001 exact R1-R3 wall; purpose supplied by numbered row",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/tests/support/mcp_channels_fixture.rs",
+      "note": "NCH-001 exact R1-R3 wall; purpose supplied by numbered row",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/Cargo.toml",
+      "note": "R3 custom Rust integration harness prevents libtest stdout from contaminating MCP frames",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/loop/mod.rs",
+      "note": "NCH-001 R4a exact owned delivery wall",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/loop/loop_context.rs",
+      "note": "NCH-001 R4a exact owned delivery wall",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/loop/runner/setup.rs",
+      "note": "NCH-001 R4a exact owned delivery wall",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/loop/runner/dispatch.rs",
+      "note": "NCH-001 R4a exact owned delivery wall",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/loop/runner/tests.rs",
+      "note": "NCH-001 R4a exact owned delivery wall",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/loop/linger.rs",
+      "note": "NCH-001 R4a exact owned delivery wall",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/loop/mcp_channel_delivery.rs",
+      "note": "NCH-001 R4a exact owned delivery wall",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/loop/mcp_channel_delivery_tests.rs",
+      "note": "NCH-001 R4a exact owned delivery wall",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/loop/runner/tests/mcp_channel_delivery.rs",
+      "note": "NCH-001 R4a exact owned delivery wall",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/tool/selection.rs",
+      "note": "NCH-002 preserves dynamic tool availability policy separately from startup visibility",
+      "brief": "NCH-002"
+    },
+    {
+      "path": "crates/norn/src/tool/registry.rs",
+      "note": "NCH-002 preserves dynamic tool availability policy separately from startup visibility",
+      "brief": "NCH-002"
+    },
+    {
+      "path": "crates/norn/src/tool/generation.rs",
+      "note": "NCH-002 preserves dynamic tool availability policy separately from startup visibility",
+      "brief": "NCH-002"
+    },
+    {
+      "path": "crates/norn/src/tool/mod.rs",
+      "note": "NCH-002 preserves dynamic tool availability policy separately from startup visibility",
+      "brief": "NCH-002"
+    },
+    {
+      "path": "crates/norn/src/tool/generation_tests.rs",
+      "note": "NCH-002 preserves dynamic tool availability policy separately from startup visibility",
+      "brief": "NCH-002"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_runtime.rs",
+      "note": "NCH-002 preserves dynamic tool availability policy separately from startup visibility",
+      "brief": "NCH-002"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_candidate_builder_tests.rs",
+      "note": "NCH-002 preserves dynamic tool availability policy separately from startup visibility",
+      "brief": "NCH-002"
+    },
+    {
+      "path": "crates/norn-cli/src/cli/args.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-003"
+    },
+    {
+      "path": "crates/norn-cli/src/cli/mod.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-003"
+    },
+    {
+      "path": "crates/norn-cli/src/cli/channel_args.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-003"
+    },
+    {
+      "path": "crates/norn-cli/src/runtime/mod.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-003"
+    },
+    {
+      "path": "crates/norn-cli/src/runtime/resolve.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-003"
+    },
+    {
+      "path": "crates/norn-cli/src/runtime/channel_config.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-003"
+    },
+    {
+      "path": "crates/norn-cli/src/runtime/channel_config_tests.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-003"
+    },
+    {
+      "path": "crates/norn-cli/src/runtime/channel_startup.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-003"
+    },
+    {
+      "path": "crates/norn-cli/src/print/orchestrator.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-003"
+    },
+    {
+      "path": "crates/norn-cli/src/tui/driver.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-003"
+    },
+    {
+      "path": "crates/norn-tui/src/app/event_loop.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-004"
+    },
+    {
+      "path": "crates/norn-tui/src/app/turn/run.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-004"
+    },
+    {
+      "path": "crates/norn-tui/src/app/turn/mod.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-004"
+    },
+    {
+      "path": "crates/norn-tui/src/error.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-004"
+    },
+    {
+      "path": "crates/norn-tui/Cargo.toml",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-004"
+    },
+    {
+      "path": "crates/norn-tui/tests/mcp_channels.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-004"
+    },
+    {
+      "path": "crates/norn-tui/tests/support/mcp_channels_tui.rs",
+      "note": "Explicit channel startup and current-session wake wiring",
+      "brief": "NCH-004"
+    },
+    {
+      "path": "crates/norn/src/agent/mcp.rs",
+      "note": "Actual root ownership and coherent initial MCP channel activation",
+      "brief": "NCH-005"
+    },
+    {
+      "path": "crates/norn/src/agent/builder/build.rs",
+      "note": "Actual root ownership and coherent initial MCP channel activation",
+      "brief": "NCH-005"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_candidate_builder.rs",
+      "note": "Actual root ownership and coherent initial MCP channel activation",
+      "brief": "NCH-005"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_runtime_candidate.rs",
+      "note": "Actual root ownership and coherent initial MCP channel activation",
+      "brief": "NCH-005"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_control.rs",
+      "note": "Actual root ownership and coherent initial MCP channel activation",
+      "brief": "NCH-005"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_control_actor.rs",
+      "note": "Actual root ownership and coherent initial MCP channel activation",
+      "brief": "NCH-005"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_control_error.rs",
+      "note": "Actual root ownership and coherent initial MCP channel activation",
+      "brief": "NCH-005"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_channel_settings.rs",
+      "note": "Actual root ownership and coherent initial MCP channel activation",
+      "brief": "NCH-005"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_runtime_channels.rs",
+      "note": "Actual root ownership and coherent initial MCP channel activation",
+      "brief": "NCH-005"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_channel_startup_tests.rs",
+      "note": "Actual root ownership and coherent initial MCP channel activation",
+      "brief": "NCH-005"
+    },
+    {
+      "path": "crates/norn/src/agent/mcp_channel_builder_tests.rs",
+      "note": "Actual root ownership and coherent initial MCP channel activation",
+      "brief": "NCH-005"
+    },
+    {
+      "path": "crates/norn/src/provider/agent_event.rs",
+      "note": "R4a distinct persisted external-channel delivery observation on existing bounded event broadcast",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/provider/mod.rs",
+      "note": "R4a distinct persisted external-channel delivery observation on existing bounded event broadcast",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/provider/channel_event.rs",
+      "note": "R4a distinct persisted external-channel delivery observation on existing bounded event broadcast",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn-cli/src/print/output.rs",
+      "note": "Distinct typed external-channel observation consumed by the existing display path",
+      "brief": "NCH-003"
+    },
+    {
+      "path": "crates/norn-cli/src/print/output/provider_events.rs",
+      "note": "Distinct typed external-channel observation consumed by the existing display path",
+      "brief": "NCH-003"
+    },
+    {
+      "path": "crates/norn-tui/src/app/dispatch.rs",
+      "note": "Distinct typed external-channel observation consumed by the existing display path",
+      "brief": "NCH-004"
+    },
+    {
+      "path": "crates/norn-tui/src/app/turn/mid.rs",
+      "note": "Distinct typed external-channel observation consumed by the existing display path",
+      "brief": "NCH-004"
+    },
+    {
+      "path": "crates/norn/src/loop/runner/tests/streaming_nudge.rs",
+      "note": "R4a exhaustive provider-only regression accounts for distinct channel delivery observations",
+      "brief": "NCH-001"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_control_approval.rs",
+      "note": "Approval/revocation generation rollback followed by the same owner-scoped runtime/channel publication as startup",
+      "brief": "NCH-005"
+    },
+    {
+      "path": "crates/norn-cli/src/print/mod.rs",
+      "note": "NCH-003 R2: declare the private print input module for the production-LOC extraction",
+      "brief": "NCH-003"
+    },
+    {
+      "path": "crates/norn-cli/src/print/input.rs",
+      "note": "NCH-003 R2: existing piped-stdin reading and prompt composition, with unchanged public orchestrator re-export",
+      "brief": "NCH-003"
+    },
+    {
+      "path": "crates/norn-cli/tests/channel_mode_policy.rs",
+      "note": "NCH-003 R4 actual-binary unsupported mode/policy preflight, stdout purity and no-launch regressions",
+      "brief": "NCH-003"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_control_refresh.rs",
+      "note": "NCH-005 refresh recovery never restores stale runtime after a committed channel publication error",
+      "brief": "NCH-005"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_channel_publication_tests.rs",
+      "note": "NCH-005 deterministic regressions for revoked-source fencing, committed configuration coherence and exhaustive channel transitions",
+      "brief": "NCH-005"
+    }
+  ],
+  "cluster": "norn-channels",
+  "intention": "Claude Code Channels wire compatibility is high value and the next feature priority alongside review remediation. A stdio MCP server may push an external message into a running Norn session, wake it when permitted, or leave input held for an inbox. The feature must work with Rust runtimes and must not depend on the new daemon, Aion or full-screen TUI.",
+  "problem": "The current MCP reader consumes Channels notifications and discards initialization instructions. Existing inter-agent buffers do not provide total retained-byte accounting or an external-source ownership contract.",
+  "solution": "The existing running session remains the single owner. Transport ingress is a capability passed explicitly by that owner; sharing tools across children does not share message reception.\n\nMcpChannelInbox is one recipient-scoped retained queue. Host-supplied positive count and byte budgets cover staged, held, queued and claimed messages. Receipt/state mutations are synchronous short critical sections; delivery waits use Notify/watch, not polling.\n\nThe connection object is installed in ClientProtocolState before spawning the stdio reader. Messages can stage before asynchronous initialize completion; they cannot reach a provider before the capability is verified and host activation publishes that generation.\n\nA replacement connection is pending until host activation. Activation fences new events from the former connection. Already admitted events retain their original source identity; candidate-only events are explicitly rejected if the candidate is abandoned.\n\nThe RPC reader never awaits inbox capacity. It records a typed refusal when admission is unavailable and continues reading tool responses. No unbounded spill queue or implicit retry task is added.\n\nThe consumer claims, processes/persists, then explicitly settles a retained message. Moving or inspecting it never frees quota. Cancellation returns the claim to the retained queue.\n\nSource, connection generation, recipient, sequence and local event identity are host-stamped. Sender metadata is stored separately. A supplied meta.source remains untrusted data and cannot replace the configured source attribute.\n\nHold waits for explicit release/deny. NextTurn joins independently started work. Wake makes idle work eligible through a push notification; busy work uses a safe provider boundary. These are explicit policy choices, not inferred from urgent metadata.\n\nR1-R3 source implements the receiver/admission seam and Rust stdio fixture, with venue verification pending. They do not provide a complete Channels launch feature. R4-R6 remain outlines for runtime ownership, current controls, delivery persistence and actual running-session interoperability.\n\nNCH-003 R4 first CLI release: interactive TUI accepts Wake and NextTurn; plain print (including pipes and terminal fallback) and driven JSON-RPC accept Wake only during the active run. Explicit jsonrpc is always one-shot. Hold is refused until CLI release/deny controls exist; that operator-control work remains open, while the library retains Hold with explicit host release/deny. Unsupported CLI combinations fail before provider/MCP startup with exit 2, a named stderr diagnostic and empty stdout. No daemon, durable inbox, automatic linger or second driven run is introduced.",
+  "principles": [
+    {
+      "id": "P1",
+      "text": "Source-enable rule and scope: Explicit named session/source opt-in, separate from enabling MCP tools. Must be recorded before CLI wiring; first slice requires a caller-created attachment."
+    },
+    {
+      "id": "P2",
+      "text": "Delivery policy: library callers retain explicit Hold, NextTurn and Wake; the first CLI release accepts only the actual-mode combinations in NCH-003 R4. No policy is selected or coerced implicitly."
+    },
+    {
+      "id": "P3",
+      "text": "Total retained count and bytes: Required positive host-supplied values; existing 32-message coordination setting is not a full lifecycle bound and no byte total is currently ruled. No new default. Test budgets are fixture inputs only."
+    },
+    {
+      "id": "P4",
+      "text": "Overflow: Explicit RejectNew policy with visible source/generation/refusal state while RPC continues. R1-R3 accept explicit enum choice; operator default not imposed."
+    },
+    {
+      "id": "P5",
+      "text": "Restart and replay: Transport staging is explicitly in-memory. R4 must define persistent accepted events and uncertain-append recovery before advertising durable inbox admission. Upstream IDs remain metadata until a separate dedupe contract is chosen. No exactly-once or upstream receipt claim."
+    }
+  ],
+  "constraints": [
+    {
+      "id": "K1",
+      "text": "R1-R3 receiver passed 10 Rust stdio cases, 122 MCP tests and strict Clippy on 205 as reported by coordinator. R4a now has an exact executable wall; later runtime publication and operator wiring remain outlines."
+    },
+    {
+      "id": "K2",
+      "text": "Parent centralizes all Rust builds and required 205 venue verification; source-bound exact-commit battery and Fable rereview remain separate landing requirements."
+    },
+    {
+      "id": "K3",
+      "text": "Official public reference: https://code.claude.com/docs/en/channels-reference"
+    },
+    {
+      "id": "K4",
+      "text": "McpChannelInbox::new(recipient_id, McpChannelLimits::new(count, bytes)?) -> McpChannelInbox; inbox.host() -> McpChannelHost"
+    },
+    {
+      "id": "K5",
+      "text": "McpChannelHost::attachment(policy: McpChannelPolicy, overflow: McpChannelOverflow) -> McpChannelAttachment"
+    },
+    {
+      "id": "K6",
+      "text": "McpClient::connect_with_channel(config, roots, attachment) -> Result<McpClient, IntegrationError>; config.name and newly minted instance_id bind source and generation before reader spawn."
+    },
+    {
+      "id": "K7",
+      "text": "McpClient::activate_channel() publishes verified staged input; McpClient::retire_channel() fences further ingress; lifecycle status remains inspectable."
+    },
+    {
+      "id": "K8",
+      "text": "McpChannelInbox::try_claim()/claim() -> McpChannelDelivery; message() borrows immutable host-attributed data; consume() settles; host.deny(id) settles unclaimed held input; Drop returns an unsettled claim."
+    },
+    {
+      "id": "K9",
+      "text": "McpChannelHost::status()/subscribe_status() exposes count/bytes and latest typed refusal; McpChannelInbox::wake_ready() observes readiness without draining held input."
+    },
+    {
+      "id": "K10",
+      "text": "/Users/tom/Developer/ablative/apps/cambium/surface/mcp/src/notifications.ts: urgent is boolean true; official meta requires strings. Existing source metadata must not replace host attribution. Separate adapter correction to urgent=\"true\" and tests; preserve source metadata as untrusted data."
+    },
+    {
+      "id": "K11",
+      "text": "/Users/tom/Developer/games/hammerbarn-40k/src/mcp/channel.ts: String-only metadata with chat_id, message_id, revision and notification_kind is conforming. Use equivalent Rust fixture envelopes; no production game edits in R1-R3."
+    },
+    {
+      "id": "K12",
+      "text": "NCH-003 R4 first CLI release: interactive TUI accepts Wake and NextTurn; plain print (including pipes and terminal fallback) and driven JSON-RPC accept Wake only during the active run. Explicit jsonrpc is always one-shot. Hold is refused until CLI release/deny controls exist; that operator-control work remains open, while the library retains Hold with explicit host release/deny. Unsupported CLI combinations fail before provider/MCP startup with exit 2, a named stderr diagnostic and empty stdout. No daemon, durable inbox, automatic linger or second driven run is introduced."
+    }
+  ],
+  "status_detail": "R1-R3 receiver passed 10 Rust stdio cases, 122 MCP tests and strict Clippy on 205 as reported by coordinator. R4a now has an exact executable wall; later runtime publication and operator wiring remain outlines."
+}

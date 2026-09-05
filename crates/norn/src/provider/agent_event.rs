@@ -438,6 +438,8 @@ pub enum AgentEventKind {
     /// [`AgentMessageLifecycle::Sent`] and the *recipient's* for
     /// [`AgentMessageLifecycle::Delivered`].
     Message(AgentMessageLifecycle),
+    /// Persisted external channel input, attributed to its actual receiving agent.
+    McpChannel(super::channel_event::McpChannelDeliveryEvent),
     /// A live prompt/input estimate for the tagged agent's next provider
     /// request.
     UsageEstimate(AgentUsageEstimate),
@@ -482,6 +484,33 @@ pub struct AgentEventSender {
 }
 
 impl AgentEventSender {
+    /// Publish persisted external input through the existing bounded event broadcast.
+    ///
+    /// # Errors
+    /// Refuses mismatched recipients and reports absence of current observers.
+    pub fn send_mcp_channel(
+        &self,
+        event: super::channel_event::McpChannelDeliveryEvent,
+    ) -> Result<(), super::channel_event::McpChannelObservationError> {
+        use super::channel_event::McpChannelObservationError;
+        if event.recipient_id != self.agent_id {
+            return Err(McpChannelObservationError::RecipientMismatch {
+                recipient: event.recipient_id,
+                sender: self.agent_id,
+            });
+        }
+        match self.tx.send(AgentEvent {
+            agent_id: self.agent_id,
+            agent_role: Arc::clone(&self.agent_role),
+            event: AgentEventKind::McpChannel(event),
+        }) {
+            Ok(_) => Ok(()),
+            Err(error) => Err(McpChannelObservationError::NoObservers {
+                recipient: error.0.agent_id,
+            }),
+        }
+    }
+
     /// Create a sender for a specific agent on the given channel.
     #[must_use]
     pub fn new(tx: broadcast::Sender<AgentEvent>, agent_id: Uuid, agent_role: String) -> Self {
@@ -731,6 +760,7 @@ mod tests {
             }
             AgentEventKind::Provider(_)
             | AgentEventKind::Message(_)
+            | AgentEventKind::McpChannel(_)
             | AgentEventKind::UsageEstimate(_)
             | AgentEventKind::StreamRetry(_)
             | AgentEventKind::Compaction(_) => {

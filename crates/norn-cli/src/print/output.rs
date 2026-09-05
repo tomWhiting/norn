@@ -382,6 +382,16 @@ pub(crate) fn agent_event_to_value(
         }
         norn::provider::AgentEventKind::Subagent(lifecycle) => subagent_event_to_value(lifecycle),
         norn::provider::AgentEventKind::Message(lifecycle) => message_event_to_value(lifecycle),
+        norn::provider::AgentEventKind::McpChannel(delivery) => Some(json!({
+            "type": "mcp_channel",
+            "event_id": delivery.event_id,
+            "message_id": delivery.message_id,
+            "recipient_id": delivery.recipient_id,
+            "source": delivery.source,
+            "generation": delivery.generation,
+            "sequence": delivery.sequence,
+            "content": delivery.content,
+        })),
         norn::provider::AgentEventKind::UsageEstimate(estimate) => Some(json!({
             "type": "usage_estimate",
             "input_tokens": estimate.input_tokens,

@@ -96,6 +96,7 @@ fn agent_event_needs_panel_redraw(state: &AppState, agent_ev: &AgentEvent) -> bo
         AgentEventKind::Provider(event) => child_provider_event_needs_panel_redraw(event),
         AgentEventKind::Subagent(_)
         | AgentEventKind::Message(_)
+        | AgentEventKind::McpChannel(_)
         | AgentEventKind::UsageEstimate(_)
         // Compaction pushes an activity-log row: the panel must repaint.
         | AgentEventKind::Compaction(_)

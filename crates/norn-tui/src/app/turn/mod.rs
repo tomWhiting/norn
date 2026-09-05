@@ -8,4 +8,6 @@
 mod mid;
 mod run;
 
-pub(super) use run::{run_pending_child_prompts, run_ready_root_inbound, run_turn_and_pending};
+pub(super) use run::{
+    run_pending_child_prompts, run_ready_mcp_channels, run_ready_root_inbound, run_turn_and_pending,
+};

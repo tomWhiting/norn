@@ -84,6 +84,29 @@ pub fn handle_agent_event(
                 Instant::now(),
             ));
         }
+        AgentEventKind::McpChannel(delivery) => {
+            state.activity_log.push(ActivityLogEntry {
+                agent_role: agent_event.agent_role.to_string(),
+                tool_name: format!(
+                    "external channel: {}",
+                    channel_display_text(&delivery.source, false)
+                ),
+                description: Some(channel_display_text(&delivery.content, true)),
+                at: Instant::now(),
+            });
+            if agent_event.agent_id == root_id {
+                finish_thinking_block(state, guard, renderer)?;
+                flush_markdown(state, guard, renderer)?;
+                let channel_text = format!(
+                    "\n[external channel: {}]\n{}\n\n",
+                    channel_display_text(&delivery.source, false),
+                    channel_display_text(&delivery.content, true),
+                );
+                write_to_scroll(&channel_text, guard.terminal_mut())?;
+                guard.note_scroll_newlines(&channel_text)?;
+                flush_terminal(guard)?;
+            }
+        }
         AgentEventKind::UsageEstimate(estimate) => {
             if agent_event.agent_id == root_id {
                 state.set_root_input_estimate(estimate.input_tokens);
@@ -118,6 +141,19 @@ pub fn handle_agent_event(
         }
     }
     Ok(())
+}
+
+/// Keep external control bytes visible as text instead of terminal instructions.
+fn channel_display_text(text: &str, multiline: bool) -> String {
+    let mut displayed = String::new();
+    for character in text.chars() {
+        if character.is_control() && !(multiline && matches!(character, '\n' | '\t')) {
+            displayed.push_str(&character.escape_default().to_string());
+        } else {
+            displayed.push(character);
+        }
+    }
+    displayed
 }
 
 /// Surface one provider-retry wait (retry-forever DESIGN D8).
@@ -557,6 +593,18 @@ mod tests {
     use crate::input::history::InputHistory;
     use crate::render::fixed_panel::StatusBar;
     use crate::terminal::caps::TerminalCaps;
+
+    #[test]
+    fn external_channel_rendering_neutralizes_terminal_control_bytes() {
+        assert_eq!(
+            channel_display_text("source\n\u{1b}[2J", false),
+            "source\\n\\u{1b}[2J",
+        );
+        assert_eq!(
+            channel_display_text("first\nsecond\tcolumn\r\u{1b}]52;c;data\u{7}", true),
+            "first\nsecond\tcolumn\\r\\u{1b}]52;c;data\\u{7}",
+        );
+    }
 
     #[test]
     fn format_usage_summary_matches_print_mode_shape() {

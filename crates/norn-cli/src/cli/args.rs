@@ -105,6 +105,10 @@ pub struct Cli {
     #[arg(short = 'e', long = "extension", value_name = "URI")]
     pub extension: Vec<String>,
 
+    /// Explicit external-channel admission for this running session.
+    #[command(flatten)]
+    pub channels: super::channel_args::ChannelArgs,
+
     // -- Output control (NC4) --
     /// JSON Schema for structured model output — inline JSON if value
     /// starts with `{`, otherwise a file path.

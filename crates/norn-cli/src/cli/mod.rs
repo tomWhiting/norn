@@ -1,6 +1,7 @@
 //! CLI surface — argument parsing, mode detection, exit codes, and error types.
 
 pub mod args;
+pub mod channel_args;
 pub mod error;
 pub mod exit;
 mod mcp_args;

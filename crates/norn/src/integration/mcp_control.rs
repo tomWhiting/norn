@@ -78,6 +78,7 @@ impl McpActivationRequest {
 pub struct McpActivationCandidate {
     generation: Arc<ToolGeneration>,
     runtime: Arc<McpRuntime>,
+    manages_channels: bool,
 }
 
 impl McpActivationCandidate {
@@ -87,6 +88,7 @@ impl McpActivationCandidate {
         Self {
             generation,
             runtime,
+            manages_channels: false,
         }
     }
 
@@ -102,8 +104,13 @@ impl McpActivationCandidate {
         Arc::clone(&self.runtime)
     }
 
-    fn into_parts(self) -> (Arc<ToolGeneration>, Arc<McpRuntime>) {
-        (self.generation, self.runtime)
+    pub(crate) fn with_channel_lifecycle(mut self) -> Self {
+        self.manages_channels = true;
+        self
+    }
+
+    fn into_parts(self) -> (Arc<ToolGeneration>, Arc<McpRuntime>, bool) {
+        (self.generation, self.runtime, self.manages_channels)
     }
 }
 
@@ -338,6 +345,14 @@ impl McpControlHandle {
         self.mutation(Command::Reload).await
     }
 
+    /// Publish the first runtime candidate even when configuration is unchanged.
+    ///
+    /// Launchers use this after root registration and inbox installation. Once a
+    /// candidate has been published, subsequent initialization calls are no-ops.
+    pub async fn initialize(&self) -> Result<McpMutationResult, McpControlError> {
+        self.mutation(Command::Initialize).await
+    }
+
     async fn persist(
         &self,
         scope: McpPersistentScope,
@@ -388,6 +403,7 @@ pub(super) enum Command {
     Approve(String),
     Revoke(String),
     Reload,
+    Initialize,
     RefreshTools {
         name: String,
         instance_id: u64,
@@ -408,6 +424,7 @@ impl Command {
             Self::Approve(_) => "approve",
             Self::Revoke(_) => "revoke",
             Self::Reload => "reload",
+            Self::Initialize => "initialize",
             Self::RefreshTools { .. } => "refresh_tools",
         }
     }
@@ -425,3 +442,7 @@ mod tests;
 #[cfg(test)]
 #[path = "mcp_control_refresh_tests.rs"]
 mod refresh_tests;
+
+#[cfg(test)]
+#[path = "mcp_channel_startup_tests.rs"]
+mod channel_startup_tests;

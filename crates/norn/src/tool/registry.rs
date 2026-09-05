@@ -34,6 +34,7 @@ use super::lifecycle::{
 };
 use super::post_validation_feedback::{append_advisories, append_post_validation_errors};
 use super::scheduling::ToolEffectIndex;
+use super::selection::ToolSelectionPolicy;
 use super::traits::{Tool, ToolOutput};
 use crate::error::ToolError;
 use crate::r#loop::config::{DispatchOutcome, ToolExecutor};
@@ -42,13 +43,10 @@ use crate::r#loop::config::{DispatchOutcome, ToolExecutor};
 /// pre-validate / execute / post-validate / on-success lifecycle.
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool + Send + Sync>>,
-    /// When `Some`, restricts [`Self::get`] (and therefore dispatch) to the
-    /// named tools. `None` means every registered tool is available.
-    available: Option<HashSet<String>>,
-    /// Names gated out unconditionally (e.g. `--disallowed-tools`). A
-    /// disallowed name is unavailable even when it appears in
-    /// [`Self::set_available`]'s allow-list — deny wins.
-    disallowed: HashSet<String>,
+    /// Original operator predicates retained by live generation replacement.
+    selection: ToolSelectionPolicy,
+    /// Current selected-server view; never replaces the operator predicates.
+    visible: Option<HashSet<String>>,
     /// Shared orchestrator-supplied context passed to every dispatched tool.
     context: Arc<ToolContext>,
     /// Name → implementation index published on [`Self::shared_context`]
@@ -73,8 +71,8 @@ impl ToolRegistry {
         context.insert_extension(Arc::clone(&effects));
         Self {
             tools: HashMap::new(),
-            available: None,
-            disallowed: HashSet::new(),
+            selection: ToolSelectionPolicy::default(),
+            visible: None,
             context,
             effects,
         }
@@ -89,9 +87,8 @@ impl ToolRegistry {
         self.context = context;
     }
 
-    /// Registers a tool. Uses the tool's `name()` as the key. When an
-    /// availability set is active, the new tool is gated by it — call
-    /// [`Self::set_available`] again to include it.
+    /// Registers a tool using its `name()` as the key. An active availability
+    /// set also gates later registrations, including names listed in advance.
     pub fn register(&mut self, tool: Box<dyn Tool + Send + Sync>) {
         let tool: Arc<dyn Tool + Send + Sync> = Arc::from(tool);
         let name = tool.name().to_string();
@@ -104,8 +101,11 @@ impl ToolRegistry {
     pub fn remove(&mut self, name: &str) -> Option<Arc<dyn Tool + Send + Sync>> {
         let removed = self.tools.remove(name);
         self.effects.remove(name);
-        if let Some(available) = self.available.as_mut() {
+        if let Some(available) = self.selection.available.as_mut() {
             available.remove(name);
+        }
+        if let Some(visible) = self.visible.as_mut() {
+            visible.remove(name);
         }
         removed
     }
@@ -114,13 +114,13 @@ impl ToolRegistry {
     /// tools. Names that are not currently registered are still accepted —
     /// they become available when [`Self::register`] is called for them.
     pub fn set_available(&mut self, names: Vec<String>) {
-        self.available = Some(names.into_iter().collect());
+        self.selection.available = Some(names.into_iter().collect());
     }
 
-    /// Restores access to every registered tool. Equivalent to clearing the
-    /// availability set installed by [`Self::set_available`].
+    /// Clears the operator allow-list installed by [`Self::set_available`].
+    /// Explicit denies and the current selected-server view still apply.
     pub fn reset_available(&mut self) {
-        self.available = None;
+        self.selection.available = None;
     }
 
     /// Unconditionally gates out the named tools (the `--disallowed-tools`
@@ -129,7 +129,14 @@ impl ToolRegistry {
     /// when listed in the availability allow-list — deny wins — and the
     /// gate also applies to tools registered after this call.
     pub fn set_disallowed(&mut self, names: Vec<String>) {
-        self.disallowed = names.into_iter().collect();
+        self.selection.disallowed = names.into_iter().collect();
+    }
+
+    /// Restrict the current discovered-server view without changing operator
+    /// policy. Live candidates apply server selection to their new tool set,
+    /// so this snapshot must not become a permanent name allow-list.
+    pub(crate) fn set_visibility(&mut self, names: Vec<String>) {
+        self.visible = Some(names.into_iter().collect());
     }
 
     /// Looks up a tool by name. Returns `None` for unregistered names and
@@ -146,7 +153,7 @@ impl ToolRegistry {
     /// Look up a physically registered tool while bypassing only the current
     /// availability view. Explicit deny rules remain authoritative.
     pub(crate) fn get_registered(&self, name: &str) -> Option<&(dyn Tool + Send + Sync)> {
-        if self.disallowed.contains(name) {
+        if self.selection.disallowed.contains(name) {
             return None;
         }
         self.tools.get(name).map(AsRef::as_ref)
@@ -203,6 +210,11 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// Retain the original predicates, including currently undiscovered names.
+    pub(super) fn selection_policy(&self) -> ToolSelectionPolicy {
+        self.selection.clone()
+    }
+
     /// Clone the context shared by every tool in this registry.
     pub(crate) fn context_arc(&self) -> Arc<ToolContext> {
         Arc::clone(&self.context)
@@ -218,12 +230,11 @@ impl ToolRegistry {
     }
 
     fn is_name_available(&self, name: &str) -> bool {
-        if self.disallowed.contains(name) {
-            return false;
-        }
-        self.available
-            .as_ref()
-            .is_none_or(|allowed| allowed.contains(name))
+        self.selection.allows(name)
+            && self
+                .visible
+                .as_ref()
+                .is_none_or(|visible| visible.contains(name))
     }
 
     fn prepare_dispatch(

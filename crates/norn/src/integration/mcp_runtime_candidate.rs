@@ -11,7 +11,8 @@ use crate::config::{
 };
 use crate::error::IntegrationError;
 use crate::integration::{
-    DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES, McpClient, McpClientConfig, McpTransport,
+    DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES, McpChannelHost, McpChannelSettings, McpClient,
+    McpClientConfig, McpRoot, McpTransport,
 };
 use crate::tool::traits::Tool;
 
@@ -108,6 +109,40 @@ impl McpRuntime {
         working_dir: &Path,
     ) -> McpRuntimeCandidate {
         build_candidate(self, snapshot, working_dir, McpClient::connect).await
+    }
+
+    /// Build a candidate whose opted-in sources stage into one existing session inbox.
+    pub(crate) async fn build_channel_candidate(
+        &self,
+        snapshot: &McpConfigSnapshot,
+        working_dir: &Path,
+        host: &McpChannelHost,
+        settings: &McpChannelSettings,
+    ) -> McpRuntimeCandidate {
+        build_candidate(
+            self,
+            snapshot,
+            working_dir,
+            |config: McpClientConfig| async move {
+                let Some(policy) = settings.sources().get(&config.name) else {
+                    return McpClient::connect(config).await;
+                };
+                let roots = config
+                    .working_dir
+                    .as_deref()
+                    .map(McpRoot::from_path)
+                    .transpose()?
+                    .into_iter()
+                    .collect();
+                McpClient::connect_with_channel(
+                    config,
+                    roots,
+                    host.attachment(*policy, settings.overflow()),
+                )
+                .await
+            },
+        )
+        .await
     }
 
     #[cfg(test)]

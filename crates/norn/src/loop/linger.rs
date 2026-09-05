@@ -44,6 +44,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent::result_channel::ChildAgentResult;
 use crate::error::SessionError;
+use crate::integration::McpChannelError;
 use crate::r#loop::inbound::{ChannelMessage, InboundChannel};
 use crate::r#loop::loop_context::LoopContext;
 use crate::provider::agent_event::AgentEventSender;
@@ -51,6 +52,7 @@ use crate::provider::request::Message;
 use crate::session::store::EventStore;
 
 use super::delivery::{drain_child_results, flush_active_inputs, flush_inbound_messages};
+use super::mcp_channel_delivery::{McpChannelSession, flush_mcp_channel_messages};
 
 /// Opt-in policy making an agent wait at its would-stop boundaries for
 /// late inbound messages and child results instead of returning
@@ -84,6 +86,10 @@ enum LingerWake {
     /// ([`InboundChannel::steer_ready`] resolved); the boundary sweep
     /// drains and injects it.
     InboundSteer,
+    /// A published channel Wake is retained for the common boundary sweep.
+    ChannelReady,
+    /// Channel readiness failed with a named error.
+    ChannelFailed(McpChannelError),
     /// The deadline elapsed with nothing delivered to the wake set.
     DeadlineExpired,
     /// The cancellation token fired.
@@ -171,12 +177,16 @@ pub(super) async fn resolve_stop_boundary(
     match await_linger_wake(
         loop_context.child_result_rx.as_mut(),
         &mut inbound,
+        loop_context.mcp_channel_session.as_ref(),
         cancel,
         policy.deadline,
     )
     .await
     {
         LingerWake::Cancelled => Ok(BoundaryOutcome::Cancelled),
+        LingerWake::ChannelFailed(error) => Err(SessionError::EventAppendFailed {
+            reason: format!("MCP channel linger readiness failed: {error}"),
+        }),
         LingerWake::ChildResult(first) => {
             // The awaited recv consumed one result; inject it as the
             // seed of the same drain call every other delivery uses,
@@ -192,7 +202,7 @@ pub(super) async fn resolve_stop_boundary(
             .await?;
             Ok(BoundaryOutcome::Continue)
         }
-        LingerWake::InboundSteer => {
+        LingerWake::InboundSteer | LingerWake::ChannelReady => {
             // `steer_ready` buffered a steer without consuming it; this
             // sweep drains and injects it through the same flush path a
             // mid-run drain uses.
@@ -255,6 +265,12 @@ async fn sweep(
     loop_context: &mut LoopContext,
     event_tx: Option<&AgentEventSender>,
 ) -> Result<bool, SessionError> {
+    if !flush_mcp_channel_messages(store, messages, loop_context, true, event_tx)
+        .await?
+        .is_empty()
+    {
+        return Ok(true);
+    }
     if !flush_inbound_messages(
         store,
         messages,
@@ -299,6 +315,7 @@ async fn sweep(
 async fn await_linger_wake(
     mut child_rx: Option<&mut tokio::sync::mpsc::Receiver<ChildAgentResult>>,
     inbound: &mut Option<&mut InboundChannel>,
+    channel_session: Option<&McpChannelSession>,
     cancel: Option<&CancellationToken>,
     deadline: Duration,
 ) -> LingerWake {
@@ -320,7 +337,7 @@ async fn await_linger_wake(
     // set; narrowing this gate to work-sources only (`child_rx` /
     // `inbound`) is a live design question, deliberately NOT decided
     // here because it changes linger semantics for every driver.
-    if cancel.is_none() && child_rx.is_none() && inbound.is_none() {
+    if cancel.is_none() && child_rx.is_none() && inbound.is_none() && channel_session.is_none() {
         return LingerWake::DeadlineExpired;
     }
     let sleep = tokio::time::sleep(deadline);
@@ -329,6 +346,7 @@ async fn await_linger_wake(
     // boundary sweep that follows the wake still drains the channel's
     // peek buffer (a closed channel can still hold buffered updates).
     let mut inbound_open = inbound.is_some();
+    let mut channel_open = channel_session.is_some();
     loop {
         tokio::select! {
             biased;
@@ -349,8 +367,23 @@ async fn await_linger_wake(
                 // arrive. Same disable-don't-spin treatment.
                 inbound_open = false;
             },
+            ready = channel_or_pending(channel_session, channel_open) => match ready {
+                Ok(()) => return LingerWake::ChannelReady,
+                Err(McpChannelError::Closed { .. }) => channel_open = false,
+                Err(error) => return LingerWake::ChannelFailed(error),
+            },
             () = &mut sleep => return LingerWake::DeadlineExpired,
         }
+    }
+}
+
+async fn channel_or_pending(
+    session: Option<&McpChannelSession>,
+    open: bool,
+) -> Result<(), McpChannelError> {
+    match session {
+        Some(session) if open => session.wake_ready().await,
+        _ => std::future::pending().await,
     }
 }
 
@@ -518,6 +551,7 @@ mod tests {
         let wake = await_linger_wake(
             Some(&mut rx),
             &mut None,
+            None,
             Some(&token),
             Duration::from_secs(5),
         )
@@ -531,7 +565,8 @@ mod tests {
         tx.send(child_result("spawn/worker", "done"))
             .await
             .expect("send");
-        let wake = await_linger_wake(Some(&mut rx), &mut None, None, Duration::from_secs(5)).await;
+        let wake =
+            await_linger_wake(Some(&mut rx), &mut None, None, None, Duration::from_secs(5)).await;
         let LingerWake::ChildResult(result) = wake else {
             panic!("expected ChildResult wake");
         };
@@ -545,7 +580,14 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
             tx.send(child_result("spawn/worker", "late")).await
         });
-        let wake = await_linger_wake(Some(&mut rx), &mut None, None, Duration::from_hours(1)).await;
+        let wake = await_linger_wake(
+            Some(&mut rx),
+            &mut None,
+            None,
+            None,
+            Duration::from_hours(1),
+        )
+        .await;
         assert!(matches!(wake, LingerWake::ChildResult(_)));
         sender.await.expect("join").expect("send");
     }
@@ -559,7 +601,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn no_wake_sources_expires_at_deadline() {
         let before = tokio::time::Instant::now();
-        let wake = await_linger_wake(None, &mut None, None, Duration::from_hours(1)).await;
+        let wake = await_linger_wake(None, &mut None, None, None, Duration::from_hours(1)).await;
         assert!(matches!(wake, LingerWake::DeadlineExpired));
         assert_eq!(
             tokio::time::Instant::now(),
@@ -572,8 +614,14 @@ mod tests {
     async fn closed_child_channel_disables_arm_and_expires() {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<ChildAgentResult>(4);
         drop(tx);
-        let wake =
-            await_linger_wake(Some(&mut rx), &mut None, None, Duration::from_millis(100)).await;
+        let wake = await_linger_wake(
+            Some(&mut rx),
+            &mut None,
+            None,
+            None,
+            Duration::from_millis(100),
+        )
+        .await;
         assert!(matches!(wake, LingerWake::DeadlineExpired));
     }
 
@@ -599,7 +647,14 @@ mod tests {
             .expect("send");
 
         let start = tokio::time::Instant::now();
-        let wake = await_linger_wake(None, &mut Some(&mut ch), None, Duration::from_hours(1)).await;
+        let wake = await_linger_wake(
+            None,
+            &mut Some(&mut ch),
+            None,
+            None,
+            Duration::from_hours(1),
+        )
+        .await;
         assert!(matches!(wake, LingerWake::InboundSteer));
         assert!(
             start.elapsed() < Duration::from_secs(1),
@@ -619,7 +674,14 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
             tx.send(steer_message("late act", MessageKind::Steer)).await
         });
-        let wake = await_linger_wake(None, &mut Some(&mut ch), None, Duration::from_hours(1)).await;
+        let wake = await_linger_wake(
+            None,
+            &mut Some(&mut ch),
+            None,
+            None,
+            Duration::from_hours(1),
+        )
+        .await;
         assert!(matches!(wake, LingerWake::InboundSteer));
         sender.await.expect("join").expect("send");
     }
@@ -632,8 +694,14 @@ mod tests {
             .expect("send");
 
         let start = tokio::time::Instant::now();
-        let wake =
-            await_linger_wake(None, &mut Some(&mut ch), None, Duration::from_millis(100)).await;
+        let wake = await_linger_wake(
+            None,
+            &mut Some(&mut ch),
+            None,
+            None,
+            Duration::from_millis(100),
+        )
+        .await;
         assert!(
             matches!(wake, LingerWake::DeadlineExpired),
             "an update must not wake the linger (DECISION M2)",
@@ -650,8 +718,14 @@ mod tests {
     async fn closed_inbound_channel_disables_arm_and_expires() {
         let (tx, mut ch) = inbound_channel(4);
         drop(tx);
-        let wake =
-            await_linger_wake(None, &mut Some(&mut ch), None, Duration::from_millis(100)).await;
+        let wake = await_linger_wake(
+            None,
+            &mut Some(&mut ch),
+            None,
+            None,
+            Duration::from_millis(100),
+        )
+        .await;
         assert!(matches!(wake, LingerWake::DeadlineExpired));
     }
 

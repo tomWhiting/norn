@@ -42,6 +42,8 @@ pub(super) async fn run(
         receiver,
         watchers: ToolChangeWatchers::new(sender),
         applied_tool_revisions: BTreeMap::new(),
+        initialized: false,
+        manages_channels: false,
     }
     .run()
     .await;
@@ -56,6 +58,8 @@ struct McpController {
     receiver: mpsc::Receiver<Envelope>,
     watchers: ToolChangeWatchers,
     applied_tool_revisions: BTreeMap<u64, u64>,
+    initialized: bool,
+    manages_channels: bool,
 }
 
 impl McpController {
@@ -109,6 +113,7 @@ impl McpController {
             Command::Approve(name) => self.change_approval(&name, true).await,
             Command::Revoke(name) => self.change_approval(&name, false).await,
             Command::Reload => self.reload().await,
+            Command::Initialize => self.initialize().await,
             Command::RefreshTools {
                 name,
                 instance_id,
@@ -175,6 +180,15 @@ impl McpController {
         self.commit_staged(staged, changed).await
     }
 
+    async fn initialize(&mut self) -> Result<McpControlResponse, McpControlError> {
+        if self.initialized {
+            return Ok(self.mutation_response(false));
+        }
+        let candidate = self.candidate(&self.state, None).await?;
+        self.publish(candidate)?;
+        Ok(self.mutation_response(true))
+    }
+
     async fn persist(
         &mut self,
         scope: McpPersistentScope,
@@ -197,13 +211,16 @@ impl McpController {
                 return Err(error);
             }
         };
-        if let Err(error) = self.publish(candidate) {
+        if let Err(error) = self.publish_generation(&candidate) {
             if let Err(rollback) = staged.persist(scope, &previous) {
                 return Err(McpControlError::rollback(error, rollback));
             }
             return Err(error);
         }
+        // Generation publication is irreversible; disk and actor state now
+        // describe that committed generation even if channel activation fails.
         self.state = staged;
+        self.complete_publication(candidate)?;
         Ok(self.mutation_response(true))
     }
 
@@ -216,8 +233,9 @@ impl McpController {
             return Ok(self.mutation_response(false));
         }
         let candidate = self.candidate(&staged, None).await?;
-        self.publish(candidate)?;
+        self.publish_generation(&candidate)?;
         self.state = staged;
+        self.complete_publication(candidate)?;
         Ok(self.mutation_response(true))
     }
 
@@ -320,12 +338,37 @@ impl McpController {
     }
 
     fn publish(&mut self, candidate: McpActivationCandidate) -> Result<(), McpControlError> {
-        let (generation, runtime) = candidate.into_parts();
+        self.publish_generation(&candidate)?;
+        self.complete_publication(candidate)
+    }
+
+    fn publish_generation(
+        &self,
+        candidate: &McpActivationCandidate,
+    ) -> Result<(), McpControlError> {
         self.generations
-            .publish(Arc::clone(&generation))
-            .map_err(McpControlError::publication)?;
-        self.active_runtime.replace(generation, runtime);
+            .publish(candidate.generation())
+            .map(drop)
+            .map_err(McpControlError::publication)
+    }
+
+    fn complete_publication(
+        &mut self,
+        candidate: McpActivationCandidate,
+    ) -> Result<(), McpControlError> {
+        let (generation, runtime, manages_channels) = candidate.into_parts();
+        let revision = generation.revision();
+        let previous = self.active_runtime.snapshot().runtime();
+        self.active_runtime
+            .replace(generation, Arc::clone(&runtime));
+        self.manages_channels |= manages_channels;
         self.reconcile_watchers();
+        if self.manages_channels {
+            runtime
+                .publish_channels(&previous)
+                .map_err(|error| McpControlError::channel_publication(revision, error))?;
+        }
+        self.initialized = true;
         Ok(())
     }
 

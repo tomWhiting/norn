@@ -10,6 +10,10 @@
 //! - `tools/list` — returns `{ tools: [{ name, description, inputSchema }] }`.
 //! - `tools/call` — `{ name, arguments }` → `{ content: [...], isError }`.
 
+#[cfg(test)]
+#[path = "mcp_channel_publication_tests.rs"]
+mod channel_publication_tests;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -20,6 +24,10 @@ use crate::error::{IntegrationError, McpRemoteError};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::traits::Tool;
 
+use super::mcp_channel_source::McpChannelAttachment;
+use super::mcp_channels::{
+    MCP_CHANNEL_CAPABILITY, McpChannelError, McpChannelInfo, McpChannelRefusal,
+};
 use super::mcp_protocol::{ClientProtocolState, McpRoot};
 use super::mcp_proxy::McpProxyTool;
 #[cfg(test)]
@@ -41,6 +49,12 @@ use tool_schema::validate_discovered_tools;
 pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 
 static CLIENT_INSTANCE: AtomicU64 = AtomicU64::new(1);
+
+fn channel_error(error: &McpChannelError) -> IntegrationError {
+    IntegrationError::McpError {
+        reason: error.to_string(),
+    }
+}
 
 fn validate_client_settings(config: &McpServerConfig) -> Result<(), IntegrationError> {
     if config.max_inbound_message_bytes == 0 {
@@ -191,6 +205,7 @@ impl McpClientInner {
 pub struct McpClient {
     inner: Arc<McpClientInner>,
     tools: Vec<McpToolDef>,
+    channel_info: Option<McpChannelInfo>,
 }
 
 impl McpClient {
@@ -218,8 +233,43 @@ impl McpClient {
         config: McpServerConfig,
         roots: Vec<McpRoot>,
     ) -> Result<Self, IntegrationError> {
+        Self::connect_attached(config, roots, None).await
+    }
+
+    /// Connect an explicitly enabled stdio channel to one host-owned inbox.
+    ///
+    /// Notifications stage before initialization completes. The host must call
+    /// [`Self::activate_channel`] after publishing this connection's runtime
+    /// generation; connection setup alone never retires a working predecessor.
+    pub async fn connect_with_channel(
+        config: McpServerConfig,
+        roots: Vec<McpRoot>,
+        attachment: McpChannelAttachment,
+    ) -> Result<Self, IntegrationError> {
+        if !matches!(config.transport, McpTransport::Stdio { .. }) {
+            return Err(IntegrationError::McpError {
+                reason: format!("MCP channel '{}' requires the stdio transport", config.name),
+            });
+        }
+        Self::connect_attached(config, roots, Some(attachment)).await
+    }
+
+    async fn connect_attached(
+        config: McpServerConfig,
+        roots: Vec<McpRoot>,
+        attachment: Option<McpChannelAttachment>,
+    ) -> Result<Self, IntegrationError> {
         validate_client_settings(&config)?;
-        let protocol = Arc::new(ClientProtocolState::new(roots));
+        let instance_id = CLIENT_INSTANCE.fetch_add(1, Ordering::Relaxed);
+        let channel_source = attachment
+            .map(|attachment| attachment.bind(config.name.clone(), instance_id))
+            .transpose()
+            .map_err(|error| channel_error(&error))?;
+        let protocol = Arc::new(ClientProtocolState::with_channel(
+            roots,
+            channel_source,
+            Some(config.name.clone()),
+        ));
         let transport: Box<dyn Transport> = match &config.transport {
             McpTransport::Stdio { command, args } => {
                 Box::new(super::mcp_stdio::StdioTransport::spawn(
@@ -247,7 +297,7 @@ impl McpClient {
             context_call: Mutex::new(()),
             server_name: config.name.clone(),
             protocol,
-            instance_id: CLIENT_INSTANCE.fetch_add(1, Ordering::Relaxed),
+            instance_id,
             live: AtomicBool::new(true),
         });
 
@@ -288,6 +338,45 @@ impl McpClient {
             "MCP server initialized",
         );
 
+        let channel_info = match initialized
+            .capabilities
+            .experimental
+            .get(MCP_CHANNEL_CAPABILITY)
+        {
+            Some(serde_json::Value::Object(capability)) if capability.is_empty() => {
+                Some(McpChannelInfo {
+                    capability: capability.clone().into_iter().collect(),
+                    instructions: initialized.instructions,
+                })
+            }
+            Some(_) => {
+                if let Some(source) = inner.protocol.channel_source() {
+                    source.reject(McpChannelRefusal::NotDeclared);
+                }
+                inner.invalidate().await;
+                return Err(IntegrationError::McpError {
+                    reason: format!(
+                        "MCP server '{}' channel capability must be an empty object",
+                        config.name
+                    ),
+                });
+            }
+            None => None,
+        };
+        if let Some(source) = inner.protocol.channel_source() {
+            if channel_info.is_none() {
+                source.reject(McpChannelRefusal::NotDeclared);
+                inner.invalidate().await;
+                return Err(IntegrationError::McpError {
+                    reason: format!(
+                        "MCP server '{}' did not declare {MCP_CHANNEL_CAPABILITY}",
+                        config.name
+                    ),
+                });
+            }
+            source.negotiated().map_err(|error| channel_error(&error))?;
+        }
+
         inner
             .notify("notifications/initialized", serde_json::json!({}))
             .await?;
@@ -295,6 +384,7 @@ impl McpClient {
         let mut client = Self {
             inner,
             tools: Vec::new(),
+            channel_info,
         };
         if initialized.capabilities.tools.is_some() {
             client.tools = client.discover_tools().await?;
@@ -317,7 +407,32 @@ impl McpClient {
                 live: AtomicBool::new(true),
             }),
             tools: Vec::new(),
+            channel_info: None,
         }
+    }
+
+    /// Advertised ordinary channel capability and untrusted initialize instructions.
+    /// Presence does not mean the session has enabled or activated channel ingress.
+    pub const fn channel_info(&self) -> Option<&McpChannelInfo> {
+        self.channel_info.as_ref()
+    }
+
+    /// Publish this verified channel generation and fence its previously active source.
+    pub fn activate_channel(&self) -> Result<(), McpChannelError> {
+        self.inner
+            .protocol
+            .channel_source()
+            .ok_or(McpChannelError::NotEnabled)?
+            .activate()
+    }
+
+    /// Stop new events from this connection; already published inbox events remain retained.
+    pub fn retire_channel(&self) -> Result<(), McpChannelError> {
+        self.inner
+            .protocol
+            .channel_source()
+            .ok_or(McpChannelError::NotEnabled)?
+            .retire()
     }
 
     #[cfg(test)]
@@ -369,6 +484,7 @@ impl McpClient {
         Ok(Self {
             inner: Arc::clone(&self.inner),
             tools,
+            channel_info: self.channel_info.clone(),
         })
     }
 

@@ -266,6 +266,7 @@ impl StdioShared {
         if was_invalidated {
             return;
         }
+        self.protocol.retire_channel();
         let stderr_summary = self.stderr_observation.snapshot();
         let failure = format!("{reason}; {stderr_summary}");
         trace_invalidation(stderr_summary);

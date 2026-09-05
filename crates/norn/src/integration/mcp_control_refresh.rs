@@ -5,7 +5,8 @@ use std::sync::Arc;
 use super::McpController;
 use crate::integration::McpRuntime;
 use crate::integration::mcp_control::{
-    McpActivationCandidate, McpCandidateError, McpControlError, McpControlResponse,
+    McpActivationCandidate, McpCandidateError, McpControlError, McpControlErrorKind,
+    McpControlResponse,
 };
 use crate::tool::ToolGeneration;
 
@@ -63,6 +64,9 @@ impl McpController {
             Err(error) => Err(error),
         };
         if let Err(reconnect_error) = reconnect {
+            if reconnect_error.kind() == McpControlErrorKind::CommittedPublication {
+                return Err(reconnect_error);
+            }
             let primary = McpControlError::refresh_recovery(refresh_error, reconnect_error);
             tracing::warn!(
                 server = name,
@@ -76,6 +80,9 @@ impl McpController {
                 current.as_ref(),
                 primary.to_string(),
             ) {
+                if fallback_error.kind() == McpControlErrorKind::CommittedPublication {
+                    return Err(fallback_error);
+                }
                 return Err(McpControlError::refresh_recovery(primary, fallback_error));
             }
             return Ok(self.mutation_response(true));

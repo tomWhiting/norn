@@ -8,6 +8,11 @@ pub mod diagnostics;
 pub mod extensions;
 pub mod hooks;
 mod mcp_candidate_builder;
+mod mcp_channel_frame;
+mod mcp_channel_inbox;
+mod mcp_channel_settings;
+mod mcp_channel_source;
+mod mcp_channels;
 pub mod mcp_client;
 #[cfg(test)]
 mod mcp_context_call_tests;
@@ -17,6 +22,7 @@ pub mod mcp_live_command;
 mod mcp_protocol;
 pub mod mcp_proxy;
 pub mod mcp_runtime;
+mod mcp_runtime_channels;
 mod mcp_runtime_store;
 pub mod mcp_server;
 mod mcp_stdio;
@@ -42,6 +48,15 @@ pub use hooks::{
     UserPromptHook,
 };
 pub use mcp_candidate_builder::McpRuntimeCandidateBuilder;
+pub use mcp_channel_frame::frame_mcp_channel_message;
+pub use mcp_channel_inbox::{McpChannelDelivery, McpChannelHost, McpChannelInbox};
+pub use mcp_channel_settings::McpChannelSettings;
+pub use mcp_channel_source::McpChannelAttachment;
+pub use mcp_channels::{
+    MCP_CHANNEL_CAPABILITY, MCP_CHANNEL_NOTIFICATION, McpChannelError, McpChannelInfo,
+    McpChannelLimits, McpChannelMessage, McpChannelOverflow, McpChannelPolicy, McpChannelRefusal,
+    McpChannelRejection, McpChannelStatus,
+};
 pub use mcp_client::{
     MCP_PROTOCOL_VERSION, McpClient, McpClientInner, McpServerConfig as McpClientConfig,
     McpToolDef, McpTransport,

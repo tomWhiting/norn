@@ -400,3 +400,194 @@ async fn published_dynamic_rebuild_keeps_the_old_request_lease_alive() -> TestRe
     );
     Ok(())
 }
+
+async fn assert_unavailable(generation: &ToolGeneration, name: &str) {
+    assert!(!generation.names().any(|available| available == name));
+    assert!(
+        generation
+            .definitions()
+            .iter()
+            .all(|tool| tool.name != name)
+    );
+    assert!(generation.catalog().iter().all(|tool| tool.name != name));
+    assert!(
+        generation
+            .prompt_entries()
+            .iter()
+            .all(|tool| tool.name != name)
+    );
+    assert!(
+        generation
+            .dynamic_prompt_entries()
+            .iter()
+            .all(|tool| tool.name != name)
+    );
+    assert_eq!(
+        generation.effect_index().effect_for(name, &json!({})),
+        ToolEffect::Unknown
+    );
+    assert!(matches!(
+        generation.execute(name, "unavailable", json!({})).await,
+        Err(ToolError::ToolNotFound { name: refused }) if refused == name
+    ));
+}
+
+#[tokio::test]
+async fn replacement_preserves_original_policy_across_removal_and_registry_changes() -> TestResult {
+    let mut registry = registry_with_tools(&[
+        ("stable", ToolEffect::ReadOnly, false),
+        ("mcp_old", ToolEffect::ReadOnly, true),
+    ]);
+    registry.set_available(vec![
+        "stable".to_owned(),
+        "mcp_old".to_owned(),
+        "mcp_future".to_owned(),
+        "mcp_denied".to_owned(),
+        "mcp_prefix*".to_owned(),
+    ]);
+    registry.set_disallowed(vec!["mcp_denied".to_owned()]);
+    let first = ToolGeneration::from_registry(&registry, 1);
+    registry.reset_available();
+    registry.set_disallowed(Vec::new());
+    let removed = ToolGeneration::removing_dynamic_tools(
+        &first,
+        &std::collections::BTreeSet::from(["mcp_old".to_owned()]),
+        2,
+    );
+    let replacement = ToolGeneration::replacing_dynamic_tools(
+        &removed,
+        vec![
+            boxed_stub("mcp_old", ToolEffect::ReadOnly, true),
+            boxed_stub("mcp_future", ToolEffect::RemoteMutation, true),
+            boxed_stub("mcp_denied", ToolEffect::ReadOnly, true),
+            boxed_stub("mcp_unlisted", ToolEffect::ReadOnly, true),
+            boxed_stub("mcp_prefix_suffix", ToolEffect::ReadOnly, true),
+        ],
+        3,
+    )?;
+    assert_eq!(
+        replacement.names().collect::<Vec<_>>(),
+        ["mcp_future", "mcp_old", "stable"]
+    );
+    assert_eq!(
+        replacement
+            .execute("mcp_future", "allowed", json!({}))
+            .await?["tool"],
+        "mcp_future"
+    );
+    assert_eq!(
+        replacement
+            .effect_index()
+            .effect_for("mcp_future", &json!({})),
+        ToolEffect::RemoteMutation
+    );
+    for name in ["mcp_denied", "mcp_unlisted", "mcp_prefix_suffix"] {
+        assert_unavailable(&replacement, name).await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn replacement_distinguishes_no_allowlist_from_empty_allowlist() -> TestResult {
+    for empty_allowlist in [false, true] {
+        let mut registry = ToolRegistry::new();
+        if empty_allowlist {
+            registry.set_available(Vec::new());
+        }
+        registry.set_disallowed(vec!["mcp_denied".to_owned()]);
+        let first = ToolGeneration::from_registry(&registry, 1);
+        let replacement = ToolGeneration::replacing_dynamic_tools(
+            &first,
+            vec![
+                boxed_stub("mcp_new", ToolEffect::ReadOnly, true),
+                boxed_stub("mcp_denied", ToolEffect::ReadOnly, true),
+            ],
+            2,
+        )?;
+        assert_unavailable(&replacement, "mcp_denied").await;
+        if empty_allowlist {
+            assert_unavailable(&replacement, "mcp_new").await;
+        } else {
+            assert_eq!(replacement.names().collect::<Vec<_>>(), ["mcp_new"]);
+            assert_eq!(
+                replacement.execute("mcp_new", "allowed", json!({})).await?["tool"],
+                "mcp_new"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn child_view_retains_operator_policy_and_its_own_name_restriction() -> TestResult {
+    let mut registry = registry_with_tools(&[("stable", ToolEffect::ReadOnly, false)]);
+    registry.set_available(vec![
+        "stable".to_owned(),
+        "mcp_child".to_owned(),
+        "mcp_future".to_owned(),
+        "mcp_denied".to_owned(),
+        "mcp_parent_only".to_owned(),
+    ]);
+    registry.set_disallowed(vec!["mcp_denied".to_owned()]);
+    let source = ToolGeneration::from_registry(&registry, 1);
+    let child_names = std::collections::BTreeSet::from([
+        "stable".to_owned(),
+        "mcp_child".to_owned(),
+        "mcp_future".to_owned(),
+        "mcp_denied".to_owned(),
+        "mcp_unlisted".to_owned(),
+    ]);
+    let child = ToolGeneration::child_view(
+        &source,
+        Some(vec![
+            boxed_stub("mcp_child", ToolEffect::ReadOnly, true),
+            boxed_stub("mcp_denied", ToolEffect::ReadOnly, true),
+            boxed_stub("mcp_unlisted", ToolEffect::ReadOnly, true),
+            boxed_stub("mcp_parent_only", ToolEffect::ReadOnly, true),
+        ]),
+        Some(&child_names),
+        Arc::new(ToolContext::empty()),
+    )?;
+    assert_eq!(child.names().collect::<Vec<_>>(), ["mcp_child", "stable"]);
+    let replacement = ToolGeneration::replacing_dynamic_tools(
+        &child,
+        vec![
+            boxed_stub("mcp_future", ToolEffect::ReadOnly, true),
+            boxed_stub("mcp_denied", ToolEffect::ReadOnly, true),
+            boxed_stub("mcp_unlisted", ToolEffect::ReadOnly, true),
+            boxed_stub("mcp_parent_only", ToolEffect::ReadOnly, true),
+        ],
+        2,
+    )?;
+    assert_eq!(
+        replacement.names().collect::<Vec<_>>(),
+        ["mcp_future", "stable"]
+    );
+    for generation in [&child, &replacement] {
+        for name in ["mcp_denied", "mcp_unlisted", "mcp_parent_only"] {
+            assert_unavailable(generation, name).await;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn excluded_dynamic_duplicates_are_still_rejected() {
+    let mut registry = ToolRegistry::new();
+    registry.set_available(Vec::new());
+    let source = ToolGeneration::from_registry(&registry, 1);
+    assert_eq!(
+        ToolGeneration::replacing_dynamic_tools(
+            &source,
+            vec![
+                boxed_stub("duplicate", ToolEffect::Unknown, true),
+                boxed_stub("duplicate", ToolEffect::Unknown, true),
+            ],
+            2,
+        )
+        .err(),
+        Some(ToolGenerationBuildError::DuplicateDynamicName {
+            name: "duplicate".to_owned()
+        })
+    );
+}

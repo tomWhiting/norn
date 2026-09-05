@@ -12,6 +12,7 @@ use super::context::ToolContext;
 use super::envelope::{ToolEnvelope, split_envelope_fields};
 use super::registry::{ToolRegistry, dispatch_tool_with_outcome};
 use super::scheduling::ToolEffectIndex;
+use super::selection::ToolSelectionPolicy;
 use super::traits::Tool;
 use crate::error::ToolError;
 use crate::r#loop::config::{DispatchOutcome, ToolExecutionSnapshot, ToolExecutor};
@@ -24,6 +25,7 @@ use crate::tools::tool_search::{TOOL_SEARCH_TOOL_NAME, ToolSearchTool};
 pub struct ToolGeneration {
     revision: u64,
     tools: BTreeMap<String, Arc<dyn Tool + Send + Sync>>,
+    selection: ToolSelectionPolicy,
     context: Arc<ToolContext>,
     effects: Arc<ToolEffectIndex>,
     definitions: Arc<[ToolDefinition]>,
@@ -33,11 +35,12 @@ pub struct ToolGeneration {
 }
 
 impl ToolGeneration {
-    /// Snapshot the registry's currently available tools at `revision`.
+    /// Snapshot the available tools and original operator policy at `revision`.
     #[must_use]
     pub fn from_registry(registry: &ToolRegistry, revision: u64) -> Self {
         Self::assemble(
             registry.available_tool_arcs(),
+            registry.selection_policy(),
             registry.context_arc(),
             revision,
         )
@@ -46,7 +49,9 @@ impl ToolGeneration {
     /// Replace every runtime-dynamic tool while preserving the stable surface.
     ///
     /// The new generation retains the exact context and stable tool instances
-    /// from `previous`. All model-facing projections are then rebuilt together.
+    /// from `previous`. The original operator policy filters newly discovered
+    /// names; the supplied candidates retain the caller's server selection.
+    /// All model-facing projections are then rebuilt together.
     ///
     /// # Errors
     ///
@@ -76,6 +81,7 @@ impl ToolGeneration {
         }
         Ok(Self::assemble(
             tools,
+            previous.selection.clone(),
             Arc::clone(&previous.context),
             revision,
         ))
@@ -99,7 +105,12 @@ impl ToolGeneration {
             .filter(|(name, tool)| !(tool.runtime_dynamic() && removed.contains(*name)))
             .map(|(name, tool)| (name.clone(), Arc::clone(tool)))
             .collect();
-        Self::assemble(tools, Arc::clone(&previous.context), revision)
+        Self::assemble(
+            tools,
+            previous.selection.clone(),
+            Arc::clone(&previous.context),
+            revision,
+        )
     }
 
     /// Derive a child-context view while retaining source tool instances.
@@ -128,17 +139,21 @@ impl ToolGeneration {
                 tools.insert(name, Arc::from(tool));
             }
         }
-        if let Some(available) = available {
-            tools.retain(|name, _tool| available.contains(name));
-        }
-        Ok(Self::assemble(tools, context, source.revision))
+        Ok(Self::assemble(
+            tools,
+            source.selection.narrowed(available),
+            context,
+            source.revision,
+        ))
     }
 
     fn assemble(
         mut tools: BTreeMap<String, Arc<dyn Tool + Send + Sync>>,
+        selection: ToolSelectionPolicy,
         context: Arc<ToolContext>,
         revision: u64,
     ) -> Self {
+        tools.retain(|name, _| selection.allows(name));
         let mut catalog: Vec<ToolCatalogEntry> = tools
             .values()
             .flat_map(|tool| tool.catalog_entries())
@@ -180,6 +195,7 @@ impl ToolGeneration {
         Self {
             revision,
             tools,
+            selection,
             context,
             effects,
             definitions,

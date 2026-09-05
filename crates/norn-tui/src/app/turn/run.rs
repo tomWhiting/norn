@@ -38,11 +38,13 @@ use super::mid::{
 enum TurnSeed {
     UserPrompt(String),
     AgentMessages(Vec<ChannelMessage>),
+    McpChannelWake,
 }
 
 #[derive(Default)]
 struct TurnOutcome {
     interrupt_prompt: Option<String>,
+    channel_wake_pause: Option<String>,
 }
 
 pub(crate) async fn run_turn_and_pending(
@@ -120,7 +122,63 @@ pub(crate) async fn run_ready_root_inbound(
         child_results,
         outcome,
     )
-    .await
+    .await?;
+    Ok(())
+}
+
+/// Start from the channel owner's persisted input, without synthesizing a prompt.
+/// The wake future only reports readiness; the agent loop retains delivery ownership.
+pub(crate) async fn run_ready_mcp_channels(
+    state: &mut AppState,
+    runtime: &mut RuntimeRefs,
+    guard: &mut TerminalGuard,
+    term_rx: &mut mpsc::UnboundedReceiver<std::io::Result<Event>>,
+    agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
+    child_results: &mut ChildResultState,
+) -> Result<bool, TuiError> {
+    let outcome = run_turn(
+        state,
+        runtime,
+        guard,
+        TurnSeed::McpChannelWake,
+        term_rx,
+        agent_event_rx,
+        child_results,
+    )
+    .await?;
+    let pause_reason = outcome.channel_wake_pause.clone();
+    let operator_followup = run_followup_prompts(
+        state,
+        runtime,
+        guard,
+        term_rx,
+        agent_event_rx,
+        child_results,
+        outcome,
+    )
+    .await?;
+    run_pending_child_prompts(
+        state,
+        runtime,
+        guard,
+        term_rx,
+        agent_event_rx,
+        child_results,
+    )
+    .await?;
+    if !operator_followup && let Some(reason) = pause_reason {
+        with_scroll_region_cursor(guard, |guard| {
+            write_error_line(
+                state,
+                guard,
+                &format!(
+                    "Automatic channel wake paused: {reason}. Send an ordinary message to resume; retained input stays in the inbox."
+                ),
+            )
+        })?;
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 pub(crate) async fn run_pending_child_prompts(
@@ -164,11 +222,13 @@ async fn run_followup_prompts(
     agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
     child_results: &mut ChildResultState,
     first_outcome: TurnOutcome,
-) -> Result<(), TuiError> {
+) -> Result<bool, TuiError> {
+    let mut ran_operator_turn = false;
     let mut next = first_outcome
         .interrupt_prompt
         .or_else(|| state.in_flight_input.pop_queued_followup());
     while let Some(prompt) = next {
+        ran_operator_turn = true;
         write_user_message(&prompt, state, guard)?;
         let outcome = run_turn(
             state,
@@ -184,7 +244,7 @@ async fn run_followup_prompts(
             .interrupt_prompt
             .or_else(|| state.in_flight_input.pop_queued_followup());
     }
-    Ok(())
+    Ok(ran_operator_turn)
 }
 
 /// Drive one agent turn from a submitted prompt.
@@ -271,6 +331,23 @@ async fn run_turn(
                         config: &agent_config,
                         event_tx: Some(&runtime.root_event_sender),
                         initial_messages,
+                        inbound: runtime.root_inbound.as_mut(),
+                        loop_context: &mut runtime.loop_context,
+                        cancel: Some(cancel.clone()),
+                    })
+                    .await
+                }
+                TurnSeed::McpChannelWake => {
+                    run_agent_step_from_messages(AgentMessageStepRequest {
+                        provider: runtime.provider.as_ref(),
+                        executor: &runtime.executor,
+                        store: runtime.store.as_ref(),
+                        tools: &tools,
+                        output_schema: None,
+                        model: &model,
+                        config: &agent_config,
+                        event_tx: Some(&runtime.root_event_sender),
+                        initial_messages: Vec::new(),
                         inbound: runtime.root_inbound.as_mut(),
                         loop_context: &mut runtime.loop_context,
                         cancel: Some(cancel.clone()),
@@ -366,6 +443,9 @@ async fn run_turn(
     // synchronous scroll-region closure below. A failure message is
     // carried into the closure and written in the error style there.
     let checkpoint_failure = checkpoint_session(&runtime.store).await;
+    let channel_wake_pause = matches!(seed, TurnSeed::McpChannelWake)
+        .then(|| channel_wake_pause_reason(step_result.as_ref(), cancel_requested))
+        .flatten();
     with_scroll_region_cursor(guard, |guard| {
         finish_thinking_block(state, guard, &mut renderer)?;
         flush_pending(state, guard, &mut renderer)?;
@@ -382,7 +462,32 @@ async fn run_turn(
         Ok(())
     })?;
     redraw_panel(state, guard)?;
-    Ok(TurnOutcome { interrupt_prompt })
+    Ok(TurnOutcome {
+        interrupt_prompt,
+        channel_wake_pause,
+    })
+}
+
+fn channel_wake_pause_reason(
+    result: Option<&Result<AgentStepResult, norn::error::NornError>>,
+    cancelled: bool,
+) -> Option<String> {
+    if cancelled {
+        return Some("turn cancelled".to_owned());
+    }
+    let reason = match result {
+        Some(Ok(AgentStepResult::Completed { .. } | AgentStepResult::Refused { .. })) => {
+            return None;
+        }
+        Some(Ok(AgentStepResult::Cancelled { .. })) => "turn cancelled",
+        Some(Ok(AgentStepResult::MaxIterationsReached { .. })) => "iteration limit reached",
+        Some(Ok(AgentStepResult::TimedOut { .. })) => "turn deadline elapsed",
+        Some(Ok(AgentStepResult::Truncated { .. })) => "model output stopped early",
+        Some(Ok(AgentStepResult::SchemaUnreachable { .. })) => "output contract was not satisfied",
+        Some(Err(error)) => return Some(error.to_string()),
+        None => "agent event stream closed before the turn returned",
+    };
+    Some(reason.to_owned())
 }
 
 fn reset_turn_state(state: &mut AppState) {

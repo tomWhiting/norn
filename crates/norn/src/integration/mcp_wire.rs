@@ -1,6 +1,7 @@
 //! JSON-RPC envelopes used by the MCP client transports.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use super::mcp_types::McpToolDef;
 
@@ -51,12 +52,16 @@ pub(crate) struct InitializeResult {
     pub(crate) protocol_version: String,
     pub(crate) capabilities: ServerCapabilities,
     pub(crate) server_info: ServerInfo,
+    #[serde(default)]
+    pub(crate) instructions: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct ServerCapabilities {
     #[serde(default)]
     pub(crate) tools: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) experimental: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Deserialize)]

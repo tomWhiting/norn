@@ -38,3 +38,7 @@ vte = { workspace = true }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "mcp_channels"
+harness = false

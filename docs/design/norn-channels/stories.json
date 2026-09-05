@@ -1,0 +1,35 @@
+{
+  "cluster": "norn-channels",
+  "personas": [
+    {
+      "name": "Norn operator",
+      "role": "Collaborating with external systems",
+      "stories": [
+        {
+          "id": "S1",
+          "text": "As an operator, I want my existing conforming Channels MCP server to connect to Norn and retain its first pushed message."
+        },
+        {
+          "id": "S2",
+          "text": "As an operator, I want explicit inbox policy and bounded retained work without stalling tool replies or confusing source identity."
+        },
+        {
+          "id": "S3",
+          "text": "As a Rust server author, I want a real stdio fixture proving the public contract without JavaScript."
+        },
+        {
+          "id": "S4",
+          "text": "As an operator, I want busy and idle running sessions to receive messages through their existing owned lifecycle."
+        },
+        {
+          "id": "S5",
+          "text": "As an operator, I want to see enabled sources, pending inbox messages and refusals and change admission through existing controls."
+        },
+        {
+          "id": "S6",
+          "text": "As an operator, I want Cambium and Hammerbarn interoperability demonstrated without unearned delivery guarantees."
+        }
+      ]
+    }
+  ]
+}

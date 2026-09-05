@@ -24,6 +24,8 @@ pub enum McpControlErrorKind {
     Candidate,
     /// Candidate publication violated a generation invariant.
     Publication,
+    /// Runtime publication committed, but one or more channel transitions failed.
+    CommittedPublication,
     /// A compensating operation failed after the primary operation failed.
     Rollback,
     /// The actor and handle disagreed about their response protocol.
@@ -83,6 +85,17 @@ pub struct McpControlError {
 }
 
 impl McpControlError {
+    pub(crate) fn channel_publication(
+        revision: u64,
+        source: super::super::mcp_runtime_channels::McpChannelPublicationError,
+    ) -> Self {
+        Self::new(
+            McpControlErrorKind::CommittedPublication,
+            "MCP runtime publication committed; channel transitions failed",
+            McpCommittedChannelDiagnostic { revision, source },
+        )
+    }
+
     pub(crate) fn unavailable(error: impl Error + Send + Sync + 'static) -> Self {
         Self::new(
             McpControlErrorKind::Unavailable,
@@ -236,6 +249,13 @@ impl From<ConfigError> for McpControlError {
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 struct McpControlDiagnostic(String);
+
+#[derive(Debug, thiserror::Error)]
+#[error("committed revision {revision}: {source}")]
+struct McpCommittedChannelDiagnostic {
+    revision: u64,
+    source: super::super::mcp_runtime_channels::McpChannelPublicationError,
+}
 
 #[derive(Debug)]
 struct McpRollbackDiagnostic {

@@ -2,6 +2,7 @@
 
 mod driven;
 mod error;
+mod input;
 pub mod intervene;
 pub mod jsonrpc;
 pub mod orchestrator;

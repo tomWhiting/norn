@@ -19,11 +19,11 @@ use norn_tui::input::history::{InputHistory, default_history_path};
 use norn_tui::render::fixed_panel::StatusBar;
 use norn_tui::terminal::caps::TerminalCaps;
 
-use crate::cli::{Cli, ExitCode};
+use crate::cli::{Cli, ExitCode, Mode, Protocol};
 use crate::print::build_provider;
 use crate::runtime::{
-    builder_from_cli, cli_coordination_envelope, connect_mcp_runtime, resolve_invocation,
-    warn_unmatched_tool_flag_names,
+    builder_from_cli, cli_coordination_envelope, initialize_cli_channels, prepare_cli_mcp,
+    resolve_invocation, validate_channel_mode, warn_unmatched_runtime_tool_flag_names,
 };
 
 use super::startup_trace::StartupTrace;
@@ -34,9 +34,16 @@ const AGENT_EVENT_CHANNEL_CAPACITY: usize = 4096;
 /// Synchronous entry point — matches the CLI dispatch pattern.
 #[must_use]
 pub fn run(cli: &Cli) -> ExitCode {
+    if cli.protocol == Some(Protocol::Jsonrpc) {
+        return crate::print::run(cli);
+    }
     if let Err(e) = TerminalCaps::check_hard_requirements() {
         eprintln!("{e}");
         return crate::print::run(cli);
+    }
+    if let Err(error) = validate_channel_mode(cli, Mode::Tui) {
+        eprintln!("norn: {error}");
+        return ExitCode::ArgumentError;
     }
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -116,7 +123,12 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     .await?;
     startup_trace.mark("provider_built");
 
-    let mcp = connect_mcp_runtime(&resolved.project_root, &resolved.mcp_servers).await?;
+    let mcp = prepare_cli_mcp(
+        &resolved.project_root,
+        &resolved.mcp_servers,
+        resolved.channel_config.as_ref(),
+    )
+    .await?;
     for server in &mcp.pending_project_servers {
         eprintln!(
             "norn: MCP server '{server}' is waiting for shared-project approval; from {} run `norn mcp approve {server}`",
@@ -158,6 +170,17 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     }
     builder = builder.mcp_config_state(resolved.mcp_state);
+    if let Some(channels) = resolved.channel_config.as_ref() {
+        builder = builder.mcp_channels(channels.clone());
+        if let Some(servers) = resolved
+            .settings
+            .agent
+            .as_ref()
+            .and_then(|agent| agent.mcp_servers.as_ref())
+        {
+            builder = builder.mcp_selected_servers(servers.clone());
+        }
+    }
     let agent = builder
         .execution_mode(ExecutionMode::Interactive)
         .lsp_workspace(Arc::clone(&lsp_workspace))
@@ -176,10 +199,11 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     parts
         .model_selection
         .bind_provider_profile(resolved.provider_profile);
+    initialize_cli_channels(&mut parts, resolved.channel_config.as_ref()).await?;
 
     // Warn on `--allowed-tools` / `--disallowed-tools` names that match no
     // real tool: the gated registry is only known after `build()`.
-    warn_unmatched_tool_flag_names(&parts.registry, &resolved.applied);
+    warn_unmatched_runtime_tool_flag_names(&parts, &resolved.applied);
 
     // `info.session_id` is always populated (fresh UUID under
     // `--no-session`); `session_entry` is `Some` only for a persisted

@@ -46,6 +46,7 @@ mod iteration_monitor;
 mod llm_event_hooks;
 mod local_compaction;
 mod managed_context;
+mod mcp_channel_delivery;
 mod pending_inbound;
 mod pending_mailbox_api;
 mod persisted_compaction;

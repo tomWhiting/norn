@@ -8,6 +8,8 @@ use std::sync::{Arc, RwLock};
 use serde::Serialize;
 use tokio::sync::watch;
 
+use super::mcp_channel_source::ChannelSource;
+use super::mcp_channels::{MCP_CHANNEL_NOTIFICATION, McpChannelRefusal};
 use crate::error::IntegrationError;
 
 /// A contextual URI advertised to an MCP server through `roots/list`.
@@ -81,15 +83,40 @@ pub(crate) struct ClientProtocolState {
     roots: RwLock<Arc<[McpRoot]>>,
     tool_list_revision: AtomicU64,
     tool_list_changes: watch::Sender<u64>,
+    channel_source: Option<ChannelSource>,
+    channel_name: Option<String>,
 }
 
 impl ClientProtocolState {
+    #[cfg(test)]
     pub(crate) fn new(roots: Vec<McpRoot>) -> Self {
+        Self::with_channel(roots, None, None)
+    }
+
+    pub(crate) fn with_channel(
+        roots: Vec<McpRoot>,
+        channel_source: Option<ChannelSource>,
+        channel_name: Option<String>,
+    ) -> Self {
         let (tool_list_changes, _receiver) = watch::channel(0);
         Self {
             roots: RwLock::new(roots.into()),
             tool_list_revision: AtomicU64::new(0),
             tool_list_changes,
+            channel_source,
+            channel_name,
+        }
+    }
+
+    pub(crate) fn channel_source(&self) -> Option<&ChannelSource> {
+        self.channel_source.as_ref()
+    }
+
+    pub(crate) fn retire_channel(&self) {
+        if let Some(source) = &self.channel_source
+            && let Err(error) = source.retire()
+        {
+            tracing::error!(error = %error, "MCP channel retirement failed");
         }
     }
 
@@ -129,7 +156,19 @@ impl ClientProtocolState {
             });
         }
         let Some(id) = message.get("id") else {
-            if method == "notifications/tools/list_changed" {
+            if method == MCP_CHANNEL_NOTIFICATION {
+                if let Some(source) = &self.channel_source {
+                    source.receive(
+                        message
+                            .get("params")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                    );
+                } else {
+                    tracing::warn!(source = ?self.channel_name, reason = %McpChannelRefusal::NotEnabled,
+                        "MCP channel event refused; no input attachment was granted");
+                }
+            } else if method == "notifications/tools/list_changed" {
                 let revision = self.tool_list_revision.fetch_add(1, Ordering::AcqRel) + 1;
                 self.tool_list_changes.send_replace(revision);
             }

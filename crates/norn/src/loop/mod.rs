@@ -23,6 +23,7 @@ pub use crate::r#loop::iteration::{
 };
 pub use crate::r#loop::linger::LingerPolicy;
 pub use crate::r#loop::loop_context::LoopContext;
+pub use crate::r#loop::mcp_channel_delivery::McpChannelSession;
 
 pub use crate::r#loop::retry::{
     RetryNotice, RetryOutcome, RetryPolicy, RetryableError, error_class_label, retry_with_backoff,
@@ -60,6 +61,7 @@ pub mod inbound;
 pub mod iteration;
 pub mod linger;
 pub mod loop_context;
+mod mcp_channel_delivery;
 pub mod notifications;
 mod numeric;
 mod programmatic_calling;

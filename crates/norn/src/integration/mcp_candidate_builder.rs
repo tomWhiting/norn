@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use super::mcp_control::{
     McpActivationCandidate, McpActivationRequest, McpCandidateBuilder, McpCandidateError,
 };
+use super::{McpChannelHost, McpChannelSettings};
 use crate::config::McpConfigSnapshot;
 use crate::tool::ToolGeneration;
 
@@ -16,6 +17,7 @@ use crate::tool::ToolGeneration;
 pub struct McpRuntimeCandidateBuilder {
     working_dir: PathBuf,
     selected_servers: Option<Arc<[String]>>,
+    channels: Option<(McpChannelHost, McpChannelSettings)>,
 }
 
 impl McpRuntimeCandidateBuilder {
@@ -25,6 +27,7 @@ impl McpRuntimeCandidateBuilder {
         Self {
             working_dir,
             selected_servers: None,
+            channels: None,
         }
     }
 
@@ -35,6 +38,13 @@ impl McpRuntimeCandidateBuilder {
     #[must_use]
     pub fn with_selected_servers(mut self, servers: Vec<String>) -> Self {
         self.selected_servers = Some(Arc::from(servers));
+        self
+    }
+
+    /// Bind newly connected channel sources to the existing root-owned inbox.
+    #[must_use]
+    pub fn with_channels(mut self, host: McpChannelHost, settings: McpChannelSettings) -> Self {
+        self.channels = Some((host, settings));
         self
     }
 }
@@ -57,10 +67,29 @@ impl McpCandidateBuilder for McpRuntimeCandidateBuilder {
             }
         }
         let snapshot = McpConfigSnapshot::new(servers);
-        let runtime_candidate = request
-            .previous_runtime()
-            .build_candidate(&snapshot, &self.working_dir)
-            .await;
+        let previous_runtime = request.previous_runtime();
+        let runtime_candidate = match self.channels.as_ref() {
+            Some((host, settings)) => {
+                previous_runtime
+                    .build_channel_candidate(&snapshot, &self.working_dir, host, settings)
+                    .await
+            }
+            None => {
+                previous_runtime
+                    .build_candidate(&snapshot, &self.working_dir)
+                    .await
+            }
+        };
+        if let Some((_, settings)) = self.channels.as_ref() {
+            for (name, reason) in runtime_candidate.failures() {
+                if settings.sources().contains_key(name) {
+                    return Err(crate::error::IntegrationError::McpError {
+                        reason: format!("MCP channel source '{name}' failed to connect: {reason}"),
+                    }
+                    .into());
+                }
+            }
+        }
         let complete_generation = ToolGeneration::replacing_dynamic_tools(
             request.previous().as_ref(),
             runtime_candidate.proxy_tools(),
@@ -80,7 +109,12 @@ impl McpCandidateBuilder for McpRuntimeCandidateBuilder {
             complete_generation
         };
         let runtime = Arc::new(runtime_candidate.into_runtime());
-        Ok(McpActivationCandidate::new(Arc::new(generation), runtime))
+        let candidate = McpActivationCandidate::new(Arc::new(generation), runtime);
+        Ok(if self.channels.is_some() {
+            candidate.with_channel_lifecycle()
+        } else {
+            candidate
+        })
     }
 }
 

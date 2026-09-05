@@ -16,6 +16,7 @@ use crate::r#loop::helpers::{
     append_tool_result, execute_tool_batch, inject_post_tool_batch_notifications,
     reject_post_schema_tools,
 };
+use crate::r#loop::mcp_channel_delivery::flush_mcp_channel_messages;
 use crate::r#loop::schema::{format_nudge, format_validation_feedback};
 use crate::provider::request::{Message, MessageRole};
 use crate::session::events::{EventBase, SessionEvent};
@@ -173,6 +174,15 @@ impl StepMachine<'_> {
         )
         .await?;
 
+        flush_mcp_channel_messages(
+            self.store,
+            &mut self.messages,
+            self.loop_context,
+            true,
+            self.event_tx,
+        )
+        .await?;
+
         Ok(StepFlow::Next(StepState::Gate))
     }
 
@@ -206,6 +216,15 @@ impl StepMachine<'_> {
             &mut self.messages,
             self.loop_context.active_input_rx.as_mut(),
             self.loop_context.hooks.as_deref(),
+        )
+        .await?;
+
+        flush_mcp_channel_messages(
+            self.store,
+            &mut self.messages,
+            self.loop_context,
+            true,
+            self.event_tx,
         )
         .await?;
 
@@ -332,7 +351,7 @@ impl StepMachine<'_> {
         // steer must reach the model, so the loop continues
         // instead of resolving the stop boundary — mirroring the
         // boundary's own Continue on injected work.
-        if drain_post_batch_inbound(
+        let inbound_delivered = drain_post_batch_inbound(
             self.store,
             &mut self.messages,
             self.inbound.as_deref_mut(),
@@ -340,8 +359,17 @@ impl StepMachine<'_> {
             self.loop_context.hooks.as_deref(),
             self.event_tx,
         )
+        .await?;
+        let channel_delivered = !flush_mcp_channel_messages(
+            self.store,
+            &mut self.messages,
+            self.loop_context,
+            true,
+            self.event_tx,
+        )
         .await?
-        {
+        .is_empty();
+        if inbound_delivered || channel_delivered {
             return Ok(StepFlow::Next(StepState::Gate));
         }
 

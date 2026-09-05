@@ -12,4 +12,8 @@ pub enum TuiError {
     /// An I/O error occurred during terminal operations.
     #[error(transparent)]
     Io(#[from] io::Error),
+
+    /// The installed channel owner could not provide idle wake readiness.
+    #[error(transparent)]
+    McpChannel(#[from] norn::integration::McpChannelError),
 }

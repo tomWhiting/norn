@@ -33,7 +33,6 @@
 //! The result of every path is an [`crate::exit::ExitCode`] which the
 //! binary converts into the OS process exit code.
 
-use std::io::{IsTerminal, Read};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -50,6 +49,7 @@ use super::driven::{
     driven_background_failure, execute_driven, finish_intervene_loop, spawn_intervene_loop,
 };
 use super::error::{fail_before_assembly, merge_background_failures, preserve_run_failure, report};
+use super::input::read_stdin_if_piped;
 use super::jsonrpc::{DrivenRun, SharedRunDriver};
 use super::output::{StopInfo, drain_diagnostics, extract_output_and_usage};
 use super::provider::build_provider;
@@ -62,19 +62,21 @@ use super::step_output::{
 use super::stream_renderer::{StreamSink, spawn_stream_renderer};
 use super::tracing_setup::ensure_stderr_tracing;
 use crate::cli::ExitCode;
-use crate::cli::{Cli, OutputFormat, Protocol};
+use crate::cli::{Cli, Mode, OutputFormat, Protocol};
 use crate::commands::slash::{
     DispatchOutcome, apply_clear_request, apply_compact_request, dispatch_input_with_mcp,
 };
 use crate::config::parse_inline_or_file;
 use crate::runtime::{
     SlashStateInputs, build_slash_state_with_schema, builder_from_cli, cli_coordination_envelope,
-    connect_mcp_runtime, resolve_invocation, warn_unmatched_tool_flag_names,
+    initialize_cli_channels, prepare_cli_mcp, resolve_invocation, validate_channel_mode,
+    warn_unmatched_runtime_tool_flag_names,
 };
 use crate::session::SessionPersistError;
 use norn::tools::lsp::build_lsp_backend;
 
 pub use super::error::PrintError;
+pub use super::input::compose_prompt;
 
 /// Buffer size for the streaming-event broadcast channel the builder
 /// creates via `.event_channel_capacity`. Sized so a brief burst of
@@ -149,7 +151,7 @@ pub async fn run_async(cli: &Cli) -> ExitCode {
     // whose routing is in question — the contract above is the surface
     // that covers that case, and the binary warns on stderr directly.
     ensure_stderr_tracing();
-    match execute(cli).await {
+    match Box::pin(execute(cli)).await {
         Ok(code) => code,
         Err(err) => report(&err),
     }
@@ -161,8 +163,9 @@ pub async fn run_async(cli: &Cli) -> ExitCode {
 /// (stdin is the JSON-RPC channel, never the prompt); every other format
 /// and the TUI are unreached in that case.
 async fn execute(cli: &Cli) -> Result<ExitCode, PrintError> {
+    validate_channel_mode(cli, Mode::Print)?;
     if cli.protocol == Some(Protocol::Jsonrpc) {
-        return execute_driven(cli).await;
+        return Box::pin(execute_driven(cli)).await;
     }
 
     // Every failure from here on is post-argument-parsing: the machine
@@ -246,9 +249,13 @@ pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<PrintAssembly, Pri
         _ => PrintError::Agent(err.to_string()),
     })?;
 
-    let mcp = connect_mcp_runtime(&resolved.project_root, &resolved.mcp_servers)
-        .await
-        .map_err(|error| PrintError::Agent(error.to_string()))?;
+    let mcp = prepare_cli_mcp(
+        &resolved.project_root,
+        &resolved.mcp_servers,
+        resolved.channel_config.as_ref(),
+    )
+    .await
+    .map_err(|error| PrintError::Agent(error.to_string()))?;
     for server in &mcp.pending_project_servers {
         eprintln!(
             "norn: MCP server '{server}' is waiting for shared-project approval; from {} run `norn mcp approve {server}`",
@@ -286,6 +293,17 @@ pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<PrintAssembly, Pri
         }
     }
     builder = builder.mcp_config_state(resolved.mcp_state);
+    if let Some(channels) = resolved.channel_config.as_ref() {
+        builder = builder.mcp_channels(channels.clone());
+        if let Some(servers) = resolved
+            .settings
+            .agent
+            .as_ref()
+            .and_then(|agent| agent.mcp_servers.as_ref())
+        {
+            builder = builder.mcp_selected_servers(servers.clone());
+        }
+    }
     let agent = builder
         .execution_mode(ExecutionMode::Headless)
         .lsp_backend(build_lsp_backend().map_err(|error| PrintError::Agent(error.to_string()))?)
@@ -301,44 +319,17 @@ pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<PrintAssembly, Pri
     parts
         .model_selection
         .bind_provider_profile(resolved.provider_profile);
+    initialize_cli_channels(&mut parts, resolved.channel_config.as_ref())
+        .await
+        .map_err(|error| PrintError::Agent(error.to_string()))?;
     // Deferred until here (not inside `builder_from_cli`) because gating
     // happens during `build()`: the assembled registry is the authoritative
     // reference for which flag-named tools exist.
-    warn_unmatched_tool_flag_names(&parts.registry, &resolved.applied);
+    warn_unmatched_runtime_tool_flag_names(&parts, &resolved.applied);
     Ok(PrintAssembly {
         parts,
         index_lock_deadline,
     })
-}
-
-/// Read stdin in full when it is not a TTY. Returns [`None`] when stdin
-/// is a TTY (print mode invoked from a terminal with `-p`).
-fn read_stdin_if_piped() -> Result<Option<String>, PrintError> {
-    let stdin = std::io::stdin();
-    if stdin.is_terminal() {
-        return Ok(None);
-    }
-    let mut buf = String::new();
-    stdin.lock().read_to_string(&mut buf)?;
-    Ok(Some(buf))
-}
-
-/// Build the effective prompt given an optional piped-stdin payload and
-/// the positional `PROMPT` words joined into a single string.
-///
-/// Logic per NC-003 R4:
-/// - `stdin = None`: return the positional prompt verbatim.
-/// - `stdin = Some`, positional empty: use stdin verbatim.
-/// - both present: wrap stdin in `<stdin>…</stdin>` and concatenate.
-#[must_use]
-pub fn compose_prompt(stdin: Option<&str>, positional: &str) -> String {
-    match (stdin, positional.is_empty()) {
-        (None, _) => positional.to_owned(),
-        (Some(content), true) => content.to_owned(),
-        (Some(content), false) => {
-            format!("<stdin>\n{content}\n</stdin>\n\n{positional}")
-        }
-    }
 }
 
 /// Parse `-s` / `--output-schema` if provided. Failures are mapped to

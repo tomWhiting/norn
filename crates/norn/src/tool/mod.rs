@@ -44,4 +44,5 @@ mod post_validation_feedback;
 pub mod registry;
 pub mod risk;
 pub mod scheduling;
+mod selection;
 pub mod traits;

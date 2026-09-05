@@ -1,0 +1,283 @@
+{
+  "id": "NCH-001",
+  "title": "Channels receiver, typed admission and running-session rollout",
+  "status": "R1-R3_verified_R4a_source_written_venue_verification_pending",
+  "base_commit": "cf6c44cad8a534910f614f703a36bbd26a4fdcbc",
+  "branch": "codex/nwp-03-channels",
+  "worktree": "/private/tmp/norn-nwp-03-channels",
+  "design": "../design.json",
+  "requirements": [
+    {
+      "id": "R1",
+      "programme_rows": [
+        "NWP-03.1"
+      ],
+      "title": "Public channel wire, startup ordering and trusted framing",
+      "status": "source_written_venue_verification_pending",
+      "spec": "WHEN an explicitly enabled stdio MCP server declares capabilities.experimental[claude/channel] as an empty object, Norn SHALL retain that declaration and optional initialize instructions, accept notifications/claude/channel with string content and optional string-only metadata, and preserve a notification sent immediately after initialization. The listener SHALL exist before the transport reader starts. Before negotiation succeeds, received channel messages SHALL remain staged and bounded. Model-facing source attribution SHALL come from the configured server name, while all server metadata and instructions SHALL remain untrusted context. Permission relay SHALL NOT be enabled by this capability.",
+      "files": {
+        "modify": [
+          "crates/norn/src/integration/mod.rs",
+          "crates/norn/src/integration/mcp_wire.rs",
+          "crates/norn/src/integration/mcp_protocol.rs",
+          "crates/norn/src/integration/mcp_client.rs",
+          "crates/norn/src/integration/mcp_stdio.rs"
+        ],
+        "create": [
+          "crates/norn/src/integration/mcp_channels.rs",
+          "crates/norn/src/integration/mcp_channel_source.rs",
+          "crates/norn/src/integration/mcp_channel_frame.rs",
+          "crates/norn/src/integration/mcp_channel_tests.rs"
+        ]
+      },
+      "acceptance": [
+        "Initialize retains instructions and exact experimental channel declaration; absent capability cannot silently enable ingress.",
+        "Valid metadata uses ASCII letters/digits/underscores and string values; invalid payloads produce named refusals without echoing content or secrets.",
+        "Configured source, recipient UUID and connection generation cannot be replaced by meta.source, recipient, generation or body text.",
+        "First notification can precede tools/list response and is still available after connection activation.",
+        "Tool response dispatch, roots/list and tool-list notifications remain live while channel messages arrive.",
+        "XML-sensitive content and attribute values are escaped; a supplied metadata source never creates a second trusted source attribute.",
+        "HTTP channel activation is explicitly refused by this stdio-scoped row; HTTP tools continue to work.",
+        "Locator grep only, not closure: rg -n 'claude/channel|notifications/claude/channel' crates/norn/src/integration",
+        "Locator grep only, not closure: rg -n 'instructions|experimental' crates/norn/src/integration/mcp_wire.rs"
+      ],
+      "acceptance_greps": [
+        "rg -n 'claude/channel|notifications/claude/channel' crates/norn/src/integration",
+        "rg -n 'instructions|experimental' crates/norn/src/integration/mcp_wire.rs"
+      ],
+      "checklist": [
+        "C1"
+      ],
+      "stories": [
+        "S1"
+      ]
+    },
+    {
+      "id": "R2",
+      "programme_rows": [
+        "NWP-03.2",
+        "NWP-03.3"
+      ],
+      "title": "Explicit, bounded admission with one recipient and source generations",
+      "status": "source_written_venue_verification_pending",
+      "spec": "The host SHALL create one recipient-scoped inbox with explicit positive retained-count and retained-byte budgets and explicit source policies Hold, NextTurn or Wake. The synchronous MCP reader SHALL attempt admission without awaiting inbox capacity. All staged, held, queued and claimed-but-unconsumed messages SHALL count against the same budgets until explicitly consumed or denied. A full inbox SHALL report a typed refusal and remain observable while outstanding RPC responses continue. Connecting a replacement SHALL NOT retire the current source until the host activates the new connection. Retirement SHALL fence subsequent emissions from the old connection. Already admitted messages SHALL retain their original source generation. Cancellation of delivery SHALL leave its message retained. No implicit durable admission or upstream acknowledgement SHALL be claimed.",
+      "files": {
+        "create": [
+          "crates/norn/src/integration/mcp_channel_inbox.rs",
+          "crates/norn/src/integration/mcp_channel_inbox_tests.rs"
+        ],
+        "modify": [
+          "crates/norn/src/integration/mcp_channels.rs",
+          "crates/norn/src/integration/mcp_channel_source.rs",
+          "crates/norn/src/integration/mcp_protocol.rs",
+          "crates/norn/src/integration/mcp_client.rs"
+        ]
+      },
+      "acceptance": [
+        "Two callers sharing a client cannot acquire two inbox receivers; the intended recipient is captured at host construction.",
+        "Counts and bytes remain charged when an owner claims a message; dropping the delivery claim leaves it available again.",
+        "Holding messages cannot expand an unbounded side vector or free quota.",
+        "A pending/new connection stages events; only explicit activation admits them for delivery and fences its predecessor.",
+        "Full-count and full-byte refusals are visible in typed status and logs, and neither awaits nor blocks the sole RPC reader.",
+        "A retired connection cannot publish to the current recipient generation.",
+        "Wake readiness is push-driven and cancel-safe; Hold and NextTurn alone do not wake an idle session.",
+        "Receiver closure refuses new events visibly; zero limits are validation errors, and this API defines no numeric defaults.",
+        "Locator grep only, not closure: rg -n 'Hold|NextTurn|Wake|retained|generation' crates/norn/src/integration/mcp_channel*.rs",
+        "Locator grep only, not closure: rg -n 'sleep|interval|unbounded' crates/norn/src/integration/mcp_channel*.rs"
+      ],
+      "acceptance_greps": [
+        "rg -n 'Hold|NextTurn|Wake|retained|generation' crates/norn/src/integration/mcp_channel*.rs",
+        "rg -n 'sleep|interval|unbounded' crates/norn/src/integration/mcp_channel*.rs"
+      ],
+      "checklist": [
+        "C2"
+      ],
+      "stories": [
+        "S2"
+      ]
+    },
+    {
+      "id": "R3",
+      "programme_rows": [
+        "NWP-03.1",
+        "NWP-03.2",
+        "NWP-03.4"
+      ],
+      "title": "Rust stdio interoperability fixture",
+      "status": "source_written_venue_verification_pending",
+      "spec": "A Rust fixture SHALL speak the public MCP initialize/initialized/channel/tools contract over actual subprocess stdio. The integration test SHALL spawn its own compiled test executable in an explicit fixture mode, without a JavaScript runtime, shell protocol implementation or runtime compilation. It SHALL synchronize through protocol messages, not filesystem polling. Test-only deadlines SHALL diagnose a hung test, not become product limits. The test target SHALL set harness=false because libtest writes a non-JSON preamble before test entry; its explicit main dispatches fixture mode before writing stdout and otherwise runs every named case with nonzero failure propagation.",
+      "files": {
+        "create": [
+          "crates/norn/tests/mcp_channels_stdio.rs",
+          "crates/norn/tests/support/mcp_channels_fixture.rs"
+        ],
+        "modify": [
+          "crates/norn/Cargo.toml"
+        ]
+      },
+      "acceptance": [
+        "Rust fixture emits immediate initial channel data and instructions, discovers a reply tool and receives a tool call with unchanged chat_id.",
+        "Notification arrival while tools/list and tools/call are outstanding preserves JSON-RPC response routing.",
+        "A fixture fills explicit count and byte budgets; subsequent tool calls still answer and rejection status identifies the source.",
+        "Malformed content/meta/capability and undeclared channel sources are refused explicitly.",
+        "A replacement source retires its predecessor without broadcasting to a child inbox.",
+        "The fixture includes ordinary Hammerbarn-shaped string metadata and a negative Cambium urgent-boolean specimen.",
+        "All tests run through the centrally dispatched 205 verification; no local Rust build is part of this work.",
+        "Locator grep only, not closure: rg -n 'current_exe|notifications/claude/channel|chat_id' crates/norn/tests/mcp_channels_stdio.rs crates/norn/tests/support/mcp_channels_fixture.rs"
+      ],
+      "acceptance_greps": [
+        "rg -n 'current_exe|notifications/claude/channel|chat_id' crates/norn/tests/mcp_channels_stdio.rs crates/norn/tests/support/mcp_channels_fixture.rs"
+      ],
+      "checklist": [
+        "C3"
+      ],
+      "stories": [
+        "S3"
+      ]
+    },
+    {
+      "id": "R4a",
+      "programme_rows": [
+        "NWP-03.2",
+        "NWP-03.3"
+      ],
+      "title": "Running-session owned delivery with exact persistence and push readiness",
+      "status": "source_written_venue_verification_pending",
+      "spec": "WHEN the existing running LoopContext has its authoritative agent UUID, the owner SHALL install one explicitly bounded MCP channel inbox and receive its host handle. Setup SHALL admit eligible Wake and NextTurn messages as host-framed external UserMessage events without invoking local slash-command or permission-response parsing. Busy and linger boundaries SHALL claim Wake messages only, after every running tool has a result. One prepared event with stable namespaced identity, timestamp and parent SHALL remain attached to its retained delivery claim through append failure; consumption SHALL follow exact idempotent persistence synchronously before cancellation-capable hooks. Charge SHALL remain until consumption. Idle readiness SHALL be push-driven and cancellation-safe. Source messages SHALL not alter model, output schema, recipient or approval authority. This row SHALL NOT connect CLI servers or claim a complete Channels launch feature; runtime publication and operator wiring remain following rows. After the persisted append and consumption, the loop SHALL emit a distinct typed McpChannel delivery observation through the existing bounded AgentEvent broadcast before hooks. It SHALL carry host source/generation/recipient/sequence, raw external text and the exact persisted event ID. No synthetic operator prompt, forged inter-agent lifecycle or second queue SHALL be added.",
+      "acceptance": [
+        "Installed inbox recipient matches the actual LoopContext.agent_id; absent identity and duplicate install fail by name, and later mismatched identity cannot deliver.",
+        "A channel wake uses persisted external event identity without an empty operator prompt; /exit, /model and approval-looking content remain attributed untrusted content.",
+        "Wake arriving during a tool batch reaches the next request only after tool completion; NextTurn arriving during a run remains until an independently started turn.",
+        "Held work stays retained and cannot wake or deliver. Existing linger selects directly on channel readiness without a new polling path.",
+        "Count and bytes remain charged through claimed/prepared state and sink failure. Exact event retry reconciles an ambiguous append without creating a second UserMessage.",
+        "Cancellation after content persistence but during hooks cannot redeliver the message; cancellation before persistence leaves work retained.",
+        "Source metadata cannot alter the request output schema, model or host approval state.",
+        "Row code uses existing session ownership and EventStore; no daemon, Aion dependency or new durable ingress service is required.",
+        "A distinct typed channel observation carries the matching persisted UserMessage ID and host source; publication precedes cancellation-capable hooks and Debug does not expose external content.",
+        "Existing exhaustive provider-event regressions explicitly classify McpChannel observations as unexpected when only provider or subagent events are expected; no wildcard hides newly introduced variants."
+      ],
+      "checklist": [
+        "C4"
+      ],
+      "stories": [
+        "S4"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/loop/mod.rs",
+          "crates/norn/src/loop/loop_context.rs",
+          "crates/norn/src/loop/runner/setup.rs",
+          "crates/norn/src/loop/runner/dispatch.rs",
+          "crates/norn/src/loop/runner/tests.rs",
+          "crates/norn/src/loop/linger.rs",
+          "crates/norn/src/integration/mcp_channel_inbox.rs",
+          "crates/norn/src/integration/mcp_channel_inbox_tests.rs",
+          "crates/norn/src/provider/agent_event.rs",
+          "crates/norn/src/provider/mod.rs",
+          "crates/norn/src/loop/runner/tests/streaming_nudge.rs"
+        ],
+        "create": [
+          "crates/norn/src/loop/mcp_channel_delivery.rs",
+          "crates/norn/src/loop/mcp_channel_delivery_tests.rs",
+          "crates/norn/src/loop/runner/tests/mcp_channel_delivery.rs",
+          "crates/norn/src/provider/channel_event.rs"
+        ]
+      },
+      "acceptance_greps": [
+        "rg -n \"install_mcp_channel_inbox|mcp_channel_session\" crates/norn/src/loop",
+        "rg -n \"try_claim_wake|append_idempotent_off_executor|from_stable_namespace\" crates/norn/src/loop/mcp_channel_delivery.rs crates/norn/src/integration/mcp_channel_inbox.rs"
+      ]
+    },
+    {
+      "id": "R5",
+      "programme_rows": [
+        "NWP-03.3",
+        "NWP-03.4"
+      ],
+      "title": "CLI, driven mode and existing TUI controls",
+      "status": "outline_requires_wall_refresh",
+      "spec": "OUTLINE ONLY; NOT AN EXECUTABLE FILE WALL. Expose source opt-in, effective policy, retained limits, refusals and inbox release/deny through existing host surfaces, without waiting for the new workspace. Add a push select arm for idle channel readiness; do not piggyback on the TUI render timer. Driven output contracts stay bound to the active request and ordinary channel messages do not approve tools. Candidate anchors: crates/norn/src/config/types.rs, crates/norn/src/config/validate.rs, crates/norn/src/config/mcp.rs, crates/norn-cli/src/cli/mcp_args.rs, crates/norn-cli/src/runtime/mcp.rs, crates/norn-cli/src/runtime/from_cli.rs, crates/norn-cli/src/print/driven.rs, crates/norn-cli/src/print/jsonrpc/run.rs, crates/norn-cli/src/print/jsonrpc/frames.rs, crates/norn-tui/src/app/event_loop.rs, crates/norn-tui/src/app/turn/run.rs, crates/norn-tui/src/app/mcp_slash.rs.",
+      "candidate_paths": [
+        "crates/norn/src/config/types.rs",
+        "crates/norn/src/config/validate.rs",
+        "crates/norn/src/config/mcp.rs",
+        "crates/norn-cli/src/cli/mcp_args.rs",
+        "crates/norn-cli/src/runtime/mcp.rs",
+        "crates/norn-cli/src/runtime/from_cli.rs",
+        "crates/norn-cli/src/print/driven.rs",
+        "crates/norn-cli/src/print/jsonrpc/run.rs",
+        "crates/norn-cli/src/print/jsonrpc/frames.rs",
+        "crates/norn-tui/src/app/event_loop.rs",
+        "crates/norn-tui/src/app/turn/run.rs",
+        "crates/norn-tui/src/app/mcp_slash.rs"
+      ],
+      "acceptance": [
+        "A real Norn interactive session wakes when an enabled source emits while idle.",
+        "A busy session receives the message at the documented boundary, with source and outcome visible.",
+        "Effective source policy and all budget values appear in status; invalid/missing required explicit values fail before launch.",
+        "No subscription process, daemon or Aion instance is required for the basic feature."
+      ],
+      "checklist": [
+        "C5"
+      ],
+      "stories": [
+        "S5"
+      ]
+    },
+    {
+      "id": "R6",
+      "programme_rows": [
+        "NWP-03.4"
+      ],
+      "title": "Cambium and Hammerbarn verification and release evidence",
+      "status": "outline_separate_repository_wall",
+      "spec": "OUTLINE ONLY; NOT AN EXECUTABLE FILE WALL. Verify ordinary push and tool replies from the existing Cambium and Hammerbarn MCP adapters. Correct Cambium urgent metadata to a string in a separate brief/repository wall rather than relaxing the public schema silently. Record adapter revisions, fixture source identity and real-session proof. Do not equate a transport write with application processing or advertise exactly-once effects. Candidate anchors: /Users/tom/Developer/ablative/apps/cambium/surface/mcp/src/notifications.ts, /Users/tom/Developer/ablative/apps/cambium/surface/mcp/tests/tools-and-keys.test.ts, /Users/tom/Developer/games/hammerbarn-40k/tests/mcp/bridge.test.ts.",
+      "candidate_paths": [
+        "/Users/tom/Developer/ablative/apps/cambium/surface/mcp/src/notifications.ts",
+        "/Users/tom/Developer/ablative/apps/cambium/surface/mcp/tests/tools-and-keys.test.ts",
+        "/Users/tom/Developer/games/hammerbarn-40k/tests/mcp/bridge.test.ts"
+      ],
+      "acceptance": [
+        "Cambium urgent metadata is conforming string data; it cannot promote its own inbox/wake authority.",
+        "Hammerbarn chat_id/message_id/revision remain verbatim data and ordinary reply tools work.",
+        "Source enable/disable/reconnect and held/denied states are visible in an actual Norn session.",
+        "Any optional play session remains explicitly voluntary; fixture certification is not gameplay."
+      ],
+      "checklist": [
+        "C6"
+      ],
+      "stories": [
+        "S6"
+      ]
+    }
+  ],
+  "boundaries": [
+    "No new daemon, PTY/multiplexer, TUI workspace, permission relay, hidden gameplay evaluation, private Claude implementation or automatic approval authority.",
+    "No feature-complete claim from a receiver fixture alone.",
+    "No numeric product default or artificial queue limit chosen by an implementer."
+  ],
+  "verification": [
+    "Parent centralizes all Rust builds and required 205 venue verification; source-bound exact-commit battery and Fable rereview remain separate landing requirements."
+  ],
+  "cluster": "norn-channels",
+  "depends_on": [],
+  "checklist": [
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C5",
+    "C6"
+  ],
+  "stories": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6"
+  ],
+  "purpose": "Implement the public Claude Code Channels receiver contract in Rust and retain the full owner-requested running-session rollout. Provenance: ../design.json and owner conversation of 5 September 2026, Melbourne time. Branch codex/nwp-03-channels at base cf6c44cad8a534910f614f703a36bbd26a4fdcbc.",
+  "task": "R1-R3 receiver source has coordinator-reported venue proof. Implement R4a owned delivery in its newly registered exact wall. Runtime source publication, CLI/TUI connection and controls remain following work with separate executable walls; receiver and delivery plumbing alone do not constitute the complete requested feature. No landing is implied.",
+  "status_detail": "R1-R3 receiver passed coordinator-reported 205 checks. R4a source and regressions are written, frozen for venue compilation. Runtime startup, CLI controls and TUI wake are recorded in the parallel NCH-002 through NCH-005 briefs."
+}

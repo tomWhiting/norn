@@ -47,7 +47,9 @@ use super::render::{
 use super::session_replay::replay_visible_session_history;
 use super::slash::{SlashOutcome, try_dispatch_slash};
 use super::state::AppState;
-use super::turn::{run_pending_child_prompts, run_ready_root_inbound, run_turn_and_pending};
+use super::turn::{
+    run_pending_child_prompts, run_ready_mcp_channels, run_ready_root_inbound, run_turn_and_pending,
+};
 
 /// Bundled runtime inputs needed by [`run_app`].
 ///
@@ -401,6 +403,7 @@ async fn outer_loop(
 ) -> Result<(), TuiError> {
     let mut tick = tokio::time::interval(RENDER_TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut channel_wake_paused = false;
 
     loop {
         tokio::select! {
@@ -418,6 +421,7 @@ async fn outer_loop(
                     &mut child_results,
                 ).await? {
                     InputOutcome::Continue => {}
+                    InputOutcome::OperatorTurn => channel_wake_paused = false,
                     InputOutcome::Exit => return Ok(()),
                 }
             }
@@ -429,6 +433,24 @@ async fn outer_loop(
                     redraw_panel(state, guard)?;
                     render_input(state, guard)?;
                 }
+            }
+            readiness = async {
+                match runtime.loop_context.mcp_channel_session.as_ref() {
+                    Some(session) => session.wake_ready().await,
+                    None => std::future::pending().await,
+                }
+            }, if !channel_wake_paused => {
+                readiness?;
+                channel_wake_paused = !run_ready_mcp_channels(
+                    state,
+                    runtime,
+                    guard,
+                    &mut term_rx,
+                    agent_event_rx,
+                    &mut child_results,
+                ).await?;
+                redraw_panel(state, guard)?;
+                render_input(state, guard)?;
             }
             _ = tick.tick() => {
                 if runtime
@@ -479,6 +501,8 @@ async fn outer_loop(
 enum InputOutcome {
     /// Keep looping.
     Continue,
+    /// An ordinary operator turn ran and may retry retained channel input.
+    OperatorTurn,
     /// Exit cleanly.
     Exit,
 }
@@ -597,6 +621,7 @@ async fn handle_action(
     agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
     child_results: &mut ChildResultState,
 ) -> Result<InputOutcome, TuiError> {
+    let mut outcome = InputOutcome::Continue;
     match action {
         InputAction::Exit => {
             if state.input_editor.is_empty() {
@@ -642,6 +667,7 @@ async fn handle_action(
                         child_results,
                     )
                     .await?;
+                    outcome = InputOutcome::OperatorTurn;
                 }
             }
         }
@@ -655,7 +681,7 @@ async fn handle_action(
     }
     sync_input_for_current_geometry(state, guard);
     redraw_all(state, guard)?;
-    Ok(InputOutcome::Continue)
+    Ok(outcome)
 }
 
 /// Detect Ctrl+C on a terminal [`Event`].

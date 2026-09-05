@@ -1,0 +1,112 @@
+{
+  "id": "NCH-005",
+  "title": "R4b authoritative root channel assembly and initial activation",
+  "status": "source_written_venue_verification_pending",
+  "base_commit": "cf6c44cad8a534910f614f703a36bbd26a4fdcbc",
+  "branch": "codex/nwp-03-channels",
+  "worktree": "/private/tmp/norn-nwp-03-channels",
+  "design": "../design.json",
+  "provenance": [
+    {
+      "source": "Tom requested Channels on the actual Norn session; NCH-001 R1-R4a receiver and session ownership contracts.",
+      "referent": "../design.json"
+    },
+    {
+      "source": "/private/tmp/norn-nwp-01-model-selection/crates/norn/src/agent/builder/build.rs",
+      "sha256": "541b93d319de4475fd56734213c8ab5b46f6a649f14073b8c603ae626eb084d2",
+      "transfer": "Copy exact model candidate16 builder/build.rs before applying R4b, retaining ModelRuntime and parent context-window changes."
+    },
+    {
+      "source": "Parent authorization during R4b implementation; original fixture owner channels_fixture confirmed both stdio fixture files free.",
+      "scope": "Add built-Agent root startup scenario; preserve quiet fixture case used by TUI tests."
+    },
+    {
+      "source": "/private/tmp/nwp-03-proof/channels4-clippy-output.txt",
+      "scope": "Parent authorized integrated-checkout repair only: use backend-validated builder model policy in the root identity fixture; route approval and revocation publication through the existing owner-aware channel activation path. Original source worktrees remain frozen.",
+      "worktree": "/private/tmp/norn-nwp-03-integrated"
+    },
+    {
+      "source": "Parent-authorized integrated publication repair following compatibility review",
+      "scope": "Fence every removed channel despite other transition failures; preserve committed config, approval and runtime state after post-publication failure; prevent refresh fallback from stale precommit state. mcp_client.rs changes only to register a deterministic private-protocol test module.",
+      "worktree": "/private/tmp/norn-nwp-03-integrated"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "R4b",
+      "title": "Root-before-MCP startup and explicit initial activation",
+      "programme_rows": [
+        "NWP-03.2",
+        "NWP-03.3"
+      ],
+      "spec": "WHEN explicit channel settings accompany a new root, assembly SHALL resolve the registered root identity before installing the session inbox. The existing serialized MCP control actor SHALL explicitly initialize its first candidate, publish matching tools/runtime, then activate staged channel ingress. Unchanged configuration reload SHALL retain its existing semantics. No parallel runtime, fabricated UUID, implicit policy or implicit capacity is introduced.",
+      "files": {
+        "modify": [
+          "crates/norn/src/agent/mcp.rs",
+          "crates/norn/src/agent/builder/build.rs",
+          "crates/norn/src/integration/mod.rs",
+          "crates/norn/src/integration/mcp_candidate_builder.rs",
+          "crates/norn/src/integration/mcp_runtime_candidate.rs",
+          "crates/norn/src/integration/mcp_control.rs",
+          "crates/norn/src/integration/mcp_control_actor.rs",
+          "crates/norn/src/integration/mcp_control_error.rs",
+          "crates/norn/tests/mcp_channels_stdio.rs",
+          "crates/norn/tests/support/mcp_channels_fixture.rs",
+          "crates/norn/src/integration/mcp_control_approval.rs",
+          "crates/norn/src/integration/mcp_control_refresh.rs",
+          "crates/norn/src/integration/mcp_client.rs"
+        ],
+        "create": [
+          "crates/norn/src/integration/mcp_channel_settings.rs",
+          "crates/norn/src/integration/mcp_runtime_channels.rs",
+          "crates/norn/src/integration/mcp_channel_startup_tests.rs",
+          "crates/norn/src/agent/mcp_channel_builder_tests.rs",
+          "crates/norn/src/integration/mcp_channel_publication_tests.rs"
+        ]
+      },
+      "acceptance": [
+        "A configured channel startup installs one inbox only after resolving the authoritative registered root UUID, and fails without retained MCP configuration or with a preconnected runtime.",
+        "Explicit positive budgets, source names, policy and overflow survive assembly without defaults or fabricated recipient identity.",
+        "Channel-enabled candidate connections install their source listener before transport spawn; ordinary servers use the existing connect path.",
+        "The initial control command builds and publishes a candidate even when configuration has not changed; later successful initializations are idempotent.",
+        "Channel ingress activates after tool generation and runtime publication; removed/replaced sources are retired, reused clients remain live.",
+        "Failed connection or generation publication is explicit and cannot silently claim initialized success; retries do not mint a parallel runtime.",
+        "Candidate16 model-selection changes in builder/build.rs are preserved. Tests cover actual root identity, invalid startup, and explicit initialization versus unchanged reload.",
+        "A real Rust stdio fixture emits before initialization completes; a built registered Agent explicitly initializes its existing MCP actor, sees matching reply tools, and persists the initial source-attributed message into its first provider request.",
+        "Only the explicitly channel-bound root controller manages channel activation and retirement; a child inheriting MCP tools does not acquire authority over the root inbox lifecycle.",
+        "Approval and revocation preserve durable approval rollback when tool generation publication fails; after successful generation publication they publish the matching runtime and execute the same owner-scoped channel activation or retirement as startup.",
+        "All removed or replaced sources are retired before candidate activation; every transition is attempted and all failures are reported without abandoning later revocations.",
+        "Post-publication channel errors identify the committed revision and cannot roll back persisted configuration or trigger refresh fallback from the previous runtime.",
+        "Deterministic retired reused-source regressions cover revoked-source admission fencing, durable approval, session and persisted configuration, matching runtime/tool revision, and a subsequent source activation despite earlier failures."
+      ],
+      "acceptance_greps": [
+        "rg -n \"install_channels|resolve_root_agent_id|mcp.assemble\" crates/norn/src/agent/builder/build.rs",
+        "rg -n \"initialize|publish_channels|with_channels\" crates/norn/src/integration/mcp_control_actor.rs crates/norn/src/integration/mcp_candidate_builder.rs"
+      ],
+      "checklist": [
+        "C4"
+      ],
+      "stories": [
+        "S4"
+      ]
+    }
+  ],
+  "cluster": "norn-channels",
+  "checklist": [
+    "C4"
+  ],
+  "stories": [
+    "S4"
+  ],
+  "purpose": "Bind explicitly opted-in channel sources to the actual registered Norn root and publish their first runtime through the existing serialized MCP actor.",
+  "task": "Implement R4b within the exact file wall; preserve candidate16 model-selection assembly. Parent owns venue compilation, tests, review and commits.",
+  "depends_on": [
+    "NCH-001",
+    "NCH-002"
+  ],
+  "verification": [
+    "Source syntax and formatting checked with rustfmt on the exact wall, skip_children=true; git diff --check clean.",
+    "JSON rendered with design-system-v2/render-brief.py; cluster check-coverage.py passes (shared C4/S4 split is intentional).",
+    "No Cargo, compilation, remote work, commit or review invoked by this row owner. Parent must run the full built-root stdio scenario and other checks on venue205."
+  ]
+}

@@ -379,10 +379,6 @@ impl AgentBuilder {
         shared.insert_extension(Arc::new(
             crate::agent::fork::ParentPromptPlan::from_loop_context(&loop_context),
         ));
-        let (registry, tool_runtime) = self.mcp.assemble(&working_dir, registry, &shared)?;
-        // Share the same `Arc<ActionLog>` with the loop so dispatch recording
-        // and the `action_log` tool's queries observe one ledger.
-        loop_context.action_log = Some(Arc::clone(&action_log));
         // Root registry registration (D2): opt-in and effective only
         // alongside `.agent_registry(..)`; the reservation mints the id so
         // the registered root entry and the running agent share one id.
@@ -392,6 +388,13 @@ impl AgentBuilder {
             &model,
             self.agent_id,
         )?;
+        loop_context.agent_id = Some(agent_id);
+        let channel_host = self.mcp.install_channels(&mut loop_context)?;
+        let (registry, tool_runtime) =
+            self.mcp
+                .assemble(&working_dir, registry, &shared, channel_host)?;
+        // Share one action ledger between dispatch and its query tool.
+        loop_context.action_log = Some(Arc::clone(&action_log));
         let root_mailbox_lease = Arc::new(crate::agent::PendingMailboxLease::new());
         loop_context.pending_mailbox_lease = Some(Arc::clone(&root_mailbox_lease));
 
@@ -441,7 +444,6 @@ impl AgentBuilder {
             // would complete into a channel nothing reads.
             loop_context.child_result_rx = Some(child_rx);
         }
-        loop_context.agent_id = Some(agent_id);
         if let Some(infra) = shared.get_extension::<crate::tools::agent::AgentToolInfra>() {
             loop_context.pending_agent_messages = Some(Arc::clone(&infra.pending_messages));
         }

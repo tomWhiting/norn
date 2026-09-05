@@ -24,7 +24,7 @@ pub(crate) fn agent_event_method(agent_event: &norn::provider::AgentEvent) -> &'
             | ProviderEvent::ResponseAudioFrame { .. }
             | ProviderEvent::Error { .. } => "event/raw",
         },
-        AgentEventKind::Message(_) => "event/message",
+        AgentEventKind::Message(_) | AgentEventKind::McpChannel(_) => "event/message",
         AgentEventKind::UsageEstimate(_) | AgentEventKind::StreamRetry(_) => "event/progress",
         AgentEventKind::Subagent(_) | AgentEventKind::Compaction(_) => "event/raw",
     }

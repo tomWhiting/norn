@@ -233,3 +233,102 @@ async fn candidate_rejects_unknown_selected_server() -> TestResult {
     assert!(result.is_err());
     Ok(())
 }
+
+#[tokio::test]
+async fn selected_refresh_preserves_operator_policy_and_accepts_future_names() -> TestResult {
+    let alpha = effective("alpha")?;
+    let beta = effective("beta")?;
+    let startup = McpRuntime::from_test_connected_servers(vec![
+        (alpha.clone(), client("alpha", &["old"])),
+        (beta.clone(), client("beta", &["lookup"])),
+    ]);
+    let refreshed = Arc::new(McpRuntime::from_test_connected_servers(vec![
+        (
+            alpha.clone(),
+            client("alpha", &["old", "future", "denied", "unlisted"]),
+        ),
+        (beta.clone(), client("beta", &["lookup", "future"])),
+    ]));
+    let alpha_names = refreshed.tool_names_for_servers(&["alpha".to_owned()])?;
+    let beta_names = refreshed.tool_names_for_servers(&["beta".to_owned()])?;
+    let old = crate::integration::mcp_proxy::qualified_tool_name("alpha", "old");
+    let future = crate::integration::mcp_proxy::qualified_tool_name("alpha", "future");
+    let denied = crate::integration::mcp_proxy::qualified_tool_name("alpha", "denied");
+    let unlisted = crate::integration::mcp_proxy::qualified_tool_name("alpha", "unlisted");
+    for explicit_allowlist in [false, true] {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(FixtureTool {
+            name: "stable".to_owned(),
+            dynamic: false,
+        }));
+        startup.register_tools(&mut registry)?;
+        if explicit_allowlist {
+            let mut allowed = vec![
+                "stable".to_owned(),
+                old.clone(),
+                future.clone(),
+                denied.clone(),
+            ];
+            allowed.extend(beta_names.iter().cloned());
+            registry.set_available(allowed);
+        }
+        registry.set_disallowed(vec![denied.clone()]);
+        startup.restrict_registry_to_servers(&mut registry, &["alpha".to_owned()])?;
+        let previous = Arc::new(ToolGeneration::from_registry(&registry, 1));
+        assert_eq!(previous.names().count(), 2);
+        assert!(!previous.names().any(|name| name == future));
+        let candidate = McpRuntimeCandidateBuilder::new("/project".into())
+            .with_selected_servers(vec!["alpha".to_owned()])
+            .build(McpActivationRequest::new(
+                2,
+                previous,
+                Arc::clone(&refreshed),
+                Arc::from([alpha.clone(), beta.clone()]),
+            ))
+            .await?;
+        let next = candidate.generation();
+        assert!(next.names().any(|name| name == old));
+        assert!(next.names().any(|name| name == future));
+        assert_eq!(
+            next.names().any(|name| name == unlisted),
+            !explicit_allowlist
+        );
+        for name in std::iter::once(&denied).chain(&beta_names) {
+            assert!(!next.definitions().iter().any(|tool| tool.name == *name));
+            assert_eq!(
+                next.effect_index().effect_for(name, &json!({})),
+                ToolEffect::Unknown
+            );
+            assert!(matches!(
+                next.execute(name, "excluded", json!({})).await,
+                Err(ToolError::ToolNotFound { name: refused }) if refused == *name
+            ));
+        }
+        if explicit_allowlist {
+            assert!(matches!(
+                next.execute(&unlisted, "unlisted", json!({})).await,
+                Err(ToolError::ToolNotFound { name }) if name == unlisted
+            ));
+        }
+        let child = ToolGeneration::child_view(
+            next.as_ref(),
+            Some(
+                candidate
+                    .runtime()
+                    .proxy_tools_for_servers(&["beta".to_owned()])?,
+            ),
+            None,
+            Arc::new(ToolContext::empty()),
+        )?;
+        for name in &beta_names {
+            assert!(child.names().any(|available| available == name));
+        }
+        assert!(child.names().any(|name| name == "stable"));
+        assert!(
+            alpha_names
+                .iter()
+                .all(|name| !child.names().any(|available| available == name))
+        );
+    }
+    Ok(())
+}

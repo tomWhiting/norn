@@ -241,7 +241,7 @@ impl McpRuntime {
             .filter(|name| !all.contains(*name) || selected.contains(*name))
             .map(str::to_owned)
             .collect();
-        registry.set_available(available);
+        registry.set_visibility(available);
         Ok(())
     }
 

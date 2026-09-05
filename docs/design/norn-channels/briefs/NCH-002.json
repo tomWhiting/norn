@@ -1,0 +1,158 @@
+{
+  "id": "NCH-002",
+  "title": "Preserve tool selection policy through live MCP replacement",
+  "cluster": "norn-channels",
+  "status": "source_written_venue_verification_pending",
+  "date": "2026-09-05",
+  "timezone": "Australia/Melbourne",
+  "base_commit": "cf6c44cad8a534910f614f703a36bbd26a4fdcbc",
+  "branch": "codex/nwp-03-channels",
+  "worktree": "/private/tmp/norn-nwp-03-channels",
+  "design": "../design.json",
+  "depends_on": [],
+  "checklist": [
+    "C4"
+  ],
+  "stories": [
+    "S4"
+  ],
+  "purpose": "Preserve the operator tool policy at the live source-publication boundary described by norn-channels/design.json architecture and NCH-001 R4a/R4b planning. This is the narrow policy prerequisite identified in /private/tmp/nwp-03-proof/runtime-plan.json, grounding entry tool/generation.rs. C4/S4 coverage is intentionally shared with NCH-001: this brief owns only tool selection, not channel delivery.",
+  "task": "Implement one immutable original exact-name selection policy for registry and live generations. Retain separate selected-server visibility so a refresh can admit a newly discovered tool that satisfies the original operator policy. Parent owns all Cargo and venue verification; no local compilation, commit or landing.",
+  "grounding": [
+    {
+      "path": "crates/norn/src/tool/registry.rs",
+      "sha256_before": "206649b5b9ff6158e2949e291dfb47a0ff07c1ae5087a51fa0305455f5f925ac"
+    },
+    {
+      "path": "crates/norn/src/tool/generation.rs",
+      "sha256_before": "6de129830d899137317a50cd21622e9b150398c03d25f05e88b09a92fc33d598"
+    },
+    {
+      "path": "crates/norn/src/tool/mod.rs",
+      "sha256_before": "e947629a0c618fa2087956eff23d8590a1f03c581b44c2d7dd1168898a5b4832"
+    },
+    {
+      "path": "crates/norn/src/tool/generation_tests.rs",
+      "sha256_before": "880553d313a733894822a957b61a95321534060204e2f4d91687f7df307f4f47"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_runtime.rs",
+      "sha256_before": "1d90e032042c374ddc148b4f44993fbc6a62627c56481e96c251022ef31ba5a7"
+    },
+    {
+      "path": "crates/norn/src/integration/mcp_candidate_builder_tests.rs",
+      "sha256_before": "231dbb9cfa376759beb0d3586e5390ffec79cf17191d752a99e2d1e1f3a302b4"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "R1",
+      "programme_rows": [
+        "NWP-03.2",
+        "NWP-03.4"
+      ],
+      "title": "Retained allow/deny predicates and independent server views",
+      "status": "source_written_venue_verification_pending",
+      "spec": "WHEN a registry becomes an immutable generation, the generation SHALL retain the actual original allow-list and deny-list, including names not yet discovered and the distinction between no allow-list and an empty allow-list. WHEN dynamic tools are replaced or removed, the successor SHALL enforce that retained policy before constructing executable, provider, prompt, discovery and scheduling surfaces. Explicit deny SHALL win. Initial MCP server selection SHALL remain a view over permitted tools, not overwrite the original policy with a snapshot of present names. Selected-server replacement candidates SHALL determine membership in that server view. Child generation views SHALL retain the original policy and intersect explicit child name restrictions without treating the parent server view as authority over independently selected servers. Duplicate dynamic and stable-name collision checks SHALL remain active before policy filtering. An excluded tool SHALL fail dispatch with ToolNotFound and absent effect lookup SHALL stay Unknown.",
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/registry.rs",
+          "crates/norn/src/tool/generation.rs",
+          "crates/norn/src/tool/mod.rs",
+          "crates/norn/src/tool/generation_tests.rs",
+          "crates/norn/src/integration/mcp_runtime.rs",
+          "crates/norn/src/integration/mcp_candidate_builder_tests.rs"
+        ],
+        "create": [
+          "crates/norn/src/tool/selection.rs"
+        ]
+      },
+      "acceptance": [
+        "A registry allowing future names and denying one allowed name produces a replacement that admits the future permitted tool and refuses denied and unlisted tools; none of the refused tools appear in definitions, prompt, dynamic prompt or ordinary tool catalog entries.",
+        "No allow-list admits newly discovered names; an explicit empty allow-list admits none. Matching remains exact, with no prefix or wildcard expansion.",
+        "Removing then replacing tools preserves the original predicates. A registry edit after snapshot does not mutate an existing generation policy.",
+        "A child view enforces original allow/deny policy and any child name restriction through later replacement, while a different explicitly selected MCP server remains selectable when policy permits.",
+        "The actual McpRuntimeCandidateBuilder selected-server path admits a newly discovered permitted tool despite a narrowed startup registry; deny-list and allow-list constraints survive that same candidate path.",
+        "Denied or unlisted dynamic tools cannot execute, return ToolNotFound, and have Unknown scheduling effects. Candidate duplicates and stable-name collisions remain explicit errors.",
+        "No source in the NCH-001 delivery wall changes, except the separately coordinated one-line mcp_runtime.rs call from set_available to set_visibility. No local Cargo or commit runs."
+      ],
+      "acceptance_greps": [
+        "rg -n 'ToolSelectionPolicy|set_visibility|selection_policy' crates/norn/src/tool crates/norn/src/integration/mcp_runtime.rs",
+        "rg -n 'replacement_preserves|empty_allowlist|child_view_retains|selected_refresh_preserves' crates/norn/src/tool/generation_tests.rs crates/norn/src/integration/mcp_candidate_builder_tests.rs"
+      ],
+      "checklist": [
+        "C4"
+      ],
+      "stories": [
+        "S4"
+      ]
+    }
+  ],
+  "boundaries": [
+    "No edits to NCH-001 or its session-delivery files.",
+    "No new glob selector syntax, approval authority, effect defaults or live configuration mutation API.",
+    "Current server views are separate from original operator policy; this does not broaden the tools supplied by selected-server candidates.",
+    "Tests written here require parent-centralized venue execution and are not pass claims."
+  ],
+  "verification": [
+    "Source regression cases and exact file formatting only in this agent. Parent centralizes Rust tests, strict Clippy, independent review and exact-commit battery."
+  ],
+  "documentation_files": {
+    "create": [
+      "docs/design/norn-channels/briefs/NCH-002.json",
+      "docs/design/norn-channels/briefs/NCH-002.md"
+    ],
+    "coordinated_by_other_owner": [
+      "docs/design/norn-channels/design.json",
+      "docs/design/norn-channels/DESIGN.md"
+    ]
+  },
+  "implementation": {
+    "status": "Source written; not compiled or executed by this agent.",
+    "policy": "ToolSelectionPolicy retains original exact availability and deny predicates. The registry retains its current selected-server visibility separately. Generation assembly enforces policy before generating dispatch, provider definitions, prompt, catalog and effect-index views. Child restrictions intersect policy; duplicate/collision validation still precedes filtering.",
+    "api": "No ToolGeneration signature changes. New internal ToolRegistry::set_visibility(Vec<String>) supplies current selected-server visibility without replacing operator policy; restrict_registry_to_servers uses it. ToolRegistry::selection_policy and tool::selection remain internal.",
+    "source_defect_reproduction": "Before this change, from_registry kept only currently visible implementations; replacing_dynamic_tools inserted every candidate and child_view inserted candidates before only its optional child-name filter. The new regression assertions reject mcp_denied/mcp_unlisted on those exact paths. Runtime reproduction is pending centralized execution; no red or green test result is claimed here.",
+    "new_tests": [
+      "tool::generation::tests::replacement_preserves_original_policy_across_removal_and_registry_changes",
+      "tool::generation::tests::replacement_distinguishes_no_allowlist_from_empty_allowlist",
+      "tool::generation::tests::child_view_retains_operator_policy_and_its_own_name_restriction",
+      "tool::generation::tests::excluded_dynamic_duplicates_are_still_rejected",
+      "integration::mcp_candidate_builder::tests::selected_refresh_preserves_operator_policy_and_accepts_future_names"
+    ],
+    "local_checks": [
+      "Exact changed Rust files formatted with rustfmt --edition 2024 --config skip_children=true; no Cargo invoked.",
+      "git diff --check on owned sources clean.",
+      "check-coverage.py was clean with documented C4/S4 split warnings after NCH-002 registration. The final concurrent cluster check has no NCH-002 failures; it reports 13 newly registered NCH-005 coverage/structure failures sent to that owner for correction."
+    ],
+    "source_hashes": [
+      {
+        "path": "crates/norn/src/tool/registry.rs",
+        "sha256": "17a6a050b217c8aa8e636e71c897de7b9d1f671415ffb657fdbf91113730240e"
+      },
+      {
+        "path": "crates/norn/src/tool/generation.rs",
+        "sha256": "8f1d69e54fb196fbda270c3ea464d5aeb8f06c6843b2a619c7fbfa29421a4dae"
+      },
+      {
+        "path": "crates/norn/src/tool/mod.rs",
+        "sha256": "5a0261c3e002a3239083f2cf0ed9336964662a607645e79e87ebb0d830fe2eac"
+      },
+      {
+        "path": "crates/norn/src/tool/generation_tests.rs",
+        "sha256": "4aa935ff61bbc70520f2d572ed31f5030bc7d5007e5e3e99ba55604f97efa080"
+      },
+      {
+        "path": "crates/norn/src/integration/mcp_runtime.rs",
+        "sha256": "2334f2d9ba198043c88ff4aa088b8ca4a498e777c8a5eb29b339bf1b8e52f408"
+      },
+      {
+        "path": "crates/norn/src/integration/mcp_candidate_builder_tests.rs",
+        "sha256": "f098fd06d840a391f56fdd77a25cac0f933e7bd64d7cbf442b0f5f276e024f8f"
+      },
+      {
+        "path": "crates/norn/src/tool/selection.rs",
+        "sha256": "ac1406848e525eaae6f6f17235623c0d224f3d12de544812440977c5b370a194"
+      }
+    ]
+  }
+}

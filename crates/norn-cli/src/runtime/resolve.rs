@@ -46,6 +46,8 @@ pub struct ResolvedInvocation {
     pub mcp_servers: ResolvedMcpServers,
     /// Reloadable MCP configuration with every raw source layer retained.
     pub mcp_state: McpConfigState,
+    /// Explicit named channel admission and quotas, absent unless requested.
+    pub channel_config: Option<norn::integration::McpChannelSettings>,
     /// The resolved profile with model / tool / reasoning overrides
     /// applied, ready to move into `builder_from_cli`.
     pub profile: Profile,
@@ -109,6 +111,8 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         .map_err(|error| BuildError::Argument(error.to_string()))?;
     let resolved_settings = load_resolved_settings(&cwd, &mcp_overrides)
         .map_err(|error| BuildError::Argument(error.to_string()))?;
+    let channel_config =
+        crate::runtime::resolve_channel_config(cli, &resolved_settings.mcp_servers)?;
     let settings = resolved_settings.settings;
 
     let resolved_profile = resolve_profile_with_origin(cli.profile.as_deref())?;
@@ -258,6 +262,7 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         project_root: resolved_settings.project_root,
         mcp_servers: resolved_settings.mcp_servers,
         mcp_state,
+        channel_config,
         profile,
         profile_source,
         applied,

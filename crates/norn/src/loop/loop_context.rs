@@ -223,6 +223,8 @@ pub struct LoopContext {
     /// [`Self::pending_agent_messages`]; both must be present before the
     /// runner drains queued messages into this loop.
     pub agent_id: Option<Uuid>,
+    /// Sole channel receiving owner, installed after this loop's actual agent identity exists.
+    pub mcp_channel_session: Option<super::mcp_channel_delivery::McpChannelSession>,
 
     /// Shared pending-message store for this agent tree.
     ///
@@ -404,6 +406,7 @@ impl LoopContext {
             diagnostics: None,
             action_log: None,
             agent_id: None,
+            mcp_channel_session: None,
             pending_agent_messages: None,
             pending_mailbox_lease: None,
             schedule_executor: None,

@@ -1,7 +1,5 @@
 //! Transactional approval mutations for the live MCP controller.
 
-use std::sync::Arc;
-
 use super::McpController;
 use crate::config::{
     EffectiveMcpServer, McpApprovalSnapshot, McpApprovalState, McpApprovalStore, McpConfigLayer,
@@ -51,7 +49,7 @@ impl McpController {
         approvals
             .approve(self.state.project_root(), &resolved)
             .map_err(McpControlError::approval)?;
-        let (generation, runtime) = publish_approval_candidate(
+        let candidate = publish_approval_candidate(
             self.generations.as_ref(),
             self.state.project_root(),
             candidate,
@@ -59,8 +57,7 @@ impl McpController {
             name,
             previous,
         )?;
-        self.active_runtime.replace(generation, runtime);
-        self.reconcile_watchers();
+        self.complete_publication(candidate)?;
         Ok(self.mutation_response(true))
     }
 
@@ -103,7 +100,7 @@ impl McpController {
             .revoke(self.state.project_root(), name)
             .map_err(McpControlError::approval)?;
         if let Some(candidate) = candidate {
-            let (generation, runtime) = publish_approval_candidate(
+            let candidate = publish_approval_candidate(
                 self.generations.as_ref(),
                 self.state.project_root(),
                 candidate,
@@ -111,8 +108,7 @@ impl McpController {
                 name,
                 previous,
             )?;
-            self.active_runtime.replace(generation, runtime);
-            self.reconcile_watchers();
+            self.complete_publication(candidate)?;
         }
         Ok(self.mutation_response(true))
     }
@@ -161,22 +157,15 @@ fn publish_approval_candidate(
     approvals: &McpApprovalStore,
     name: &str,
     previous: McpApprovalSnapshot,
-) -> Result<
-    (
-        Arc<crate::tool::ToolGeneration>,
-        Arc<crate::integration::McpRuntime>,
-    ),
-    McpControlError,
-> {
-    let (generation, runtime) = candidate.into_parts();
-    if let Err(source) = generations.publish(Arc::clone(&generation)) {
+) -> Result<McpActivationCandidate, McpControlError> {
+    if let Err(source) = generations.publish(candidate.generation()) {
         let error = McpControlError::publication(source);
         if let Err(rollback) = approvals.restore(project_root, name, previous) {
             return Err(McpControlError::rollback(error, rollback));
         }
         return Err(error);
     }
-    Ok((generation, runtime))
+    Ok(candidate)
 }
 
 fn resolved_server(server: &EffectiveMcpServer) -> ResolvedMcpServer {

@@ -75,3 +75,7 @@ wiremock.workspace = true
 
 [lints]
 workspace = true
+
+[[test]]
+name = "mcp_channels_stdio"
+harness = false
