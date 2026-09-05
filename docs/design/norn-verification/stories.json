@@ -15,6 +15,10 @@
         {
           "id": "S3",
           "text": "I can distinguish pre-existing compiler defects from model-change regressions and verify both are fixed."
+        },
+        {
+          "id": "S4",
+          "text": "Cancellation verification proves cleanup and absence of credential writes without turning unrelated machine scheduling into an undeclared product latency requirement."
         }
       ]
     }

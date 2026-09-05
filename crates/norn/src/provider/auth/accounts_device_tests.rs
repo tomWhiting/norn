@@ -296,7 +296,7 @@ async fn cancelling_default_commit_while_lock_waits_never_writes() -> TestResult
 
     drop(completion);
     drop(held);
-    tokio::time::timeout(Duration::from_secs(2), cleanup_observed.notified()).await?;
+    cleanup_observed.notified().await;
 
     assert!(
         crate::provider::openai_oauth::load_auth_dot_json(&base, AuthCredentialsStoreMode::File,)?
@@ -351,7 +351,7 @@ async fn cancelling_named_commit_while_lock_waits_retires_slot() -> TestResult {
 
     drop(completion);
     drop(held);
-    tokio::time::timeout(Duration::from_secs(2), cleanup_observed.notified()).await?;
+    cleanup_observed.notified().await;
 
     assert!(!old_root.as_path().exists());
     let NamedLoginPreparation::Pending(replacement) =

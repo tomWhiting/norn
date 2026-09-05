@@ -14,7 +14,7 @@ Make diagnostic failures truthful and declare the venue legs without treating di
 
 ## Problem
 
-The legacy diagnostic script could hide failing legs or reset source, the pinned baseline has four Clippy findings, and a prompt-refresh test assumes a distinct filesystem timestamp, and an account-catalog recovery fixture applies its deliberate lock-failure deadline to successful setup. The live Aion battery checks HEAD without checking source cleanliness around each leg.
+The legacy diagnostic script could hide failing legs or reset source, the pinned baseline has four Clippy findings, and a prompt-refresh test assumes a distinct filesystem timestamp, and an account-catalog recovery fixture applies its deliberate lock-failure deadline to successful setup. The live Aion battery checks HEAD without checking source cleanliness around each leg. Two commit-cancellation fixtures also impose a two-second cleanup deadline without a product SLA; NV-002 removes only those wrappers while preserving cleanup assertions.
 
 ## Structure
 
@@ -43,6 +43,7 @@ The legacy diagnostic script could hide failing legs or reset source, the pinned
 | `crates/norn/src/provider/openai/provider.rs` | NV-001 R8 exact file wall |  |
 | `crates/norn/src/tools/lsp/workspace_backend/stub_tests.rs` | NV-001 R8 exact file wall |  |
 | `crates/norn/src/tools/search/tool.rs` | NV-001 R8 exact file wall |  |
+| `crates/norn/src/provider/auth/accounts_device_tests.rs` | NV-002 R1 exact test-only wall: await existing cancellation cleanup notifications without a two-second fixture deadline |  |
 
 ## Constraints
 
@@ -53,3 +54,4 @@ The legacy diagnostic script could hide failing legs or reset source, the pinned
 - **V2** — NV-001 R7 guards every Norn leg before and after execution, with committed declaration and guard digests. This mitigates persistent dirty-source execution for Norn; it does not repair Aion X.1 globally or detect a change restored inside a leg. Landing review must compare the receipt declaration and guard digests with the exact commit and ensure no unreviewed writer shares the run tree.
 - **V3** — Git status is not byte identity: every source witness hashes raw tracked file bytes and symlink targets with the repository object format against HEAD tree object IDs, and verifies executable mode. Unsupported entry types and normalized bytes that differ from committed blobs refuse; no stat-cache or filter assumption silently permits a mismatch.
 - **V4** — The release battery measures deterministic/local prerequisites and compiles/lints the optional live-api-smoke target. Live network execution is a separately dispatched Aion lane with its own credential prerequisite and receipt; compile-only coverage is never described as live-provider proof. Missing local prerequisites are errors emitted through the Rust test harness, not passing tracing-only returns.
+- **V5** — NV-002 changes only two test notification awaits. Existing production timing and the four-hour venue test-activity bound remain unchanged. The 3964799 red receipt retains its unproven failure cause; a historical candidate6 Elapsed report does not establish the current cause.

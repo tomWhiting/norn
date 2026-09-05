@@ -14,7 +14,7 @@ Accept complete named MCP definitions at process launch for both interactive and
 
 ## Problem
 
-The existing --extension URI flag cannot express args, env or HTTP headers; driven callers need the same complete startup configuration.
+The existing --extension URI flag cannot express args, env or HTTP headers; driven callers need the same complete startup configuration. Verification is under repair: the exact 3964799 battery returned five green legs and tests rc101. NV-002 documents the two test-only cleanup-notification changes. The named current cancellation failure has no retained detailed error, so its cause is not attributed to the historical candidate6 timeout. Proof: /private/tmp/nwp-04-proof/exact-battery/execution-result.json. New candidate verification and installation remain pending.
 
 ## Solution
 

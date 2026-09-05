@@ -2,7 +2,7 @@
   "id": "NML-001",
   "cluster": "norn-mcp-launch",
   "title": "Inline and file MCP configuration for all launch modes",
-  "status": "implemented_local_checks_passed_awaiting_exact205_and_install",
+  "status": "implemented_awaiting_repaired_candidate_exact205_verification",
   "depends_on": [],
   "checklist": [
     "C1",
@@ -16,7 +16,7 @@
   ],
   "design": "../design.json",
   "purpose": "Make runtime MCP launch configuration complete and consistent without a second client or session lifecycle.",
-  "task": "R1 parser owner; R2 integration owner; R3 documentation owner. No edits outside the named row wall; name amendments first. Parent owns compilation, exact205 verification, installation and final source reconciliation.",
+  "task": "R1 parser owner; R2 integration owner; R3 documentation owner. No edits outside the named row wall; name amendments first. Parent owns compilation, exact205 verification, installation and final source reconciliation. Verification is under repair: the exact 3964799 battery returned five green legs and tests rc101. NV-002 documents the two test-only cleanup-notification changes. The named current cancellation failure has no retained detailed error, so its cause is not attributed to the historical candidate6 timeout. Proof: /private/tmp/nwp-04-proof/exact-battery/execution-result.json. New candidate verification and installation remain pending.",
   "requirements": [
     {
       "id": "R1",
@@ -150,5 +150,14 @@
       "Local checks are not an exact-commit205 receipt.",
       "No fresh Fable or live provider inference result is claimed."
     ]
+  },
+  "verification_failure": {
+    "candidate": "396479969e7d2db5c094007a1ee5a783a67f4918",
+    "proof": "/private/tmp/nwp-04-proof/exact-battery/execution-result.json",
+    "receipt_sha256": "a3a1fe54ab3b4818c02c15e7c682fafdd3e92e90f2eea2393e0bf9a5dd4eea35",
+    "named_test": "provider::auth::accounts::device_tests::cancelling_named_commit_while_lock_waits_retires_slot",
+    "cause": "Detailed current error unretained; no timeout attribution.",
+    "repair_brief": "docs/design/norn-verification/briefs/NV-002.json",
+    "main_and_installation": "Unchanged while repair and new verification are pending."
   }
 }

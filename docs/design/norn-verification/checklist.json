@@ -33,6 +33,10 @@
         {
           "id": "C8",
           "text": "Local prerequisites fail observably; live API smoke is explicit, compiled/linted normally and separately receipted when run."
+        },
+        {
+          "id": "C9",
+          "text": "Commit-cancellation fixtures await their cleanup completion signal, preserve no-write/retired-slot/fresh-replacement checks and impose no invented two-second SLA."
         }
       ],
       "name": "Verification"

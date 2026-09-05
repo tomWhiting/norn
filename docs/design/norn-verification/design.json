@@ -29,10 +29,11 @@
     "crates/norn/src/lib.rs": "NV-001 R8 exact file wall",
     "crates/norn/src/provider/openai/provider.rs": "NV-001 R8 exact file wall",
     "crates/norn/src/tools/lsp/workspace_backend/stub_tests.rs": "NV-001 R8 exact file wall",
-    "crates/norn/src/tools/search/tool.rs": "NV-001 R8 exact file wall"
+    "crates/norn/src/tools/search/tool.rs": "NV-001 R8 exact file wall",
+    "crates/norn/src/provider/auth/accounts_device_tests.rs": "NV-002 R1 exact test-only wall: await existing cancellation cleanup notifications without a two-second fixture deadline"
   },
   "intention": "Make diagnostic failures truthful and declare the venue legs without treating diagnostics as landing authority.",
-  "problem": "The legacy diagnostic script could hide failing legs or reset source, the pinned baseline has four Clippy findings, and a prompt-refresh test assumes a distinct filesystem timestamp, and an account-catalog recovery fixture applies its deliberate lock-failure deadline to successful setup. The live Aion battery checks HEAD without checking source cleanliness around each leg.",
+  "problem": "The legacy diagnostic script could hide failing legs or reset source, the pinned baseline has four Clippy findings, and a prompt-refresh test assumes a distinct filesystem timestamp, and an account-catalog recovery fixture applies its deliberate lock-failure deadline to successful setup. The live Aion battery checks HEAD without checking source cleanliness around each leg. Two commit-cancellation fixtures also impose a two-second cleanup deadline without a product SLA; NV-002 removes only those wrappers while preserving cleanup assertions.",
   "constraints": [
     {
       "id": "P1",
@@ -61,6 +62,10 @@
     {
       "id": "V4",
       "text": "The release battery measures deterministic/local prerequisites and compiles/lints the optional live-api-smoke target. Live network execution is a separately dispatched Aion lane with its own credential prerequisite and receipt; compile-only coverage is never described as live-provider proof. Missing local prerequisites are errors emitted through the Rust test harness, not passing tracing-only returns."
+    },
+    {
+      "id": "V5",
+      "text": "NV-002 changes only two test notification awaits. Existing production timing and the four-hour venue test-activity bound remain unchanged. The 3964799 red receipt retains its unproven failure cause; a historical candidate6 Elapsed report does not establish the current cause."
     }
   ]
 }

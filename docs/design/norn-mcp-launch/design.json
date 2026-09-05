@@ -1,7 +1,7 @@
 {
   "cluster": "norn-mcp-launch",
   "title": "Runtime MCP launch documents",
-  "status": "Implemented; local parser/process fixtures, strict Clippy and AST policy passed 5 September 2026, Melbourne. Exact candidate205 battery and installation pending.",
+  "status": "implemented_awaiting_repaired_candidate_exact205_verification",
   "provenance": [
     "Tom: proceed with inline MCP configuration for interactive and driven launches; document current work first; set a goal and do it properly.",
     "Prior installed source: 911eddd plus NMS-002 owner defaults, binary SHA256450bb7a890045669068861abbeda803cd373ef8094603c23a314929a44d09684."
@@ -42,7 +42,7 @@
     "crates/norn-cli/src/tui/driver.rs": "NML-001 R2 amended file wall: preserve typed startup argument and authentication exit codes"
   },
   "intention": "Accept complete named MCP definitions at process launch for both interactive and driven Norn, without persistent configuration writes.",
-  "problem": "The existing --extension URI flag cannot express args, env or HTTP headers; driven callers need the same complete startup configuration.",
+  "problem": "The existing --extension URI flag cannot express args, env or HTTP headers; driven callers need the same complete startup configuration. Verification is under repair: the exact 3964799 battery returned five green legs and tests rc101. NV-002 documents the two test-only cleanup-notification changes. The named current cancellation failure has no retained detailed error, so its cause is not attributed to the historical candidate6 timeout. Proof: /private/tmp/nwp-04-proof/exact-battery/execution-result.json. New candidate verification and installation remain pending.",
   "solution": "Strict repeatable --mcp-config JSON|PATH documents feed the existing CLI configuration overlay and MCP lifecycle.",
   "startup_error_correction": "TUI startup preserves BuildError exit classification; malformed launch configuration is argument exit2 before terminal setup.",
   "local_verification": {
@@ -57,5 +57,14 @@
       "Local checks are not an exact-commit205 receipt.",
       "No fresh Fable or live provider inference result is claimed."
     ]
+  },
+  "verification_failure": {
+    "candidate": "396479969e7d2db5c094007a1ee5a783a67f4918",
+    "proof": "/private/tmp/nwp-04-proof/exact-battery/execution-result.json",
+    "receipt_sha256": "a3a1fe54ab3b4818c02c15e7c682fafdd3e92e90f2eea2393e0bf9a5dd4eea35",
+    "named_test": "provider::auth::accounts::device_tests::cancelling_named_commit_while_lock_waits_retires_slot",
+    "cause": "Detailed current error unretained; no timeout attribution.",
+    "repair_brief": "docs/design/norn-verification/briefs/NV-002.json",
+    "main_and_installation": "Unchanged while repair and new verification are pending."
   }
 }

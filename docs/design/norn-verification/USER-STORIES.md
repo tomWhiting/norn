@@ -7,3 +7,5 @@
 **S2.** The venue measures the exact leg list declared by the candidate.
 
 **S3.** I can distinguish pre-existing compiler defects from model-change regressions and verify both are fixed.
+
+**S4.** Cancellation verification proves cleanup and absence of credential writes without turning unrelated machine scheduling into an undeclared product latency requirement.
