@@ -56,7 +56,7 @@ fn initialize(
             &json!({"content": "undeclared before initialize result"}),
         )?;
     }
-    if matches!(case, "startup" | "root-startup") {
+    if matches!(case, "startup" | "root-startup" | "off-startup") {
         notification(output, &json!({"content": "before initialize result"}))?;
     }
     if case == "startup" {
@@ -68,7 +68,7 @@ fn initialize(
         }
     }
     let capabilities = match case {
-        "unadvertised" => json!({"tools": {}}),
+        "unadvertised" | "ordinary" | "ordinary-list-failure" => json!({"tools": {}}),
         "bad-capability" => json!({"tools": {}, "experimental": {"claude/channel": true}}),
         "nonempty-capability" => {
             json!({"tools": {}, "experimental": {"claude/channel": {"permission": true}}})
@@ -85,14 +85,25 @@ fn initialize(
             "instructions": INSTRUCTIONS,
         }),
     )?;
-    if matches!(case, "startup" | "root-startup") {
+    if matches!(case, "startup" | "root-startup" | "off-startup") {
         notification(output, &json!({"content": "after initialize result"}))?;
     }
     Ok(())
 }
 
 fn list_tools(case: &str, request: &Value, output: &mut impl Write) -> Result<(), TestError> {
-    if matches!(case, "startup" | "root-startup") {
+    if case == "ordinary-list-failure" {
+        let id = request.get("id").ok_or("fixture RPC request omitted id")?;
+        return write_json(
+            output,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {"code": -32603, "message": "ordinary tool discovery failed"},
+            }),
+        );
+    }
+    if matches!(case, "startup" | "root-startup" | "off-startup") {
         notification(
             output,
             &json!({
@@ -101,7 +112,7 @@ fn list_tools(case: &str, request: &Value, output: &mut impl Write) -> Result<()
             }),
         )?;
     }
-    if case != "root-startup" {
+    if !matches!(case, "root-startup" | "ordinary" | "off-startup") {
         write_json(
             output,
             &json!({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}),

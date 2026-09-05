@@ -28,11 +28,12 @@ pub fn run_mcp(arguments: &[String]) -> TestResult {
     assert_eq!(literal, LITERAL_ARGUMENT);
     let environment = std::env::var("NORN_LAUNCH_FIXTURE_VALUE")?;
     assert_eq!(environment, ENV_VALUE);
+    let channel_capable = source != "secondary";
     std::fs::write(
         report,
         serde_json::to_vec(&json!({
             "arguments": arguments, "environment": environment,
-            "cwd": std::env::current_dir()?
+            "cwd": std::env::current_dir()?, "channel_capable": channel_capable
         }))?,
     )?;
     let stdin = std::io::stdin();
@@ -46,10 +47,15 @@ pub fn run_mcp(arguments: &[String]) -> TestResult {
         };
         let result = match request["method"].as_str() {
             Some("initialize") => {
-                channel(&mut stdout, STARTUP_MESSAGE)?;
+                let capabilities = if channel_capable {
+                    channel(&mut stdout, STARTUP_MESSAGE)?;
+                    json!({"tools": {}, "experimental": {"claude/channel": {}}})
+                } else {
+                    json!({"tools": {}})
+                };
                 json!({
                     "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}, "experimental": {"claude/channel": {}}},
+                    "capabilities": capabilities,
                     "serverInfo": {"name": source, "version": "1"},
                     "instructions": "Use reply with the original chat_id."
                 })
@@ -73,7 +79,9 @@ pub fn run_mcp(arguments: &[String]) -> TestResult {
                     Path::new(report).with_extension("call"),
                     serde_json::to_vec(&request["params"]["arguments"])?,
                 )?;
-                channel(&mut stdout, ACTIVE_MESSAGE)?;
+                if channel_capable {
+                    channel(&mut stdout, ACTIVE_MESSAGE)?;
+                }
                 json!({"content": [{"type": "text", "text": "fixture reply accepted"}]})
             }
             Some("ping") => json!({}),
@@ -344,4 +352,86 @@ async fn next_rpc(
         "every stdout line must be JSON-RPC"
     );
     Ok(value)
+}
+
+pub async fn persisted_next_turn_refusal() -> TestResult {
+    let sandbox = Sandbox::new()?;
+    let settings = serde_json::to_vec(&json!({
+        "mcp_servers": {"messages": sandbox.definition("sentinel")?},
+        "channels": {
+            "default_policy": "next-turn", "max_retained_messages": 8,
+            "max_retained_bytes": 8192, "overflow": "reject-new"
+        }
+    }))?;
+    std::fs::write(sandbox.home.join("settings.json"), &settings)?;
+    let mut command = sandbox.agent_command("http://127.0.0.1:9/v1");
+    let output = driven(&mut command).await?;
+    assert_eq!(output.status.code(), Some(2), "{}", output.stderr);
+    assert_eq!(output.response["id"], "run-1");
+    assert!(output.response.get("result").is_none());
+    let message = output.response["error"]["message"]
+        .as_str()
+        .ok_or("next-turn refusal omitted its RPC error message")?;
+    assert!(message.contains("next-turn"), "{message}");
+    assert!(message.contains("driven"), "{message}");
+    assert!(output.notifications.is_empty());
+    assert!(
+        !sandbox.report("sentinel").exists(),
+        "settings mode refusal must precede MCP startup"
+    );
+    assert_eq!(std::fs::read(sandbox.home.join("settings.json"))?, settings);
+    Ok(())
+}
+
+pub struct HarnessOptions {
+    filter: Option<String>,
+    exact: bool,
+    pub list: bool,
+    ignored_only: bool,
+    skipped: Vec<String>,
+}
+
+impl HarnessOptions {
+    pub fn parse(arguments: &[String]) -> TestResult<Self> {
+        let mut options = Self {
+            filter: None,
+            exact: false,
+            list: false,
+            ignored_only: false,
+            skipped: Vec::new(),
+        };
+        let mut arguments = arguments.iter();
+        while let Some(argument) = arguments.next() {
+            match argument.as_str() {
+                "--nocapture" | "--show-output" | "--quiet" | "-q" | "--include-ignored" => {}
+                "--exact" => options.exact = true,
+                "--list" => options.list = true,
+                "--ignored" => options.ignored_only = true,
+                "--skip" => options
+                    .skipped
+                    .push(arguments.next().ok_or("--skip requires a name")?.clone()),
+                value if value.starts_with('-') => {
+                    return Err(format!("unsupported MCP launch harness option {value}").into());
+                }
+                filter => {
+                    if options.filter.replace(filter.to_owned()).is_some() {
+                        return Err("MCP launch harness accepts one test-name filter".into());
+                    }
+                }
+            }
+        }
+        Ok(options)
+    }
+
+    pub fn selects(&self, name: &str) -> bool {
+        !self.ignored_only
+            && !self.skipped.iter().any(|skip| name.contains(skip))
+            && self.filter.as_ref().is_none_or(|filter| {
+                if self.exact {
+                    name == filter
+                } else {
+                    name.contains(filter)
+                }
+            })
+    }
 }

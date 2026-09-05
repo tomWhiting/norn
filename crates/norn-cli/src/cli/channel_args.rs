@@ -4,37 +4,29 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 
 use clap::{Args, ValueEnum};
-use norn::integration::{McpChannelOverflow, McpChannelPolicy};
+use norn::config::{ChannelOverflowSetting, ChannelPolicySetting};
 
-/// Channel input is enabled only by named source policy and complete explicit limits.
+/// Channel overrides combine with persistent settings before startup validation.
 #[derive(Args, Debug)]
 pub struct ChannelArgs {
-    /// Enable channel input from one configured stdio source: NAME=next-turn|wake.
+    /// Override one configured source: NAME=off|next-turn|wake.
     ///
     /// Next-turn requires the interactive TUI. Wake in print/driven mode joins
     /// the active run only; it does not keep the process waiting after completion.
     /// Hold is unavailable until CLI inbox release/deny controls exist.
-    #[arg(
-        long = "channel",
-        value_name = "NAME=POLICY",
-        requires_all = [
-            "channel_max_retained_messages",
-            "channel_max_retained_bytes",
-            "channel_overflow"
-        ]
-    )]
+    #[arg(long = "channel", value_name = "NAME=POLICY")]
     pub channel: Vec<ChannelSourceArg>,
 
     /// Positive total message quota across staged, held, queued and claimed input.
-    #[arg(long, value_name = "COUNT", requires = "channel")]
+    #[arg(long, value_name = "COUNT")]
     pub channel_max_retained_messages: Option<NonZeroUsize>,
 
     /// Positive total UTF-8 byte quota for retained source labels, content and metadata.
-    #[arg(long, value_name = "BYTES", requires = "channel")]
+    #[arg(long, value_name = "BYTES")]
     pub channel_max_retained_bytes: Option<NonZeroUsize>,
 
     /// Explicit behavior when the retained inbox is full.
-    #[arg(long, value_enum, requires = "channel")]
+    #[arg(long, value_enum)]
     pub channel_overflow: Option<ChannelOverflowArg>,
 }
 
@@ -44,16 +36,16 @@ pub struct ChannelSourceArg {
     /// Exact configured MCP server name, independent of sender metadata.
     pub name: String,
     /// The operator-selected behavior for admitted input.
-    pub policy: McpChannelPolicy,
+    pub policy: ChannelPolicySetting,
 }
 
 impl FromStr for ChannelSourceArg {
     type Err = String;
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        let (name, value) = raw
-            .split_once('=')
-            .ok_or_else(|| format!("channel '{raw}' must name NAME=next-turn or NAME=wake"))?;
+        let (name, value) = raw.split_once('=').ok_or_else(|| {
+            format!("channel '{raw}' must name NAME=off, NAME=next-turn or NAME=wake")
+        })?;
         if name.is_empty() || name.chars().any(char::is_whitespace) {
             return Err(format!(
                 "channel source '{name}' must be a nonempty exact name"
@@ -65,11 +57,12 @@ impl FromStr for ChannelSourceArg {
                     "channel source '{name}' uses policy 'hold', unsupported in every CLI mode because inbox release/deny controls are not available"
                 ));
             }
-            "next-turn" => McpChannelPolicy::NextTurn,
-            "wake" => McpChannelPolicy::Wake,
+            "off" => ChannelPolicySetting::Off,
+            "next-turn" => ChannelPolicySetting::NextTurn,
+            "wake" => ChannelPolicySetting::Wake,
             _ => {
                 return Err(format!(
-                    "channel source '{name}' has unknown policy '{value}'; use next-turn or wake"
+                    "channel source '{name}' has unknown policy '{value}'; use off, next-turn or wake"
                 ));
             }
         };
@@ -88,7 +81,7 @@ pub enum ChannelOverflowArg {
     RejectNew,
 }
 
-impl From<ChannelOverflowArg> for McpChannelOverflow {
+impl From<ChannelOverflowArg> for ChannelOverflowSetting {
     fn from(value: ChannelOverflowArg) -> Self {
         match value {
             ChannelOverflowArg::RejectNew => Self::RejectNew,

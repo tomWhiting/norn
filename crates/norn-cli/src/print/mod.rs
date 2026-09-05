@@ -1,5 +1,6 @@
 //! Print-mode execution — driving the agent step and rendering output.
 
+mod assembly;
 mod driven;
 mod error;
 mod input;

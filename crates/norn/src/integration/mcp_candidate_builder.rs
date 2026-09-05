@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use super::mcp_channel_settings::McpChannelSelection;
 use super::mcp_control::{
     McpActivationCandidate, McpActivationRequest, McpCandidateBuilder, McpCandidateError,
 };
@@ -82,7 +83,13 @@ impl McpCandidateBuilder for McpRuntimeCandidateBuilder {
         };
         if let Some((_, settings)) = self.channels.as_ref() {
             for (name, reason) in runtime_candidate.failures() {
-                if settings.sources().contains_key(name) {
+                let required = snapshot.get(name).is_some_and(|server| {
+                    matches!(
+                        settings.selection(name, server.definition().command.is_some()),
+                        McpChannelSelection::Required(_)
+                    )
+                });
+                if required {
                     return Err(crate::error::IntegrationError::McpError {
                         reason: format!("MCP channel source '{name}' failed to connect: {reason}"),
                     }

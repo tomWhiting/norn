@@ -99,6 +99,11 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     startup_trace.mark("lsp_workspace_ready");
 
     let resolved = resolve_invocation(cli)?;
+    crate::runtime::channel_config::validate_resolved_channel_mode(
+        resolved.channel_config.as_ref(),
+        cli.protocol,
+        Mode::Tui,
+    )?;
     startup_trace.mark("invocation_resolved");
 
     // Debug-dump file naming: the provider is built before the session id

@@ -9,7 +9,8 @@ use crate::agent::registry::AgentRegistry;
 use crate::agent_loop::config::ToolExecutor;
 use crate::config::{McpConfigState, McpServerSettings};
 use crate::integration::{
-    McpChannelLimits, McpChannelOverflow, McpChannelPolicy, McpChannelSettings, McpRuntime,
+    McpChannelLimits, McpChannelOverflow, McpChannelPolicy, McpChannelSettings,
+    McpChannelSourcePolicy, McpRuntime,
 };
 use crate::r#loop::LoopContext;
 use crate::provider::mock::MockProvider;
@@ -24,7 +25,11 @@ fn settings() -> Result<McpChannelSettings, crate::error::ConfigError> {
     })?;
     McpChannelSettings::new(
         limits,
-        BTreeMap::from([("messages".to_owned(), McpChannelPolicy::Wake)]),
+        McpChannelSourcePolicy::Off,
+        BTreeMap::from([(
+            "messages".to_owned(),
+            McpChannelSourcePolicy::Delivery(McpChannelPolicy::Wake),
+        )]),
         McpChannelOverflow::RejectNew,
     )
 }

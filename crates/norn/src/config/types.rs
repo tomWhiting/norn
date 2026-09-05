@@ -103,6 +103,11 @@ pub struct NornSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_servers: Option<BTreeMap<String, McpServerSettings>>,
 
+    /// Partial external-channel policy and retention configuration. Higher
+    /// layers merge individual fields and source policies by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channels: Option<super::channels::ChannelSettings>,
+
     /// Skill discovery configuration — see [`SkillsSettings`]. The internal
     /// structure of skills is owned by a separate cluster (NG3 in
     /// `DESIGN.md`); this struct only exposes the search-path surface.
@@ -1470,6 +1475,7 @@ mod tests {
                 },
             )])),
             mcp_servers: Some(mcp),
+            channels: None,
             skills: Some(SkillsSettings {
                 search_paths: Some(vec!["./skills".to_owned()]),
             }),

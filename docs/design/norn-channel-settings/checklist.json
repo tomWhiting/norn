@@ -1,0 +1,31 @@
+{
+  "cluster": "norn-channel-settings",
+  "title": "Persisted channel settings checklist",
+  "sections": [
+    {
+      "name": "Launch policy",
+      "items": [
+        {
+          "id": "C1",
+          "text": "Typed persistent channel settings"
+        },
+        {
+          "id": "C2",
+          "text": "Resolve the effective launch policy"
+        },
+        {
+          "id": "C3",
+          "text": "Optional default negotiation with strict named selection"
+        },
+        {
+          "id": "C4",
+          "text": "Prove settings at the real CLI boundary"
+        },
+        {
+          "id": "C5",
+          "text": "Operating guide and truthful programme status"
+        }
+      ]
+    }
+  ]
+}

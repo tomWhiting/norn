@@ -120,23 +120,22 @@ pub async fn initialize_cli_channels(
     for (name, reason) in runtime.failures() {
         eprintln!("norn: MCP server '{name}' is unavailable; continuing without it: {reason}");
     }
+    eprintln!(
+        "norn: channel default policy: {:?}; policy changes require restart",
+        settings.default_policy()
+    );
     for (name, policy) in settings.sources() {
+        eprintln!("norn: configured channel '{name}': policy={policy:?}");
+    }
+    for (name, policy) in runtime.active_channel_policies() {
         let policy = match policy {
             McpChannelPolicy::Hold => "hold",
             McpChannelPolicy::NextTurn => "next-turn",
             McpChannelPolicy::Wake => "wake",
         };
-        let status = statuses
-            .iter()
-            .find(|status| status.name == *name)
-            .ok_or_else(|| {
-                startup_error(&format!(
-                    "configured channel source '{name}' has no startup status"
-                ))
-            })?;
         eprintln!(
-            "norn: channel '{name}': policy={policy}, recipient={}, approval={:?}, connection={:?}",
-            parts.id, status.approval, status.runtime_state,
+            "norn: active channel '{name}': policy={policy}, recipient={}",
+            parts.id
         );
     }
     let status = host.status();

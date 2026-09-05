@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::{McpClient, McpClientConfig};
+use super::{McpChannelPolicy, McpClient, McpClientConfig};
 use crate::error::IntegrationError;
 use crate::tool::registry::ToolRegistry;
 use crate::tool::traits::Tool;
@@ -73,6 +73,15 @@ impl McpRuntime {
     /// Connected server names in deterministic order.
     pub fn server_names(&self) -> impl Iterator<Item = &str> {
         self.clients.keys().map(String::as_str)
+    }
+
+    /// Actually active channel sources and policies, excluding ordinary tools-only clients.
+    pub fn active_channel_policies(&self) -> impl Iterator<Item = (&str, McpChannelPolicy)> {
+        self.clients.iter().filter_map(|(name, client)| {
+            client
+                .active_channel_policy()
+                .map(|policy| (name.as_str(), policy))
+        })
     }
 
     pub(crate) fn tool_change_subscriptions(

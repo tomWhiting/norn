@@ -1,7 +1,7 @@
 {
   "cluster": "norn-mcp-launch",
   "title": "Runtime MCP launch documents",
-  "status": "implemented_awaiting_repaired_candidate_exact205_verification",
+  "status": "execution_complete;exact205_green;installed_and_merged",
   "provenance": [
     "Tom: proceed with inline MCP configuration for interactive and driven launches; document current work first; set a goal and do it properly.",
     "Prior installed source: 911eddd plus NMS-002 owner defaults, binary SHA256450bb7a890045669068861abbeda803cd373ef8094603c23a314929a44d09684."
@@ -42,7 +42,7 @@
     "crates/norn-cli/src/tui/driver.rs": "NML-001 R2 amended file wall: preserve typed startup argument and authentication exit codes"
   },
   "intention": "Accept complete named MCP definitions at process launch for both interactive and driven Norn, without persistent configuration writes.",
-  "problem": "The existing --extension URI flag cannot express args, env or HTTP headers; driven callers need the same complete startup configuration. Verification is under repair: the exact 3964799 battery returned five green legs and tests rc101. NV-002 documents the two test-only cleanup-notification changes. The named current cancellation failure has no retained detailed error, so its cause is not attributed to the historical candidate6 timeout. Proof: /private/tmp/nwp-04-proof/exact-battery/execution-result.json. New candidate verification and installation remain pending.",
+  "problem": "The original --extension URI flag could not express args, env or HTTP headers. NML-001 resolves complete startup definitions for all modes. The completed NML-001/NV-002 checkpoint is exact commit `5227db49d805a4c0729912dca3832c842c8f39e1`, installed at 20:15:11 Melbourne on 5 September 2026 and merged to local/remote main. Installed SHA-256: `dc61b730918db4928e5e9ff0cf1194f7ed0fdfcf0d010286ab87f8d2d26e0a19`. Its exact 205 battery passed all six declared legs with 14 venue bindings; native build and installed help/list/redacted-error checks passed. Proof: `/private/tmp/nwp-04-proof/exact-battery-2/execution-result.json` and `/private/tmp/nwp-04-proof/native-release-2/installation.json`. Fresh Fable re-review remains pending; no new review pass or waiver is claimed. The historical `3964799` battery remains red: five green legs and tests exit 101. Its detailed cancellation error was not retained. NV-002 changed only two test cleanup waits; the green repaired-candidate receipt does not identify the old failure cause or relabel the old result. The earlier 18:09 `450bb7a` defaults installation and the `911eddd` receipt remain historical.",
   "solution": "Strict repeatable --mcp-config JSON|PATH documents feed the existing CLI configuration overlay and MCP lifecycle.",
   "startup_error_correction": "TUI startup preserves BuildError exit classification; malformed launch configuration is argument exit2 before terminal setup.",
   "local_verification": {
@@ -58,7 +58,22 @@
       "No fresh Fable or live provider inference result is claimed."
     ]
   },
-  "verification_failure": {
+  "completed_checkpoint": {
+    "candidate": "5227db49d805a4c0729912dca3832c842c8f39e1",
+    "status": "execution_complete;exact205_green;installed_and_merged",
+    "installed_melbourne": "2026-09-05T20:15:11.667661+10:00",
+    "installed_sha256": "dc61b730918db4928e5e9ff0cf1194f7ed0fdfcf0d010286ab87f8d2d26e0a19",
+    "receipt_sha256": "52a1c296380ddb4f9632759c7af285a31fedc057b5415f54cd2ad76a651abc08",
+    "workflow_id": "042d6998-a14e-4fec-861c-fd62394fdd46",
+    "run_id": "0f39e9cc-ea57-4ee3-a9e5-888c4d48c654",
+    "proof": [
+      "/private/tmp/nwp-04-proof/exact-battery-2/execution-result.json",
+      "/private/tmp/nwp-04-proof/native-release-2/installation.json"
+    ],
+    "fresh_fable": "pending; no pass or waiver",
+    "new_checkpoint": "NCS-001 in progress; this receipt does not cover its source"
+  },
+  "historical_verification_failure": {
     "candidate": "396479969e7d2db5c094007a1ee5a783a67f4918",
     "proof": "/private/tmp/nwp-04-proof/exact-battery/execution-result.json",
     "receipt_sha256": "a3a1fe54ab3b4818c02c15e7c682fafdd3e92e90f2eea2393e0bf9a5dd4eea35",

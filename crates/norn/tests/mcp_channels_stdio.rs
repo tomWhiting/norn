@@ -11,7 +11,8 @@ use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use norn::integration::{
     McpChannelInbox, McpChannelLimits, McpChannelOverflow, McpChannelPolicy, McpChannelRefusal,
-    McpChannelStatus, McpClient, McpClientConfig, McpRoot, McpTransport, frame_mcp_channel_message,
+    McpChannelSourcePolicy, McpChannelStatus, McpClient, McpClientConfig, McpRoot, McpTransport,
+    frame_mcp_channel_message,
 };
 use norn::tool::{ToolContext, ToolEnvelope};
 use serde_json::{Value, json};
@@ -105,10 +106,22 @@ impl HarnessOptions {
 }
 
 async fn run_scenarios(options: &HarnessOptions) -> TestResult {
-    let scenarios: [Scenario; 11] = [
+    let scenarios: [Scenario; 14] = [
+        (
+            "optional_absence_preserves_tools_and_refuses_channel_input",
+            Box::pin(optional_absence_preserves_tools_and_refuses_channel_input()),
+        ),
+        (
+            "optional_capability_declaration_must_be_well_formed",
+            Box::pin(optional_capability_declaration_must_be_well_formed()),
+        ),
         (
             "built_root_initializes_channel_before_first_provider_request",
             Box::pin(built_root_initializes_channel_before_first_provider_request()),
+        ),
+        (
+            "optional_ordinary_failure_preserves_healthy_root_channel",
+            Box::pin(optional_ordinary_failure_preserves_healthy_root_channel()),
         ),
         (
             "startup_notifications_and_interleaved_rpc",
@@ -220,6 +233,14 @@ fn config(name: &str, case: &str) -> Result<McpClientConfig, TestError> {
 }
 
 async fn built_root_initializes_channel_before_first_provider_request() -> TestResult {
+    assert_root_channel_startup("ordinary", true).await
+}
+
+async fn optional_ordinary_failure_preserves_healthy_root_channel() -> TestResult {
+    assert_root_channel_startup("ordinary-list-failure", false).await
+}
+
+async fn assert_root_channel_startup(ordinary_case: &str, ordinary_available: bool) -> TestResult {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
@@ -243,20 +264,30 @@ async fn built_root_initializes_channel_before_first_provider_request() -> TestR
         .ok_or("fixture executable is not UTF-8")?;
     let state = McpConfigState::load(
         directory.path(),
-        BTreeMap::from([(
-            "messages".to_owned(),
-            McpServerSettings {
-                transport: Some("stdio".to_owned()),
-                command: Some(command.to_owned()),
-                args: Some(vec![FIXTURE_ARGUMENT.to_owned(), "root-startup".to_owned()]),
-                max_inbound_message_bytes: Some(TEST_FRAME_BYTES),
-                ..McpServerSettings::default()
-            },
-        )]),
+        [
+            ("messages", "root-startup"),
+            ("ordinary", ordinary_case),
+            ("off", "off-startup"),
+        ]
+        .into_iter()
+        .map(|(name, case)| {
+            (
+                name.to_owned(),
+                McpServerSettings {
+                    transport: Some("stdio".to_owned()),
+                    command: Some(command.to_owned()),
+                    args: Some(vec![FIXTURE_ARGUMENT.to_owned(), case.to_owned()]),
+                    max_inbound_message_bytes: Some(TEST_FRAME_BYTES),
+                    ..McpServerSettings::default()
+                },
+            )
+        })
+        .collect(),
     )?;
     let channels = McpChannelSettings::new(
         McpChannelLimits::new(8, 8192)?,
-        BTreeMap::from([("messages".to_owned(), McpChannelPolicy::Wake)]),
+        McpChannelSourcePolicy::Delivery(McpChannelPolicy::Wake),
+        BTreeMap::from([("off".to_owned(), McpChannelSourcePolicy::Off)]),
         McpChannelOverflow::RejectNew,
     )?;
     let provider = Arc::new(MockProvider::new(vec![vec![
@@ -309,8 +340,12 @@ async fn built_root_initializes_channel_before_first_provider_request() -> TestR
     assert_eq!(initial.revision, 1);
     assert!(!control.initialize().await?.changed);
     let statuses = control.list().await?;
-    assert_eq!(statuses.len(), 1);
-    assert!(statuses[0].active);
+    assert_eq!(statuses.len(), 3);
+    for status in &statuses {
+        let expected_active = status.name != "ordinary" || ordinary_available;
+        assert_eq!(status.active, expected_active, "{}", status.name);
+        assert_eq!(status.failure_present, !expected_active, "{}", status.name);
+    }
 
     let RunOutcome::Completed(output) = agent.run("continue with the external messages").await?
     else {
@@ -318,11 +353,22 @@ async fn built_root_initializes_channel_before_first_provider_request() -> TestR
     };
     let requests = provider.requests()?;
     assert_eq!(requests.len(), 1);
-    assert!(requests[0].tools.iter().any(|tool| matches!(
-        tool,
-        ProviderToolDefinition::Function(definition)
-            if definition.name.starts_with("mcp_messages_reply_")
-    )));
+    for source in ["messages", "ordinary", "off"] {
+        let tool_present = requests[0].tools.iter().any(|tool| {
+            matches!(
+                tool,
+                ProviderToolDefinition::Function(definition)
+                    if definition.name.starts_with(&format!("mcp_{source}_reply_"))
+            )
+        });
+        assert_eq!(tool_present, source != "ordinary" || ordinary_available);
+    }
+    assert!(!requests[0].messages.iter().any(|message| {
+        message
+            .content
+            .as_deref()
+            .is_some_and(|content| content.starts_with("<channel source=\"off\""))
+    }));
     let frames: Vec<_> = requests[0]
         .messages
         .iter()
@@ -395,6 +441,83 @@ fn rejection(status: &McpChannelStatus, source: &str, reason: McpChannelRefusal)
     Ok(())
 }
 
+async fn optional_absence_preserves_tools_and_refuses_channel_input() -> TestResult {
+    for case in ["ordinary", "unadvertised"] {
+        let mut inbox = McpChannelInbox::new(Uuid::new_v4(), McpChannelLimits::new(4, 4096)?);
+        let host = inbox.host();
+        let client = McpClient::connect_with_channel(
+            config("optional-tools", case)?,
+            Vec::new(),
+            host.attachment(McpChannelPolicy::Wake, McpChannelOverflow::RejectNew)
+                .if_advertised(),
+        )
+        .await?;
+        assert!(client.channel_info().is_none());
+        assert!(client.active_channel_policy().is_none());
+        assert_eq!(client.tools().len(), 1);
+        assert!(matches!(
+            client.activate_channel(),
+            Err(norn::integration::McpChannelError::NotEnabled)
+        ));
+        let before = host.status();
+        assert_eq!(before.retained_messages, 0);
+        assert_eq!(before.retained_bytes, 0);
+        assert_eq!(before.rejected, u64::from(case == "unadvertised"));
+        let echoed = reply(
+            &client,
+            json!({"chat_id": CHAT_ID, "emit": [{"content": "not a declared channel"}]}),
+        )
+        .await?;
+        assert_eq!(echoed["chat_id"], CHAT_ID);
+        assert_eq!(host.status().rejected, before.rejected + 1);
+        rejection(
+            &host.status(),
+            "optional-tools",
+            McpChannelRefusal::NotDeclared,
+        )?;
+        assert!(inbox.try_claim()?.is_none());
+        {
+            let wake = inbox.wake_ready();
+            tokio::pin!(wake);
+            assert!(futures_util::poll!(&mut wake).is_pending());
+        }
+        client.retire_channel()?;
+        assert!(matches!(
+            client.activate_channel(),
+            Err(norn::integration::McpChannelError::NotEnabled)
+        ));
+        assert_eq!(
+            reply(&client, json!({"chat_id": CHAT_ID})).await?["chat_id"],
+            CHAT_ID
+        );
+    }
+    Ok(())
+}
+
+async fn optional_capability_declaration_must_be_well_formed() -> TestResult {
+    for case in ["bad-capability", "nonempty-capability"] {
+        let inbox = McpChannelInbox::new(Uuid::new_v4(), McpChannelLimits::new(4, 4096)?);
+        let host = inbox.host();
+        let connected = McpClient::connect_with_channel(
+            config("malformed-optional", case)?,
+            Vec::new(),
+            host.attachment(McpChannelPolicy::Wake, McpChannelOverflow::RejectNew)
+                .if_advertised(),
+        )
+        .await;
+        assert!(connected.is_err());
+        let status = host.status();
+        assert_eq!(status.retained_messages, 0);
+        assert_eq!(status.retained_bytes, 0);
+        rejection(
+            &status,
+            "malformed-optional",
+            McpChannelRefusal::NotDeclared,
+        )?;
+    }
+    Ok(())
+}
+
 async fn startup_notifications_and_interleaved_rpc() -> TestResult {
     let recipient = Uuid::new_v4();
     let source = "trusted<&\"source";
@@ -413,6 +536,7 @@ async fn startup_notifications_and_interleaved_rpc() -> TestResult {
     assert_eq!(info.instructions.as_deref(), Some(INSTRUCTIONS));
     assert_eq!(*client.subscribe_tool_list_changes().borrow(), 1);
     assert_eq!(host.status().retained_messages, 3);
+    assert!(client.active_channel_policy().is_none());
     assert!(inbox.try_claim()?.is_none());
     {
         let wake = inbox.wake_ready();
@@ -420,6 +544,7 @@ async fn startup_notifications_and_interleaved_rpc() -> TestResult {
         assert!(futures_util::poll!(&mut wake).is_pending());
     }
     client.activate_channel()?;
+    assert_eq!(client.active_channel_policy(), Some(McpChannelPolicy::Wake));
     inbox.wake_ready().await?;
     for (index, expected) in [
         "before initialize result",

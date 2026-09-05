@@ -101,7 +101,7 @@ Guarantees on the acceptance boundary:
 
 ## MCP configuration at process launch
 
-5 September 2026, Melbourne time. Ordinary stdio Channels push is already implemented for an active driven run. The repeatable `--mcp-config JSON|PATH` flag is available in this source under NML-001. It is absent from historical binary `450bb7a`, installed at 18:09 Melbourne; the final candidate receipt and installation identity are recorded in external programme evidence.
+5 September 2026, Melbourne time. Ordinary stdio Channels push is already implemented for an active driven run. The repeatable `--mcp-config JSON|PATH` flag is available in this source under NML-001. It was installed in the historical `5227db4` checkpoint at 20:15 Melbourne on 5 September 2026, whose six-leg 205 battery and native installation passed; that proof does not cover the later NCS-001 settings source. Full commit/artifact references are in the [MCP launch guide](../../MCP-LAUNCH.md).
 
 The launch form is:
 
@@ -113,9 +113,17 @@ The document root is `{ "mcpServers": { "server-name": { ...definition } } }`. I
 
 MCP definitions remain launch configuration: `run/execute` still accepts its existing prompt/input parameters, and `initialize` keeps advertising `norn-driven/1` with a `one_shot` lifecycle. No dynamic MCP configuration method or second run is added. Source selection and positive retained limits are still explicit `--channel` launch flags; driven policy is `wake` during the active run only. Neither channel messages nor header metadata grant tool approval or permission-relay authority.
 
-For an accepted `run/execute`, an MCP document-resolution failure follows the existing id-matched error boundary before any MCP server starts. Malformed command-line syntax can still fail before the RPC loop is entered. Raw inline documents and credential values must not be emitted in errors or Debug output, and stdout remains JSON-RPC frames only. The native process fixtures pass for relative JSON/executable startup, active channel delivery, one-shot exit and id-matched invalid-document refusal. Parser, reload, print/TUI refusal and strict formatting/Clippy diagnostics also passed under [NML-001](../norn-mcp-launch/briefs/NML-001.md). These local fixtures are separate from the exact candidate battery, source review, final installation and any live provider or live Cambium acceptance.
+For an accepted `run/execute`, an MCP document-resolution failure follows the existing id-matched error boundary before any MCP server starts. Malformed command-line syntax can still fail before the RPC loop is entered. Raw inline documents and credential values must not be emitted in errors or Debug output, and stdout remains JSON-RPC frames only. The native process fixtures pass for relative JSON/executable startup, active channel delivery, one-shot exit and id-matched invalid-document refusal. Parser, reload, print/TUI refusal and strict formatting/Clippy diagnostics also passed under [NML-001](../norn-mcp-launch/briefs/NML-001.md). The later exact `5227db4` battery and installation also passed. Fresh Fable review and live provider/Cambium acceptance remain separate; Tom’s reported Hammerbarn success is owner feedback, not a new automated receipt.
 
 See [MCP launch configuration and Channels](../../MCP-LAUNCH.md) for executable/args/env/header examples and the interactive/print/driven policy matrix. This startup addition provides no idle-before-run or post-run listener, persistent daemon, optional permission relay or live Cambium certification.
+
+### Persisted channel policy
+
+The `channels` settings object and `-c channels=JSON` use one fieldwise merge: user, project, local, inline object, then dedicated flags. Positive count/byte limits and `reject-new` remain explicit. This interface is implemented in the NCS-001 source and verification is in progress. The historical `5227db4` installation predates it; the old receipt does not verify the settings changes. Actual candidate checks and any later installation are recorded in `/private/tmp/ncs-001-proof` and the external programme, without declaring an NCS battery or installation pass in this contract.
+
+Default `wake` optionally negotiates only with enabled, approved stdio servers advertising valid Channels capability. Missing capability keeps ordinary tools. Initialization or capability-validation failures remain visible per server and exclude that optional connection while healthy sources can publish; malformed capability always fails its connection and is never accepted as tools-only. Named `wake` requires a known enabled stdio channel source, and failure of that required source is fatal to the candidate. Named `off` excludes delivery, but an unknown name still refuses. Settings do not approve MCP execution or expand tool authority. There is no `hold` setting or remote approval relay.
+
+Validate the effective policy before provider/MCP construction for the actual mode: driven refuses `next-turn` even when it comes from saved settings. Its lifetime remains one active `run/execute`; no idle-before-run or post-run listener is added. Policy and limits are fixed for this launch. Reloading MCP definitions uses that same policy; changing it requires restart. No RPC schema, mutation method or extra discovery provider call is added. [NCS-001](../norn-channel-settings/briefs/NCS-001.md) owns implementation and new proof; [the guide](../../MCP-LAUNCH.md) gives examples with explicit chosen limits.
 
 ## Event notifications
 

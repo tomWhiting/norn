@@ -23,6 +23,7 @@
 //!   calls against the merged allow/deny/ask patterns; consumed by tool
 //!   dispatch as the runtime consent boundary.
 
+pub mod channels;
 pub mod loader;
 pub mod mcp;
 pub mod mcp_approval;
@@ -39,6 +40,7 @@ mod provider_security;
 pub mod types;
 pub mod validate;
 
+pub use channels::{ChannelOverflowSetting, ChannelPolicySetting, ChannelSettings};
 pub use loader::{local_settings_path, project_settings_path};
 pub use mcp::{
     McpConfigSource, McpDefinitionFingerprint, McpRuntimeOverrides, ResolvedMcpServer,

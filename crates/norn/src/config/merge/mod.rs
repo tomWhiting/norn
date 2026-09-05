@@ -39,6 +39,7 @@
 //!   (permissions, hooks, MCP servers, skills, context, env).
 //! - `settings` — the [`merge_settings`] entry point.
 
+mod channels;
 mod collection_sections;
 mod primitives;
 mod scalar_sections;

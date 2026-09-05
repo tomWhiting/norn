@@ -9,19 +9,28 @@ use std::process::Stdio;
 
 use clap::Parser;
 use norn::config::{McpConfigLayer, McpConfigSource};
-use norn::integration::McpChannelPolicy;
+use norn::integration::{McpChannelPolicy, McpChannelSourcePolicy};
 use norn_cli::cli::Cli;
 use norn_cli::runtime::resolve_invocation;
 use serde_json::{Value, json};
 
 use fixture::{
-    ACTIVE_MESSAGE, CHAT_ID, DEADLINE, FIXTURE_FLAG, ModelStub, STARTUP_MESSAGE, Sandbox,
-    TestResult, channel_arguments, driven,
+    ACTIVE_MESSAGE, CHAT_ID, DEADLINE, FIXTURE_FLAG, HarnessOptions, ModelStub, STARTUP_MESSAGE,
+    Sandbox, TestResult, channel_arguments, driven, persisted_next_turn_refusal,
 };
 
 type Scenario = Pin<Box<dyn Future<Output = TestResult> + Send>>;
 type NamedScenario = (&'static str, fn() -> Scenario);
 const TUI_FLAG: &str = "--norn-tui-launch-fixture";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LaunchPolicy {
+    PlainPrint,
+    NamedFlags,
+    SavedDefault,
+    InlinePartial,
+    ExplicitOff,
+}
 
 fn main() -> TestResult {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -44,14 +53,14 @@ fn main() -> TestResult {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let scenarios: [NamedScenario; 6] = [
+    let scenarios: [NamedScenario; 10] = [
         (
             "inline_print_launches_disjoint_sources_and_preserves_disk",
-            || Box::pin(process_launch(false)),
+            || Box::pin(process_launch(LaunchPolicy::PlainPrint)),
         ),
         (
             "relative_file_driven_launch_delivers_channels_and_exits_once",
-            || Box::pin(process_launch(true)),
+            || Box::pin(process_launch(LaunchPolicy::NamedFlags)),
         ),
         ("interactive_resolution_preserves_overlay_on_reload", || {
             Box::pin(async { interactive_resolution() })
@@ -66,6 +75,20 @@ fn main() -> TestResult {
         (
             "invalid_tui_entry_exits_two_before_terminal_and_mcp",
             || Box::pin(invalid_tui_launch()),
+        ),
+        ("saved_default_wake_preserves_ordinary_mcp_tools", || {
+            Box::pin(process_launch(LaunchPolicy::SavedDefault))
+        }),
+        (
+            "inline_channels_complete_saved_limits_and_override_off",
+            || Box::pin(process_launch(LaunchPolicy::InlinePartial)),
+        ),
+        ("dedicated_off_overrides_saved_and_inline_wake", || {
+            Box::pin(process_launch(LaunchPolicy::ExplicitOff))
+        }),
+        (
+            "persisted_next_turn_driven_refuses_before_mcp_startup",
+            || Box::pin(persisted_next_turn_refusal()),
         ),
     ];
     let mut completed = 0;
@@ -86,59 +109,6 @@ fn main() -> TestResult {
         println!("MCP launch result: {completed} passed");
     }
     Ok(())
-}
-
-struct HarnessOptions {
-    filter: Option<String>,
-    exact: bool,
-    list: bool,
-    ignored_only: bool,
-    skipped: Vec<String>,
-}
-
-impl HarnessOptions {
-    fn parse(arguments: &[String]) -> TestResult<Self> {
-        let mut options = Self {
-            filter: None,
-            exact: false,
-            list: false,
-            ignored_only: false,
-            skipped: Vec::new(),
-        };
-        let mut arguments = arguments.iter();
-        while let Some(argument) = arguments.next() {
-            match argument.as_str() {
-                "--nocapture" | "--show-output" | "--quiet" | "-q" | "--include-ignored" => {}
-                "--exact" => options.exact = true,
-                "--list" => options.list = true,
-                "--ignored" => options.ignored_only = true,
-                "--skip" => options
-                    .skipped
-                    .push(arguments.next().ok_or("--skip requires a name")?.clone()),
-                value if value.starts_with('-') => {
-                    return Err(format!("unsupported MCP launch harness option {value}").into());
-                }
-                filter => {
-                    if options.filter.replace(filter.to_owned()).is_some() {
-                        return Err("MCP launch harness accepts one test-name filter".into());
-                    }
-                }
-            }
-        }
-        Ok(options)
-    }
-
-    fn selects(&self, name: &str) -> bool {
-        !self.ignored_only
-            && !self.skipped.iter().any(|skip| name.contains(skip))
-            && self.filter.as_ref().is_none_or(|filter| {
-                if self.exact {
-                    name == filter
-                } else {
-                    name.contains(filter)
-                }
-            })
-    }
 }
 
 fn launch_documents(
@@ -168,7 +138,48 @@ fn launch_documents(
     Ok((first, second, saved))
 }
 
-async fn process_launch(use_driven: bool) -> TestResult {
+fn configure_channel_settings(
+    policy: LaunchPolicy,
+    sandbox: &Sandbox,
+    command: &mut tokio::process::Command,
+    saved: &[u8],
+) -> TestResult<Vec<u8>> {
+    let channels = match policy {
+        LaunchPolicy::PlainPrint => return Ok(saved.to_vec()),
+        LaunchPolicy::NamedFlags => {
+            channel_arguments(command);
+            return Ok(saved.to_vec());
+        }
+        LaunchPolicy::SavedDefault | LaunchPolicy::ExplicitOff => json!({
+            "default_policy": "wake", "max_retained_messages": 8,
+            "max_retained_bytes": 8192, "overflow": "reject-new"
+        }),
+        LaunchPolicy::InlinePartial => json!({
+            "default_policy": "off", "sources": {"messages": "off"}, "max_retained_messages": 8
+        }),
+    };
+    let mut settings: Value = serde_json::from_slice(saved)?;
+    settings["channels"] = channels;
+    let persisted = serde_json::to_vec(&settings)?;
+    std::fs::write(sandbox.home.join("settings.json"), &persisted)?;
+    if policy == LaunchPolicy::InlinePartial {
+        command.args(["-c", &format!("channels={}", json!({
+            "sources": {"messages": "wake"}, "max_retained_bytes": 8192, "overflow": "reject-new"
+        }))]);
+    }
+    if policy == LaunchPolicy::ExplicitOff {
+        command.args([
+            "-c",
+            "channels={\"sources\":{\"messages\":\"wake\"}}",
+            "--channel",
+            "messages=off",
+        ]);
+    }
+    Ok(persisted)
+}
+
+async fn process_launch(policy: LaunchPolicy) -> TestResult {
+    let use_driven = policy != LaunchPolicy::PlainPrint;
     let sandbox = Sandbox::new()?;
     let (first, second, saved) = launch_documents(&sandbox, use_driven)?;
     let document = sandbox.work.join("launch.json");
@@ -186,8 +197,8 @@ async fn process_launch(use_driven: bool) -> TestResult {
         .arg("--working-dir")
         .arg(&sandbox.work)
         .args(["--mcp-config", &first_argument, "--mcp-config", &second]);
+    let saved = configure_channel_settings(policy, &sandbox, &mut command, &saved)?;
     let requests = if use_driven {
-        channel_arguments(&mut command);
         let (output, requests) = tokio::try_join!(driven(&mut command), model.serve())?;
         assert!(
             output.status.success(),
@@ -197,8 +208,19 @@ async fn process_launch(use_driven: bool) -> TestResult {
         );
         assert_eq!(output.response["result"]["output"], "launch complete");
         assert_eq!(output.response["result"]["stop"]["reason"], "completed");
-        assert_channel_notifications(&output.notifications);
-        assert_channel_requests(&requests)?;
+        if policy == LaunchPolicy::ExplicitOff {
+            assert!(
+                output
+                    .notifications
+                    .iter()
+                    .all(|event| event["params"]["type"] != "mcp_channel")
+            );
+            assert!(channel_frames(&requests[0])?.is_empty());
+            assert!(channel_frames(&requests[1])?.is_empty());
+        } else {
+            assert_channel_notifications(&output.notifications);
+            assert_channel_requests(&requests)?;
+        }
         assert_eq!(std::fs::read(&document)?, first.as_bytes());
         requests
     } else {
@@ -246,6 +268,8 @@ async fn process_launch(use_driven: bool) -> TestResult {
     }));
     sandbox.assert_launch("messages")?;
     sandbox.assert_launch("secondary")?;
+    let ordinary: Value = serde_json::from_slice(&std::fs::read(sandbox.report("secondary"))?)?;
+    assert_eq!(ordinary["channel_capable"], false);
     let call: Value = serde_json::from_slice(&std::fs::read(
         sandbox.report("messages").with_extension("call"),
     )?)?;
@@ -381,7 +405,7 @@ fn interactive_resolution() -> TestResult {
                 .ok_or("named wake policy missing")?;
             assert_eq!(
                 channels.sources().get("messages"),
-                Some(&McpChannelPolicy::Wake)
+                Some(&McpChannelSourcePolicy::Delivery(McpChannelPolicy::Wake))
             );
             let before = invocation.mcp_state.snapshot()?;
             assert!(!invocation.mcp_state.reload_disk()?);

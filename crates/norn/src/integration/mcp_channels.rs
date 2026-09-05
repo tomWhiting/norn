@@ -24,6 +24,21 @@ pub enum McpChannelPolicy {
     Wake,
 }
 
+/// Host selection for one source, separate from an admitted message's policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum McpChannelSourcePolicy {
+    /// Keep the server's tools without granting channel input.
+    Off,
+    /// Use this delivery policy if the source is selected for channel input.
+    Delivery(McpChannelPolicy),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum McpChannelCapabilityRequirement {
+    Required,
+    IfAdvertised,
+}
+
 /// Explicit behaviour when the host cannot retain another channel message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum McpChannelOverflow {

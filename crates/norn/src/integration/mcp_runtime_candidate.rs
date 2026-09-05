@@ -5,6 +5,7 @@ use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 
+use super::super::mcp_channel_settings::McpChannelSelection;
 use super::McpRuntime;
 use crate::config::{
     EffectiveMcpServer, McpConfigLayer, McpConfigSnapshot, McpDefinitionFingerprint,
@@ -124,8 +125,18 @@ impl McpRuntime {
             snapshot,
             working_dir,
             |config: McpClientConfig| async move {
-                let Some(policy) = settings.sources().get(&config.name) else {
-                    return McpClient::connect(config).await;
+                let selection = settings.selection(
+                    &config.name,
+                    matches!(config.transport, McpTransport::Stdio { .. }),
+                );
+                let attachment = match selection {
+                    McpChannelSelection::Off => return McpClient::connect(config).await,
+                    McpChannelSelection::IfAdvertised(policy) => {
+                        host.attachment(policy, settings.overflow()).if_advertised()
+                    }
+                    McpChannelSelection::Required(policy) => {
+                        host.attachment(policy, settings.overflow())
+                    }
                 };
                 let roots = config
                     .working_dir
@@ -134,12 +145,7 @@ impl McpRuntime {
                     .transpose()?
                     .into_iter()
                     .collect();
-                McpClient::connect_with_channel(
-                    config,
-                    roots,
-                    host.attachment(*policy, settings.overflow()),
-                )
-                .await
+                McpClient::connect_with_channel(config, roots, attachment).await
             },
         )
         .await

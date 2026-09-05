@@ -8,13 +8,14 @@ use uuid::Uuid;
 
 use tokio_util::sync::CancellationToken;
 
+use super::assembly::assemble_print_agent;
 use super::error::{PrintError, preserve_primary_failure};
 use super::intervene::NornInterventionHandler;
 use super::jsonrpc::{
     self, DrivenRun, EventEmitterError, InterventionHandler, PreRunOutcome, RunDriver,
     SharedRunDriver, TransportError, UnavailableInterventionHandler,
 };
-use super::orchestrator::{assemble_print_agent, orchestrate, parse_output_schema};
+use super::orchestrator::{orchestrate, parse_output_schema};
 use crate::cli::{Cli, ExitCode};
 
 /// Driven-mode entry: own the stdin+stdout JSON-RPC 2.0 duplex.

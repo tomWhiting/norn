@@ -6,8 +6,8 @@ use uuid::Uuid;
 
 use super::mcp_channel_inbox::{InboxShared, InboxState, RetainedMessage};
 use super::mcp_channels::{
-    ChannelParams, McpChannelError, McpChannelMessage, McpChannelOverflow, McpChannelPolicy,
-    McpChannelRefusal, McpChannelRejection,
+    ChannelParams, McpChannelCapabilityRequirement, McpChannelError, McpChannelMessage,
+    McpChannelOverflow, McpChannelPolicy, McpChannelRefusal, McpChannelRejection,
 };
 
 /// Caller-created authority for exactly one connection; source identity is host-bound later.
@@ -15,6 +15,7 @@ pub struct McpChannelAttachment {
     pub(super) shared: Arc<InboxShared>,
     pub(super) policy: McpChannelPolicy,
     pub(super) overflow: McpChannelOverflow,
+    pub(super) capability_requirement: McpChannelCapabilityRequirement,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -22,6 +23,7 @@ pub(super) enum SourcePhase {
     Initializing,
     Ready,
     Active,
+    NotDeclared,
     Retired,
 }
 
@@ -40,6 +42,14 @@ pub(crate) struct ChannelSource {
 }
 
 impl McpChannelAttachment {
+    /// Keep ordinary MCP tools when initialization does not advertise channel input.
+    /// Staged notifications from an undeclared source are still refused.
+    #[must_use]
+    pub fn if_advertised(mut self) -> Self {
+        self.capability_requirement = McpChannelCapabilityRequirement::IfAdvertised;
+        self
+    }
+
     pub(crate) fn bind(
         self,
         name: String,
@@ -144,6 +154,9 @@ impl ChannelSource {
         if source.phase == SourcePhase::Retired {
             return Err(McpChannelRefusal::Retired);
         }
+        if source.phase == SourcePhase::NotDeclared {
+            return Err(McpChannelRefusal::NotDeclared);
+        }
         if state.queue.len() >= state.limits.max_retained_messages() {
             return Err(McpChannelRefusal::FullCount);
         }
@@ -199,6 +212,29 @@ impl ChannelSource {
         Ok(())
     }
 
+    pub(crate) fn not_declared(&self) -> Result<(), McpChannelError> {
+        let mut state = self.shared.state.lock();
+        let source = state
+            .sources
+            .get_mut(&self.generation)
+            .ok_or_else(|| self.error(McpChannelRefusal::Retired))?;
+        if source.phase != SourcePhase::Initializing {
+            return Err(self.error(McpChannelRefusal::Retired));
+        }
+        source.phase = SourcePhase::NotDeclared;
+        source.terminal_refusal = Some(McpChannelRefusal::NotDeclared);
+        self.discard_staged(&mut state);
+        self.shared.publish(&state);
+        Ok(())
+    }
+
+    pub(crate) fn active_policy(&self) -> Option<McpChannelPolicy> {
+        let state = self.shared.state.lock();
+        state.sources.get(&self.generation).and_then(|source| {
+            (source.phase == SourcePhase::Active && !state.closed).then_some(source.policy)
+        })
+    }
+
     pub(crate) fn activate(&self) -> Result<(), McpChannelError> {
         let mut state = self.shared.state.lock();
         if state.closed {
@@ -213,6 +249,9 @@ impl ChannelSource {
             .phase;
         if phase == SourcePhase::Active {
             return Ok(());
+        }
+        if phase == SourcePhase::NotDeclared {
+            return Err(McpChannelError::NotEnabled);
         }
         if phase == SourcePhase::Retired {
             return Err(self.error(McpChannelRefusal::Retired));
@@ -248,7 +287,9 @@ impl ChannelSource {
             .sources
             .get_mut(&self.generation)
             .ok_or_else(|| self.error(McpChannelRefusal::Retired))?;
-        source.phase = SourcePhase::Retired;
+        if source.phase != SourcePhase::NotDeclared {
+            source.phase = SourcePhase::Retired;
+        }
         self.discard_staged(&mut state);
         self.shared.publish(&state);
         Ok(())

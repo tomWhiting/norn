@@ -118,6 +118,8 @@ fn parse_retry_attempts(value: &str) -> Result<RetryAttempts, BuildError> {
 /// [`ProviderConfigOverrides`], and `RetryPolicy`.
 #[derive(Default, Clone)]
 pub struct ConfigOverrides {
+    /// Typed partial `-c channels=<json>` startup policy.
+    pub channels: Option<norn::config::ChannelSettings>,
     // -- AgentLoopConfig fields ------------------------------------------
     /// `-c timeout=<duration>` → [`AgentLoopConfig::step_timeout`].
     pub timeout: Option<Duration>,
@@ -332,6 +334,14 @@ impl ConfigOverrides {
 
     fn apply_pair(&mut self, key: &str, value: &str) -> Result<(), BuildError> {
         match key {
+            "channels" => {
+                if self.channels.is_some() {
+                    return Err(BuildError::Argument(
+                        "-c channels is specified more than once".to_owned(),
+                    ));
+                }
+                self.channels = Some(super::channel_overrides::parse_channel_overrides(value)?);
+            }
             "timeout" => {
                 self.timeout = Some(parse_duration(value)?);
             }

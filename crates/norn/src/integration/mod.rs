@@ -55,7 +55,7 @@ pub use mcp_channel_source::McpChannelAttachment;
 pub use mcp_channels::{
     MCP_CHANNEL_CAPABILITY, MCP_CHANNEL_NOTIFICATION, McpChannelError, McpChannelInfo,
     McpChannelLimits, McpChannelMessage, McpChannelOverflow, McpChannelPolicy, McpChannelRefusal,
-    McpChannelRejection, McpChannelStatus,
+    McpChannelRejection, McpChannelSourcePolicy, McpChannelStatus,
 };
 pub use mcp_client::{
     MCP_PROTOCOL_VERSION, McpClient, McpClientInner, McpServerConfig as McpClientConfig,

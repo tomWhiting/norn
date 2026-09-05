@@ -8,6 +8,7 @@
 
 use crate::config::types::NornSettings;
 
+use super::channels::merge_channels;
 use super::collection_sections::{
     merge_context, merge_env_map, merge_hooks, merge_mcp_servers, merge_model_aliases,
     merge_permissions, merge_provider_profiles, merge_skills, merge_variants,
@@ -94,6 +95,12 @@ pub(crate) fn merge_settings(
             &mut prj.mcp_servers,
             &mut lcl.mcp_servers,
             &mut ovr.mcp_servers,
+        ),
+        channels: merge_channels(
+            &mut usr.channels,
+            &mut prj.channels,
+            &mut lcl.channels,
+            &mut ovr.channels,
         ),
         skills: merge_skills(
             &mut usr.skills,

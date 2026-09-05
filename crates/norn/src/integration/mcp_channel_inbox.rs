@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use super::mcp_channel_source::{McpChannelAttachment, SourceRecord};
 use super::mcp_channels::{
-    McpChannelError, McpChannelLimits, McpChannelMessage, McpChannelOverflow, McpChannelPolicy,
-    McpChannelRejection, McpChannelStatus,
+    McpChannelCapabilityRequirement, McpChannelError, McpChannelLimits, McpChannelMessage,
+    McpChannelOverflow, McpChannelPolicy, McpChannelRejection, McpChannelStatus,
 };
 
 pub(super) struct InboxShared {
@@ -118,6 +118,7 @@ impl McpChannelHost {
             shared: Arc::clone(&self.shared),
             policy,
             overflow,
+            capability_requirement: McpChannelCapabilityRequirement::Required,
         }
     }
 

@@ -2,6 +2,7 @@
 //! extensions, rules, and path resolution.
 
 pub mod assembly;
+mod channel_overrides;
 pub mod event_schemas;
 pub mod extensions;
 pub mod mcp_launch;

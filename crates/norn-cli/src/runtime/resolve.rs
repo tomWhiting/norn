@@ -111,8 +111,13 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         .map_err(|error| BuildError::Argument(error.to_string()))?;
     let resolved_settings = load_resolved_settings(&cwd, &mcp_overrides)
         .map_err(|error| BuildError::Argument(error.to_string()))?;
-    let channel_config =
-        crate::runtime::resolve_channel_config(cli, &resolved_settings.mcp_servers)?;
+    let mut config_overrides = ConfigOverrides::parse(&cli.config)?;
+    let channel_config = crate::runtime::resolve_channel_config(
+        cli,
+        resolved_settings.settings.channels.as_ref(),
+        config_overrides.channels.as_ref(),
+        &resolved_settings.mcp_servers,
+    )?;
     let settings = resolved_settings.settings;
 
     let resolved_profile = resolve_profile_with_origin(cli.profile.as_deref())?;
@@ -155,7 +160,6 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
     }
     profile.model.clone_from(&model_selection.model);
 
-    let mut config_overrides = ConfigOverrides::parse(&cli.config)?;
     if let Some(debug_api) = &cli.debug_api {
         config_overrides.debug_dump_dir = Some(resolve_debug_api_dir(debug_api)?);
     }

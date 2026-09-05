@@ -1,0 +1,37 @@
+{
+  "cluster": "norn-channel-settings",
+  "title": "Persisted channel settings stories",
+  "personas": [
+    {
+      "name": "Norn operator",
+      "role": "operator",
+      "stories": [
+        {
+          "id": "S1",
+          "title": "Typed persistent channel settings",
+          "text": "As an operator, I can save partial channel settings and combine them predictably."
+        },
+        {
+          "id": "S2",
+          "title": "Resolve the effective launch policy",
+          "text": "As an operator, I can override saved policy at launch without repeating every flag."
+        },
+        {
+          "id": "S3",
+          "title": "Optional default negotiation with strict named selection",
+          "text": "As an operator, I can use channel-capable servers alongside ordinary MCP tools."
+        },
+        {
+          "id": "S4",
+          "title": "Prove settings at the real CLI boundary",
+          "text": "As an operator, I can rely on the same policy in interactive and driven launches."
+        },
+        {
+          "id": "S5",
+          "title": "Operating guide and truthful programme status",
+          "text": "As an operator, I can see what is installed and what remains under verification."
+        }
+      ]
+    }
+  ]
+}

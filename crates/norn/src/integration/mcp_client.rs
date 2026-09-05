@@ -26,7 +26,8 @@ use crate::tool::traits::Tool;
 
 use super::mcp_channel_source::McpChannelAttachment;
 use super::mcp_channels::{
-    MCP_CHANNEL_CAPABILITY, McpChannelError, McpChannelInfo, McpChannelRefusal,
+    MCP_CHANNEL_CAPABILITY, McpChannelCapabilityRequirement, McpChannelError, McpChannelInfo,
+    McpChannelPolicy, McpChannelRefusal,
 };
 use super::mcp_protocol::{ClientProtocolState, McpRoot};
 use super::mcp_proxy::McpProxyTool;
@@ -261,6 +262,9 @@ impl McpClient {
     ) -> Result<Self, IntegrationError> {
         validate_client_settings(&config)?;
         let instance_id = CLIENT_INSTANCE.fetch_add(1, Ordering::Relaxed);
+        let channel_requirement = attachment
+            .as_ref()
+            .map(|value| value.capability_requirement);
         let channel_source = attachment
             .map(|attachment| attachment.bind(config.name.clone(), instance_id))
             .transpose()
@@ -364,7 +368,13 @@ impl McpClient {
             None => None,
         };
         if let Some(source) = inner.protocol.channel_source() {
-            if channel_info.is_none() {
+            if channel_info.is_some() {
+                source.negotiated().map_err(|error| channel_error(&error))?;
+            } else if channel_requirement == Some(McpChannelCapabilityRequirement::IfAdvertised) {
+                source
+                    .not_declared()
+                    .map_err(|error| channel_error(&error))?;
+            } else {
                 source.reject(McpChannelRefusal::NotDeclared);
                 inner.invalidate().await;
                 return Err(IntegrationError::McpError {
@@ -374,7 +384,6 @@ impl McpClient {
                     ),
                 });
             }
-            source.negotiated().map_err(|error| channel_error(&error))?;
         }
 
         inner
@@ -415,6 +424,17 @@ impl McpClient {
     /// Presence does not mean the session has enabled or activated channel ingress.
     pub const fn channel_info(&self) -> Option<&McpChannelInfo> {
         self.channel_info.as_ref()
+    }
+
+    /// Actually activated input policy, excluding ordinary, declined and retired sources.
+    pub fn active_channel_policy(&self) -> Option<McpChannelPolicy> {
+        if !self.inner.is_live() {
+            return None;
+        }
+        self.inner
+            .protocol
+            .channel_source()
+            .and_then(super::mcp_channel_source::ChannelSource::active_policy)
     }
 
     /// Publish this verified channel generation and fence its previously active source.
