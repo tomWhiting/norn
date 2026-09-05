@@ -1,0 +1,47 @@
+{
+  "cluster": "norn-retained-tui",
+  "title": "Retained TUI checklist",
+  "sections": [
+    {
+      "name": "Checkpoint requirements",
+      "items": [
+        {
+          "id": "C0",
+          "text": "Register the settled checkpoint on frozen NCS"
+        },
+        {
+          "id": "C1",
+          "text": "Terminal-independent identities and deterministic projection"
+        },
+        {
+          "id": "C2",
+          "text": "Demanded history and approved body ranges"
+        },
+        {
+          "id": "C3",
+          "text": "Migrate every transcript and status producer"
+        },
+        {
+          "id": "C4",
+          "text": "Own frame, layout, caret and styled content"
+        },
+        {
+          "id": "C5",
+          "text": "Compact known/unknown calls and honest per-call Changes"
+        },
+        {
+          "id": "C6",
+          "text": "Reading, selection/copy, search/export and existing controls"
+        },
+        {
+          "id": "C7",
+          "text": "Real PTY checkpoint and exact-commit evidence"
+        },
+        {
+          "id": "C8",
+          "text": "R4.layout — independent pure geometry foundation"
+        }
+      ]
+    }
+  ]
+}

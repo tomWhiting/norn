@@ -1,0 +1,793 @@
+{
+  "id": "NRT-001",
+  "cluster": "norn-retained-tui",
+  "status": "implementation_in_progress",
+  "title": "Retained foreground transcript and read-only tool Changes",
+  "baseline": "f0cb7476ceb80ce6b9c85a02088cdb8297e960a3",
+  "depends_on": [
+    "NCS-001"
+  ],
+  "blocked_by": [],
+  "checklist": [
+    "C0",
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C5",
+    "C6",
+    "C7",
+    "C8"
+  ],
+  "stories": [
+    "S1",
+    "S2",
+    "S3"
+  ],
+  "purpose": "Make terminal history compact, readable and stable under resize while preserving exact semantic evidence and existing execution behavior.",
+  "task": "Implement the settled NRT-001 checkpoint on frozen NCS commit f0cb7476ceb80ce6b9c85a02088cdb8297e960a3. R0 registers this contract; R1 and R8 (R4.layout) may then run independently. R2 follows R1; R3 follows R2; R4 follows R3 and R8; R5, R6 and R7 follow sequentially. Root owns R8 only; one integration owner owns overlapping R3-R6 paths. NCS must be exact-commit venue-green and integrated before NRT landing. If NCS changes, reconcile/rebase and repeat exact-candidate verification. No approval or preference placeholder remains. Stop and name required files before editing outside a row wall.",
+  "requirements": [
+    {
+      "id": "R0",
+      "title": "Register the settled checkpoint on frozen NCS",
+      "depends_on": [],
+      "spec": "WHEN this settled checkpoint is registered, THE SYSTEM SHALL record the source baseline, decisions, local producer/acceptance contracts, checklist, stories and exact walls before implementation. Registration authorizes stacked implementation without treating pending NCS verification as green.",
+      "files": {
+        "modify": [],
+        "create": [
+          "docs/design/norn-retained-tui/design.json",
+          "docs/design/norn-retained-tui/DESIGN.md",
+          "docs/design/norn-retained-tui/checklist.json",
+          "docs/design/norn-retained-tui/CHECKLIST.md",
+          "docs/design/norn-retained-tui/stories.json",
+          "docs/design/norn-retained-tui/USER-STORIES.md",
+          "docs/design/norn-retained-tui/briefs/NRT-001.json",
+          "docs/design/norn-retained-tui/briefs/NRT-001.md",
+          "docs/design/norn-retained-tui/producer-coverage.json",
+          "docs/design/norn-retained-tui/acceptance.json"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "F1..F6 are recorded as settled decisions with explicit defaults and action semantics; no conditional wall or preference placeholder remains.",
+        "Existing estate design/cluster renderers reproduce Markdown from JSON; existing coverage checker reports every checklist/story assigned. Producer/acceptance references resolve to files in this cluster.",
+        "The refreshed inventory is bound to f0cb7476ceb80ce6b9c85a02088cdb8297e960a3 with the exact51-path NCS delta and unchanged TUI/event contracts; root owns external programme/tracking updates. NCS and NRT landing remain separately verified.",
+        "Design provenance: D1-D6, F1-F6 in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+      ],
+      "acceptance_greps": [
+        "rg -n \"F1|F2|F3|F4|F5|F6|NCS|baseline\" docs/design/norn-retained-tui/design.json"
+      ],
+      "design_refs": [
+        "D1-D6",
+        "F1-F6"
+      ],
+      "checklist": [
+        "C0"
+      ],
+      "stories": [
+        "S1"
+      ],
+      "status": "registered_rendered_coverage_and_schema_validated"
+    },
+    {
+      "id": "R1",
+      "title": "Terminal-independent identities and deterministic projection",
+      "depends_on": [
+        "R0"
+      ],
+      "spec": "WHEN a typed live or committed record arrives, THE SYSTEM SHALL reduce it through norn::session_view using I1..I8, without terminal types, disk I/O, provider calls or a duplicate host reducer.",
+      "files": {
+        "modify": [
+          "crates/norn/src/lib.rs"
+        ],
+        "create": [
+          "crates/norn/src/session_view/mod.rs",
+          "crates/norn/src/session_view/contract.rs",
+          "crates/norn/src/session_view/projection.rs",
+          "crates/norn/src/session_view/body.rs",
+          "crates/norn/src/session_view/error.rs",
+          "crates/norn/src/session_view/contract_tests.rs",
+          "crates/norn/src/session_view/projection_tests.rs",
+          "crates/norn/src/session_view/live.rs",
+          "crates/norn/src/session_view/committed.rs",
+          "crates/norn/src/session_view/response.rs",
+          "crates/norn/src/session_view/tools.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "Test same-name overlapping tools, item_id→call_id aliases, freeform calls, orphan results and duplicates across page boundaries.",
+        "Test retry within a multi-response turn, authoritative response_items versus flat projections, refusal, cancellation and provisional alias invalidation; never identify by text equality.",
+        "Explicit body allowlist and unknown custom-event classification exclude opaque/private provider replay state. Each current enum variant has a disposition fixture; future variants force exhaustive review.",
+        "No Ready/snapshot subscription API or durable generation claim is introduced.",
+        "Implement the six public core seams named in design.json.public_core_contracts. Cursor/body minting is crate-internal and source-owner validated; public consumers cannot construct arbitrary approved roots/fields.",
+        "Projection inputs/history items carry compact approved metadata and body references, never cloned raw SessionEvent/ResponseTranscriptItem payloads containing opaque/private state. Validate every provenance/correlation boundary and retain unknown origin explicitly.",
+        "Design provenance: I1-I8, D4, producer-coverage.json in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+      ],
+      "acceptance_greps": [
+        "rg -n \"pub mod session_view\" crates/norn/src/lib.rs",
+        "rg -n \"Provisional|Committed|BodyRef|HistoryCursor|Incomplete\" crates/norn/src/session_view"
+      ],
+      "design_refs": [
+        "I1-I8",
+        "D4",
+        "producer-coverage.json"
+      ],
+      "checklist": [
+        "C1"
+      ],
+      "stories": [
+        "S1"
+      ],
+      "status": "in_progress"
+    },
+    {
+      "id": "R2",
+      "title": "Demanded history and approved body ranges",
+      "depends_on": [
+        "R1"
+      ],
+      "spec": "WHEN the view requests history or a body, THE SYSTEM SHALL validate the source/cursor/reference/range and return only the requested data or an explicit typed failure, without holding store locks during filesystem work.",
+      "files": {
+        "modify": [
+          "crates/norn/src/session/store.rs",
+          "crates/norn/src/session/spool.rs"
+        ],
+        "create": [
+          "crates/norn/src/session/store/history_page.rs",
+          "crates/norn/src/session/store/history_page_tests.rs",
+          "crates/norn/src/session/spool/range.rs",
+          "crates/norn/src/session/spool/range_tests.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "Refuse wrong source/generation, mismatched EventId/ordinal, stale provisional revision, forged/traversing/outside-root spool references and unavailable/malformed bodies.",
+        "Real temporary spool tests prove requested byte ranges, UTF-8 chunk reconstruction, short reads and file failures; raw JSON-range reads do not claim decoded arbitrary field paging.",
+        "Store pages clone only selected records; render/resize have zero body/history reads. A user page/search/expand action requests explicit demand and exposes partial coverage.",
+        "No new committed push/append-family edits: later host owner must integrate ordinary, batch, idempotent and provider-identity-adoption paths separately. Do not emit a fake durable cursor.",
+        "Initialize distinct StoreInstanceId in all three EventStore constructors and validate every cursor against that instance/session binding. Empty-start is explicit.",
+        "Range reads use the owning SpoolWriter private data_dir/registered/root_session_id and PrivateRoot; no caller-supplied root path or exported arbitrary-path capability.",
+        "Design provenance: I6-I8, F1, F4, session-host-review STORE-COMMIT/BODY-RANGES in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+      ],
+      "acceptance_greps": [
+        "rg -n \"history_page|HistoryCursor\" crates/norn/src/session/store.rs crates/norn/src/session/store/history_page.rs",
+        "rg -n \"Body|range|validate_spool_ref\" crates/norn/src/session/spool.rs crates/norn/src/session/spool/range.rs"
+      ],
+      "design_refs": [
+        "I6-I8",
+        "F1",
+        "F4",
+        "session-host-review STORE-COMMIT/BODY-RANGES"
+      ],
+      "checklist": [
+        "C2"
+      ],
+      "stories": [
+        "S1"
+      ]
+    },
+    {
+      "id": "R3",
+      "title": "Migrate every transcript and status producer",
+      "depends_on": [
+        "R2"
+      ],
+      "spec": "WHEN any current TUI producer emits user-visible content or current state, THE SYSTEM SHALL retain it semantically through one local projection adapter and preserve its origin and execution semantics.",
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/app/mod.rs",
+          "crates/norn-tui/src/app/state.rs",
+          "crates/norn-tui/src/app/dispatch.rs",
+          "crates/norn-tui/src/app/dispatch/finalization.rs",
+          "crates/norn-tui/src/app/streaming.rs",
+          "crates/norn-tui/src/app/tool_calls.rs",
+          "crates/norn-tui/src/app/session_replay.rs",
+          "crates/norn-tui/src/app/slash.rs",
+          "crates/norn-tui/src/app/model_selection.rs",
+          "crates/norn-tui/src/app/mcp_slash.rs",
+          "crates/norn-tui/src/app/turn/run.rs",
+          "crates/norn-tui/src/app/turn/mid.rs",
+          "crates/norn-tui/src/app/rotation.rs",
+          "crates/norn-tui/src/app/child_results.rs",
+          "crates/norn-tui/src/app/helpers.rs",
+          "crates/norn-tui/src/app/event_loop.rs",
+          "crates/norn-tui/src/app/render.rs",
+          "crates/norn-tui/src/agents/tabs.rs",
+          "crates/norn-tui/src/events/schema_render.rs"
+        ],
+        "create": [
+          "crates/norn-tui/src/app/transcript.rs",
+          "crates/norn-tui/src/app/transcript_tests.rs",
+          "crates/norn-tui/src/app/notices.rs",
+          "crates/norn-tui/src/app/view_config.rs",
+          "crates/norn-tui/src/app/view_config_tests.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "All entries in producer-coverage.json have executable assertions for semantic output/state, including child-result batches, steered/queued delivery, root inbound wake, MCP command completion/refusal, all step outcomes and startup/new/compaction notices.",
+        "Broadcast lag creates a visible incomplete state and boundary reconciliation without repeating tools or inventing missing transient events; forced lag case is a required fixture.",
+        "/new swaps store binding and view generation coherently with existing rotation dependencies; historical data and draft treatment follow D-F3/D-F5 controls. Resume loads demanded history with truthful older-coverage status.",
+        "Channels remain external framed content; no slash parsing or fabricated human sender. Child results retain actual child/source identity even where the old display used write_user_message.",
+        "All production writes leave semantic producers; only the later single frame/terminal owner writes terminal bytes. This row and R4 are an integration unit, not separately shippable UI.",
+        "ViewConfig owns the declared history/body/clipboard preferences from D-F4, with typed validation, visible effective values and explicit /view updates. R1/R2 contain no default demand sizes. Geometry defaults remain solely in render/layout.rs, avoiding duplicated constants.",
+        "Design provenance: D4-D5, I1-I8, producer-coverage.json in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+      ],
+      "acceptance_greps": [
+        "rg -n \"Transcript|session_view|notice|incomplete\" crates/norn-tui/src/app/transcript.rs crates/norn-tui/src/app/notices.rs",
+        "rg -n \"write_to_scroll|write_dim_line|write_error_line|write_user_message\" crates/norn-tui/src/app crates/norn-tui/src/agents/tabs.rs"
+      ],
+      "design_refs": [
+        "D4-D5",
+        "I1-I8",
+        "producer-coverage.json"
+      ],
+      "checklist": [
+        "C3"
+      ],
+      "stories": [
+        "S1"
+      ]
+    },
+    {
+      "id": "R4",
+      "title": "Own frame, layout, caret and styled content",
+      "depends_on": [
+        "R3",
+        "R8"
+      ],
+      "spec": "WHEN the app paints or receives geometry/input, THE SYSTEM SHALL compose one full-screen frame under the viewport invariants and restore terminal modes on every supported exit path.",
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/lib.rs",
+          "crates/norn-tui/src/app/mod.rs",
+          "crates/norn-tui/src/app/state.rs",
+          "crates/norn-tui/src/app/render.rs",
+          "crates/norn-tui/src/app/event_loop.rs",
+          "crates/norn-tui/src/app/turn/mid.rs",
+          "crates/norn-tui/src/app/helpers.rs",
+          "crates/norn-tui/src/app/autocomplete.rs",
+          "crates/norn-tui/src/render/mod.rs",
+          "crates/norn-tui/src/render/fixed_panel.rs",
+          "crates/norn-tui/src/render/content.rs",
+          "crates/norn-tui/src/render/syntax.rs",
+          "crates/norn-tui/src/render/markdown.rs",
+          "crates/norn-tui/src/render/markdown/emitter.rs",
+          "crates/norn-tui/src/render/markdown/dim.rs",
+          "crates/norn-tui/src/render/markdown/dim/list.rs",
+          "crates/norn-tui/src/render/markdown/scan.rs",
+          "crates/norn-tui/src/render/markdown/scan/list.rs",
+          "crates/norn-tui/src/render/thinking.rs",
+          "crates/norn-tui/src/render/text.rs",
+          "crates/norn-tui/src/render/style.rs",
+          "crates/norn-tui/src/render/streaming_indicator.rs",
+          "crates/norn-tui/src/events/schema_render.rs",
+          "crates/norn-tui/src/agents/status_line.rs",
+          "crates/norn-tui/src/agents/activity_log.rs",
+          "crates/norn-tui/src/agents/tabs.rs",
+          "crates/norn-tui/src/terminal/setup.rs",
+          "crates/norn-tui/src/terminal/caps.rs",
+          "crates/norn-tui/Cargo.toml"
+        ],
+        "create": [
+          "crates/norn-tui/src/render/frame.rs",
+          "crates/norn-tui/src/render/retained_text.rs",
+          "crates/norn-tui/src/render/frame_tests.rs",
+          "crates/norn-tui/src/app/viewport.rs",
+          "crates/norn-tui/src/app/viewport_tests.rs",
+          "crates/norn-tui/src/app/focus.rs"
+        ],
+        "delete": [
+          "crates/norn-tui/src/render/scroll_region.rs"
+        ]
+      },
+      "acceptance": [
+        "Alternate-screen entry/leave, bracketed paste, mouse/Kitty/synchronized output and cursor restoration are owned exactly once. No production DECSTBM scroll-growth/cursor-accounting API remains.",
+        "Retain semantic markdown/code/diff/structured formatting as styled rows; no ANSI capture/parser/terminal emulator is introduced. Renderer errors are handled visibly. No dependency addition in this wall.",
+        "Full-width composer, no global header/footer; narrow switch/restore, popup and focus follow the D-F2 geometry. Zero/tiny sizes preserve state without coordinate underflow or accidental submission.",
+        "Resize invalidates layout only; stable logical anchor/selection, draft, provider-call count and store-event count remain unchanged. Incoming live updates cannot steal focus.",
+        "Update crates/norn-tui/Cargo.toml package description from obsolete DECSTBM wording only; no dependency or manifest policy changes. R8 owns layout.rs/layout_tests.rs; integration consumes its public rectangles/geometry without editing those files concurrently.",
+        "Design provenance: D1, viewport_invariants, WS-01, WS-02, WS-16 in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+      ],
+      "acceptance_greps": [
+        "rg -n \"DECSTBM|write_to_scroll|note_scroll_newlines|restore_scroll_cursor|save_scroll_cursor\" crates/norn-tui/src",
+        "rg -n \"Frame|Viewport|Focus\" crates/norn-tui/src/render/frame.rs crates/norn-tui/src/app/viewport.rs"
+      ],
+      "design_refs": [
+        "D1",
+        "viewport_invariants",
+        "WS-01",
+        "WS-02",
+        "WS-16"
+      ],
+      "checklist": [
+        "C4"
+      ],
+      "stories": [
+        "S2"
+      ]
+    },
+    {
+      "id": "R5",
+      "title": "Compact known/unknown calls and honest per-call Changes",
+      "depends_on": [
+        "R4"
+      ],
+      "spec": "WHEN a tool is shown, THE SYSTEM SHALL display compact description/status and allow historical expansion or a read-only exact call change view without touching provider context or workspace files.",
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/app/mod.rs",
+          "crates/norn-tui/src/app/state.rs",
+          "crates/norn-tui/src/app/tool_calls.rs",
+          "crates/norn-tui/src/render/mod.rs",
+          "crates/norn-tui/src/render/content.rs",
+          "crates/norn-tui/src/tools/mod.rs",
+          "crates/norn-tui/src/tools/renderer.rs",
+          "crates/norn-tui/src/tools/helpers.rs",
+          "crates/norn-tui/src/tools/compact.rs",
+          "crates/norn-tui/src/tools/minimal.rs",
+          "crates/norn-tui/src/tools/status.rs",
+          "crates/norn-tui/src/tools/verbosity.rs",
+          "crates/norn-tui/src/tools/rich/bash.rs",
+          "crates/norn-tui/src/tools/rich/edit.rs",
+          "crates/norn-tui/src/tools/rich/patch.rs",
+          "crates/norn-tui/src/tools/rich/read.rs",
+          "crates/norn-tui/src/tools/rich/search.rs"
+        ],
+        "create": [
+          "crates/norn-tui/src/tools/summary.rs",
+          "crates/norn-tui/src/tools/summary_tests.rs",
+          "crates/norn-tui/src/app/changes.rs",
+          "crates/norn-tui/src/app/changes_tests.rs",
+          "crates/norn-tui/src/render/changes.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "Every known and unknown tool starts compact; original description/call/status/duration stays visible, with missing fields explicitly unavailable. Individual historic expansion obeys D-F3 override rules.",
+        "Real edit/write/patch output shapes prove committed-with-diagnostic-error distinct from blocked/uncommitted; no action-log-success filter.",
+        "Opening an old link reads its recorded argument/result/spool references only, even after disk changes or deletion. Missing before-content cannot produce an empty-baseline diff.",
+        "Bash/MCP/unknown writer coverage remains explicitly unknown; no invented authorship or session-wide diff. Changes exposes no save/mutation handler.",
+        "Design provenance: D3, change_evidence_rules, I5-I6, WS-03, WS-05, WS-06 in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+      ],
+      "acceptance_greps": [
+        "rg -n \"Compact|Collapsed|description|call_id\" crates/norn-tui/src/tools/summary.rs crates/norn-tui/src/tools/verbosity.rs",
+        "rg -n \"committed|unavailable|fragment|supplied\" crates/norn-tui/src/app/changes.rs"
+      ],
+      "design_refs": [
+        "D3",
+        "change_evidence_rules",
+        "I5-I6",
+        "WS-03",
+        "WS-05",
+        "WS-06"
+      ],
+      "checklist": [
+        "C5"
+      ],
+      "stories": [
+        "S2"
+      ]
+    },
+    {
+      "id": "R6",
+      "title": "Reading, selection/copy, search/export and existing controls",
+      "depends_on": [
+        "R5"
+      ],
+      "spec": "WHEN a person navigates retained content, THE SYSTEM SHALL provide keyboard and mouse actions with explicit focus/capability/scope, while preserving current composer and runtime-control behavior.",
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/app/mod.rs",
+          "crates/norn-tui/src/app/event_loop.rs",
+          "crates/norn-tui/src/app/turn/mid.rs",
+          "crates/norn-tui/src/app/edit.rs",
+          "crates/norn-tui/src/app/autocomplete.rs",
+          "crates/norn-tui/src/app/slash.rs",
+          "crates/norn-tui/src/app/slash_catalog.rs",
+          "crates/norn-tui/src/input/keybindings.rs",
+          "crates/norn-tui/src/terminal/mod.rs",
+          "crates/norn-tui/src/terminal/caps.rs",
+          "crates/norn-tui/src/terminal/setup.rs",
+          "crates/norn/src/loop/commands.rs",
+          "crates/norn-cli/src/commands/slash/registry.rs",
+          "crates/norn-tui/src/app/view_config.rs",
+          "crates/norn-tui/src/app/view_config_tests.rs"
+        ],
+        "create": [
+          "crates/norn-tui/src/app/view_actions.rs",
+          "crates/norn-tui/src/app/selection.rs",
+          "crates/norn-tui/src/app/selection_tests.rs",
+          "crates/norn-tui/src/app/search.rs",
+          "crates/norn-tui/src/app/search_tests.rs",
+          "crates/norn-tui/src/app/export.rs",
+          "crates/norn-tui/src/app/export_tests.rs",
+          "crates/norn-tui/src/terminal/clipboard.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "Selection binds original logical text/body revision across Unicode, wrapping, resize and paging. Copy strips UI/control bytes and never converts soft wraps into hard newlines; unavailable or unacknowledged clipboard is not reported as confirmed success.",
+        "Scoped search/export cover older history through explicit demand with partial/unavailable states; disk export targets an explicit operator path and reports errors/overwrite decisions without hidden persistence.",
+        "Built-in slash list derives from existing shared registry, plus selected skills/@file autocomplete. Popup selection precedes send/view keys; keyboard-only focus/expand/scroll/follow/search/copy/export/resize is discoverable.",
+        "Multiline paste never submits. Preserve Unicode editing/history, Enter/newline capability behavior, Escape popup/draft handling, Ctrl+C active cancellation/idle exit, Ctrl+T steer/queue, Ctrl+E reasoning/secondary fields, model/effort/tier and NCS settings validation, usage/status and MCP command-exit guards.",
+        "Existing child activity and result delivery remain visible. View selection does not grant new worker control or change message targets.",
+        "Register /view once in the shared built-in catalogue as TUI-only. Preserve exhaustive CLI enum handling without installing a CLI action or sending view commands to the model. Slash completion/help use this same entry.",
+        "The /view palette lists and invokes every view action and explicit settings: focus, pane visibility, split, browse, expand/reset overrides, follow/pin, selection, copy/export, search scope/load-more, history/body demand and clipboard capability. Mid-turn /view is intercepted locally before steer/queue admission; other input behavior is unchanged.",
+        "F6/Shift+F6 cycles visible regions; F2 toggles upper pane; PgUp/PgDn browse focus; non-composer Enter expands; F3 search, F4 copy, F5 export; arrows resize a focused divider. Existing composer/popup/cancellation actions have precedence. Unavailable function keys have the /view equivalent.",
+        "Design provenance: viewport_invariants, F2-F5, WS-11, WS-16, producer-coverage.json in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+      ],
+      "acceptance_greps": [
+        "rg -n \"Copy|Search|Export|Focus|Follow\" crates/norn-tui/src/app/view_actions.rs",
+        "rg -n \"scope|partial|unavailable\" crates/norn-tui/src/app/search.rs crates/norn-tui/src/app/export.rs"
+      ],
+      "design_refs": [
+        "viewport_invariants",
+        "F2-F5",
+        "WS-11",
+        "WS-16",
+        "producer-coverage.json"
+      ],
+      "checklist": [
+        "C6"
+      ],
+      "stories": [
+        "S3"
+      ]
+    },
+    {
+      "id": "R7",
+      "title": "Real PTY checkpoint and exact-commit evidence",
+      "depends_on": [
+        "R6"
+      ],
+      "spec": "WHEN the integrated checkpoint is verified, THE SYSTEM SHALL exercise actual run_app in a real PTY with deterministic provider/tool/store fixtures and verify semantic invariants alongside terminal behavior before venue release checks.",
+      "files": {
+        "modify": [
+          "crates/norn-tui/tests/pty_smoke.rs",
+          "crates/norn-tui/tests/model_selection.rs",
+          "crates/norn-tui/tests/mcp_channels.rs",
+          "crates/norn-tui/tests/support/mcp_channels_tui.rs"
+        ],
+        "create": [
+          "crates/norn-tui/tests/retained_workspace.rs",
+          "crates/norn-tui/tests/support/retained_workspace.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "Execute PTY-01..PTY-09 in acceptance.json; use real PTY dimensions/events, barrier-controlled provider fixtures and real tool-result semantics. Missing prerequisites fail clearly; no silent skips, no provider credentials required.",
+        "Existing model/budget/prompt-history, channel wake/hold/next-turn and child/cancel tests retain their semantic assertions; replace old escape-sequence shape assertions with new owned-frame/restoration assertions.",
+        "Supported real terminal and multiplexer selection/copy/restoration require recorded manual evidence; PTY OSC52 bytes alone cannot prove actual clipboard acceptance. Capture old artifact if reproducible; otherwise label initial diagnosis source-supported, not runtime-reproduced.",
+        "Run strict fmt/all-target Clippy and declared battery legs on final exact commit at205, with source/gates/guard/venue witnesses and raw result references. Required rigorous review and source-transfer authorization are separate from a green battery. No local pass/fixture timing is a landing receipt or performance claim.",
+        "Design provenance: acceptance.json, D5, WS-01, WS-02, WS-03, WS-11, WS-16 in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+      ],
+      "acceptance_greps": [
+        "rg -n \"retained_workspace|resize|selection|copy|Lagged\" crates/norn-tui/tests/retained_workspace.rs",
+        "rg -n \"provider_calls|event_count|body_reads|history_reads\" crates/norn-tui/tests/support/retained_workspace.rs"
+      ],
+      "design_refs": [
+        "acceptance.json",
+        "D5",
+        "WS-01",
+        "WS-02",
+        "WS-03",
+        "WS-11",
+        "WS-16"
+      ],
+      "checklist": [
+        "C7"
+      ],
+      "stories": [
+        "S3"
+      ]
+    },
+    {
+      "id": "R8",
+      "label": "R4.layout",
+      "title": "R4.layout — independent pure geometry foundation",
+      "depends_on": [
+        "R0"
+      ],
+      "owner": "root",
+      "spec": "WHEN given terminal geometry, requested composer rows and explicit pane/split policy, THE SYSTEM SHALL calculate rectangles and a typed no-paint/resize-required/single/split result without session semantics, terminal I/O or mutable application state.",
+      "files": {
+        "modify": [],
+        "create": [
+          "crates/norn-tui/src/render/layout.rs",
+          "crates/norn-tui/src/render/layout_tests.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "Expose a pure LayoutRequest/LayoutPolicy to Layout result seam. Inputs include cols/rows, requested composer rows, Changes visibility, preferred split and active upper pane/focus. Results provide bounded composer/content/divider rectangles and effective mode; saved preferences are inputs, never rewritten when clamped. No imports from norn::session_view or app state.",
+        "Declare default equal upper-pane split, minimum content width40 each plus one divider, composer maximum12 rows and at most half terminal rows. Width81 is the derived split threshold. Explicit validated policy overrides win; no second copy of these defaults elsewhere.",
+        "Allocate odd split surplus deterministically to conversation, clamp actual split to both minima, and retain the original preference for widening. Changes closed gives conversation all upper width; narrow Changes-open uses the selected single upper pane.",
+        "Zero width or height returns no paint. Geometry unable to retain at least one composer row and one conversation/content row returns resize-required while preserving caller state. Otherwise requested composer height is clamped by declared policy; integration adds popup only if it fits after essential content.",
+        "Test widths80/81/82, height0/1/2, empty/oversized requested composer height, extreme u16 geometry, custom validated policy, open/closed/narrow pane selection, repeated shrink/widen with unchanged preferences and rectangle containment/non-overlap. Test numbers are geometry cases, not a performance SLA.",
+        "Root alone edits these two files. No render/mod.rs wiring in this row; R4 performs it after R3 and completed R8. Files have documented public APIs and mod.rs policy remains intact.",
+        "Design provenance: D-F2, declared_defaults, viewport_invariants in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+      ],
+      "acceptance_greps": [
+        "rg -n \"LayoutRequest|LayoutPolicy|Layout|40|12\" crates/norn-tui/src/render/layout.rs",
+        "rg -n \"narrow|zero|resize|preference|81\" crates/norn-tui/src/render/layout_tests.rs"
+      ],
+      "design_refs": [
+        "D-F2",
+        "declared_defaults",
+        "viewport_invariants"
+      ],
+      "checklist": [
+        "C8"
+      ],
+      "stories": [
+        "S2"
+      ],
+      "status": "implemented_local_proof_only",
+      "local_verification": {
+        "recorded_melbourne": "2026-09-05T22:01:24.377511+10:00",
+        "source_sha256": {
+          "crates/norn-tui/src/render/layout.rs": "a7068e0103750c5876747e3a4c5960d3bfaea390ac51a023862116004ee28374",
+          "crates/norn-tui/src/render/layout_tests.rs": "c160be57f7e33dcb7712feb7ee801ffb8a81274b4376410f1fd0b82ddca3ea5d"
+        },
+        "local_checks": [
+          {
+            "path": "/private/tmp/nrt-001-proof/r8-local-checks.json",
+            "sha256": "1591fe88cab3dcc985f40fb9999dc35c5ba1bea4ae44a34542a8721c3cdd1aa2",
+            "outcome": "six standalone tests passed; rustfmt check and standalone pedantic clippy-driver passed"
+          },
+          {
+            "path": "/private/tmp/nrt-001-proof/r8-policy/ast-policy.json",
+            "sha256": "2626d1cb0c0eddd37bb9323a0e47c0094fd6d5a9a858f6f953d3a3b111034819",
+            "outcome": "bounded AST policy passed for the two R8 files"
+          }
+        ],
+        "scope": "Supplied root proof verified by reading records and source hashes; no test rerun by registration agent. Layout is not wired into TUI. No full workspace, NCS/NRT venue, landing or whole-checkpoint pass."
+      }
+    }
+  ],
+  "sequential_overlaps": [
+    {
+      "path": "crates/norn-tui/src/app/mod.rs",
+      "rows": [
+        "R3",
+        "R4",
+        "R5",
+        "R6"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/app/state.rs",
+      "rows": [
+        "R3",
+        "R4",
+        "R5"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/app/tool_calls.rs",
+      "rows": [
+        "R3",
+        "R5"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/app/slash.rs",
+      "rows": [
+        "R3",
+        "R6"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/app/turn/mid.rs",
+      "rows": [
+        "R3",
+        "R4",
+        "R6"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/app/helpers.rs",
+      "rows": [
+        "R3",
+        "R4"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/app/event_loop.rs",
+      "rows": [
+        "R3",
+        "R4",
+        "R6"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/app/render.rs",
+      "rows": [
+        "R3",
+        "R4"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/agents/tabs.rs",
+      "rows": [
+        "R3",
+        "R4"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/events/schema_render.rs",
+      "rows": [
+        "R3",
+        "R4"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/app/view_config.rs",
+      "rows": [
+        "R3",
+        "R6"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/app/view_config_tests.rs",
+      "rows": [
+        "R3",
+        "R6"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/app/autocomplete.rs",
+      "rows": [
+        "R4",
+        "R6"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/render/mod.rs",
+      "rows": [
+        "R4",
+        "R5"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/render/content.rs",
+      "rows": [
+        "R4",
+        "R5"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/terminal/setup.rs",
+      "rows": [
+        "R4",
+        "R6"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    },
+    {
+      "path": "crates/norn-tui/src/terminal/caps.rs",
+      "rows": [
+        "R4",
+        "R6"
+      ],
+      "execution": "R3→R4→R5→R6 where present; metadata belongs R0. Never concurrent on the same path."
+    }
+  ],
+  "boundaries": [
+    "No provider/tool execution engine changes, session-host/Ready transport, active-input policy change, Liminal dependency, Iridium embedding, filesystem watcher, session baseline capture or mutation-owner work in this checkpoint. Those remain wanted programme work, not permanent feature cuts.",
+    "No added dependencies or arbitrary configuration values. R4 adapts existing presentation APIs and the named Cargo package description only; dependency changes are outside the wall.",
+    "No new durable transcript store, raw terminal recording, ANSI emulator or sidecar agent. Use existing EventStore plus one semantic view.",
+    "Root owns programme/tracking updates and NCS integration outside these product walls.",
+    "No silent skipped prerequisites, lint bypasses, or reduction of existing semantic assertions. Source changes need the existing rigorous review and exact-commit venue receipt."
+  ],
+  "verification": [
+    "Run row acceptance and every PTY scenario in ../acceptance.json; semantic operation counts and screen behavior are separate oracles.",
+    "Run existing estate renderer and coverage checker after any authoritative brief change; validate all local references and exact row-wall ownership.",
+    "Run strict fmt/all-target Clippy, then declared exact-commit NRT battery on205 with source/gates/guard/venue witnesses; no skipped prerequisites or borrowed NCS receipt.",
+    "Obtain the required rigorous review with the applicable source-transfer authorization; retain real supported-terminal and multiplexer evidence for clipboard/selection/restoration.",
+    "NCS exact-green and integration are landing prerequisites. If that baseline changes, reconcile/rebase and repeat NRT final verification."
+  ],
+  "branch": "codex/norn-retained-tui",
+  "worktree": "/private/tmp/norn-retained-tui",
+  "landing_dependency": {
+    "brief": "NCS-001",
+    "baseline": "f0cb7476ceb80ce6b9c85a02088cdb8297e960a3",
+    "implementation_admission": "stacked implementation authorized now by F6",
+    "landing": "NCS exact-green and integrated; NRT own exact-commit proof required",
+    "current_verification": "NCS battery pending at registration; no borrowed pass"
+  },
+  "wall_amendments": [
+    {
+      "at_melbourne": "2026-09-05T21:40:51.490572+10:00",
+      "authority": "Root R0 registration instruction plus root-settlement F1-F6; recorded before repository edits",
+      "row": "R0",
+      "create_additions": [
+        "docs/design/norn-retained-tui/producer-coverage.json",
+        "docs/design/norn-retained-tui/acceptance.json"
+      ],
+      "create_replace": {
+        "from": "docs/design/norn-retained-tui/STORIES.md",
+        "to": "docs/design/norn-retained-tui/USER-STORIES.md"
+      },
+      "reason": "Keep referenced producer and acceptance contracts local to authoritative cluster; existing estate renderer generates USER-STORIES.md. No other repository path or product edit authorized by R0."
+    },
+    {
+      "at_melbourne": "2026-09-05T21:48:02.621060+10:00",
+      "authority": "Root settlement F2/F3/F4 plus root source-owner and layout instructions",
+      "rows": {
+        "R3": [
+          "add app/view_config.rs and tests as central declared UI preference owner"
+        ],
+        "R4": [
+          "transfer render/layout.rs ownership to R8 and add root-owned layout_tests.rs there",
+          "add crates/norn-tui/Cargo.toml description-only modification"
+        ],
+        "R6": [
+          "add shared loop/commands.rs and CLI exhaustive registry handling for settled TUI-only /view",
+          "integrate explicit view preferences through R3-owned view_config.rs/tests after R3"
+        ]
+      },
+      "reason": "Executable settled actions and owner-bound defaults need exact files before code; pure layout has an independent two-file wall. Root also approved R1 live.rs, committed.rs, response.rs and tools.rs before edits for the500 production LOC boundary."
+    }
+  ],
+  "dispatch_graph": {
+    "R0": [],
+    "R1": [
+      "R0"
+    ],
+    "R8": [
+      "R0"
+    ],
+    "R2": [
+      "R1"
+    ],
+    "R3": [
+      "R2"
+    ],
+    "R4": [
+      "R3",
+      "R8"
+    ],
+    "R5": [
+      "R4"
+    ],
+    "R6": [
+      "R5"
+    ],
+    "R7": [
+      "R6"
+    ]
+  },
+  "concurrency": {
+    "permitted_independent": [
+      "R1 semantic core and root R8 pure layout after R0",
+      "R8 may remain independent during R2/R3 until R4 integration"
+    ],
+    "forbidden": [
+      "concurrent edits to any overlapping row path",
+      "host lane store/history/body edits overlapping R2",
+      "editing root-owned layout files from R4 integration without an amended handoff"
+    ],
+    "landing_is_complete_unit": "R3-R6 are one integrated local UI checkpoint; foundation progress is not user-delivery readiness."
+  },
+  "design_source": "../design.json",
+  "producer_contract": "../producer-coverage.json",
+  "acceptance_contract": "../acceptance.json"
+}

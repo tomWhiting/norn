@@ -1,0 +1,1058 @@
+{
+  "cluster": "norn-retained-tui",
+  "title": "Retained foreground transcript and exact tool Changes",
+  "status": "implementation_in_progress",
+  "baseline": "f0cb7476ceb80ce6b9c85a02088cdb8297e960a3",
+  "written_at_melbourne": "2026-09-05T21:48:02.621060+10:00",
+  "intention": "Make terminal history compact, readable and stable under resize while preserving exact semantic evidence and existing execution behavior.",
+  "problem": [
+    "Native scrollback plus fixed-region cursor accounting loses reliable geometry under resize.",
+    "Completed tool arguments are discarded from the current UI projection; old result expansion and exact-call evidence need stable correlation.",
+    "Switching to alternate screen requires an owned reading, selection/copy/search/export story and migration of every notice/error/status producer."
+  ],
+  "solution": {
+    "summary": "Share terminal-independent session_view semantics with the later host while delivering the local foreground retained screen now. Keep current agent/editor/control owners.",
+    "pieces": [
+      {
+        "id": "CORE",
+        "title": "Shared semantic core",
+        "description": "Typed identities, deterministic projection, approved body capabilities and demanded history."
+      },
+      {
+        "id": "VIEW",
+        "title": "Owned viewport",
+        "description": "Compact transcript and read-only Changes above a full-width composer, one terminal owner and preserved focus."
+      },
+      {
+        "id": "PROOF",
+        "title": "Real terminal acceptance",
+        "description": "Semantic assertions, real PTY resize/copy/controls, supported-terminal evidence and exact-commit venue release checks."
+      }
+    ]
+  },
+  "decisions": [
+    {
+      "id": "D1",
+      "title": "D1 checkpoint decision",
+      "status": "active",
+      "body": "One full-screen owner; conversation and collapsible workspace above a full-width composer; no global header or permanent global footer. Necessary target, model and status information uses pane-local labels and composer controls.",
+      "rationale": "Recorded owner direction and root settlement, 5 September2026 Melbourne; source model preserved in this cluster."
+    },
+    {
+      "id": "D2",
+      "title": "D2 checkpoint decision",
+      "status": "active",
+      "body": "Deliver the complete local foreground retained-transcript checkpoint first. Keep the current agent driver, editor and cancellation owners; make norn::session_view reusable by the later independent host. No Liminal, Aion or Iridium runtime dependency is introduced by this checkpoint.",
+      "rationale": "Recorded owner direction and root settlement, 5 September2026 Melbourne; source model preserved in this cluster."
+    },
+    {
+      "id": "D3",
+      "title": "D3 checkpoint decision",
+      "status": "active",
+      "body": "Compact original tool descriptions/status by default, expandable individual historic bodies and a read-only per-call Changes view. The latter is evidence of calls, with truthful commit/diagnostic states; it is not a session-start or Git comparison.",
+      "rationale": "Recorded owner direction and root settlement, 5 September2026 Melbourne; source model preserved in this cluster."
+    },
+    {
+      "id": "D4",
+      "title": "D4 checkpoint decision",
+      "status": "active",
+      "body": "First-slice shared core owns deterministic item/body/cursor semantics and demanded store reads; the local TUI adapter owns its single projection. It consumes existing broadcasts and marks missing live coverage explicitly. Reliable retained producer feed, atomic Ready registration, committed publication across all append families and hosted control remain the coordinated later host foundation.",
+      "rationale": "Recorded owner direction and root settlement, 5 September2026 Melbourne; source model preserved in this cluster."
+    },
+    {
+      "id": "D5",
+      "title": "D5 checkpoint decision",
+      "status": "active",
+      "body": "Display collapse, search, copy, scrolling, resize, expansion and pane selection never change stored events, provider input, active output contract, selected model policy or execution ownership.",
+      "rationale": "Recorded owner direction and root settlement, 5 September2026 Melbourne; source model preserved in this cluster."
+    },
+    {
+      "id": "D6",
+      "title": "D6 checkpoint decision",
+      "status": "active",
+      "body": "A completed local checkpoint is not the complete workspace programme. Retain NWP-02 host/attach, NWP-05 Iridium and configurable send, NWP-08 mutation receipts/baselines/guarded editing/Work/Session/modules/request contracts, and full inline-diff preference as named wanted follow-on work.",
+      "rationale": "Recorded owner direction and root settlement, 5 September2026 Melbourne; source model preserved in this cluster."
+    },
+    {
+      "id": "D-F1",
+      "title": "Settled F1",
+      "status": "active",
+      "body": "Accept D2/D4. Shared session_view vocabulary and demanded history/body ownership; local adapter now, retained producer/actual host later. R1 then R2 then integration rows; no parallel store mutation.",
+      "rationale": "Root implementation decisions within Tom-authorized staged improvements; no new user confirmation required. Recorded 2026-09-05T21:40:51.490572+10:00."
+    },
+    {
+      "id": "D-F2",
+      "title": "Settled F2",
+      "status": "active",
+      "body": "Changes initially closed; explicit tool link or pane toggle opens it. Save split/visibility per frontend. Declare initial equal upper-pane split, minimum content width40 cells each plus one divider. Below81 cells, single upper-pane switch. Full-width composer uses existing12-row maximum and at most half terminal rows; under height pressure preserve draft/caret and a minimal conversation row, then popup only when fit; zero geometry no paint. Tiny geometry explicitly requests resize. No global header/footer.",
+      "rationale": "Root implementation decisions within Tom-authorized staged improvements; no new user confirmation required. Recorded 2026-09-05T21:40:51.490572+10:00."
+    },
+    {
+      "id": "D-F3",
+      "title": "Settled F3",
+      "status": "active",
+      "body": "Accept per-item overrides surviving global Ctrl+O default; reset via view controls. F6 focus, F2 upper-pane toggle, PgUp/PgDn focused browse, non-composer Enter expand, F3 scoped search, F4 copy, F5 export; focused divider arrows. All actions additionally discoverable/available through /view command palette (and existing slash catalog) for terminals where function keys unavailable. Existing composer, popup, cancellation and control bindings keep precedence. Focus cycling skips closed panes; Shift+F6 reverse.",
+      "rationale": "Root implementation decisions within Tom-authorized staged improvements; no new user confirmation required. Recorded 2026-09-05T21:40:51.490572+10:00."
+    },
+    {
+      "id": "D-F4",
+      "title": "Settled F4",
+      "status": "active",
+      "body": "Declare UI history demand20 events, reusing existing initial replay count; body range demand65536 bytes per explicit load, UTF-8-safe chunking and visible load-more state. These are named UI defaults documented/tested centrally, not hidden retention limits. Keep demanded semantic rows; body cache only explicitly expanded/visible/selected revisions, evict unpinned collapsed bodies. No whole-body spool decoding on render/input; background work with revision check. OSC52 only explicit user-selected clipboard capability, no startup probing; default copy offers export when capability unspecified. Say sent for unacknowledged OSC52. Required PTY verification plus accessible local terminal/multiplexer manual evidence, do not claim unsupported matrix.",
+      "rationale": "Root implementation decisions within Tom-authorized staged improvements; no new user confirmation required. Recorded 2026-09-05T21:40:51.490572+10:00."
+    },
+    {
+      "id": "D-F5",
+      "title": "Settled F5",
+      "status": "active",
+      "body": "Accept response_items authority and generic attempt windows with explicit incomplete association. Loaded-scope default search labelled, older-history search explicit; selection/body revision bound. Exclude opaque reasoning/provider state/audio capabilities. /new retains existing draft command semantics, discards old view source, initializes new binding; no cross-session cursor reuse.",
+      "rationale": "Root implementation decisions within Tom-authorized staged improvements; no new user confirmation required. Recorded 2026-09-05T21:40:51.490572+10:00."
+    },
+    {
+      "id": "D-F6",
+      "title": "Settled F6",
+      "status": "active",
+      "body": "Amend registration dependency: start isolated stacked worktree on exact frozen/pushed NCS candidatef0cb now; NCS must be venue-green and integrated before NRT landing. No edits to NCS worktree. Refresh inventory to f0cb; merge/rebase and repeat exact battery if NCS changes. This removes an unnecessary authoring wait without borrowing NCS verification.",
+      "rationale": "Root implementation decisions within Tom-authorized staged improvements; no new user confirmation required. Recorded 2026-09-05T21:40:51.490572+10:00."
+    }
+  ],
+  "goals": [
+    "All eight identity invariants and all producer obligations remain explicit.",
+    "Visible per-call changes never claim session-start baselines or all filesystem authorship.",
+    "One complete local foreground checkpoint preserves current controls while making history readable."
+  ],
+  "non_goals": [
+    "These are checkpoint boundaries, not permanent feature cuts: independent host/attach, Iridium composer, editable/guarded file workspace, Work/Session panels, Liminal modules and request-local structured output remain wanted as recorded below."
+  ],
+  "structure": {
+    "crates/norn-cli/src/commands/slash/registry.rs": "NRT-001 R6 exact wall",
+    "crates/norn-tui/Cargo.toml": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/agents/activity_log.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/agents/status_line.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/agents/tabs.rs": "NRT-001 R3, R4 exact wall",
+    "crates/norn-tui/src/app/autocomplete.rs": "NRT-001 R4, R6 exact wall",
+    "crates/norn-tui/src/app/changes.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/app/changes_tests.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/app/child_results.rs": "NRT-001 R3 exact wall",
+    "crates/norn-tui/src/app/dispatch.rs": "NRT-001 R3 exact wall",
+    "crates/norn-tui/src/app/dispatch/finalization.rs": "NRT-001 R3 exact wall",
+    "crates/norn-tui/src/app/edit.rs": "NRT-001 R6 exact wall",
+    "crates/norn-tui/src/app/event_loop.rs": "NRT-001 R3, R4, R6 exact wall",
+    "crates/norn-tui/src/app/export.rs": "NRT-001 R6 exact wall",
+    "crates/norn-tui/src/app/export_tests.rs": "NRT-001 R6 exact wall",
+    "crates/norn-tui/src/app/focus.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/app/helpers.rs": "NRT-001 R3, R4 exact wall",
+    "crates/norn-tui/src/app/mcp_slash.rs": "NRT-001 R3 exact wall",
+    "crates/norn-tui/src/app/mod.rs": "NRT-001 R3, R4, R5, R6 exact wall",
+    "crates/norn-tui/src/app/model_selection.rs": "NRT-001 R3 exact wall",
+    "crates/norn-tui/src/app/notices.rs": "NRT-001 R3 exact wall",
+    "crates/norn-tui/src/app/render.rs": "NRT-001 R3, R4 exact wall",
+    "crates/norn-tui/src/app/rotation.rs": "NRT-001 R3 exact wall",
+    "crates/norn-tui/src/app/search.rs": "NRT-001 R6 exact wall",
+    "crates/norn-tui/src/app/search_tests.rs": "NRT-001 R6 exact wall",
+    "crates/norn-tui/src/app/selection.rs": "NRT-001 R6 exact wall",
+    "crates/norn-tui/src/app/selection_tests.rs": "NRT-001 R6 exact wall",
+    "crates/norn-tui/src/app/session_replay.rs": "NRT-001 R3 exact wall",
+    "crates/norn-tui/src/app/slash.rs": "NRT-001 R3, R6 exact wall",
+    "crates/norn-tui/src/app/slash_catalog.rs": "NRT-001 R6 exact wall",
+    "crates/norn-tui/src/app/state.rs": "NRT-001 R3, R4, R5 exact wall",
+    "crates/norn-tui/src/app/streaming.rs": "NRT-001 R3 exact wall",
+    "crates/norn-tui/src/app/tool_calls.rs": "NRT-001 R3, R5 exact wall",
+    "crates/norn-tui/src/app/transcript.rs": "NRT-001 R3 exact wall",
+    "crates/norn-tui/src/app/transcript_tests.rs": "NRT-001 R3 exact wall",
+    "crates/norn-tui/src/app/turn/mid.rs": "NRT-001 R3, R4, R6 exact wall",
+    "crates/norn-tui/src/app/turn/run.rs": "NRT-001 R3 exact wall",
+    "crates/norn-tui/src/app/view_actions.rs": "NRT-001 R6 exact wall",
+    "crates/norn-tui/src/app/view_config.rs": "NRT-001 R3, R6 exact wall",
+    "crates/norn-tui/src/app/view_config_tests.rs": "NRT-001 R3, R6 exact wall",
+    "crates/norn-tui/src/app/viewport.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/app/viewport_tests.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/events/schema_render.rs": "NRT-001 R3, R4 exact wall",
+    "crates/norn-tui/src/input/keybindings.rs": "NRT-001 R6 exact wall",
+    "crates/norn-tui/src/lib.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/changes.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/render/content.rs": "NRT-001 R4, R5 exact wall",
+    "crates/norn-tui/src/render/fixed_panel.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/frame.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/frame_tests.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/layout.rs": "NRT-001 R8 exact wall",
+    "crates/norn-tui/src/render/layout_tests.rs": "NRT-001 R8 exact wall",
+    "crates/norn-tui/src/render/markdown.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/markdown/dim.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/markdown/dim/list.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/markdown/emitter.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/markdown/scan.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/markdown/scan/list.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/mod.rs": "NRT-001 R4, R5 exact wall",
+    "crates/norn-tui/src/render/retained_text.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/scroll_region.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/streaming_indicator.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/style.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/syntax.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/text.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/render/thinking.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/terminal/caps.rs": "NRT-001 R4, R6 exact wall",
+    "crates/norn-tui/src/terminal/clipboard.rs": "NRT-001 R6 exact wall",
+    "crates/norn-tui/src/terminal/mod.rs": "NRT-001 R6 exact wall",
+    "crates/norn-tui/src/terminal/setup.rs": "NRT-001 R4, R6 exact wall",
+    "crates/norn-tui/src/tools/compact.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/tools/helpers.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/tools/minimal.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/tools/mod.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/tools/renderer.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/tools/rich/bash.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/tools/rich/edit.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/tools/rich/patch.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/tools/rich/read.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/tools/rich/search.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/tools/status.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/tools/summary.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/tools/summary_tests.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/src/tools/verbosity.rs": "NRT-001 R5 exact wall",
+    "crates/norn-tui/tests/mcp_channels.rs": "NRT-001 R7 exact wall",
+    "crates/norn-tui/tests/model_selection.rs": "NRT-001 R7 exact wall",
+    "crates/norn-tui/tests/pty_smoke.rs": "NRT-001 R7 exact wall",
+    "crates/norn-tui/tests/retained_workspace.rs": "NRT-001 R7 exact wall",
+    "crates/norn-tui/tests/support/mcp_channels_tui.rs": "NRT-001 R7 exact wall",
+    "crates/norn-tui/tests/support/retained_workspace.rs": "NRT-001 R7 exact wall",
+    "crates/norn/src/lib.rs": "NRT-001 R1 exact wall",
+    "crates/norn/src/loop/commands.rs": "NRT-001 R6 exact wall",
+    "crates/norn/src/session/spool.rs": "NRT-001 R2 exact wall",
+    "crates/norn/src/session/spool/range.rs": "NRT-001 R2 exact wall",
+    "crates/norn/src/session/spool/range_tests.rs": "NRT-001 R2 exact wall",
+    "crates/norn/src/session/store.rs": "NRT-001 R2 exact wall",
+    "crates/norn/src/session/store/history_page.rs": "NRT-001 R2 exact wall",
+    "crates/norn/src/session/store/history_page_tests.rs": "NRT-001 R2 exact wall",
+    "crates/norn/src/session_view/body.rs": "NRT-001 R1 exact wall",
+    "crates/norn/src/session_view/committed.rs": "NRT-001 R1 exact wall",
+    "crates/norn/src/session_view/contract.rs": "NRT-001 R1 exact wall",
+    "crates/norn/src/session_view/contract_tests.rs": "NRT-001 R1 exact wall",
+    "crates/norn/src/session_view/error.rs": "NRT-001 R1 exact wall",
+    "crates/norn/src/session_view/live.rs": "NRT-001 R1 exact wall",
+    "crates/norn/src/session_view/mod.rs": "NRT-001 R1 exact wall",
+    "crates/norn/src/session_view/projection.rs": "NRT-001 R1 exact wall",
+    "crates/norn/src/session_view/projection_tests.rs": "NRT-001 R1 exact wall",
+    "crates/norn/src/session_view/response.rs": "NRT-001 R1 exact wall",
+    "crates/norn/src/session_view/tools.rs": "NRT-001 R1 exact wall",
+    "docs/design/norn-retained-tui/CHECKLIST.md": "NRT-001 R0 exact wall",
+    "docs/design/norn-retained-tui/DESIGN.md": "NRT-001 R0 exact wall",
+    "docs/design/norn-retained-tui/USER-STORIES.md": "NRT-001 R0 exact wall",
+    "docs/design/norn-retained-tui/acceptance.json": "NRT-001 R0 exact wall",
+    "docs/design/norn-retained-tui/briefs/NRT-001.json": "NRT-001 R0 exact wall",
+    "docs/design/norn-retained-tui/briefs/NRT-001.md": "NRT-001 R0 exact wall",
+    "docs/design/norn-retained-tui/checklist.json": "NRT-001 R0 exact wall",
+    "docs/design/norn-retained-tui/design.json": "NRT-001 R0 exact wall",
+    "docs/design/norn-retained-tui/producer-coverage.json": "NRT-001 R0 exact wall",
+    "docs/design/norn-retained-tui/stories.json": "NRT-001 R0 exact wall"
+  },
+  "topics": [
+    {
+      "name": "Public shared core contracts for R1",
+      "content": "**ViewSource / StoreInstanceId / SessionIdentity** (R1 vocabulary; R2 minting): A source binds persisted-or-explicit-ephemeral session, local store instance and agent identity. StoreInstanceId is minted independently for every EventStore instance; it is not a persisted generation or host identity.\n\n**HistoryCursor / HistoryRead / HistoryPage** (R1 types; R2 implementation): Opaque cursor binds exact source, event ordinal and EventId, including empty-start. Read uses explicit direction/anchor/event demand. Page exposes approved compact semantic items, next cursor and coverage; never full opaque event payloads. Typed errors identify wrong source, stale generation, mismatched anchor and unavailable data.\n\n**ItemId / ProvisionalKey / ViewRevision / ViewItem** (R1): Committed identity and provisional execution/response/attempt/segment identity are disjoint. Revision is local projection revision, not history durability. Tool IDs retain call_id with supplied item aliases; authoritative response_items replace flat projections exactly once. Item bodies are references, not cloned raw events.\n\n**BodyRef / BodyRepresentation / BodyRead / BodyPage / BodyAvailability** (R1 types; R2 validated store/spool minting): Only allowlisted event display fields, owner-validated spool event references and revision-bound provisional display fragments can be read. BodyRead is an explicit byte range; response repeats source/item/representation/revision, actual range and continuation. Public callers cannot mint arbitrary paths/roots/JSON pointers. No opaque reasoning, provider state, transport credential or raw audio capability.\n\n**Projection / ProjectionInput / ProjectionChange / CoverageState** (R1): Pure deterministic reducer accepts typed approved semantic inputs with explicit provenance. It records replacements/aliases, tool status, model metadata and source resets without terminal I/O, store reads or provider calls. Lost transient coverage stays explicit; this interface has no Ready, observer snapshot, durable feed or host lifecycle guarantee.\n\n**SessionViewError** (R1): Typed source/cursor/body/projection errors carry the referenced identity or field. Failed validation cannot yield an empty body/successful association. No unwrap/expect, ignored errors, arbitrary defaults or terminal dependencies."
+    },
+    {
+      "name": "Source, model and body invariants",
+      "content": "**I1 Source and timeline** Every item is scoped by ViewSource: persisted session identity when available, explicit ephemeral identity otherwise; root/child agent identity and parent relation; local store-instance generation. Store-instance generation changes on store replacement/reopen, never because geometry changes. A persisted EventId plus validated ordinal identifies committed content. Do not call local store-instance generation a durable store generation or reuse another session cursor after /new. R2 adds a distinct store-instance identity at all three EventStore constructors; persisted SessionBinding supplies the session identity. R1 makes cursor fields private and gives crate-internal validated minting to the store adapter; external callers cannot manufacture a validated cursor.\n\n**I2 Model/configuration** Capture the actual accepted ModelRuntime selection at local turn admission: canonical model, route, effective context and selected effort/tier, with a local configuration revision. ModelChange events retain their old/new values. Earlier history with no model evidence stays unknown; do not label it using today's model. Rendering a historical item must not apply its configuration. Preserve active/pending/refused semantics supplied by current control owners, including NCS after landing.\n\n**I3 Provisional identity** ProvisionalKey = source + agent + local execution + response iteration + attempt + semantic segment. This key is explicitly volatile, not an EventId. Response/part IDs are used when supplied; unkeyed TextDelta/ThinkingDelta are local ordered segments only. Retry invalidates the interrupted attempt's uncommitted fragments and retains a retry notice; already committed items/results remain. Never correlate by text equality, tool name, clock time or guessed provider identity.\n\n**I4 Authoritative replacement** At accepted committed-history boundaries, reconcile by event/source IDs and explicit local attempt/response mapping. When AssistantMessage.response_items is present it is authoritative; flat content/thinking/tool_calls are projections and must not be rendered a second time. Preserve stable anchors with explicit provisional-to-committed alias mappings only when association is proven. If generic events cannot establish the association, replace the identified response window from committed history and expose incomplete provisional association; never silently invent exact identity.\n\n**I5 Tool identity and state** ToolKey = source + agent + call_id, narrowed by committed invocation identity when needed. Streaming item_id is an alias while call_id is unavailable, never the call_id itself. Keep call kind, original argument string, description availability, invocation reference and result reference after completion. Custom/freeform arguments remain strings. A result in an incomplete history page may be an orphan awaiting explicit older-history demand; do not manufacture empty arguments or join unrelated same-name calls. Lifecycle states include assembling/running/completed/failed/blocked/cancelled/incomplete, each only when evidenced.\n\n**I6 Bodies** BodyRef is typed: a committed event plus an allowlisted display field/item path; a validated spool reference obtained from that event and approved session root; or provisional fragment storage owned once by the projection with its exact revision. A caller cannot supply an arbitrary path or arbitrary JSON pointer. Body identity includes source, owner item, representation and revision; reads return the same identity/range or an explicit stale/unavailable/malformed error. Historical content never resolves through today's workspace bytes. Opaque reasoning, credentials, reusable provider transport state and raw audio bytes are not display body capabilities. Spool capabilities are minted from a stored event through the owning SpoolWriter, which retains its private data_dir, registered entry and root_session_id. Body callers supply the capability and range, not a root path; the owner opens through PrivateRoot and validates the reference.\n\n**I7 Demand and cursor** HistoryRead requests explicit before/after cursor and event demand. Cursor binds source/store generation, ordinal and EventId, with a distinct empty-start value. Validate all components; clone only selected records while locked and do body/file work after releasing the store lock. No events() clone on paint/resize/scroll. BodyRead names an explicit byte range/representation; preserve UTF-8 boundaries and incomplete chunk state. Current spools hold serialized JSON: raw serialized-JSON ranges are honest; field decoding cannot be claimed range-bounded without an additional index. Parsing/formatting occurs off the render/input path and results are revision-tagged. History items are lightweight semantic headers/body capabilities, not cloned raw SessionEvent values or opaque provider payloads. Projection adapters borrow only approved fields. Source generation/cursor validation precedes every page operation.\n\n**I8 Coverage and authority** Projection revision advances for local view changes; committed-history cursor advances only over observed accepted store events. Broadcast lag marks live state stale/incomplete, retains committed content and reconciles the committed suffix at the normal boundary. Missing transient status/messages stay explicitly incomplete even after history catches up. Store sink acceptance is not an fsync guarantee. No first-slice Ready, gap-free live snapshot, automatic effect replay or durable crash-resume claim. The later host must install retained producer state before fan-out and publish every append family, including provider-identity adoption."
+    },
+    {
+      "name": "Viewport and controls",
+      "content": "- Viewport state belongs to the frontend: focused region, selected item/change, expansion overrides, follow/pin, search state, logical scroll anchor and text-selection endpoints. No terminal cells enter norn::session_view.\n- Anchor = stable item/body identity plus logical text offset and affinity, not absolute screen row. Selection endpoints additionally bind body revision. Soft-wrap/Unicode width mapping changes on resize; original content offsets do not. If a selected provisional body is replaced or becomes unavailable, retain a named stale selection until explicitly reselected; never copy different bytes.\n- Follow applies only when selected by the person. Scrolling back, selecting, typing or opening an older change pins that view. Incoming activity increments a notice without replacing the selected historical body, stealing focus or moving the composer caret. Return-to-live is explicit.\n- One terminal event reader and one frame writer own input, mouse reports, geometry, alternate-screen entry/exit and the active caret. Local styled spans/cells are composed once. Reuse markdown parsing, syntax and diff data; do not parse captured terminal output or create a second terminal driver/emulator.\n- The composer spans the full terminal width even when Changes fills the upper region. Existing editor wrapping/height behavior is preserved where it fits; height-pressure ordering is declared in D-F2. No global header/footer or empty routine-notice strip; errors have retained items, and currently relevant status remains accessible through composer/pane controls.\n- Narrow mode displays one upper pane with a visible keyboard/mouse switch. Widening restores saved split preference, selected change, scroll anchors, focus and draft. Never submit, append semantic rows, restart a request or move content to native scrollback as a resize side effect. A zero-size report suspends painting; very small geometry retains state and offers a truthful resize-required view when controls cannot fit.\n- Popup ownership precedes view navigation and send. Composer Up/Down/history, Enter/Alt-Enter/Kitty Shift-Enter, Escape and Ctrl+C keep their current meaning. Browsing keys only act in their focus or via distinct global view shortcuts. Mouse selection/scroll has keyboard equivalents; click targets derive from the current layout and item identity.\n- Copy uses selected logical content with original hard newlines, excluding wrap-inserted newlines, chrome and terminal escapes. Copy transport is capability-specific and reports sent/unavailable/failed truthfully; an OSC52 write without acknowledgement is not proof the clipboard changed. Export to an explicitly chosen path remains usable when clipboard is unavailable, with a visible overwrite decision and no hidden transcript persistence.\n- Search is a deliberate read operation, not a provider request. Show scope (loaded transcript / selected body / explicitly requested older history), direction and whether the search is complete. Never report no match for history or body ranges not searched. Export names its scope and missing ranges too.\n- All external/model/tool/file display bytes are data. Control characters, OSC, CSI and hyperlinks are safely escaped or rendered through approved typed styling/actions; filename or tool text cannot emit terminal commands. Body loading errors remain visible and do not take down active agent execution."
+    },
+    {
+      "name": "Read-only call Changes",
+      "content": "- The initial title is Changes with a scope label such as Tool call <call_id>. Group by evidenced path and exact call; preserve source/agent identity. There is no implicit session-start baseline, current-file preview, Git HEAD comparison, rename detection or external-writer attribution.\n- edit: show old_string → new_string as an edit fragment, not a whole-file diff. Preserve committed and after_hash independently of diagnostics/error. Missing/ill-typed strings are evidence unavailable, never empty strings. A blocked edit is a proposed fragment labelled not committed.\n- write: show submitted content and committed/bytes_written/path facts when available. There is no captured before-content in current write output, so before comparison is unavailable; an empty before-file is not inferred. Post-write diagnostic failure may follow a committed write.\n- apply_patch: show the supplied patch tied to the call and the result's evidenced outcome. A submitted patch alone is intent, not proof all hunks committed. Never regenerate the old patch against current disk contents.\n- Unknown/Bash/MCP tools retain description, call identity, raw detail and evidenced result. Their arbitrary filesystem writes are outside structured receipt coverage; a nearby shell/tool invocation does not supply authorship or before/after hashes. No action-log-only filter, because its successful-only mutation entries omit committed-with-error cases.\n- The compact row retains the original description when supplied; otherwise show the tool name and explicitly absent description, with a separately identified argument summary only if the existing semantics supply it. Never invent a description. Keep running/error/commit state and duration visible; body collapse applies to unknown tools too.\n- Per-item expand/collapse survives new activity and history paging. Ctrl+O changes the global expansion default; explicit per-item overrides remain until the user resets them through the view controls. This policy is settled by root D-F3.\n- Changes is read-only in this checkpoint, with no save/editor mutation capability. This does not remove the wanted guarded human editor, immutable mutation receipts, session baselines, rich inline-diff preference or Work/Session tabs from NWP-08."
+    },
+    {
+      "name": "Declared UI defaults and override owner",
+      "content": "Geometry defaults and validation live in render/layout.rs (R8). History demand20, body demand65536, clipboard capability unspecified and Changes closed are declared centrally in app/view_config.rs with tests (R3), documented here and inspectable/settable through /view (R6). These are UI request/geometry preferences, not retention quotas or execution limits. Explicit values override defaults. Body cache retains only visible/expanded/selected revision bodies; unpinned collapsed bodies are evictable, while semantic identities and demanded rows remain. /view settings are frontend-local for this checkpoint, with no hidden file persistence or claim of broader startup settings integration."
+    },
+    {
+      "name": "Independent layout ownership",
+      "content": "R8 (label R4.layout) is root-owned, depends only on R0, and creates exactly render/layout.rs plus render/layout_tests.rs. R4 consumes it after R3 and R8. LayoutRequest/LayoutPolicy describe geometry only; Layout returns content/composer/divider rectangles and no-paint/resize-required/single/split mode. Equal default split assigns an odd surplus cell to conversation; clamping never mutates the saved ratio. Default40-column minima and one divider imply81-column split threshold; default composer maximum12 and one-half screen retain existing policy. Typed explicit overrides are validated; no provider/session/state dependency is introduced."
+    },
+    {
+      "name": "Producer coverage",
+      "content": "[producer-coverage.json](producer-coverage.json) is the exhaustive local AgentEventKind/ProviderEvent/SessionEvent disposition and all producer-site obligations. Raw observability/private replay data is never a generic display body. It is refreshed to the exact NCS baseline; no TUI/event-enum source changed in the51-path NCS delta."
+    },
+    {
+      "name": "Required acceptance",
+      "content": "[acceptance.json](acceptance.json) defines PTY-01..PTY-09, including actual PTY geometry, real producer/store oracles and actual terminal/multiplexer copy/restoration evidence. These are requirements, not executed results."
+    },
+    {
+      "name": "Dispatch and landing",
+      "content": "Implement the settled NRT-001 checkpoint on frozen NCS commit f0cb7476ceb80ce6b9c85a02088cdb8297e960a3. R0 registers this contract; R1 and R8 (R4.layout) may then run independently. R2 follows R1; R3 follows R2; R4 follows R3 and R8; R5, R6 and R7 follow sequentially. Root owns R8 only; one integration owner owns overlapping R3-R6 paths. NCS must be exact-commit venue-green and integrated before NRT landing. If NCS changes, reconcile/rebase and repeat exact-candidate verification. No approval or preference placeholder remains. Stop and name required files before editing outside a row wall."
+    },
+    {
+      "name": "Wanted follow-on scope",
+      "content": "- NWP-02 independent host, current-state attach, observer lifecycle and Liminal transport\n- NWP-05 Iridium editor adapter, configurable Enter/Alt-Enter send and focused editor capabilities\n- NWP-08.1 baseline/receipt/file activity with explicit external-writer attribution limits\n- NWP-08.2 guarded human editor and immutable before/after references; human draft/conflict/undo behavior\n- NWP-08.3 Work/agent/task/goal panel with existing owners\n- NWP-08.4 Session instructions/skills/tools/model settings with validated control boundaries\n- NWP-08.5 shared Liminal panel extension contract\n- NWP-08.6 per-request schemas and request-local validated result views\n- NWP-04 optional full inline diffs alongside workspace views; no silent loss of search/copy/export"
+    },
+    {
+      "name": "Current source evidence",
+      "content": "Baseline `f0cb7476ceb80ce6b9c85a02088cdb8297e960a3` on `codex/norn-retained-tui`. Refreshed 2026-09-05T21:48:02.621060+10:00 Melbourne. All73 previously inventoried source files are byte-identical to main5227; NCS changes51 other/launch paths. Detailed source hashes and exact path delta are fields of design.json. This registration edits documentation only and makes no NCS/NRT implementation or release proof claim."
+    },
+    {
+      "name": "Implementation progress",
+      "content": "R0 documentation is registered and validated. R1 shared semantic core is in progress. R8 pure layout is implemented with six standalone tests, rustfmt check, standalone pedantic Clippy and bounded AST policy passing against its recorded two-file hashes. The layout is not wired into the TUI. This is local row proof only; the retained-TUI checkpoint, full workspace validation and exact-commit venue acceptance remain incomplete. Detailed supplied proof bindings are in design.json.implementation_status."
+    }
+  ],
+  "constraints": [
+    {
+      "id": "SCOPE",
+      "description": "No provider/tool execution engine changes, session-host/Ready transport, active-input policy change, Liminal dependency, Iridium embedding, filesystem watcher, session baseline capture or mutation-owner work in this checkpoint. Those remain wanted programme work, not permanent feature cuts."
+    },
+    {
+      "id": "SCOPE",
+      "description": "No added dependencies or arbitrary configuration values. R4 adapts existing presentation APIs and the named Cargo package description only; dependency changes are outside the wall."
+    },
+    {
+      "id": "SCOPE",
+      "description": "No new durable transcript store, raw terminal recording, ANSI emulator or sidecar agent. Use existing EventStore plus one semantic view."
+    },
+    {
+      "id": "SCOPE",
+      "description": "Root owns programme/tracking updates and NCS integration outside these product walls."
+    },
+    {
+      "id": "SCOPE",
+      "description": "No silent skipped prerequisites, lint bypasses, or reduction of existing semantic assertions. Source changes need the existing rigorous review and exact-commit venue receipt."
+    }
+  ],
+  "settlement": {
+    "status": "settled_for_registration",
+    "at_melbourne": "2026-09-05T21:40:51.490572+10:00",
+    "authority": "Root implementation decisions within Tom-authorized staged improvements; no new user confirmation required.",
+    "baseline": "f0cb7476ceb80ce6b9c85a02088cdb8297e960a3",
+    "worktree": "/private/tmp/norn-retained-tui",
+    "branch": "codex/norn-retained-tui",
+    "decisions": {
+      "F1": "Accept D2/D4. Shared session_view vocabulary and demanded history/body ownership; local adapter now, retained producer/actual host later. R1 then R2 then integration rows; no parallel store mutation.",
+      "F2": "Changes initially closed; explicit tool link or pane toggle opens it. Save split/visibility per frontend. Declare initial equal upper-pane split, minimum content width40 cells each plus one divider. Below81 cells, single upper-pane switch. Full-width composer uses existing12-row maximum and at most half terminal rows; under height pressure preserve draft/caret and a minimal conversation row, then popup only when fit; zero geometry no paint. Tiny geometry explicitly requests resize. No global header/footer.",
+      "F3": "Accept per-item overrides surviving global Ctrl+O default; reset via view controls. F6 focus, F2 upper-pane toggle, PgUp/PgDn focused browse, non-composer Enter expand, F3 scoped search, F4 copy, F5 export; focused divider arrows. All actions additionally discoverable/available through /view command palette (and existing slash catalog) for terminals where function keys unavailable. Existing composer, popup, cancellation and control bindings keep precedence. Focus cycling skips closed panes; Shift+F6 reverse.",
+      "F4": "Declare UI history demand20 events, reusing existing initial replay count; body range demand65536 bytes per explicit load, UTF-8-safe chunking and visible load-more state. These are named UI defaults documented/tested centrally, not hidden retention limits. Keep demanded semantic rows; body cache only explicitly expanded/visible/selected revisions, evict unpinned collapsed bodies. No whole-body spool decoding on render/input; background work with revision check. OSC52 only explicit user-selected clipboard capability, no startup probing; default copy offers export when capability unspecified. Say sent for unacknowledged OSC52. Required PTY verification plus accessible local terminal/multiplexer manual evidence, do not claim unsupported matrix.",
+      "F5": "Accept response_items authority and generic attempt windows with explicit incomplete association. Loaded-scope default search labelled, older-history search explicit; selection/body revision bound. Exclude opaque reasoning/provider state/audio capabilities. /new retains existing draft command semantics, discards old view source, initializes new binding; no cross-session cursor reuse.",
+      "F6": "Amend registration dependency: start isolated stacked worktree on exact frozen/pushed NCS candidatef0cb now; NCS must be venue-green and integrated before NRT landing. No edits to NCS worktree. Refresh inventory to f0cb; merge/rebase and repeat exact battery if NCS changes. This removes an unnecessary authoring wait without borrowing NCS verification."
+    }
+  },
+  "public_core_contracts": [
+    {
+      "name": "ViewSource / StoreInstanceId / SessionIdentity",
+      "owner": "R1 vocabulary; R2 minting",
+      "contract": "A source binds persisted-or-explicit-ephemeral session, local store instance and agent identity. StoreInstanceId is minted independently for every EventStore instance; it is not a persisted generation or host identity."
+    },
+    {
+      "name": "HistoryCursor / HistoryRead / HistoryPage",
+      "owner": "R1 types; R2 implementation",
+      "contract": "Opaque cursor binds exact source, event ordinal and EventId, including empty-start. Read uses explicit direction/anchor/event demand. Page exposes approved compact semantic items, next cursor and coverage; never full opaque event payloads. Typed errors identify wrong source, stale generation, mismatched anchor and unavailable data."
+    },
+    {
+      "name": "ItemId / ProvisionalKey / ViewRevision / ViewItem",
+      "owner": "R1",
+      "contract": "Committed identity and provisional execution/response/attempt/segment identity are disjoint. Revision is local projection revision, not history durability. Tool IDs retain call_id with supplied item aliases; authoritative response_items replace flat projections exactly once. Item bodies are references, not cloned raw events."
+    },
+    {
+      "name": "BodyRef / BodyRepresentation / BodyRead / BodyPage / BodyAvailability",
+      "owner": "R1 types; R2 validated store/spool minting",
+      "contract": "Only allowlisted event display fields, owner-validated spool event references and revision-bound provisional display fragments can be read. BodyRead is an explicit byte range; response repeats source/item/representation/revision, actual range and continuation. Public callers cannot mint arbitrary paths/roots/JSON pointers. No opaque reasoning, provider state, transport credential or raw audio capability."
+    },
+    {
+      "name": "Projection / ProjectionInput / ProjectionChange / CoverageState",
+      "owner": "R1",
+      "contract": "Pure deterministic reducer accepts typed approved semantic inputs with explicit provenance. It records replacements/aliases, tool status, model metadata and source resets without terminal I/O, store reads or provider calls. Lost transient coverage stays explicit; this interface has no Ready, observer snapshot, durable feed or host lifecycle guarantee."
+    },
+    {
+      "name": "SessionViewError",
+      "owner": "R1",
+      "contract": "Typed source/cursor/body/projection errors carry the referenced identity or field. Failed validation cannot yield an empty body/successful association. No unwrap/expect, ignored errors, arbitrary defaults or terminal dependencies."
+    }
+  ],
+  "identity_and_body_contract": [
+    {
+      "id": "I1",
+      "name": "Source and timeline",
+      "rule": "Every item is scoped by ViewSource: persisted session identity when available, explicit ephemeral identity otherwise; root/child agent identity and parent relation; local store-instance generation. Store-instance generation changes on store replacement/reopen, never because geometry changes. A persisted EventId plus validated ordinal identifies committed content. Do not call local store-instance generation a durable store generation or reuse another session cursor after /new. R2 adds a distinct store-instance identity at all three EventStore constructors; persisted SessionBinding supplies the session identity. R1 makes cursor fields private and gives crate-internal validated minting to the store adapter; external callers cannot manufacture a validated cursor.",
+      "anchor": "crates/norn/src/session/events.rs:62"
+    },
+    {
+      "id": "I2",
+      "name": "Model/configuration",
+      "rule": "Capture the actual accepted ModelRuntime selection at local turn admission: canonical model, route, effective context and selected effort/tier, with a local configuration revision. ModelChange events retain their old/new values. Earlier history with no model evidence stays unknown; do not label it using today's model. Rendering a historical item must not apply its configuration. Preserve active/pending/refused semantics supplied by current control owners, including NCS after landing.",
+      "anchor": "crates/norn-tui/src/app/model_selection.rs:90"
+    },
+    {
+      "id": "I3",
+      "name": "Provisional identity",
+      "rule": "ProvisionalKey = source + agent + local execution + response iteration + attempt + semantic segment. This key is explicitly volatile, not an EventId. Response/part IDs are used when supplied; unkeyed TextDelta/ThinkingDelta are local ordered segments only. Retry invalidates the interrupted attempt's uncommitted fragments and retains a retry notice; already committed items/results remain. Never correlate by text equality, tool name, clock time or guessed provider identity.",
+      "anchor": "crates/norn/src/provider/events.rs:63"
+    },
+    {
+      "id": "I4",
+      "name": "Authoritative replacement",
+      "rule": "At accepted committed-history boundaries, reconcile by event/source IDs and explicit local attempt/response mapping. When AssistantMessage.response_items is present it is authoritative; flat content/thinking/tool_calls are projections and must not be rendered a second time. Preserve stable anchors with explicit provisional-to-committed alias mappings only when association is proven. If generic events cannot establish the association, replace the identified response window from committed history and expose incomplete provisional association; never silently invent exact identity.",
+      "anchor": "crates/norn/src/session/events.rs:215"
+    },
+    {
+      "id": "I5",
+      "name": "Tool identity and state",
+      "rule": "ToolKey = source + agent + call_id, narrowed by committed invocation identity when needed. Streaming item_id is an alias while call_id is unavailable, never the call_id itself. Keep call kind, original argument string, description availability, invocation reference and result reference after completion. Custom/freeform arguments remain strings. A result in an incomplete history page may be an orphan awaiting explicit older-history demand; do not manufacture empty arguments or join unrelated same-name calls. Lifecycle states include assembling/running/completed/failed/blocked/cancelled/incomplete, each only when evidenced.",
+      "anchor": "crates/norn/src/provider/events.rs:103"
+    },
+    {
+      "id": "I6",
+      "name": "Bodies",
+      "rule": "BodyRef is typed: a committed event plus an allowlisted display field/item path; a validated spool reference obtained from that event and approved session root; or provisional fragment storage owned once by the projection with its exact revision. A caller cannot supply an arbitrary path or arbitrary JSON pointer. Body identity includes source, owner item, representation and revision; reads return the same identity/range or an explicit stale/unavailable/malformed error. Historical content never resolves through today's workspace bytes. Opaque reasoning, credentials, reusable provider transport state and raw audio bytes are not display body capabilities. Spool capabilities are minted from a stored event through the owning SpoolWriter, which retains its private data_dir, registered entry and root_session_id. Body callers supply the capability and range, not a root path; the owner opens through PrivateRoot and validates the reference.",
+      "anchor": "crates/norn/src/session/spool.rs:202"
+    },
+    {
+      "id": "I7",
+      "name": "Demand and cursor",
+      "rule": "HistoryRead requests explicit before/after cursor and event demand. Cursor binds source/store generation, ordinal and EventId, with a distinct empty-start value. Validate all components; clone only selected records while locked and do body/file work after releasing the store lock. No events() clone on paint/resize/scroll. BodyRead names an explicit byte range/representation; preserve UTF-8 boundaries and incomplete chunk state. Current spools hold serialized JSON: raw serialized-JSON ranges are honest; field decoding cannot be claimed range-bounded without an additional index. Parsing/formatting occurs off the render/input path and results are revision-tagged. History items are lightweight semantic headers/body capabilities, not cloned raw SessionEvent values or opaque provider payloads. Projection adapters borrow only approved fields. Source generation/cursor validation precedes every page operation.",
+      "anchor": "crates/norn/src/session/store.rs:369"
+    },
+    {
+      "id": "I8",
+      "name": "Coverage and authority",
+      "rule": "Projection revision advances for local view changes; committed-history cursor advances only over observed accepted store events. Broadcast lag marks live state stale/incomplete, retains committed content and reconciles the committed suffix at the normal boundary. Missing transient status/messages stay explicitly incomplete even after history catches up. Store sink acceptance is not an fsync guarantee. No first-slice Ready, gap-free live snapshot, automatic effect replay or durable crash-resume claim. The later host must install retained producer state before fan-out and publish every append family, including provider-identity adoption.",
+      "anchor": "crates/norn/src/provider/agent_event.rs:480"
+    }
+  ],
+  "viewport_invariants": [
+    "Viewport state belongs to the frontend: focused region, selected item/change, expansion overrides, follow/pin, search state, logical scroll anchor and text-selection endpoints. No terminal cells enter norn::session_view.",
+    "Anchor = stable item/body identity plus logical text offset and affinity, not absolute screen row. Selection endpoints additionally bind body revision. Soft-wrap/Unicode width mapping changes on resize; original content offsets do not. If a selected provisional body is replaced or becomes unavailable, retain a named stale selection until explicitly reselected; never copy different bytes.",
+    "Follow applies only when selected by the person. Scrolling back, selecting, typing or opening an older change pins that view. Incoming activity increments a notice without replacing the selected historical body, stealing focus or moving the composer caret. Return-to-live is explicit.",
+    "One terminal event reader and one frame writer own input, mouse reports, geometry, alternate-screen entry/exit and the active caret. Local styled spans/cells are composed once. Reuse markdown parsing, syntax and diff data; do not parse captured terminal output or create a second terminal driver/emulator.",
+    "The composer spans the full terminal width even when Changes fills the upper region. Existing editor wrapping/height behavior is preserved where it fits; height-pressure ordering is declared in D-F2. No global header/footer or empty routine-notice strip; errors have retained items, and currently relevant status remains accessible through composer/pane controls.",
+    "Narrow mode displays one upper pane with a visible keyboard/mouse switch. Widening restores saved split preference, selected change, scroll anchors, focus and draft. Never submit, append semantic rows, restart a request or move content to native scrollback as a resize side effect. A zero-size report suspends painting; very small geometry retains state and offers a truthful resize-required view when controls cannot fit.",
+    "Popup ownership precedes view navigation and send. Composer Up/Down/history, Enter/Alt-Enter/Kitty Shift-Enter, Escape and Ctrl+C keep their current meaning. Browsing keys only act in their focus or via distinct global view shortcuts. Mouse selection/scroll has keyboard equivalents; click targets derive from the current layout and item identity.",
+    "Copy uses selected logical content with original hard newlines, excluding wrap-inserted newlines, chrome and terminal escapes. Copy transport is capability-specific and reports sent/unavailable/failed truthfully; an OSC52 write without acknowledgement is not proof the clipboard changed. Export to an explicitly chosen path remains usable when clipboard is unavailable, with a visible overwrite decision and no hidden transcript persistence.",
+    "Search is a deliberate read operation, not a provider request. Show scope (loaded transcript / selected body / explicitly requested older history), direction and whether the search is complete. Never report no match for history or body ranges not searched. Export names its scope and missing ranges too.",
+    "All external/model/tool/file display bytes are data. Control characters, OSC, CSI and hyperlinks are safely escaped or rendered through approved typed styling/actions; filename or tool text cannot emit terminal commands. Body loading errors remain visible and do not take down active agent execution."
+  ],
+  "change_evidence_rules": [
+    "The initial title is Changes with a scope label such as Tool call <call_id>. Group by evidenced path and exact call; preserve source/agent identity. There is no implicit session-start baseline, current-file preview, Git HEAD comparison, rename detection or external-writer attribution.",
+    "edit: show old_string → new_string as an edit fragment, not a whole-file diff. Preserve committed and after_hash independently of diagnostics/error. Missing/ill-typed strings are evidence unavailable, never empty strings. A blocked edit is a proposed fragment labelled not committed.",
+    "write: show submitted content and committed/bytes_written/path facts when available. There is no captured before-content in current write output, so before comparison is unavailable; an empty before-file is not inferred. Post-write diagnostic failure may follow a committed write.",
+    "apply_patch: show the supplied patch tied to the call and the result's evidenced outcome. A submitted patch alone is intent, not proof all hunks committed. Never regenerate the old patch against current disk contents.",
+    "Unknown/Bash/MCP tools retain description, call identity, raw detail and evidenced result. Their arbitrary filesystem writes are outside structured receipt coverage; a nearby shell/tool invocation does not supply authorship or before/after hashes. No action-log-only filter, because its successful-only mutation entries omit committed-with-error cases.",
+    "The compact row retains the original description when supplied; otherwise show the tool name and explicitly absent description, with a separately identified argument summary only if the existing semantics supply it. Never invent a description. Keep running/error/commit state and duration visible; body collapse applies to unknown tools too.",
+    "Per-item expand/collapse survives new activity and history paging. Ctrl+O changes the global expansion default; explicit per-item overrides remain until the user resets them through the view controls. This policy is settled by root D-F3.",
+    "Changes is read-only in this checkpoint, with no save/editor mutation capability. This does not remove the wanted guarded human editor, immutable mutation receipts, session baselines, rich inline-diff preference or Work/Session tabs from NWP-08."
+  ],
+  "declared_defaults": {
+    "changes_open": false,
+    "history_event_demand": 20,
+    "body_range_bytes": 65536,
+    "clipboard_capability": "unspecified",
+    "initial_split": "equal",
+    "minimum_content_columns": 40,
+    "divider_columns": 1,
+    "derived_split_width": 81,
+    "composer_maximum_rows": 12,
+    "composer_maximum_terminal_fraction": {
+      "numerator": 1,
+      "denominator": 2
+    },
+    "source": "Root F2/F4, 2026-09-05T21:40:51.490572+10:00",
+    "explicit_overrides": "Validated frontend-local ViewConfig/LayoutPolicy and /view controls; no hidden persisted file."
+  },
+  "source_inventory": [
+    {
+      "path": "CLAUDE.md",
+      "sha256": "952e08ec25793b63009788a5b5d3c6bdfe482577d199e872635aba73c90ec629"
+    },
+    {
+      "path": "crates/norn-cli/src/commands/slash/registry.rs",
+      "sha256": "35ea7d76cb304198ae0c6bcacf6018f773d61fe479b21dec10685c8fc43dfc1c"
+    },
+    {
+      "path": "crates/norn-cli/src/tui/driver.rs",
+      "sha256": "991f73340a83d65ff0e8676432a2c8bb913574072beec9e016ee50c896f97658"
+    },
+    {
+      "path": "crates/norn-tui/Cargo.toml",
+      "sha256": "60095cc488a6afd573cc7e46477713d13912b7035f3c534938f7994cc990b99d"
+    },
+    {
+      "path": "crates/norn-tui/src/agents/activity_log.rs",
+      "sha256": "de0f5775e085c275f1420b06771ce59c8003079ea9de385902078e7ec4cdef66"
+    },
+    {
+      "path": "crates/norn-tui/src/agents/status_line.rs",
+      "sha256": "de89f5f09fdb0aa60cefef2e27adf9f0571b018382d75c1cf6ecd7d9a795ff18"
+    },
+    {
+      "path": "crates/norn-tui/src/agents/tabs.rs",
+      "sha256": "92605858e4923de2c2080465579edf0736aa18efc865b2666c0b9794ce444e29"
+    },
+    {
+      "path": "crates/norn-tui/src/app/active_input.rs",
+      "sha256": "aed2a92c6738d4912403e65e20d3ad14a79de92a43aca346b2173c62056e5148"
+    },
+    {
+      "path": "crates/norn-tui/src/app/autocomplete.rs",
+      "sha256": "3cec8c2eeb457daa444b0b5c3148009ecfa3deb79910fe7fe94ddbfceb62fcb5"
+    },
+    {
+      "path": "crates/norn-tui/src/app/child_results.rs",
+      "sha256": "a3b7a6ac0d5f334da26188c23cec8e0d180633734dbc6b4aaafacdd0c218c18a"
+    },
+    {
+      "path": "crates/norn-tui/src/app/dispatch.rs",
+      "sha256": "03d30ccae4e1d777c28d71beb12120fb8fa01e5c398223b2bccafac83f2aa678"
+    },
+    {
+      "path": "crates/norn-tui/src/app/dispatch/finalization.rs",
+      "sha256": "db177249c01ced982b4ac375ee1400b875ad00a51a30ae2b1e42f56ec37d0171"
+    },
+    {
+      "path": "crates/norn-tui/src/app/edit.rs",
+      "sha256": "c7c49819a988e8c7f0ba8dbc1d1fab646aed069826d3693a3043a98a2a368b3d"
+    },
+    {
+      "path": "crates/norn-tui/src/app/event_loop.rs",
+      "sha256": "48935cbfb21b88dccd0cc4889e149e1706356c5f9c5b6d1c2df4c29c7f36d15f"
+    },
+    {
+      "path": "crates/norn-tui/src/app/helpers.rs",
+      "sha256": "4bdad5eae7fa26dba04877db332d90fc19aa438b6f5ef7b7b29d8e33a8e9c1dc"
+    },
+    {
+      "path": "crates/norn-tui/src/app/mcp_slash.rs",
+      "sha256": "648473c7bbd1c66d7f74997b009a1eae34a91da71504027091cc6fb15636dc9e"
+    },
+    {
+      "path": "crates/norn-tui/src/app/mod.rs",
+      "sha256": "02a299230c4774cabcfea2699c8224c1ca69cf8a75b571370956442a7a2913f4"
+    },
+    {
+      "path": "crates/norn-tui/src/app/model_selection.rs",
+      "sha256": "c7e9d3905aeaabf2681ad706494a696dccd970a5678f5354e55b643d39e1a1d4"
+    },
+    {
+      "path": "crates/norn-tui/src/app/render.rs",
+      "sha256": "2188edd576b9742b8542222156d600dbae3278391ab0fe9cc07bcea96a0bd82a"
+    },
+    {
+      "path": "crates/norn-tui/src/app/rotation.rs",
+      "sha256": "609e3bd80674eddceea30cb596b2845cfd6b7afdb776ad1fcb26a1723b3c19be"
+    },
+    {
+      "path": "crates/norn-tui/src/app/session_replay.rs",
+      "sha256": "03ebe66ca5af49793f1dcd81bc223e6120354d16b6b84ed0f7e157b678efb130"
+    },
+    {
+      "path": "crates/norn-tui/src/app/slash.rs",
+      "sha256": "a5d8e236f772eb52bd2adcdc009ffe6eafed262708609dbeb9e37c734e067488"
+    },
+    {
+      "path": "crates/norn-tui/src/app/slash_catalog.rs",
+      "sha256": "aef8c4501df6ce04c13f7b2c8d411c0b5412d668ad3427f91f41d4d9ae2a6820"
+    },
+    {
+      "path": "crates/norn-tui/src/app/state.rs",
+      "sha256": "1b00d02c4a1591c460dd6d94709da90041ea6273ac8cbdb9863c4c12bd468fd7"
+    },
+    {
+      "path": "crates/norn-tui/src/app/streaming.rs",
+      "sha256": "594b02ac2124539001d791a46aede7adfa87f9f6647a7b3474bbf4b45e479d09"
+    },
+    {
+      "path": "crates/norn-tui/src/app/tool_calls.rs",
+      "sha256": "80a6baf83ca235f6faee60d6a4f9af4f662ee8cbeae4f0d2b023b882f37ef269"
+    },
+    {
+      "path": "crates/norn-tui/src/app/turn/mid.rs",
+      "sha256": "85281f0ad812845dfdde032f331490df9102ac555f107b98b109006de8236ab2"
+    },
+    {
+      "path": "crates/norn-tui/src/app/turn/run.rs",
+      "sha256": "d09ef9140ba394475e4f451961b225b65b4fadb8b4ac847866157fbec6b6f336"
+    },
+    {
+      "path": "crates/norn-tui/src/events/display_toggles.rs",
+      "sha256": "71bc52a853f2daf08a7c720b741b0e91cfdbf0ee051223eed800c076239fd598"
+    },
+    {
+      "path": "crates/norn-tui/src/events/schema_render.rs",
+      "sha256": "3aa48ea36ac13f35e66893e0810aec32f0f6af87ae87f7a3e4b6e9bb67b01522"
+    },
+    {
+      "path": "crates/norn-tui/src/input/keybindings.rs",
+      "sha256": "10548665aa0a02d5ab3005f2e4f80c073e969fce3b74ade53f1ff0c49234467d"
+    },
+    {
+      "path": "crates/norn-tui/src/lib.rs",
+      "sha256": "a046eef95e9550b990a1f583fb9455e77aa618ecdfb35450d945ad33117972c8"
+    },
+    {
+      "path": "crates/norn-tui/src/render/content.rs",
+      "sha256": "16d1762c9942346e1c487cc4ebb48f5e33716cdad6da10f78f81b626b496d15d"
+    },
+    {
+      "path": "crates/norn-tui/src/render/fixed_panel.rs",
+      "sha256": "c5807a464a7e222a744a866deaaa7fb6281cef3fed2c5c418a98a366a1a68417"
+    },
+    {
+      "path": "crates/norn-tui/src/render/markdown.rs",
+      "sha256": "ff0f5b85e787b533991788b495f87b8472ef871ff3db758487e73a90d192d730"
+    },
+    {
+      "path": "crates/norn-tui/src/render/markdown/dim.rs",
+      "sha256": "3a9f93a949f713bac3a6fd4e7a426725559d37d4f6a09c10c3e635b21c765afd"
+    },
+    {
+      "path": "crates/norn-tui/src/render/markdown/dim/list.rs",
+      "sha256": "76b86b29b07fa24a86960e78378902d2c6dcb2c1db1646793a1e5f1bb691c828"
+    },
+    {
+      "path": "crates/norn-tui/src/render/markdown/emitter.rs",
+      "sha256": "79d7dc7612e1627691557c800cf6a51e48009bae2f5dd5c050ba30dd73cdf98f"
+    },
+    {
+      "path": "crates/norn-tui/src/render/markdown/scan.rs",
+      "sha256": "6abb7d6897c14ac65074e663ec7f86eb4318adf07dc2e29aa5f0adfd81246df5"
+    },
+    {
+      "path": "crates/norn-tui/src/render/markdown/scan/list.rs",
+      "sha256": "4367a3ad81c04b132620b3ef73d22b47c3d60c98dbb86b882595727119fdd717"
+    },
+    {
+      "path": "crates/norn-tui/src/render/mod.rs",
+      "sha256": "1989a53ffd36a625e292f4a2b64ab80aac210d134b87d677824aa7d25a3f4721"
+    },
+    {
+      "path": "crates/norn-tui/src/render/retry_status.rs",
+      "sha256": "5e91ec29c1c224131140367542110a07be743c452a9825bf07b8cb16c1a72d62"
+    },
+    {
+      "path": "crates/norn-tui/src/render/scroll_region.rs",
+      "sha256": "13ec928c1ab36cb4b65406eed183ed84c77a6a3306331c5ca0dbfbccf427e96d"
+    },
+    {
+      "path": "crates/norn-tui/src/render/streaming_indicator.rs",
+      "sha256": "ad281d847bf3659e565e765e565d29b6b17aab9b85dffb06fffe796805f27ce8"
+    },
+    {
+      "path": "crates/norn-tui/src/render/style.rs",
+      "sha256": "89bcfa6eab8835e07d584b86ef4e99445015be8542e0ac9b6d3b59415f6b4825"
+    },
+    {
+      "path": "crates/norn-tui/src/render/syntax.rs",
+      "sha256": "435a47275f3cd8b543e046fcd33766d5c2535d6930fcf99b6ec540df8420d563"
+    },
+    {
+      "path": "crates/norn-tui/src/render/text.rs",
+      "sha256": "83c5cab583904a24a956c1a0d7254a378d8907163fbe54401894c39188c67841"
+    },
+    {
+      "path": "crates/norn-tui/src/render/thinking.rs",
+      "sha256": "ea83ff93a512cee57339499ce6ebb61fd4df8cb13361776b02c9858ec9c131ac"
+    },
+    {
+      "path": "crates/norn-tui/src/terminal/caps.rs",
+      "sha256": "4fc91b7a3043127b7d0069962ea343f9dde45c3e8c34b9bc106beeeb4c0d6fa2"
+    },
+    {
+      "path": "crates/norn-tui/src/terminal/mod.rs",
+      "sha256": "a311be62afa1b3b0bac547ba5eaec349ddee92d673f4ac913cf88ac3beb01ab5"
+    },
+    {
+      "path": "crates/norn-tui/src/terminal/setup.rs",
+      "sha256": "4bdb68a0a864fe4d7008831b10d972c829b494b8d826dba741b4d50aba37adfb"
+    },
+    {
+      "path": "crates/norn-tui/src/tools/compact.rs",
+      "sha256": "d4316f9253795de2f0f78b657f7c55c93a511f3e9bb4c1731fc4312f0e36832c"
+    },
+    {
+      "path": "crates/norn-tui/src/tools/helpers.rs",
+      "sha256": "005a716a9a8df9faadacf90becf088f4d1757c85284805214b66ffdf7ff4af1b"
+    },
+    {
+      "path": "crates/norn-tui/src/tools/minimal.rs",
+      "sha256": "c52fcba19e1019bf637fa7ab11ea1baa3f692e036bd048a4c62c78c8988ccb76"
+    },
+    {
+      "path": "crates/norn-tui/src/tools/mod.rs",
+      "sha256": "ddc508b278be16c82abf77f2b7661b0b354dba6582283e869e4b0856c8aa3390"
+    },
+    {
+      "path": "crates/norn-tui/src/tools/renderer.rs",
+      "sha256": "fff109a55ebf8bcd943aa2ecfacc51dff9f46ca25462246f549036ee24e29a35"
+    },
+    {
+      "path": "crates/norn-tui/src/tools/rich/bash.rs",
+      "sha256": "eff595b4b806f38a294e46e491c7e5a2247a9d3d18725502df056393ce17076b"
+    },
+    {
+      "path": "crates/norn-tui/src/tools/rich/edit.rs",
+      "sha256": "de21cce6c82f0ca30c15445f63dc24e96f08e0de3e3921c579ff28b54ab44807"
+    },
+    {
+      "path": "crates/norn-tui/src/tools/rich/patch.rs",
+      "sha256": "24e1378a1b1b4a735d1bf681b32b2c808a0aa02c422d320a23c022e6f8a4e215"
+    },
+    {
+      "path": "crates/norn-tui/src/tools/rich/read.rs",
+      "sha256": "8ba7330ba46203a40e145f1d6e00f5fc363f11ee1c7e10575a6ae8556915d130"
+    },
+    {
+      "path": "crates/norn-tui/src/tools/rich/search.rs",
+      "sha256": "9b9338bc055c9c55794106bdfec4cc079b5b8d4aebe1d3b0fe478ba24c731dbb"
+    },
+    {
+      "path": "crates/norn-tui/src/tools/status.rs",
+      "sha256": "b93edbb27dd523aa5ed3665bea812e975ee44c8369008777a3c3fb8df0dbc829"
+    },
+    {
+      "path": "crates/norn-tui/src/tools/verbosity.rs",
+      "sha256": "ff8d96a2ad7138f7120280fe838e43ad118849c7adc17bfc54b7bdfc63e5928f"
+    },
+    {
+      "path": "crates/norn-tui/tests/mcp_channels.rs",
+      "sha256": "ef50e82bc18e87d8857f76ecdc4544c3ca0d6abf0c792ec65feccc723a92ce6c"
+    },
+    {
+      "path": "crates/norn-tui/tests/model_selection.rs",
+      "sha256": "5ca8e77f402a1d13e272dfbc72056b60b5824b8ca2ad9bf631be1f834e4bc5b9"
+    },
+    {
+      "path": "crates/norn-tui/tests/pty_smoke.rs",
+      "sha256": "fe40f61b11993e6e6ea38473c86f7b4366b5e20e82e615b508e83e5f22635623"
+    },
+    {
+      "path": "crates/norn-tui/tests/support/mcp_channels_tui.rs",
+      "sha256": "c3dc259f7365ef81ee848df7c1cae9ac25ffd081bf4a39a73edbb6f35c2c7774"
+    },
+    {
+      "path": "crates/norn/src/lib.rs",
+      "sha256": "56dbab8a6d8491dcdc0572d88f374a1d8cadfdd4efaee0b43cce38d6ebcb94db"
+    },
+    {
+      "path": "crates/norn/src/loop/commands.rs",
+      "sha256": "0279332864cf7aacd4eb5ef2977dd6ea1ceae672cb69ab4fb3103e4eff3fd54c"
+    },
+    {
+      "path": "crates/norn/src/provider/agent_event.rs",
+      "sha256": "cbe365e0e458215354e1791b2497f53b4e09c0aa403709a57727001315940ed4"
+    },
+    {
+      "path": "crates/norn/src/provider/events.rs",
+      "sha256": "eebe7a28cca9c13839fe921bf6ee64c75784978ec954a2d90d30534840bdb3fc"
+    },
+    {
+      "path": "crates/norn/src/provider/response_item.rs",
+      "sha256": "435dac64f4a9e7dc57a793093f7779fb826585ac9f576fc0c4bd5a8789deb755"
+    },
+    {
+      "path": "crates/norn/src/session/action_log.rs",
+      "sha256": "1996123af8ce593a4923436df91511cfa0defd027636ba956af0f11f595405ba"
+    },
+    {
+      "path": "crates/norn/src/session/events.rs",
+      "sha256": "3cdf62e76202a29681f37ded22ea87df3f9dae350846aacb46a4021aac129b23"
+    },
+    {
+      "path": "crates/norn/src/session/spool.rs",
+      "sha256": "e42c7083fc6acb566c46e95f0bc5e8d29fa8f9a4a5d3b5c3b1ff70e9d2376ed0"
+    },
+    {
+      "path": "crates/norn/src/session/store.rs",
+      "sha256": "c799fb81d6dcde2209b38039fface509427f3549c94d9149ff7dd24ef2e47edf"
+    },
+    {
+      "path": "crates/norn/src/tools/edit.rs",
+      "sha256": "9304147d13c32b7f7f11500d0337ed95d38254c3c83e2340958d265f16422bdd"
+    },
+    {
+      "path": "crates/norn/src/tools/write.rs",
+      "sha256": "e28e777a0e7285add8f39a65d7f879f3fa2d4dce59a3771b7b32ce0951664de5"
+    }
+  ],
+  "ncs_source_delta": {
+    "from": "5227db49d805a4c0729912dca3832c842c8f39e1",
+    "to": "f0cb7476ceb80ce6b9c85a02088cdb8297e960a3",
+    "paths": [
+      {
+        "status": "M",
+        "path": "crates/norn-cli/src/cli/channel_args.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn-cli/src/config/assembly.rs"
+      },
+      {
+        "status": "A",
+        "path": "crates/norn-cli/src/config/channel_overrides.rs"
+      },
+      {
+        "status": "A",
+        "path": "crates/norn-cli/src/config/channel_overrides_tests.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn-cli/src/config/mod.rs"
+      },
+      {
+        "status": "A",
+        "path": "crates/norn-cli/src/print/assembly.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn-cli/src/print/driven.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn-cli/src/print/mod.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn-cli/src/print/orchestrator.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn-cli/src/runtime/channel_config.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn-cli/src/runtime/channel_config_tests.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn-cli/src/runtime/channel_startup.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn-cli/src/runtime/resolve.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn-cli/src/tui/driver.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn-cli/tests/mcp_launch.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn-cli/tests/support/mcp_launch_fixture.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/src/agent/mcp_channel_builder_tests.rs"
+      },
+      {
+        "status": "A",
+        "path": "crates/norn/src/config/channels.rs"
+      },
+      {
+        "status": "A",
+        "path": "crates/norn/src/config/channels_tests.rs"
+      },
+      {
+        "status": "A",
+        "path": "crates/norn/src/config/merge/channels.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/src/config/merge/mod.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/src/config/merge/settings.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/src/config/mod.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/src/config/types.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/src/integration/mcp_candidate_builder.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/src/integration/mcp_channel_inbox.rs"
+      },
+      {
+        "status": "A",
+        "path": "crates/norn/src/integration/mcp_channel_selection_tests.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/src/integration/mcp_channel_settings.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/src/integration/mcp_channel_source.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/src/integration/mcp_channels.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/src/integration/mcp_client.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/src/integration/mcp_runtime.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/src/integration/mcp_runtime_candidate.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/src/integration/mod.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/tests/mcp_channels_stdio.rs"
+      },
+      {
+        "status": "M",
+        "path": "crates/norn/tests/support/mcp_channels_fixture.rs"
+      },
+      {
+        "status": "M",
+        "path": "docs/MCP-LAUNCH.md"
+      },
+      {
+        "status": "A",
+        "path": "docs/design/norn-channel-settings/CHECKLIST.md"
+      },
+      {
+        "status": "A",
+        "path": "docs/design/norn-channel-settings/DESIGN.md"
+      },
+      {
+        "status": "A",
+        "path": "docs/design/norn-channel-settings/USER-STORIES.md"
+      },
+      {
+        "status": "A",
+        "path": "docs/design/norn-channel-settings/briefs/NCS-001.json"
+      },
+      {
+        "status": "A",
+        "path": "docs/design/norn-channel-settings/briefs/NCS-001.md"
+      },
+      {
+        "status": "A",
+        "path": "docs/design/norn-channel-settings/checklist.json"
+      },
+      {
+        "status": "A",
+        "path": "docs/design/norn-channel-settings/design.json"
+      },
+      {
+        "status": "A",
+        "path": "docs/design/norn-channel-settings/stories.json"
+      },
+      {
+        "status": "M",
+        "path": "docs/design/norn-cli/DRIVEN-PROTOCOL.md"
+      },
+      {
+        "status": "M",
+        "path": "docs/design/norn-mcp-launch/DESIGN.md"
+      },
+      {
+        "status": "M",
+        "path": "docs/design/norn-mcp-launch/briefs/NML-001.json"
+      },
+      {
+        "status": "M",
+        "path": "docs/design/norn-mcp-launch/briefs/NML-001.md"
+      },
+      {
+        "status": "M",
+        "path": "docs/design/norn-mcp-launch/design.json"
+      },
+      {
+        "status": "M",
+        "path": "docs/release-notes/UNRELEASED.md"
+      }
+    ],
+    "path_count": 51,
+    "old_inventory_unchanged": 73,
+    "driver_validation_preserved": true
+  },
+  "dispatch_graph": {
+    "R0": [],
+    "R1": [
+      "R0"
+    ],
+    "R8": [
+      "R0"
+    ],
+    "R2": [
+      "R1"
+    ],
+    "R3": [
+      "R2"
+    ],
+    "R4": [
+      "R3",
+      "R8"
+    ],
+    "R5": [
+      "R4"
+    ],
+    "R6": [
+      "R5"
+    ],
+    "R7": [
+      "R6"
+    ]
+  },
+  "concurrency": {
+    "permitted_independent": [
+      "R1 semantic core and root R8 pure layout after R0",
+      "R8 may remain independent during R2/R3 until R4 integration"
+    ],
+    "forbidden": [
+      "concurrent edits to any overlapping row path",
+      "host lane store/history/body edits overlapping R2",
+      "editing root-owned layout files from R4 integration without an amended handoff"
+    ],
+    "landing_is_complete_unit": "R3-R6 are one integrated local UI checkpoint; foundation progress is not user-delivery readiness."
+  },
+  "landing_dependency": {
+    "brief": "NCS-001",
+    "baseline": "f0cb7476ceb80ce6b9c85a02088cdb8297e960a3",
+    "implementation_admission": "stacked implementation authorized now by F6",
+    "landing": "NCS exact-green and integrated; NRT own exact-commit proof required",
+    "current_verification": "NCS battery pending at registration; no borrowed pass"
+  },
+  "proof_boundary": "Documentation registration only. No product source edits, Cargo/build/tests, runtime reproduction, NCS green claim or landing receipt.",
+  "implementation_status": {
+    "R0": "registered_rendered_coverage_and_schema_validated",
+    "R1": "in_progress",
+    "R8": "implemented_local_proof_only",
+    "R8_evidence": {
+      "recorded_melbourne": "2026-09-05T22:01:24.377511+10:00",
+      "source_sha256": {
+        "crates/norn-tui/src/render/layout.rs": "a7068e0103750c5876747e3a4c5960d3bfaea390ac51a023862116004ee28374",
+        "crates/norn-tui/src/render/layout_tests.rs": "c160be57f7e33dcb7712feb7ee801ffb8a81274b4376410f1fd0b82ddca3ea5d"
+      },
+      "local_checks": [
+        {
+          "path": "/private/tmp/nrt-001-proof/r8-local-checks.json",
+          "sha256": "1591fe88cab3dcc985f40fb9999dc35c5ba1bea4ae44a34542a8721c3cdd1aa2",
+          "outcome": "six standalone tests passed; rustfmt check and standalone pedantic clippy-driver passed"
+        },
+        {
+          "path": "/private/tmp/nrt-001-proof/r8-policy/ast-policy.json",
+          "sha256": "2626d1cb0c0eddd37bb9323a0e47c0094fd6d5a9a858f6f953d3a3b111034819",
+          "outcome": "bounded AST policy passed for the two R8 files"
+        }
+      ],
+      "scope": "Supplied root proof verified by reading records and source hashes; no test rerun by registration agent. Layout is not wired into TUI. No full workspace, NCS/NRT venue, landing or whole-checkpoint pass."
+    },
+    "checkpoint": "incomplete; remaining integration, PTY and exact-commit venue verification required"
+  }
+}

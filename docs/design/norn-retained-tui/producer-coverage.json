@@ -1,0 +1,198 @@
+{
+  "schema": "norn.retained_tui.producer_coverage.v1",
+  "baseline": "f0cb7476ceb80ce6b9c85a02088cdb8297e960a3",
+  "status": "registered_current_source_contract",
+  "agent_event_kind": {
+    "Provider": "Use ProviderEvent disposition, retaining agent identity. Child preview/status stays attributed to the child and does not join the root answer.",
+    "Subagent": "Retain Started/Completed with descriptor, identity, usage and evidenced result/error; update existing child status. No new control authority.",
+    "Message": "Retain Sent/Delivered attribution, recipient/kind/router sequence when supplied; unsequenced remains unsequenced.",
+    "McpChannel": "Retain external source/content framing, escaped as data; never classify as operator slash input.",
+    "UsageEstimate": "Update estimate state explicitly marked estimated; distinguish cumulative usage from current-turn deltas.",
+    "StreamRetry": "Retain wait/error class and attempt state; invalidate only affected provisional attempt, never committed calls/results.",
+    "Compaction": "Retain local summary/state and reconcile the committed Compaction event when available; no duplicate pretend assistant answer."
+  },
+  "provider_event": {
+    "ResponseStreamEvent": "Observability-only envelope; not a generic raw transcript body. Do not expose provider transport state by expanding tools.",
+    "ResponseAudioFrame": "Audio observability/persistence lane; no raw audio bytes or fabricated text displayed. Existing text-transcript projections are handled through their actual semantic source.",
+    "TextDelta": "Append to attempt-local ordered provisional text segment.",
+    "RefusalDelta": "Append refusal preview by actual item/output/content identity; remain a refusal, not provider error.",
+    "RefusalComplete": "Replace exact refusal preview, do not append duplicate text.",
+    "ThinkingDelta": "Append exposed display reasoning summary only; obey display toggle.",
+    "ToolCallDelta": "Retain item_id/call_id alias and kind, original raw argument fragments; partial JSON need not parse.",
+    "TextComplete": "Replace matching provisional text content; never append a second answer.",
+    "ThinkingComplete": "Replace matching summary preview; no encrypted reasoning body.",
+    "ReasoningItemDone": "Provider replay item: expose approved human-readable summary only if not already present; encrypted_content never enters display references.",
+    "ResponseItemDone": "Authoritative provider item completion, still provisional until store acceptance. Project approved item parts with stable provider IDs and avoid flat-field duplicates.",
+    "ToolCallComplete": "Finalize call_id/name/kind/raw arguments and preserve description after completion.",
+    "ToolResult": "Join exact call and retain full result reference/duration; extract evidence states independently from error.",
+    "Compaction": "Opaque provider compaction metadata only; encrypted payload is not display text. Different from AgentEventKind::Compaction summary.",
+    "Done": "End response iteration/usage/stop reason; tool results can still follow. Do not finalize pending calls as fake null results.",
+    "Error": "Retain visible typed error and incomplete state; reconcile final step error without text-equality dedup."
+  },
+  "session_event": {
+    "UserMessage": "Committed operator/injected message event; origin comes from explicit source association, not string decoration or leading slash. Unknown legacy origin remains unspecified.",
+    "AssistantMessage": "response_items is authoritative when present; otherwise approved content/thinking/tool_calls projection. Retain refusal/stop state and usage references.",
+    "SpokenResponse": "Validated structured content with primary/secondary view using the same stored value.",
+    "ToolResult": "Committed call output/duration/spool reference; demand invocation correlation if outside the page.",
+    "ModelChange": "Historical old/new model transition; no mutation on selection.",
+    "ProviderEpochBoundary": "Semantic boundary reason; no raw provider state.",
+    "Compaction": "Committed summary/affected IDs remain audit history; never replace visible history with provider prompt projection.",
+    "ChildBranch": "Actual structural child/session/parent-anchor provenance; absent child session stays ephemeral.",
+    "ForkComplete": "Child completion reference and approved validated result details, preserving child identity.",
+    "Label": "Named label/description item.",
+    "Custom": "Retain event_type and source identity; display only approved content fields for known custom types. Unknown payload is unavailable pending explicit policy, not a raw dump of internal provider state.",
+    "ContextMark": "Context bookkeeping status by target ID; not an injected new assistant answer.",
+    "RuleInjection": "Rule/content with explicit source and trust framing, never instructions to the UI."
+  },
+  "producer_sites": [
+    {
+      "id": "operator_and_inbound",
+      "paths": [
+        "crates/norn-tui/src/app/render.rs",
+        "crates/norn-tui/src/app/turn/run.rs",
+        "crates/norn-tui/src/app/event_loop.rs"
+      ],
+      "obligation": "write_user_message, submitted turn, queued follow-up, root inbound and MCP idle wake; retain display/admission/delivery distinction and no synthetic empty prompt",
+      "owner_row": "R3"
+    },
+    {
+      "id": "steer_delivery",
+      "paths": [
+        "crates/norn-tui/src/app/turn/mid.rs",
+        "crates/norn-tui/src/app/active_input.rs"
+      ],
+      "obligation": "mark delivered only from ActiveInputDelivery; retain pending/queued/cancel state and draft semantics",
+      "owner_row": "R3"
+    },
+    {
+      "id": "child_result_batches",
+      "paths": [
+        "crates/norn-tui/src/app/child_results.rs"
+      ],
+      "obligation": "render_child_result_batch currently calls write_user_message; store as child result attribution while keeping secure frame queue untouched",
+      "owner_row": "R3"
+    },
+    {
+      "id": "stream_and_tools",
+      "paths": [
+        "crates/norn-tui/src/app/streaming.rs",
+        "crates/norn-tui/src/app/tool_calls.rs",
+        "crates/norn-tui/src/app/helpers.rs"
+      ],
+      "obligation": "text/thinking flush/partial tools/error tail; pending arguments must survive result completion",
+      "owner_row": "R3"
+    },
+    {
+      "id": "agent_dispatch",
+      "paths": [
+        "crates/norn-tui/src/app/dispatch.rs"
+      ],
+      "obligation": "all AgentEvent/ProviderEvent dispositions including root/child split, retry, compaction, channel, estimates",
+      "owner_row": "R3"
+    },
+    {
+      "id": "step_finalization",
+      "paths": [
+        "crates/norn-tui/src/app/dispatch/finalization.rs",
+        "crates/norn-tui/src/app/dispatch.rs",
+        "crates/norn-tui/src/app/turn/run.rs"
+      ],
+      "obligation": "Completed/Refused/SchemaUnreachable/MaxIterationsReached/Cancelled/TimedOut/Truncated and errors, without inventing provider success",
+      "owner_row": "R3"
+    },
+    {
+      "id": "slash_help_tools_skills",
+      "paths": [
+        "crates/norn-tui/src/app/slash.rs",
+        "crates/norn-tui/src/app/slash_catalog.rs"
+      ],
+      "obligation": "help/tool/skill lists, new/compact status, unavailable/failed operations and notices remain retained",
+      "owner_row": "R3"
+    },
+    {
+      "id": "model_controls",
+      "paths": [
+        "crates/norn-tui/src/app/model_selection.rs"
+      ],
+      "obligation": "model/effort/service-tier/fast usage, validation refusal, effective selection confirmations",
+      "owner_row": "R3"
+    },
+    {
+      "id": "mcp_and_NCS_controls",
+      "paths": [
+        "crates/norn-tui/src/app/mcp_slash.rs"
+      ],
+      "obligation": "MCP command start/busy/complete/fail lines and output remain retained. NCS policy is immutable for this launch; reload applies that policy to new definitions. Display existing refusals honestly; do not invent live channel-policy editing.",
+      "owner_row": "R3"
+    },
+    {
+      "id": "resume_rotation_tabs",
+      "paths": [
+        "crates/norn-tui/src/app/session_replay.rs",
+        "crates/norn-tui/src/app/rotation.rs",
+        "crates/norn-tui/src/agents/tabs.rs"
+      ],
+      "obligation": "startup partial-history notice, /new identity and saved-event rendering; do not claim existing tab helper is wired navigation",
+      "owner_row": "R3"
+    },
+    {
+      "id": "current_status",
+      "paths": [
+        "crates/norn-tui/src/app/state.rs",
+        "crates/norn-tui/src/agents/status_line.rs",
+        "crates/norn-tui/src/agents/activity_log.rs",
+        "crates/norn-tui/src/render/fixed_panel.rs",
+        "crates/norn-tui/src/render/streaming_indicator.rs",
+        "crates/norn-tui/src/render/retry_status.rs"
+      ],
+      "obligation": "current model/usage/context, running/waiting/retry status, child rows, pending input; no permanently empty status strip",
+      "owner_row": "R3"
+    },
+    {
+      "id": "committed_replay",
+      "paths": [
+        "crates/norn-tui/src/events/schema_render.rs",
+        "crates/norn-tui/src/events/display_toggles.rs"
+      ],
+      "obligation": "all SessionEvent variants and primary/secondary/thinking views migrate without hiding errors or duplicating response projections",
+      "owner_row": "R3"
+    },
+    {
+      "id": "terminal_failures",
+      "paths": [
+        "crates/norn-tui/src/terminal/setup.rs",
+        "crates/norn-tui/src/terminal/caps.rs",
+        "crates/norn-tui/src/lib.rs"
+      ],
+      "obligation": "startup capability/I/O/guard failures remain typed; errors after terminal restoration may go to caller stderr, never into a phantom retained item",
+      "owner_row": "R4"
+    },
+    {
+      "id": "resolved_NCS_launch_mode",
+      "paths": [
+        "crates/norn-cli/src/tui/driver.rs"
+      ],
+      "obligation": "Existing pre-construction validation remains in the launch owner. No TUI provider/MCP is built for an invalid resolved channel mode; registration adds no runtime change.",
+      "owner_row": "R7 acceptance; existing launch implementation outside NRT mutation wall"
+    }
+  ],
+  "review_note": "Unknown typed enum variants require a new exhaustive disposition. Unknown Custom payloads are not automatically safe display bodies. This inventory distinguishes current semantic content from observability-only data.",
+  "refreshed_at_melbourne": "2026-09-05T21:48:02.621060+10:00",
+  "ncs_delta": {
+    "from": "5227db49d805a4c0729912dca3832c842c8f39e1",
+    "to": "f0cb7476ceb80ce6b9c85a02088cdb8297e960a3",
+    "path_count": 51,
+    "tui_or_event_enum_changes": false,
+    "driver_change": "Validate resolved channel mode before constructing provider/MCP in TUI launch."
+  },
+  "response_item": {
+    "Message": "Project approved visible text/refusal parts in order; no duplicate flat assistant rendering.",
+    "Reasoning": "Expose approved display summary only; opaque/encrypted reasoning remains outside body capabilities.",
+    "FunctionCall": "Correlate canonical call_id, name and function arguments.",
+    "CustomToolCall": "Preserve raw freeform input and call kind.",
+    "WebSearchCall": "Show typed activity/identity only, not unapproved raw fields.",
+    "Compaction": "Show provider compaction identity/status; encrypted payload is excluded.",
+    "Known": "Keep known typed item identity/kind; only specifically approved display fields are exposed.",
+    "Opaque": "Keep discriminator/identity with unavailable display body; never discard identity or expose arbitrary raw payload."
+  }
+}

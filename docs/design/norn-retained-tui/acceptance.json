@@ -1,0 +1,62 @@
+{
+  "schema": "norn.retained_tui.acceptance.v1",
+  "status": "registered_required_not_executed",
+  "scenarios": [
+    {
+      "id": "PTY-01",
+      "title": "Actual lifecycle and restored shell",
+      "procedure_and_oracle": "Run real run_app under portable-pty, plus existing low-level guard entrypoint. Assert alternate screen/modes/caret on normal exit, provider error, cancellation, terminal I/O failure and panic-unwind paths supported by current guard. Read final termios/mode state and outer-screen sentinel, not only emitted escape substrings. SIGKILL is not an RAII restoration promise.",
+      "owner_row": "R7"
+    },
+    {
+      "id": "PTY-02",
+      "title": "Live wide → narrow → tiny → wide",
+      "procedure_and_oracle": "Use actual PTY resize ioctl while provider fixture is barrier-paused mid-text and then mid-tool, with an unsent multiline Unicode draft and slash popup. A vte screen model consumes each resize epoch with correct geometry/alternate-screen semantics; assert no ghost rows, duplicate semantic items, caret theft, provider restart or store append caused by resize. Repeated resize bursts may coalesce; require final state correct, not one repaint per event. Include widths80/81/82 around the derived split boundary and the declared half-screen/12-row composer policy.",
+      "owner_row": "R7"
+    },
+    {
+      "id": "PTY-03",
+      "title": "Known and unknown tools with old changes",
+      "procedure_and_oracle": "Drive overlapping same-name calls, custom/freeform calls, successful write, edit committed then diagnostics fail, blocked edit, patch and unknown tool. Expand old call and select its exact Change after modifying/deleting current disk file; assert original evidence, compact defaults, missing baseline state and preserved error header.",
+      "owner_row": "R7"
+    },
+    {
+      "id": "PTY-04",
+      "title": "Selection, copy and scope",
+      "procedure_and_oracle": "Keyboard and mouse select across soft-wrapped Unicode prose/code/JSON, pin, resize and receive live output. Compare selected logical bytes to fixture source and OSC52/clipboard adapter payload, not decorated screen bytes. No wrap newlines or escapes. Exercise unavailable/failed clipboard and explicit export; verify exact file content, overwrite refusal, errors and scope labels.",
+      "owner_row": "R7"
+    },
+    {
+      "id": "PTY-05",
+      "title": "Search/history/body demand",
+      "procedure_and_oracle": "Create small and large stored histories with the same visible suffix and large spool fixtures. Count requested records/ranges, not wall-clock timing. Paint/resize/selection movement over resident content cause zero store/body reads; expanding/paging/search/export issues explicit demand. Test older matches, partial-search labels, unavailable bodies and corrupt/forged/stale references.",
+      "owner_row": "R7"
+    },
+    {
+      "id": "PTY-06",
+      "title": "Retry, commit and lag",
+      "procedure_and_oracle": "Barrier-control a retry after partial text, a committed earlier response, a late result and final response_items. Force broadcast Lagged; assert explicit incompleteness, committed suffix reconciliation and no duplicate final text or repeated tool/provider effects. View cannot claim the missing transient stream became complete.",
+      "owner_row": "R7"
+    },
+    {
+      "id": "PTY-07",
+      "title": "All existing controls and producers",
+      "procedure_and_oracle": "Keep model/effort/tier/budget and NCS validated-control scenarios, help/slash/skills/@file popup, thinking/secondary output, root inbound, external channels wake/hold/next-turn, child status/results, steer/queue, refusal/schema/cancel/error outcomes. Count outbound/provider/store operations to distinguish UI action from runtime admission. Exercise /view during active steer/queue mode: it opens the local palette without provider/store admission; F-key-unavailable navigation remains complete through the same palette.",
+      "owner_row": "R7"
+    },
+    {
+      "id": "PTY-08",
+      "title": "Resume/new and error recovery",
+      "procedure_and_oracle": "Resume with invocation outside current page, demand older history and expand it; then /new. Assert source/cursor reset, no old-call/body attachment to new source, existing store dependents rewired, current model/cwd target retained only according to runtime evidence, and unsent draft policy follows the settled choice.",
+      "owner_row": "R7"
+    },
+    {
+      "id": "PTY-09",
+      "title": "Supported real-terminal and multiplexer check",
+      "procedure_and_oracle": "Record actual terminal/app version, terminal capabilities, multiplexer if used, candidate commit and Melbourne time. Resize while selecting/copying and editing unsent draft; verify actual clipboard and shell restoration. If terminal denies OSC52 or modifier reporting, visible fallback works. Do not count terminal-emulator byte parsing or screenshots alone as this proof.",
+      "owner_row": "R7"
+    }
+  ],
+  "no_performance_claim": "Fixture counts establish data-demand invariants only. No latency/SLA/cache cap/throughput result is asserted or invented.",
+  "baseline": "f0cb7476ceb80ce6b9c85a02088cdb8297e960a3"
+}

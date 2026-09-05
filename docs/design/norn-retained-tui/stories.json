@@ -1,0 +1,27 @@
+{
+  "cluster": "norn-retained-tui",
+  "title": "Retained TUI user stories",
+  "personas": [
+    {
+      "name": "Session participant",
+      "role": "human operator or observing model",
+      "stories": [
+        {
+          "id": "S1",
+          "title": "S1 retained session experience",
+          "text": "As a session participant I can distinguish committed, provisional and incomplete history, and inspect the exact recorded body without affecting execution."
+        },
+        {
+          "id": "S2",
+          "title": "S2 retained session experience",
+          "text": "As a participant I can keep reading a compact conversation and exact call changes while the terminal resizes and work continues."
+        },
+        {
+          "id": "S3",
+          "title": "S3 retained session experience",
+          "text": "As a keyboard or mouse reader I can find, select, copy and export content and retain all current controls, with real terminal proof."
+        }
+      ]
+    }
+  ]
+}
