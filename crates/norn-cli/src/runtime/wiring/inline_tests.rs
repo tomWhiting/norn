@@ -93,9 +93,7 @@ mod tests {
     fn slash_inputs(parts: &AgentParts) -> SlashStateInputs<'_> {
         SlashStateInputs {
             registry: &parts.registry,
-            model: &parts.model,
-            service_tier: parts.loop_context.service_tier,
-            reasoning_effort: parts.loop_context.reasoning_effort,
+            model_selection: &parts.model_selection,
         }
     }
 

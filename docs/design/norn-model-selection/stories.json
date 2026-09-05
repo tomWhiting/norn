@@ -1,0 +1,23 @@
+{
+  "personas": [
+    {
+      "name": "Norn user",
+      "role": "operator",
+      "stories": [
+        {
+          "id": "S1",
+          "text": "I can select Astra with its actual Codex capabilities and see honest support boundaries."
+        },
+        {
+          "id": "S2",
+          "text": "My selected backend enforces its own model limits before any provider call."
+        },
+        {
+          "id": "S3",
+          "text": "Switching models updates protection correctly and a refused switch leaves my session intact."
+        }
+      ]
+    }
+  ],
+  "cluster": "norn-model-selection"
+}

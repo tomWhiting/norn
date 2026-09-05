@@ -193,7 +193,7 @@ fn build_applies_embedding_profile_overrides() {
     let agent = AgentBuilder::new(provider_with(vec![]))
         .profile(Profile {
             name: "base".to_owned(),
-            model: "test-model".to_owned(),
+            model: "gpt-5.5".to_owned(),
             tools: Some(vec!["read".to_owned(), "write".to_owned()]),
             system_instructions: vec!["Base instruction.".to_owned()],
             ..Profile::default()

@@ -70,6 +70,8 @@ fn plain_json_exit_prompt_still_emits_completion_envelope() {
         .arg("-c")
         // Never contacted: /exit short-circuits before any completion call.
         .arg("base_url=http://127.0.0.1:9/v1")
+        // Explicit Sol fixture budget: the mock route has no model catalogue.
+        .args(["-c", "context_window=272000"])
         .arg("--no-session")
         .env("NORN_HOME", home.path())
         .env("NORN_OPENAI_COMPAT_API_KEY", "test-key")

@@ -7,16 +7,14 @@
 //! from the resolved model and overrides *before* the builder runs, then
 //! passed into `builder_from_cli`. This module owns the resolution that
 //! precedes that construction — model-alias and provider-profile
-//! resolution, settings merge, CLI profile overrides, and reasoning-effort
+//! resolution, settings merge, CLI profile overrides, and complete model-selection
 //! validation — so the three drivers share one code path instead of
 //! re-deriving it.
 
 use std::time::Duration;
 
-use norn::agent_loop::{
-    effort_label, reasoning_effort_supported_for_model, unsupported_reasoning_effort_message,
-};
 use norn::config::{McpConfigState, McpRuntimeOverrides, NornSettings, ResolvedMcpServers};
+use norn::model_selection::{CatalogBackend, ModelInput, ModelRuntime};
 use norn::profile::Profile;
 use norn::runtime_init::load_resolved_settings;
 
@@ -58,6 +56,8 @@ pub struct ResolvedInvocation {
     pub applied: AppliedOverrides,
     /// The selected provider backend.
     pub provider_kind: ProviderKind,
+    /// Named provider profile retained for live alias validation.
+    pub provider_profile: Option<String>,
     /// The resolved provider-config overrides for the concrete provider
     /// construction (base URL, timeouts, retries, debug dump).
     pub provider_overrides: ProviderConfigOverrides,
@@ -88,15 +88,15 @@ pub struct ResolvedInvocation {
 /// legacy `build_runtime` did as its first step), merges and validates the
 /// settings tiers, resolves the profile (with the settings-model fallback
 /// when neither `--profile` nor `-m` is given), layers the CLI profile
-/// overrides, resolves the model alias, validates the reasoning effort
-/// against the model, and resolves the provider selection + overrides.
+/// overrides, resolves the model alias and concrete provider route, and
+/// preflights the complete model, context window, effort and tier selection.
 ///
 /// # Errors
 ///
 /// [`BuildError`] when the working directory cannot be applied, the
 /// settings fail to load / validate, the profile or model cannot be
-/// resolved, the reasoning effort is unsupported for the model, or the
-/// provider selection / overrides fail to resolve.
+/// resolved, the selected model's route cannot validate its context window,
+/// effort or service tier, or the provider selection / overrides fail to resolve.
 pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
     apply_working_dir(cli)?;
 
@@ -121,6 +121,22 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
     {
         model.clone_into(&mut profile.model);
     }
+    let effort_source = if cli.reasoning_effort.is_some() {
+        "--reasoning-effort"
+    } else if profile.reasoning_effort.is_some() {
+        "profile.reasoning_effort"
+    } else {
+        "agent.reasoning_effort"
+    };
+    let tier_source = if cli.fast {
+        "--fast"
+    } else if cli.service_tier.is_some() {
+        "--service-tier"
+    } else if profile.service_tier.is_some() {
+        "profile.service_tier"
+    } else {
+        "agent.service_tier"
+    };
     apply_settings_reasoning_to_profile(&settings, &mut profile)?;
     let applied = apply_cli_profile_overrides(cli, &mut profile)?;
     let model_selection = resolve_model_selection(&profile.model, &settings)?;
@@ -134,7 +150,6 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         ));
     }
     profile.model.clone_from(&model_selection.model);
-    validate_reasoning_effort_for_model(&profile)?;
 
     let mut config_overrides = ConfigOverrides::parse(&cli.config)?;
     if let Some(debug_api) = &cli.debug_api {
@@ -160,8 +175,52 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         )?;
     }
     overlay_cli_provider_overrides(&mut provider_overrides, &config_overrides);
-    resolve_provider_auth(provider_selection.kind, &provider_overrides)
+    let auth = resolve_provider_auth(provider_selection.kind, &provider_overrides)
         .map_err(|error| BuildError::Argument(error.to_string()))?;
+    let backend = match provider_selection.kind {
+        ProviderKind::Openai => Some(match auth {
+            norn::config::ResolvedProviderAuth::OAuth => {
+                norn::model_selection::CatalogBackend::CODEX
+            }
+            norn::config::ResolvedProviderAuth::ApiKeyEnv(_) => {
+                norn::model_selection::CatalogBackend::RESPONSES
+            }
+            norn::config::ResolvedProviderAuth::None => {
+                return Err(BuildError::Argument(
+                    "OpenAI auth resolution did not select a backend".to_owned(),
+                ));
+            }
+        }),
+        ProviderKind::OpenaiCompatible => Some(norn::model_selection::CatalogBackend::CHAT),
+        ProviderKind::ClaudeRunner => None,
+    };
+    let explicit_window = config_overrides.context_window.or_else(|| {
+        settings
+            .agent
+            .as_ref()
+            .and_then(|agent| agent.context_window)
+    });
+    let mut selection_sources = vec![if cli.model.is_some() {
+        "--model"
+    } else if cli.profile.is_none() && settings.model.is_some() {
+        "settings.model"
+    } else {
+        "profile.model"
+    }];
+    if profile.reasoning_effort.is_some() {
+        selection_sources.push(effort_source);
+    }
+    if profile.service_tier.is_some() {
+        selection_sources.push(tier_source);
+    }
+    if explicit_window.is_some() {
+        selection_sources.push(if config_overrides.context_window.is_some() {
+            "-c context_window"
+        } else {
+            "agent.context_window"
+        });
+    }
+    preflight_model_selection(&profile, backend, explicit_window, &selection_sources)?;
     if provider_overrides
         .debug_dump_dir
         .as_ref()
@@ -203,6 +262,7 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         profile_source,
         applied,
         provider_kind: provider_selection.kind,
+        provider_profile: provider_selection.profile_name,
         provider_overrides,
         model,
         delegation_depth,
@@ -210,20 +270,26 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
     })
 }
 
-/// Reject a `--reasoning-effort` the resolved model does not support, so
-/// the failure surfaces as an argument error instead of an opaque
-/// provider rejection mid-run.
-fn validate_reasoning_effort_for_model(profile: &Profile) -> Result<(), BuildError> {
-    let Some(effort) = profile.reasoning_effort else {
-        return Ok(());
-    };
-    if reasoning_effort_supported_for_model(&profile.model, effort) {
-        return Ok(());
-    }
-    Err(BuildError::Argument(unsupported_reasoning_effort_message(
-        &profile.model,
-        effort_label(effort),
-    )))
+/// Preflight the whole resolved selection before provider construction. The library
+/// repeats this boundary against its concrete provider before admitting an agent.
+fn preflight_model_selection(
+    profile: &Profile,
+    backend: Option<CatalogBackend>,
+    explicit_window: Option<u64>,
+    sources: &[&str],
+) -> Result<(), BuildError> {
+    ModelRuntime::from_input(
+        backend,
+        ModelInput::Resolved(profile.model.clone()),
+        explicit_window,
+        profile.reasoning_effort,
+        profile.service_tier,
+        std::collections::BTreeMap::new(),
+    )
+    .map(drop)
+    .map_err(|error| {
+        BuildError::Argument(format!("model selection ({}): {error}", sources.join(", ")))
+    })
 }
 
 /// Resolve the `--debug-api` value into the JSONL dump directory: an
@@ -308,6 +374,30 @@ mod tests {
                 None => unsafe { std::env::remove_var("NORN_HOME") },
             }
         }
+    }
+
+    #[test]
+    fn selection_preflight_error_has_route_effort_and_no_cli_prefix()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let profile = Profile {
+            model: "gpt-5.6-luna".to_owned(),
+            reasoning_effort: Some(norn::provider::request::ReasoningEffort::Ultra),
+            ..Profile::default()
+        };
+        let Err(error) = preflight_model_selection(
+            &profile,
+            Some(CatalogBackend::CODEX),
+            None,
+            &["--reasoning-effort"],
+        ) else {
+            return Err("Luna ultra effort must fail before assembly".into());
+        };
+        assert!(matches!(error, BuildError::Argument(_)));
+        let message = error.to_string();
+        assert!(!message.contains("norn:"));
+        assert_eq!(message.matches("openai.codex_subscription").count(), 1);
+        assert_eq!(message.matches("'ultra'").count(), 1);
+        Ok(())
     }
 
     #[test]
@@ -536,6 +626,7 @@ mod tests {
         std::fs::write(
             environment.norn_home().join("settings.json"),
             serde_json::to_vec(&serde_json::json!({
+                "agent": {"context_window": 272_000},
                 "model_aliases": {
                     "private-alias": {
                         "provider_profile": "private-deployment",
@@ -669,6 +760,7 @@ mod tests {
         std::fs::write(
             environment.norn_home().join("settings.json"),
             serde_json::to_vec(&serde_json::json!({
+                "agent": {"context_window": 272_000},
                 "model_aliases": {
                     "private-alias": {
                         "provider_profile": "private-deployment",
@@ -725,6 +817,7 @@ mod tests {
         std::fs::write(
             environment.norn_home().join("settings.json"),
             serde_json::to_vec(&serde_json::json!({
+                "agent": {"context_window": 272_000},
                 "provider": {
                     "base_url": "https://user.example/v1",
                     "api_key_env": "USER_API_KEY",

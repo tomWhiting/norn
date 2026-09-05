@@ -249,6 +249,13 @@ fn build_http_client(timeout: Duration) -> Result<reqwest::Client, ProviderError
 }
 
 impl Provider for OpenAiProvider {
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        Some(crate::model_selection::CatalogBackend {
+            provider: "openai",
+            backend: self.backend.catalog_backend(),
+        })
+    }
+
     fn state_identity(&self) -> Option<ProviderStateIdentity> {
         Some(self.state_identity)
     }

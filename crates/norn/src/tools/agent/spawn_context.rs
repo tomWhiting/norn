@@ -532,9 +532,13 @@ mod tests {
                 "system_instructions": ["Use only the inherited provider."]
             }))?,
         )?;
-        let sol_window = crate::model_catalog::smallest_context_window_for_model("gpt-5.6-sol")
+        let sol_window = crate::model_selection::CatalogBackend::CODEX
+            .model("gpt-5.6-sol")
+            .map(|entry| entry.context_window)
             .ok_or_else(|| std::io::Error::other("gpt-5.6-sol is missing from the catalog"))?;
-        let gpt_55_window = crate::model_catalog::smallest_context_window_for_model("gpt-5.5")
+        let gpt_55_window = crate::model_selection::CatalogBackend::CODEX
+            .model("gpt-5.5")
+            .map(|entry| entry.context_window)
             .ok_or_else(|| std::io::Error::other("gpt-5.5 is missing from the catalog"))?;
         let child_context_window = sol_window.min(gpt_55_window);
 

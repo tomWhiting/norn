@@ -530,7 +530,9 @@ fn plain_invocation_arms_catalog_window_and_default_reserve() {
         let config = build_parts(&cli).config;
         assert_eq!(
             config.context_window_limit,
-            norn::model_catalog::smallest_context_window_for_model("gpt-5.5"),
+            norn::model_selection::CatalogBackend::CODEX
+                .model("gpt-5.5")
+                .map(|entry| entry.context_window),
             "a plain invocation must default the window from the model catalog",
         );
         assert!(

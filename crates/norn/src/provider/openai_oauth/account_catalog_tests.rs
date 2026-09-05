@@ -261,13 +261,8 @@ fn abort_scrubs_credentials_before_retiring_catalog_reservation() -> TestResult 
 fn catalog_failure_after_slot_scrub_self_heals_without_old_credentials() -> TestResult {
     let directory = tempfile::tempdir()?;
     let base = base_root(&directory)?;
-    let options = OAuthHttpOptions {
-        credential_lock_timeout: Duration::from_millis(20),
-        credential_lock_poll_interval: Duration::from_millis(1),
-        ..OAuthHttpOptions::default()
-    };
-    let prepared = prepare_named_login(&base, "retry", options)?;
-    let NamedLoginPreparation::Pending(reservation) = prepared else {
+    let prepared = prepare_named_login(&base, "retry", OAuthHttpOptions::default())?;
+    let NamedLoginPreparation::Pending(mut reservation) = prepared else {
         return Err(std::io::Error::other("fresh alias unexpectedly recovered").into());
     };
     let reserved_root = reservation.auth_root().clone();
@@ -277,6 +272,9 @@ fn catalog_failure_after_slot_scrub_self_heals_without_old_credentials() -> Test
         OAuthHttpOptions::default().credential_lock_timing()?,
     )?;
 
+    // Apply the short deadline only to the deliberate catalog-lock failure.
+    reservation.options.credential_lock_timeout = Duration::from_millis(20);
+    reservation.options.credential_lock_poll_interval = Duration::from_millis(1);
     let result = reservation.abort();
 
     assert!(matches!(result, Err(AccountCatalogError::Coordination)));

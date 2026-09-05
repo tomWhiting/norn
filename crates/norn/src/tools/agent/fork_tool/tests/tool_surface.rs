@@ -10,6 +10,11 @@ async fn leaf_fork_provider_tool_list_omits_spawn_and_fork() -> TestResult {
         responses: StdMutex<Vec<Vec<ProviderEvent>>>,
     }
     impl Provider for ToolsCapturingProvider {
+        // This scripted provider represents the catalogued Codex models used by these tests.
+        fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+            Some(crate::model_selection::CatalogBackend::CODEX)
+        }
+
         fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
             self.captured.lock().clone_from(&request.tools);
             let seq = self.responses.lock().remove(0);

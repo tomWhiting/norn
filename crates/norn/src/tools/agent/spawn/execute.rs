@@ -102,10 +102,14 @@ pub(super) async fn execute(
     // launch below; the launch-side arming finds the window already
     // set and leaves it untouched.
     let mut child_config = ChildLoopConfig::resolve(child_policy.loop_config);
-    crate::agent::arming::arm_child_window(&mut child_config, &child_model).map_err(|e| {
-        ToolError::ExecutionFailed {
-            reason: format!("spawn_agent: {e}"),
-        }
+    let child_window_policy = crate::agent::arming::resolve_child_context_window(
+        args.child_policy.is_none().then_some(ctx),
+        infra.provider.model_catalog_backend(),
+        &mut child_config,
+        &child_model,
+    )
+    .map_err(|e| ToolError::ExecutionFailed {
+        reason: format!("spawn_agent: {e}"),
     })?;
 
     // Build the child's loop context and resolve the variant's or
@@ -131,6 +135,7 @@ pub(super) async fn execute(
     child_loop_ctx.reasoning_effort =
         super::super::variant_resolve::resolve_child_reasoning_effort(
             &super::super::variant_resolve::ChildEffortInputs {
+                backend: infra.provider.model_catalog_backend(),
                 variant_effort: resolution.reasoning_effort,
                 variant_name: resolution.variant_name.as_deref(),
                 profile_effort: child_loop_ctx.reasoning_effort,
@@ -340,6 +345,7 @@ pub(super) async fn execute(
         model: child_model.clone(),
         reasoning_effort: child_loop_ctx.reasoning_effort,
     }));
+    child_window_policy.publish(&child_ctx);
     child_ctx.insert_extension(Arc::new(ParentPromptPlan::from_loop_context(
         &child_loop_ctx,
     )));

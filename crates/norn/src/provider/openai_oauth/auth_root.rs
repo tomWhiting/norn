@@ -165,12 +165,12 @@ fn normalize_absolute(
     path: &Path,
     source: NornAuthRootSource,
 ) -> Result<NornAuthRoot, NornAuthRootError> {
-    let (_, mut components) = normalized_components(path, source)?;
+    let (_, components) = normalized_components(path, source)?;
+    let mut normalized = PathBuf::from("/");
     #[cfg(target_os = "macos")]
     if matches!(components.first(), Some(first) if first == "tmp" || first == "var") {
-        components.insert(0, OsString::from("private"));
+        normalized.push("private");
     }
-    let mut normalized = PathBuf::from("/");
     normalized.extend(components);
     Ok(NornAuthRoot(normalized))
 }

@@ -1,0 +1,23 @@
+{
+  "personas": [
+    {
+      "name": "Maintainer",
+      "role": "release owner",
+      "stories": [
+        {
+          "id": "S1",
+          "text": "A failed diagnostic cannot mislead me or discard my changes."
+        },
+        {
+          "id": "S2",
+          "text": "The venue measures the exact leg list declared by the candidate."
+        },
+        {
+          "id": "S3",
+          "text": "I can distinguish pre-existing compiler defects from model-change regressions and verify both are fixed."
+        }
+      ]
+    }
+  ],
+  "cluster": "norn-verification"
+}

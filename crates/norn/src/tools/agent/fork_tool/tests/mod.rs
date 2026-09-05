@@ -93,6 +93,11 @@ struct RequestCapturingProvider {
 }
 
 impl Provider for RequestCapturingProvider {
+    // This scripted provider represents the catalogued Codex models used by these tests.
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        Some(crate::model_selection::CatalogBackend::CODEX)
+    }
+
     fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         self.captured.lock().push(request);
         let seq = self.responses.lock().remove(0);
@@ -173,6 +178,11 @@ struct GatedProvider {
 }
 
 impl Provider for GatedProvider {
+    // This scripted provider represents the catalogued Codex models used by these tests.
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        Some(crate::model_selection::CatalogBackend::CODEX)
+    }
+
     fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         let mut lock = self.responses.lock();
         let batch = if lock.is_empty() {

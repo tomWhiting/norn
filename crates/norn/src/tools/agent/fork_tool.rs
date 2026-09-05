@@ -161,10 +161,14 @@ impl Tool for ForkTool {
         // typed error with no burned name and no dangling reservation.
         // The same resolved config rides into the launch below.
         let mut fork_config = ChildLoopConfig::resolve(fork_policy.loop_config);
-        crate::agent::arming::arm_child_window(&mut fork_config, &args.model).map_err(|e| {
-            ToolError::ExecutionFailed {
-                reason: format!("fork: {e}"),
-            }
+        let fork_window_policy = crate::agent::arming::resolve_child_context_window(
+            args.child_policy.is_none().then_some(ctx),
+            infra.provider.model_catalog_backend(),
+            &mut fork_config,
+            &args.model,
+        )
+        .map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("fork: {e}"),
         })?;
 
         // R3 / W3.4: hierarchical fork path nests under the spawning
@@ -317,6 +321,7 @@ impl Tool for ForkTool {
             fork_policy.clone(),
             fork_cancel.clone(),
         );
+        fork_window_policy.publish(&child_ctx);
         // Per-agent result channel (W3.4): a fork whose grant lets it
         // delegate gets its own child-result channel — sender on its
         // context for its spawn/fork sites, receiver wired onto its loop

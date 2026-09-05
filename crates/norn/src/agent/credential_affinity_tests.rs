@@ -90,6 +90,7 @@ fn build_managed(
     let model = crate::model_catalog::default_selection().model;
     AgentBuilder::new(provider)
         .model(model)
+        .context_window_limit(272_000)
         .working_dir(working_dir)
         .allowed_tools(&[])
         .open_session(manager, spec, DurabilityPolicy::Flush)

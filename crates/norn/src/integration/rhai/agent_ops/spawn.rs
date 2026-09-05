@@ -75,6 +75,7 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
         .unwrap_or_else(|| "subagent".to_owned());
     let child_effort = crate::tools::agent::variant_resolve::resolve_child_reasoning_effort(
         &crate::tools::agent::variant_resolve::ChildEffortInputs {
+            backend: ctx.provider.model_catalog_backend(),
             variant_effort: variant.as_ref().and_then(|value| value.reasoning_effort),
             variant_name: variant.as_ref().map(|value| value.name.as_str()),
             profile_effort: None,
@@ -114,8 +115,13 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
         .map_err(|e| Box::new(rhai_error(format!("spawn_agent: {e}"))))?;
     let mut child_config =
         crate::agent::child_policy::ChildLoopConfig::resolve(child_grant.loop_config);
-    crate::agent::arming::arm_child_window(&mut child_config, &model)
-        .map_err(|e| Box::new(rhai_error(format!("spawn_agent: {e}"))))?;
+    let child_window_policy = crate::agent::arming::resolve_child_context_window(
+        host_shared.as_deref(),
+        ctx.provider.model_catalog_backend(),
+        &mut child_config,
+        &model,
+    )
+    .map_err(|e| Box::new(rhai_error(format!("spawn_agent: {e}"))))?;
     let guard = AgentRegistry::reserve(
         &ctx.registry,
         path,
@@ -221,6 +227,7 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
             model: model.clone(),
             reasoning_effort: child_effort,
         }));
+        child_window_policy.publish(&child_ctx);
         child_ctx.insert_extension(Arc::new(crate::agent::fork::ParentPromptPlan::new(
             child_prompt_plan.clone(),
         )));
@@ -237,6 +244,7 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
             loop_ctx.reasoning_effort = Some(effort);
         }
         crate::agent::arming::arm_auto_compaction(
+            provider.model_catalog_backend(),
             &mut loop_ctx,
             &mut child_config,
             &model_for_task,

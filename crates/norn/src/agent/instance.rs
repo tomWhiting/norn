@@ -39,6 +39,7 @@ pub struct Agent {
     pub(super) loop_context: LoopContext,
     pub(super) config: AgentLoopConfig,
     pub(super) model: String,
+    pub(super) model_selection: crate::model_selection::ModelRuntime,
     pub(super) tool_defs: Vec<ToolDefinition>,
     pub(super) event_store: Arc<EventStore>,
     pub(super) event_sender: Option<AgentEventSender>,
@@ -80,6 +81,8 @@ pub struct AgentParts {
     pub config: AgentLoopConfig,
     /// The resolved model identifier.
     pub model: String,
+    /// Validated model policy, retaining the original explicit context override.
+    pub model_selection: crate::model_selection::ModelRuntime,
     /// The provider-facing tool definitions.
     pub tool_defs: Vec<ToolDefinition>,
     /// The session event store the loop persists into.
@@ -162,6 +165,7 @@ impl Agent {
             loop_context: self.loop_context,
             config: self.config,
             model: self.model,
+            model_selection: self.model_selection,
             tool_defs: self.tool_defs,
             event_store: self.event_store,
             event_sender: self.event_sender,

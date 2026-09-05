@@ -87,7 +87,7 @@ pub struct AgentBuilder {
     pub(super) profile: Option<Profile>,
     pub(super) profile_origin: Option<ProfileOrigin>,
     pub(super) profile_name: Option<String>,
-    pub(super) model: Option<String>,
+    pub(super) model: Option<crate::model_selection::ModelInput>,
     pub(super) system_prompt: Option<String>,
     pub(super) append_system_prompt: Option<String>,
     pub(super) reasoning_effort: Option<ReasoningEffort>,

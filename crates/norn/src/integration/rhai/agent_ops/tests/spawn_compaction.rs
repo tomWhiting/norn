@@ -47,6 +47,11 @@ struct CompactionDetectingProvider {
 }
 
 impl Provider for CompactionDetectingProvider {
+    // This scripted provider represents the catalogued Codex models used by these tests.
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        Some(crate::model_selection::CatalogBackend::CODEX)
+    }
+
     fn stream(
         &self,
         request: crate::provider::request::ProviderRequest,

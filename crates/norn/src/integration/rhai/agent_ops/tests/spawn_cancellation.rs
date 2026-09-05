@@ -33,6 +33,11 @@ struct ParkingProvider {
 }
 
 impl Provider for ParkingProvider {
+    // This scripted provider represents the catalogued Codex models used by these tests.
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        Some(crate::model_selection::CatalogBackend::CODEX)
+    }
+
     fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         self.parked.notify_one();
         Ok(Box::pin(stream::pending::<

@@ -590,7 +590,7 @@ fn check_reasoning_effort(field: &str, value: &str) -> Result<(), ConfigError> {
     Err(ConfigError::InvalidConfig {
         reason: format!(
             "invalid value for {field}: '{value}' \
-             (expected one of: none, low, medium, high, xhigh, max)",
+             (expected one of: none, low, medium, high, xhigh, max, ultra)",
         ),
     })
 }
@@ -1647,7 +1647,7 @@ mod tests {
             "reason must name the value: {reason}"
         );
         assert!(
-            reason.contains("none, low, medium, high, xhigh, max"),
+            reason.contains("none, low, medium, high, xhigh, max, ultra"),
             "reason must list the accepted set: {reason}",
         );
     }

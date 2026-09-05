@@ -231,13 +231,11 @@ pub struct Cli {
     pub command: Option<Command>,
 }
 
-/// Reasoning-effort levels accepted by `--reasoning-effort` and threaded
-/// into `LoopContext` by the runtime wiring (future briefs).
+/// Reasoning-effort values exposed by `--reasoning-effort`; the resolved
+/// model and provider route validate each value before runtime assembly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 pub enum ReasoningEffort {
-    /// No reasoning.
-    None,
     /// Minimum reasoning budget.
     Low,
     /// Balanced reasoning budget.
@@ -249,6 +247,8 @@ pub enum ReasoningEffort {
     XHigh,
     /// Maximum reasoning budget.
     Max,
+    /// Codex-advertised ultra effort; automatic delegation is a separate capability.
+    Ultra,
 }
 
 /// Service tiers accepted by `--service-tier`.

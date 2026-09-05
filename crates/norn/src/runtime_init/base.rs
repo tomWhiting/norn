@@ -421,7 +421,7 @@ fn parse_settings_conversation_state(raw: &str) -> Result<ConversationStateMode,
 fn parse_reasoning_effort(raw: &str) -> Result<ReasoningEffort, NornError> {
     let value = serde_json::Value::String(raw.to_lowercase());
     serde_json::from_value(value).map_err(|err| invalid_config(format!(
-        "invalid value for agent.reasoning_effort: '{raw}' ({err}); expected one of none, low, medium, high, xhigh, max"
+        "invalid value for agent.reasoning_effort: '{raw}' ({err}); expected one of none, low, medium, high, xhigh, max, ultra"
     )))
 }
 

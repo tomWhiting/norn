@@ -23,7 +23,7 @@
 - [ ] **C13** — --append-system-prompt flag appends to profile system instructions
 - [ ] **C14** — --allowed-tools flag sets tool allow-list (comma-separated, supports globs)
 - [ ] **C15** — --disallowed-tools flag sets tool deny-list (comma-separated)
-- [ ] **C16** — --reasoning-effort flag accepts none/low/medium/high/xhigh/max and threads to LoopContext
+- [ ] **C16** — --reasoning-effort flag accepts low/medium/high/xhigh/max/ultra and threads to LoopContext
 - [ ] **C17** — --max-turns flag sets AgentLoopConfig::max_iterations
 - [ ] **C18** — --timeout flag parses duration string and sets AgentLoopConfig::step_timeout
 - [ ] **C19** — -C / --working-dir flag sets the working directory before agent execution
@@ -119,7 +119,7 @@
 - [x] **C82** — norn auth login triggers OAuth PKCE flow via norn::provider::auth::login()
 - [ ] **C83** — norn auth logout clears credentials via norn::provider::auth::logout()
 - [ ] **C84** — norn auth status reports typed local state and known expiry without exposing tokens or account identity
-- [ ] **C85** — all auth surfaces use Norn-owned `$NORN_HOME/auth/auth.json`; login exposes no path override
+- [ ] **C85** — all auth surfaces use Norn-owned $NORN_HOME/auth/auth.json; login exposes no path override
 - [x] **C124** — norn auth login --device-auth supports default and --name accounts, presents URL/code only through the terminal presenter, and reports success only after durable credential/catalog publication
 
 ## Session Subcommands

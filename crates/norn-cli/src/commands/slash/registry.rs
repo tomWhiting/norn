@@ -12,11 +12,9 @@ use std::sync::atomic::Ordering;
 use norn::agent_loop::{
     BuiltinSlashKind, CustomSlashHandler, EffortCommand, ServiceTierCommand, SlashCommand,
     SlashCommandHandler, SlashCommandRegistry, SlashSurface, builtin_slash_commands, effort_label,
-    parse_effort_command, parse_service_tier_command, reasoning_effort_supported_for_model,
-    service_tier_supported_for_model, unsupported_reasoning_effort_message,
-    unsupported_service_tier_message,
+    parse_effort_command, parse_service_tier_command,
 };
-use norn::provider::request::{ReasoningEffort, ServiceTier};
+use norn::provider::request::ServiceTier;
 
 use crate::config::parse_inline_or_file;
 use crate::session::SessionManager;
@@ -183,154 +181,94 @@ fn tools_handler(state: &SlashState) -> CustomSlashHandler {
 // -- /model -----------------------------------------------------------------
 
 fn model_handler(state: &SlashState) -> CustomSlashHandler {
-    let model = Arc::clone(&state.model);
-    let reasoning_effort = Arc::clone(&state.reasoning_effort);
-    let service_tier = Arc::clone(&state.service_tier);
+    let selection = Arc::clone(&state.model_selection);
     Arc::new(move |arg| {
-        let trimmed = arg.trim();
-        if trimmed.is_empty() {
-            let current = model.lock().clone();
-            eprintln!("{current}");
-        } else {
-            trimmed.clone_into(&mut model.lock());
-            let cleared_effort = clear_unsupported_reasoning_effort(trimmed, &reasoning_effort);
-            let cleared_tier = clear_unsupported_service_tier(trimmed, &service_tier);
-            match (cleared_effort, cleared_tier) {
-                (Some(effort), Some(tier)) => eprintln!(
-                    "Switched to model: {trimmed}; cleared reasoning effort '{}' and service tier '{}' because they are unsupported",
-                    effort_label(effort),
-                    tier.as_str(),
-                ),
-                (Some(effort), None) => eprintln!(
-                    "Switched to model: {trimmed}; cleared reasoning effort '{}' because it is unsupported",
-                    effort_label(effort),
-                ),
-                (None, Some(tier)) => eprintln!(
-                    "Switched to model: {trimmed}; cleared service tier '{}' because it is unsupported",
-                    tier.as_str(),
-                ),
-                (None, None) => eprintln!("Switched to model: {trimmed}"),
-            }
+        let mut current = selection.lock();
+        if arg.trim().is_empty() {
+            eprintln!("{}", current.model());
+            return Ok(Vec::new());
         }
+        let prepared = match current.prepare(arg) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                eprintln!("norn: /model: {error}");
+                return Ok(Vec::new());
+            }
+        };
+        if current.effort().is_some() && prepared.effort().is_none() {
+            eprintln!(
+                "Cleared unsupported reasoning effort for {}",
+                prepared.model()
+            );
+        }
+        if current.tier().is_some() && prepared.tier().is_none() {
+            eprintln!("Cleared unsupported service tier for {}", prepared.model());
+        }
+        *current = prepared;
+        eprintln!("Switched to model: {}", current.model());
         Ok(Vec::new())
     })
 }
 
-// -- /effort / /reasoning-effort -------------------------------------------
-
 fn effort_handler(state: &SlashState) -> CustomSlashHandler {
-    let model = Arc::clone(&state.model);
-    let reasoning_effort = Arc::clone(&state.reasoning_effort);
+    let selection = Arc::clone(&state.model_selection);
     Arc::new(move |arg| {
-        let trimmed = arg.trim();
-        if trimmed.is_empty() {
-            let current = (*reasoning_effort.lock()).map_or("default", effort_label);
-            eprintln!("{current}");
-            return Ok(Vec::new());
-        }
-        match parse_effort_command(trimmed) {
-            Some(EffortCommand::Set(effort)) => {
-                let model_name = model.lock().clone();
-                if reasoning_effort_supported_for_model(&model_name, effort) {
-                    *reasoning_effort.lock() = Some(effort);
-                    eprintln!("Reasoning effort: {}", effort_label(effort));
-                } else {
-                    eprintln!(
-                        "{}",
-                        unsupported_reasoning_effort_message(&model_name, effort_label(effort)),
-                    );
-                }
-            }
-            Some(EffortCommand::Clear) => {
-                *reasoning_effort.lock() = None;
-                eprintln!("Reasoning effort cleared.");
+        let mut current = selection.lock();
+        let effort = match parse_effort_command(arg) {
+            Some(EffortCommand::Set(effort)) => Some(effort),
+            Some(EffortCommand::Clear) => None,
+            None if arg.trim().is_empty() => {
+                eprintln!("{}", current.effort().map_or("default", effort_label));
+                return Ok(Vec::new());
             }
             None => {
                 eprintln!(
-                    "norn: invalid reasoning effort '{trimmed}'; expected none, low, medium, high, xhigh, max, or default"
+                    "norn: invalid reasoning effort '{arg}'; expected low, medium, high, xhigh, max, ultra, or default"
                 );
+                return Ok(Vec::new());
             }
+        };
+        match current.set_effort(effort) {
+            Ok(()) => eprintln!(
+                "Reasoning effort: {}",
+                effort.map_or("default", effort_label)
+            ),
+            Err(error) => eprintln!("norn: /effort: {error}"),
         }
         Ok(Vec::new())
     })
 }
 
-// -- /service-tier / /fast --------------------------------------------------
-
 fn service_tier_handler(state: &SlashState) -> CustomSlashHandler {
-    let service_tier = Arc::clone(&state.service_tier);
-    let model = Arc::clone(&state.model);
+    let selection = Arc::clone(&state.model_selection);
     Arc::new(move |arg| {
-        let trimmed = arg.trim().to_ascii_lowercase();
-        if trimmed.is_empty() {
-            let current = match *service_tier.lock() {
-                Some(tier) => tier.as_str().to_owned(),
-                None => "none".to_owned(),
-            };
-            eprintln!("{current}");
-            return Ok(Vec::new());
-        }
-        match parse_service_tier_command(&trimmed) {
-            Some(ServiceTierCommand::Fast) => {
-                let model_name = model.lock().clone();
-                if service_tier_supported_for_model(&model_name, ServiceTier::Fast) {
-                    *service_tier.lock() = Some(ServiceTier::Fast);
-                    eprintln!("Service tier: fast");
-                } else {
-                    eprintln!("{}", unsupported_service_tier_message(&model_name, "fast"));
-                }
-            }
-            Some(ServiceTierCommand::Clear) => {
-                *service_tier.lock() = None;
-                eprintln!("Service tier cleared.");
+        let mut current = selection.lock();
+        let tier = match parse_service_tier_command(arg) {
+            Some(ServiceTierCommand::Fast) => Some(ServiceTier::Fast),
+            Some(ServiceTierCommand::Clear) => None,
+            None if arg.trim().is_empty() => {
+                eprintln!("{}", current.tier().map_or("none", |tier| tier.as_str()));
+                return Ok(Vec::new());
             }
             None => {
-                eprintln!("norn: invalid service tier '{trimmed}'; expected fast or none");
+                eprintln!("norn: invalid service tier '{arg}'; expected fast or none");
+                return Ok(Vec::new());
             }
+        };
+        match current.set_tier(tier) {
+            Ok(()) => eprintln!(
+                "Service tier: {}",
+                tier.map_or("none", |tier| tier.as_str())
+            ),
+            Err(error) => eprintln!("norn: /service-tier: {error}"),
         }
         Ok(Vec::new())
     })
 }
 
 fn fast_handler(state: &SlashState) -> CustomSlashHandler {
-    let service_tier = Arc::clone(&state.service_tier);
-    let model = Arc::clone(&state.model);
-    Arc::new(move |_arg| {
-        let model_name = model.lock().clone();
-        if service_tier_supported_for_model(&model_name, ServiceTier::Fast) {
-            *service_tier.lock() = Some(ServiceTier::Fast);
-            eprintln!("Service tier: fast");
-        } else {
-            eprintln!("{}", unsupported_service_tier_message(&model_name, "fast"));
-        }
-        Ok(Vec::new())
-    })
-}
-
-fn clear_unsupported_service_tier(
-    model: &str,
-    service_tier: &Arc<parking_lot::Mutex<Option<ServiceTier>>>,
-) -> Option<ServiceTier> {
-    let mut guard = service_tier.lock();
-    let tier = (*guard)?;
-    if service_tier_supported_for_model(model, tier) {
-        return None;
-    }
-    *guard = None;
-    Some(tier)
-}
-
-fn clear_unsupported_reasoning_effort(
-    model: &str,
-    reasoning_effort: &Arc<parking_lot::Mutex<Option<ReasoningEffort>>>,
-) -> Option<ReasoningEffort> {
-    let mut guard = reasoning_effort.lock();
-    let effort = (*guard)?;
-    if reasoning_effort_supported_for_model(model, effort) {
-        return None;
-    }
-    *guard = None;
-    Some(effort)
+    let handler = service_tier_handler(state);
+    Arc::new(move |_arg| handler("fast"))
 }
 
 // -- /schema ----------------------------------------------------------------
@@ -514,11 +452,16 @@ mod tests {
     use super::super::state::{SlashState, SlashStateSeed};
     use super::*;
 
-    fn empty_seed() -> SlashStateSeed {
-        SlashStateSeed {
-            model: "gpt-x".to_owned(),
-            service_tier: None,
-            reasoning_effort: None,
+    fn empty_seed() -> Result<SlashStateSeed, norn::error::ConfigError> {
+        Ok(SlashStateSeed {
+            model_selection: norn::model_selection::ModelRuntime::new(
+                Some(norn::model_selection::CatalogBackend::CODEX),
+                "gpt-x",
+                Some(272_000),
+                None,
+                None,
+                std::collections::BTreeMap::new(),
+            )?,
             output_schema: None,
             session_name: None,
             session_id: None,
@@ -529,7 +472,7 @@ mod tests {
             variable_pairs: Vec::new(),
             tools: Vec::new(),
             store: Arc::new(EventStore::new()),
-        }
+        })
     }
 
     fn fire(registry: &SlashCommandRegistry, name: &str, arg: &str) {
@@ -549,19 +492,20 @@ mod tests {
     }
 
     #[test]
-    fn registry_contains_all_builtins() {
-        let state = SlashState::new(empty_seed());
+    fn registry_contains_all_builtins() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         let names = cli_builtin_names();
         for name in &names {
             assert!(registry.get(name).is_some(), "missing CLI builtin: /{name}");
         }
         assert_eq!(registry.len(), names.len());
+        Ok(())
     }
 
     #[test]
-    fn command_descriptions_populated_for_builtins() {
-        let state = SlashState::new(empty_seed());
+    fn command_descriptions_populated_for_builtins() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let _registry = build_slash_registry(&state, None);
         let rows = state.command_descriptions.lock().clone();
         let names = cli_builtin_names();
@@ -572,10 +516,11 @@ mod tests {
                 "/help snapshot missing /{name}",
             );
         }
+        Ok(())
     }
 
     #[test]
-    fn profile_command_does_not_override_cli_builtin() {
+    fn profile_command_does_not_override_cli_builtin() -> Result<(), norn::error::ConfigError> {
         let mut profile = SlashCommandRegistry::new();
         profile.register(SlashCommand {
             name: "help".to_owned(),
@@ -583,17 +528,19 @@ mod tests {
                 skill_name: "rogue-help".to_owned(),
             },
         });
-        let state = SlashState::new(empty_seed());
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, Some(&profile));
         let help = registry.get("help").expect("help present");
         assert!(
             matches!(help.handler, SlashCommandHandler::Custom { .. }),
             "CLI builtin /help must win over profile /help",
         );
+        Ok(())
     }
 
     #[test]
-    fn profile_command_appears_in_merged_registry_and_help_snapshot() {
+    fn profile_command_appears_in_merged_registry_and_help_snapshot()
+    -> Result<(), norn::error::ConfigError> {
         let mut profile = SlashCommandRegistry::new();
         profile.register(SlashCommand {
             name: "deploy".to_owned(),
@@ -601,7 +548,7 @@ mod tests {
                 skill_name: "deploy".to_owned(),
             },
         });
-        let state = SlashState::new(empty_seed());
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, Some(&profile));
         assert!(registry.get("deploy").is_some());
         let rows = state.command_descriptions.lock().clone();
@@ -610,25 +557,28 @@ mod tests {
             deploy_row.map(|(_, d)| d.as_str()),
             Some(PROFILE_DESCRIPTION_PLACEHOLDER),
         );
+        Ok(())
     }
 
     #[test]
-    fn help_handler_runs_without_emitting_messages() {
-        let state = SlashState::new(empty_seed());
+    fn help_handler_runs_without_emitting_messages() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         fire(&registry, "help", "");
+        Ok(())
     }
 
     #[test]
-    fn tools_handler_handles_empty_snapshot() {
-        let state = SlashState::new(empty_seed());
+    fn tools_handler_handles_empty_snapshot() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         fire(&registry, "tools", "");
+        Ok(())
     }
 
     #[test]
-    fn tools_handler_renders_snapshot() {
-        let mut seed = empty_seed();
+    fn tools_handler_renders_snapshot() -> Result<(), norn::error::ConfigError> {
+        let mut seed = empty_seed()?;
         seed.tools = vec![
             ("read".to_owned(), "Read a file".to_owned()),
             ("write".to_owned(), "Write a file".to_owned()),
@@ -636,28 +586,31 @@ mod tests {
         let state = SlashState::new(seed);
         let registry = build_slash_registry(&state, None);
         fire(&registry, "tools", "");
+        Ok(())
     }
 
     #[test]
-    fn model_no_arg_prints_current_model() {
-        let state = SlashState::new(empty_seed());
+    fn model_no_arg_prints_current_model() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         fire(&registry, "model", "");
         assert_eq!(state.model_snapshot(), "gpt-x");
+        Ok(())
     }
 
     #[test]
-    fn model_with_arg_switches_model() {
-        let state = SlashState::new(empty_seed());
+    fn model_with_arg_switches_model() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         fire(&registry, "model", "gpt-5.5");
         assert_eq!(state.model_snapshot(), "gpt-5.5");
+        Ok(())
     }
 
     #[test]
-    fn service_tier_commands_update_runtime_state() {
-        let mut seed = empty_seed();
-        seed.model = "gpt-5.5".to_owned();
+    fn service_tier_commands_update_runtime_state() -> Result<(), norn::error::ConfigError> {
+        let mut seed = empty_seed()?;
+        seed.model_selection = seed.model_selection.prepare("gpt-5.5")?;
         let state = SlashState::new(seed);
         let registry = build_slash_registry(&state, None);
 
@@ -669,12 +622,13 @@ mod tests {
 
         fire(&registry, "fast", "");
         assert_eq!(state.service_tier_snapshot(), Some(ServiceTier::Fast));
+        Ok(())
     }
 
     #[test]
-    fn service_tier_fast_rejects_unsupported_model() {
-        let mut seed = empty_seed();
-        seed.model = "gpt-5.4-mini".to_owned();
+    fn service_tier_fast_rejects_unsupported_model() -> Result<(), norn::error::ConfigError> {
+        let mut seed = empty_seed()?;
+        seed.model_selection = seed.model_selection.prepare("gpt-5.4-mini")?;
         let state = SlashState::new(seed);
         let registry = build_slash_registry(&state, None);
 
@@ -683,13 +637,14 @@ mod tests {
 
         fire(&registry, "fast", "");
         assert_eq!(state.service_tier_snapshot(), None);
+        Ok(())
     }
 
     #[test]
-    fn model_switch_clears_unsupported_service_tier() {
-        let mut seed = empty_seed();
-        seed.model = "gpt-5.5".to_owned();
-        seed.service_tier = Some(ServiceTier::Fast);
+    fn model_switch_clears_unsupported_service_tier() -> Result<(), norn::error::ConfigError> {
+        let mut seed = empty_seed()?;
+        seed.model_selection = seed.model_selection.prepare("gpt-5.5")?;
+        seed.model_selection.set_tier(Some(ServiceTier::Fast))?;
         let state = SlashState::new(seed);
         let registry = build_slash_registry(&state, None);
 
@@ -697,14 +652,17 @@ mod tests {
 
         assert_eq!(state.model_snapshot(), "gpt-5.4-mini");
         assert_eq!(state.service_tier_snapshot(), None);
+        Ok(())
     }
 
     #[test]
-    fn model_switch_clears_unsupported_effort_but_preserves_supported_service_tier() {
-        let mut seed = empty_seed();
-        seed.model = "gpt-5.6-sol".to_owned();
-        seed.reasoning_effort = Some(ReasoningEffort::Max);
-        seed.service_tier = Some(ServiceTier::Fast);
+    fn model_switch_clears_unsupported_effort_but_preserves_supported_service_tier()
+    -> Result<(), norn::error::ConfigError> {
+        let mut seed = empty_seed()?;
+        seed.model_selection = seed.model_selection.prepare("gpt-5.6-sol")?;
+        seed.model_selection
+            .set_effort(Some(ReasoningEffort::Max))?;
+        seed.model_selection.set_tier(Some(ServiceTier::Fast))?;
         let state = SlashState::new(seed);
         let registry = build_slash_registry(&state, None);
 
@@ -713,12 +671,13 @@ mod tests {
         assert_eq!(state.model_snapshot(), "gpt-5.5");
         assert_eq!(state.reasoning_effort_snapshot(), None);
         assert_eq!(state.service_tier_snapshot(), Some(ServiceTier::Fast));
+        Ok(())
     }
 
     #[test]
-    fn effort_commands_update_runtime_state() {
-        let mut seed = empty_seed();
-        seed.model = "gpt-5.5".to_owned();
+    fn effort_commands_update_runtime_state() -> Result<(), norn::error::ConfigError> {
+        let mut seed = empty_seed()?;
+        seed.model_selection = seed.model_selection.prepare("gpt-5.5")?;
         let state = SlashState::new(seed);
         let registry = build_slash_registry(&state, None);
 
@@ -744,12 +703,13 @@ mod tests {
 
         fire(&registry, "effort", "default");
         assert_eq!(state.reasoning_effort_snapshot(), None);
+        Ok(())
     }
 
     #[test]
-    fn effort_command_accepts_max_for_supported_model() {
-        let mut seed = empty_seed();
-        seed.model = "gpt-5.6-sol".to_owned();
+    fn effort_command_accepts_max_for_supported_model() -> Result<(), norn::error::ConfigError> {
+        let mut seed = empty_seed()?;
+        seed.model_selection = seed.model_selection.prepare("gpt-5.6-sol")?;
         let state = SlashState::new(seed);
         let registry = build_slash_registry(&state, None);
 
@@ -759,40 +719,44 @@ mod tests {
             state.reasoning_effort_snapshot(),
             Some(ReasoningEffort::Max),
         );
+        Ok(())
     }
 
     #[test]
-    fn effort_command_rejects_unsupported_model() {
-        let state = SlashState::new(empty_seed());
+    fn effort_command_rejects_unsupported_model() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
 
         fire(&registry, "effort", "high");
 
         assert_eq!(state.reasoning_effort_snapshot(), None);
+        Ok(())
     }
 
     #[test]
-    fn schema_no_arg_with_none_prints_placeholder() {
-        let state = SlashState::new(empty_seed());
+    fn schema_no_arg_with_none_prints_placeholder() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         fire(&registry, "schema", "");
         assert!(state.output_schema_snapshot().is_none());
+        Ok(())
     }
 
     #[test]
-    fn schema_inline_json_sets_active_schema() {
-        let state = SlashState::new(empty_seed());
+    fn schema_inline_json_sets_active_schema() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         fire(&registry, "schema", r#"{"type":"object"}"#);
         assert_eq!(
             state.output_schema_snapshot(),
             Some(serde_json::json!({"type": "object"})),
         );
+        Ok(())
     }
 
     #[test]
-    fn schema_invalid_input_leaves_state_unchanged() {
-        let mut seed = empty_seed();
+    fn schema_invalid_input_leaves_state_unchanged() -> Result<(), norn::error::ConfigError> {
+        let mut seed = empty_seed()?;
         seed.output_schema = Some(serde_json::json!({"type": "string"}));
         let state = SlashState::new(seed);
         let registry = build_slash_registry(&state, None);
@@ -801,48 +765,54 @@ mod tests {
             state.output_schema_snapshot(),
             Some(serde_json::json!({"type": "string"})),
         );
+        Ok(())
     }
 
     #[test]
-    fn compact_handler_sets_flag() {
-        let state = SlashState::new(empty_seed());
+    fn compact_handler_sets_flag() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         fire(&registry, "compact", "");
         assert!(state.compact_requested.load(Ordering::Relaxed));
+        Ok(())
     }
 
     #[test]
-    fn clear_handler_sets_flag_and_keeps_state() {
-        let state = SlashState::new(empty_seed());
+    fn clear_handler_sets_flag_and_keeps_state() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         fire(&registry, "clear", "");
         assert!(state.clear_requested.load(Ordering::Relaxed));
+        Ok(())
     }
 
     #[test]
-    fn session_handler_handles_no_persistence() {
-        let state = SlashState::new(empty_seed());
+    fn session_handler_handles_no_persistence() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         fire(&registry, "session", "");
+        Ok(())
     }
 
     #[test]
-    fn name_handler_with_arg_updates_session_name() {
-        let state = SlashState::new(empty_seed());
+    fn name_handler_with_arg_updates_session_name() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         fire(&registry, "name", "refactor-auth");
         assert_eq!(
             state.session_name_snapshot().as_deref(),
             Some("refactor-auth")
         );
+        Ok(())
     }
 
     #[test]
-    fn name_handler_no_arg_leaves_session_name_unchanged() {
-        let state = SlashState::new(empty_seed());
+    fn name_handler_no_arg_leaves_session_name_unchanged() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         fire(&registry, "name", "");
         assert!(state.session_name_snapshot().is_none());
+        Ok(())
     }
 
     /// Regression (review A2, 2026-07-06): `/name` used to construct its
@@ -853,7 +823,8 @@ mod tests {
     /// promptly with the in-memory name set — and the rename lands once
     /// the holder releases.
     #[test]
-    fn name_handler_with_held_lock_warns_instead_of_hanging() {
+    fn name_handler_with_held_lock_warns_instead_of_hanging() -> Result<(), norn::error::ConfigError>
+    {
         use norn::session::store::DurabilityPolicy;
         use norn::session::{CreateSessionOptions, SessionManager};
 
@@ -871,7 +842,7 @@ mod tests {
         let session_id = opened.entry.id.clone();
         drop(opened);
 
-        let mut seed = empty_seed();
+        let mut seed = empty_seed()?;
         seed.session_id = Some(session_id.clone());
         seed.data_dir = tmp.path().to_path_buf();
         seed.no_session = false;
@@ -912,42 +883,46 @@ mod tests {
             .resolve(&session_id)
             .unwrap();
         assert_eq!(renamed.name.as_deref(), Some("post-release-name"));
+        Ok(())
     }
 
     #[test]
-    fn variables_handler_handles_empty_pairs() {
-        let state = SlashState::new(empty_seed());
+    fn variables_handler_handles_empty_pairs() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         fire(&registry, "variables", "");
+        Ok(())
     }
 
     #[test]
-    fn variables_handler_with_pairs_renders() {
-        let mut seed = empty_seed();
+    fn variables_handler_with_pairs_renders() -> Result<(), norn::error::ConfigError> {
+        let mut seed = empty_seed()?;
         seed.variable_pairs = vec![("project".to_owned(), "yggdrasil".to_owned())];
         let state = SlashState::new(seed);
         let registry = build_slash_registry(&state, None);
         fire(&registry, "variables", "");
+        Ok(())
     }
 
     #[test]
-    fn exit_and_quit_both_flip_exit_flag() {
-        let state = SlashState::new(empty_seed());
+    fn exit_and_quit_both_flip_exit_flag() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         fire(&registry, "exit", "");
         assert!(state.exit_requested.load(Ordering::Relaxed));
 
-        let state2 = SlashState::new(empty_seed());
+        let state2 = SlashState::new(empty_seed()?);
         let registry2 = build_slash_registry(&state2, None);
         fire(&registry2, "quit", "");
         assert!(state2.exit_requested.load(Ordering::Relaxed));
+        Ok(())
     }
 
     #[test]
-    fn closure_signature_satisfies_norn_error() {
+    fn closure_signature_satisfies_norn_error() -> Result<(), norn::error::ConfigError> {
         // Smoke test ensuring the handler type alias is the right shape.
         fn assert_send_sync<T: Send + Sync>(_: &T) {}
-        let state = SlashState::new(empty_seed());
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         let help = registry.get("help").unwrap();
         match &help.handler {
@@ -958,5 +933,6 @@ mod tests {
             }
             other => panic!("expected Custom, got {other:?}"),
         }
+        Ok(())
     }
 }

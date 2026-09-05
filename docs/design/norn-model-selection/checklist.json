@@ -1,0 +1,22 @@
+{
+  "sections": [
+    {
+      "items": [
+        {
+          "id": "C1",
+          "text": "The selected Codex model uses reviewed facts and the advertised typed effort vocabulary."
+        },
+        {
+          "id": "C2",
+          "text": "Model capability and budget resolution uses the actual backend and explicit override provenance."
+        },
+        {
+          "id": "C3",
+          "text": "Live switches publish validated model and both budgets together or change nothing."
+        }
+      ],
+      "name": "Model facts and transitions"
+    }
+  ],
+  "cluster": "norn-model-selection"
+}

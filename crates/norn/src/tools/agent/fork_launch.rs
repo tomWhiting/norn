@@ -213,7 +213,12 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         // to carry the delivered grandchild subtrees out of the loop.
         let delivered_children = loop_ctx.children_usage.clone();
         let mut fork_config = config;
-        crate::agent::arming::arm_auto_compaction(&mut loop_ctx, &mut fork_config, &model);
+        crate::agent::arming::arm_auto_compaction(
+            provider.model_catalog_backend(),
+            &mut loop_ctx,
+            &mut fork_config,
+            &model,
+        );
         let step = std::panic::AssertUnwindSafe(run_agent_step(AgentStepRequest {
             provider: provider.as_ref(),
             executor: &executor,

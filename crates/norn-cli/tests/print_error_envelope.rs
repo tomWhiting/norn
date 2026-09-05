@@ -63,6 +63,9 @@ const AGENT_FAILURE_ARGS: &[&str] = &[
     "openai-compatible",
     "-c",
     "base_url=http://127.0.0.1:9/v1",
+    // Explicit Sol fixture budget: reach the intended transport failure.
+    "-c",
+    "context_window=272000",
     "-c",
     "max_retries=0",
     "-c",
@@ -352,6 +355,9 @@ fn driven_mode_failure_answers_error_response_without_envelope() {
             "openai-compatible",
             "-c",
             "base_url=http://127.0.0.1:9/v1",
+            // The driven fixture must reach the same transport failure.
+            "-c",
+            "context_window=272000",
             "-c",
             "max_retries=0",
             "-c",

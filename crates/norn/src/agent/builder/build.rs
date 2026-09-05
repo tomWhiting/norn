@@ -67,8 +67,8 @@ impl AgentBuilder {
         )?;
         let profile_prompt_source = resolved_profile.prompt_source;
         let mut profile = resolved_profile.profile;
-        if let Some(model) = self.model {
-            profile.model = model;
+        if let Some(model) = self.model.as_ref() {
+            model.as_str().clone_into(&mut profile.model);
         }
         // H13: the programmatic hook registry is taken exactly once. When the
         // runtime base is loaded it is *moved* into `load_runtime_base`, which
@@ -103,8 +103,7 @@ impl AgentBuilder {
         if !self.capabilities.is_empty() {
             profile.capabilities.extend(self.capabilities);
         }
-        let model = profile.model.clone();
-        if model.is_empty() {
+        if profile.model.is_empty() {
             return Err(invalid(
                 "no model resolved: set .model(\"<model-id>\") on the builder, or supply \
                  a profile that specifies one via .profile(..) / .profile_name(..); Norn \
@@ -112,6 +111,29 @@ impl AgentBuilder {
                     .to_string(),
             ));
         }
+        let mut config_override = effective_agent_config(
+            runtime_base.as_ref(),
+            self.agent_config,
+            self.agent_config_present,
+        );
+        let aliases = runtime_base
+            .as_ref()
+            .and_then(|base| base.settings.model_aliases.clone())
+            .unwrap_or_default();
+        let model_input = self
+            .model
+            .unwrap_or_else(|| crate::model_selection::ModelInput::Raw(profile.model.clone()));
+        let mut model_selection = crate::model_selection::ModelRuntime::from_input(
+            self.provider.model_catalog_backend(),
+            model_input,
+            config_override.context_window_limit,
+            profile.reasoning_effort,
+            profile.service_tier,
+            aliases,
+        )
+        .map_err(NornError::Config)?;
+        let model = model_selection.model().to_owned();
+        profile.model.clone_from(&model);
         let profile_name = (!profile.name.is_empty()).then(|| profile.name.clone());
         let (provider_capabilities, provider_state_identity) =
             crate::agent::session_open::provider_authority(self.provider.as_ref())?;
@@ -270,11 +292,7 @@ impl AgentBuilder {
                 registry.get("skill").is_some(),
             );
         }
-        let mut config_override = effective_agent_config(
-            runtime_base.as_ref(),
-            self.agent_config,
-            self.agent_config_present,
-        );
+
         if let Some((entry, _)) = opened_session.as_ref() {
             // The persisted session's id is the prompt cache key on this
             // path: an explicitly configured cache_key would silently
@@ -300,8 +318,10 @@ impl AgentBuilder {
                 append_system_prompt: self.append_system_prompt,
                 profile_source: profile_prompt_source,
                 capabilities: provider_capabilities,
+                backend: self.provider.model_catalog_backend(),
             },
         )?;
+        model_selection.bind_compaction_reserve(config_override.auto_compact_reserve_tokens);
 
         let tool_defs = collect_tool_definitions(&registry);
 
@@ -355,6 +375,7 @@ impl AgentBuilder {
             &loop_context,
             &model,
         );
+        crate::agent::arming::publish_parent_context_window(shared.as_ref(), &model_selection);
         shared.insert_extension(Arc::new(
             crate::agent::fork::ParentPromptPlan::from_loop_context(&loop_context),
         ));
@@ -477,6 +498,7 @@ impl AgentBuilder {
             tool_runtime,
             loop_context,
             config: config_override,
+            model_selection,
             model,
             tool_defs,
             event_store,

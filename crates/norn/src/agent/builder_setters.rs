@@ -87,10 +87,18 @@ impl AgentBuilder {
         self
     }
 
-    /// Override the model the profile selects.
+    /// Override the model the profile selects, expanding a raw alias once at build time.
     #[must_use]
     pub fn model(mut self, model: impl Into<String>) -> Self {
-        self.model = Some(model.into());
+        self.model = Some(crate::model_selection::ModelInput::Raw(model.into()));
+        self
+    }
+
+    /// Use an already-resolved model identity without expanding another alias.
+    /// Backend capabilities and context policy remain validated at build time.
+    #[must_use]
+    pub fn resolved_model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(crate::model_selection::ModelInput::Resolved(model.into()));
         self
     }
 

@@ -1,0 +1,38 @@
+{
+  "sections": [
+    {
+      "items": [
+        {
+          "id": "C1",
+          "text": "Failures remain failures and diagnostics preserve source."
+        },
+        {
+          "id": "C2",
+          "text": "Regression fixtures reproduce real runner failures without real Cargo."
+        },
+        {
+          "id": "C3",
+          "text": "Canonical venue workflow consumes explicitly declared legs."
+        },
+        {
+          "id": "C4",
+          "text": "Pinned baseline Clippy failures are repaired explicitly without bypasses."
+        },
+        {
+          "id": "C5",
+          "text": "Prompt refresh fixture deliberately establishes a changed timestamp without timing sleeps."
+        },
+        {
+          "id": "C6",
+          "text": "Account-catalog recovery fixture separates successful default-timed setup from the unchanged deliberate abort-lock failure."
+        },
+        {
+          "id": "C7",
+          "text": "Every Norn venue leg refuses dirty source and moved HEAD before/after execution, preserves command failure, and records explicit source-witness limits."
+        }
+      ],
+      "name": "Verification"
+    }
+  ],
+  "cluster": "norn-verification"
+}

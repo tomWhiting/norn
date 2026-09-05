@@ -214,7 +214,7 @@ fn non_utf8_orphan_selector_round_trips_for_exact_export() -> Result<(), Box<dyn
         .as_deref()
         .ok_or_else(|| io::Error::other("orphan record has no source selector"))?;
     assert!(selector.starts_with("unix-path-hex:"));
-    assert!(selector.contains(&hex_byte_string(name.as_bytes())));
+    assert!(selector.contains(&hex_byte_string(name.as_bytes())?));
     let catalog_id = record
         .catalog_id
         .as_deref()
@@ -368,6 +368,10 @@ fn migrated_paths(
 }
 
 #[cfg(all(unix, not(target_vendor = "apple")))]
-fn hex_byte_string(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+fn hex_byte_string(bytes: &[u8]) -> Result<String, std::fmt::Error> {
+    let mut encoded = String::new();
+    for byte in bytes {
+        std::fmt::Write::write_fmt(&mut encoded, format_args!("{byte:02x}"))?;
+    }
+    Ok(encoded)
 }

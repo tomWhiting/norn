@@ -38,18 +38,8 @@ use serde_json::Value;
 /// slash command returns.
 #[derive(Clone)]
 pub struct SlashState {
-    /// Active model identifier. Read by the orchestrator before each
-    /// `run_agent_step` call so `/model gpt-x` takes effect immediately.
-    pub model: Arc<Mutex<String>>,
-
-    /// Active service tier. Read by the orchestrator before each
-    /// `run_agent_step` call so `/service-tier fast` takes effect
-    /// immediately.
-    pub service_tier: Arc<Mutex<Option<ServiceTier>>>,
-
-    /// Active reasoning effort. Read by the orchestrator before each
-    /// `run_agent_step` call so `/effort high` takes effect immediately.
-    pub reasoning_effort: Arc<Mutex<Option<ReasoningEffort>>>,
+    /// Model, backend, explicit context provenance, effort and tier, published together.
+    pub model_selection: Arc<Mutex<norn::model_selection::ModelRuntime>>,
 
     /// Active JSON output schema, if set. Read by the orchestrator
     /// before each `run_agent_step` call so `/schema {...}` takes
@@ -136,9 +126,7 @@ impl SlashState {
     #[must_use]
     pub fn new(seed: SlashStateSeed) -> Self {
         Self {
-            model: Arc::new(Mutex::new(seed.model)),
-            service_tier: Arc::new(Mutex::new(seed.service_tier)),
-            reasoning_effort: Arc::new(Mutex::new(seed.reasoning_effort)),
+            model_selection: Arc::new(Mutex::new(seed.model_selection)),
             output_schema: Arc::new(Mutex::new(seed.output_schema)),
             session_name: Arc::new(Mutex::new(seed.session_name)),
             cumulative_usage: Arc::new(Mutex::new(Usage::default())),
@@ -180,19 +168,19 @@ impl SlashState {
     /// Snapshot the active model identifier.
     #[must_use]
     pub fn model_snapshot(&self) -> String {
-        self.model.lock().clone()
+        self.model_selection.lock().model().to_owned()
     }
 
     /// Snapshot the active service tier.
     #[must_use]
     pub fn service_tier_snapshot(&self) -> Option<ServiceTier> {
-        *self.service_tier.lock()
+        self.model_selection.lock().tier()
     }
 
     /// Snapshot the active reasoning effort.
     #[must_use]
     pub fn reasoning_effort_snapshot(&self) -> Option<ReasoningEffort> {
-        *self.reasoning_effort.lock()
+        self.model_selection.lock().effort()
     }
 
     /// Snapshot the active output schema.
@@ -226,12 +214,8 @@ impl SlashState {
 /// within clippy's `too_many_arguments` budget and to give every input
 /// a documented name.
 pub struct SlashStateSeed {
-    /// Initial active model identifier (from the bundle).
-    pub model: String,
-    /// Initial service tier (from the bundle loop context).
-    pub service_tier: Option<ServiceTier>,
-    /// Initial reasoning effort (from the bundle loop context).
-    pub reasoning_effort: Option<ReasoningEffort>,
+    /// Validated startup selection, including explicit context-override provenance.
+    pub model_selection: norn::model_selection::ModelRuntime,
     /// Initial output schema parsed from `-s/--output-schema`, if any.
     pub output_schema: Option<Value>,
     /// Initial session name from the index entry or `--session-name`.
@@ -260,11 +244,16 @@ pub struct SlashStateSeed {
 mod tests {
     use super::*;
 
-    fn seed_with_store(store: Arc<EventStore>) -> SlashStateSeed {
-        SlashStateSeed {
-            model: "gpt-x".to_owned(),
-            service_tier: None,
-            reasoning_effort: None,
+    fn seed_with_store(store: Arc<EventStore>) -> Result<SlashStateSeed, norn::error::ConfigError> {
+        Ok(SlashStateSeed {
+            model_selection: norn::model_selection::ModelRuntime::new(
+                Some(norn::model_selection::CatalogBackend::CODEX),
+                "gpt-x",
+                Some(272_000),
+                None,
+                None,
+                std::collections::BTreeMap::new(),
+            )?,
             output_schema: None,
             session_name: None,
             session_id: None,
@@ -275,35 +264,38 @@ mod tests {
             variable_pairs: Vec::new(),
             tools: Vec::new(),
             store,
-        }
+        })
     }
 
     #[test]
-    fn model_snapshot_returns_seed_value() {
-        let state = SlashState::new(seed_with_store(Arc::new(EventStore::new())));
+    fn model_snapshot_returns_seed_value() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(seed_with_store(Arc::new(EventStore::new()))?);
         assert_eq!(state.model_snapshot(), "gpt-x");
+        Ok(())
     }
 
     #[test]
-    fn current_store_returns_initial_arc() {
+    fn current_store_returns_initial_arc() -> Result<(), norn::error::ConfigError> {
         let store = Arc::new(EventStore::new());
-        let state = SlashState::new(seed_with_store(Arc::clone(&store)));
+        let state = SlashState::new(seed_with_store(Arc::clone(&store))?);
         assert!(Arc::ptr_eq(&store, &state.current_store()));
+        Ok(())
     }
 
     #[test]
-    fn replace_store_swaps_inner_arc() {
+    fn replace_store_swaps_inner_arc() -> Result<(), norn::error::ConfigError> {
         let initial = Arc::new(EventStore::new());
-        let state = SlashState::new(seed_with_store(Arc::clone(&initial)));
+        let state = SlashState::new(seed_with_store(Arc::clone(&initial))?);
         let fresh = Arc::new(EventStore::new());
         state.replace_store(Arc::clone(&fresh));
         assert!(Arc::ptr_eq(&fresh, &state.current_store()));
         assert!(!Arc::ptr_eq(&initial, &state.current_store()));
+        Ok(())
     }
 
     #[test]
-    fn cumulative_usage_starts_at_zero_and_accumulates() {
-        let state = SlashState::new(seed_with_store(Arc::new(EventStore::new())));
+    fn cumulative_usage_starts_at_zero_and_accumulates() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(seed_with_store(Arc::new(EventStore::new()))?);
         let snapshot = state.cumulative_usage_snapshot();
         assert_eq!(snapshot.input_tokens, 0);
         assert_eq!(snapshot.output_tokens, 0);
@@ -322,11 +314,12 @@ mod tests {
         let total = state.cumulative_usage_snapshot();
         assert_eq!(total.input_tokens, 15);
         assert_eq!(total.output_tokens, 5);
+        Ok(())
     }
 
     #[test]
-    fn action_flags_initialised_to_false() {
-        let state = SlashState::new(seed_with_store(Arc::new(EventStore::new())));
+    fn action_flags_initialised_to_false() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(seed_with_store(Arc::new(EventStore::new()))?);
         assert!(
             !state
                 .compact_requested
@@ -342,5 +335,6 @@ mod tests {
                 .exit_requested
                 .load(std::sync::atomic::Ordering::Relaxed)
         );
+        Ok(())
     }
 }

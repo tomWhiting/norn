@@ -45,6 +45,11 @@ impl ScriptedTurnProvider {
 }
 
 impl Provider for ScriptedTurnProvider {
+    // This scripted provider represents the catalogued Codex models used by these tests.
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        Some(crate::model_selection::CatalogBackend::CODEX)
+    }
+
     fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         self.requests.lock().push(request);
         let mut turns = self.turns.lock();

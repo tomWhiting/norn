@@ -23,6 +23,11 @@ pub type ProviderStream = Pin<Box<dyn Stream<Item = Result<ProviderEvent, Provid
 /// The trait is object-safe: all methods take `&self` and the async
 /// `stream` method returns a boxed stream.
 pub trait Provider: Send + Sync {
+    /// Catalogue authority of this provider. Custom providers do not inherit Codex policy.
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        None
+    }
+
     /// Stable opaque identity for credential-and-authority-scoped provider
     /// state.
     ///

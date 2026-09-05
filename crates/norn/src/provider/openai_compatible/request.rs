@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use super::role_policy::{DeveloperRolePolicy, OPTION_KEY};
 use crate::error::ProviderError;
+use crate::model_selection::{CatalogBackend, effort_refusal_message, tier_refusal_message};
 use crate::provider::request::{
     Message, MessageRole, ProviderOptions, ProviderRequest, ReasoningEffort, ToolCallKind,
 };
@@ -48,12 +49,26 @@ pub(super) struct StreamOptions {
 ///
 /// # Errors
 ///
-/// Returns [`ProviderError`] when the request contains a tool surface or
-/// replay item that Chat Completions cannot represent safely.
+/// Returns [`ProviderError`] when the request contains an undeclared effort or
+/// tier, an override of owned policy, or a tool surface or replay item that Chat
+/// Completions cannot represent safely.
 pub(super) fn build_payload(
     request: &ProviderRequest,
     developer_role_policy: DeveloperRolePolicy,
 ) -> Result<serde_json::Value, ProviderError> {
+    if let Some(effort) = request.reasoning_effort {
+        let supported =
+            crate::model_catalog::find_model(CATALOG_PROVIDER, CATALOG_BACKEND, &request.model)
+                .is_some_and(|entry| entry.supported_reasoning_efforts.contains(&effort.as_str()));
+        if !supported {
+            return Err(ProviderError::InvalidRequest {
+                message: format!(
+                    "request.reasoning_effort: {}",
+                    effort_refusal_message(Some(CatalogBackend::CHAT), &request.model, effort)
+                ),
+            });
+        }
+    }
     let messages = request
         .messages
         .iter()
@@ -148,7 +163,14 @@ fn select_chat_completion_options(
 fn reject_protected_option_key(key: &str) -> Result<(), ProviderError> {
     if matches!(
         key,
-        "model" | "messages" | "tools" | "stream" | "functions" | "function_call"
+        "model"
+            | "messages"
+            | "tools"
+            | "stream"
+            | "functions"
+            | "function_call"
+            | "reasoning_effort"
+            | "service_tier"
     ) {
         return Err(ProviderError::InvalidRequest {
             message: format!(
@@ -275,9 +297,8 @@ fn service_tier_provider_value(request: &ProviderRequest) -> Result<Option<Strin
     ) else {
         return Err(ProviderError::InvalidRequest {
             message: format!(
-                "service tier '{}' is not supported for model '{}' on {CATALOG_PROVIDER}.{CATALOG_BACKEND}",
-                tier.as_str(),
-                request.model,
+                "request.service_tier: {}",
+                tier_refusal_message(Some(CatalogBackend::CHAT), &request.model, tier)
             ),
         });
     };
@@ -350,7 +371,7 @@ mod tests {
                 }),
             })],
             model: "local-model".to_owned(),
-            reasoning_effort: Some(ReasoningEffort::Low),
+            reasoning_effort: None,
             reasoning_summary: None,
             service_tier: None,
             config: None,
@@ -371,7 +392,8 @@ mod tests {
         assert_eq!(value["stream"], true);
         assert_eq!(value["stream_options"]["include_usage"], true);
         assert_eq!(value["tool_choice"], "auto");
-        assert_eq!(value["reasoning_effort"], "low");
+        assert!(value.get("reasoning_effort").is_none());
+        assert!(value.get("service_tier").is_none());
         assert!(value.get("store").is_none());
         assert!(value.get("previous_response_id").is_none());
         assert!(value.get("context_management").is_none());
@@ -398,11 +420,32 @@ mod tests {
     }
 
     #[test]
-    fn max_reasoning_effort_uses_canonical_wire_value() -> TestResult {
-        let mut request = base_request();
-        request.reasoning_effort = Some(ReasoningEffort::Max);
-        let value = build_payload(&request, DeveloperRolePolicy::Native)?;
-        assert_eq!(value["reasoning_effort"], "max");
+    fn typed_efforts_require_the_compatible_backend_catalogue() -> TestResult {
+        for model in ["gpt-5.5", "gpt-6-astra", "local-model"] {
+            for effort in [
+                ReasoningEffort::Medium,
+                ReasoningEffort::Ultra,
+                ReasoningEffort::Max,
+            ] {
+                let mut request = base_request();
+                request.model = model.to_owned();
+                request.reasoning_effort = Some(effort);
+
+                let Err(ProviderError::InvalidRequest { message }) =
+                    build_payload(&request, DeveloperRolePolicy::Native)
+                else {
+                    return Err(
+                        "an undeclared chat effort must fail before request dispatch".into(),
+                    );
+                };
+                assert!(message.contains(model));
+                assert!(message.contains(effort.as_str()));
+                assert!(message.contains("openai.openai_compatible_chat"));
+                assert!(message.contains("request.reasoning_effort"));
+                assert!(message.contains("declares no capability metadata"));
+                assert!(!message.contains("is not supported"));
+            }
+        }
         Ok(())
     }
 
@@ -504,10 +547,15 @@ mod tests {
         let mut request = base_request();
         request.service_tier = Some(ServiceTier::Fast);
 
-        let Err(err) = build_payload(&request, DeveloperRolePolicy::Native) else {
-            return Err("an unsupported service tier must fail request construction".into());
+        let Err(ProviderError::InvalidRequest { message }) =
+            build_payload(&request, DeveloperRolePolicy::Native)
+        else {
+            return Err("an undeclared service tier must fail request construction".into());
         };
-        assert!(matches!(err, ProviderError::InvalidRequest { .. }));
+        assert!(message.contains("request.service_tier"));
+        assert!(message.contains("openai.openai_compatible_chat"));
+        assert!(message.contains("declares no capability metadata"));
+        assert!(!message.contains("is not supported"));
         Ok(())
     }
 
@@ -564,6 +612,30 @@ mod tests {
         };
 
         assert!(matches!(err, ProviderError::InvalidRequest { .. }));
+        Ok(())
+    }
+
+    #[test]
+    fn provider_options_cannot_override_effort_or_tier_in_any_scope() -> TestResult {
+        for (key, value) in [("reasoning_effort", "ultra"), ("service_tier", "priority")] {
+            let fields = serde_json::json!({(key): value});
+            for options in [
+                fields.clone(),
+                serde_json::json!({"openai_chat_completions": fields.clone()}),
+                serde_json::json!({"api_options": {"openai_chat_completions": fields}}),
+            ] {
+                let mut request = base_request();
+                request.config = Some(ProviderOptions(options));
+
+                let Err(ProviderError::InvalidRequest { message }) =
+                    build_payload(&request, DeveloperRolePolicy::Native)
+                else {
+                    return Err("raw options must not override owned chat policy".into());
+                };
+                assert!(message.contains(&format!("openai_chat_completions.{key}")));
+                assert!(message.contains("owned by Norn"));
+            }
+        }
         Ok(())
     }
 

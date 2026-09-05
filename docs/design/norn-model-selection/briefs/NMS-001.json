@@ -1,0 +1,363 @@
+{
+  "id": "NMS-001",
+  "cluster": "norn-model-selection",
+  "title": "Codex model refresh and coherent model transitions",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": [
+    "C1",
+    "C2",
+    "C3"
+  ],
+  "stories": [
+    "S1",
+    "S2",
+    "S3"
+  ],
+  "purpose": "Make the supplied Astra and refreshed Codex models usable without retaining another model or backend's budgets.",
+  "task": "Implement R1, then the shared resolution R2 and live transition R3, within the exact row walls. Parent owns R1; model implementation agent owns R2/R3. Stop and name any additional required file before editing it. Final acceptance covers the complete integrated unit.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Refresh factual Codex metadata and typed effort vocabulary",
+      "spec": "WHEN the supplied Codex snapshot lists a visible model, THE SYSTEM SHALL expose its reviewed metadata on the Codex subscription route. THE SYSTEM SHALL preserve distinct default/maximum windows, retain the existing default model, exclude hidden models from ordinary selection, and represent the advertised ultra identifier without claiming automatic delegation.",
+      "files": {
+        "modify": [
+          "assets/models.json",
+          "crates/norn/src/provider/request.rs",
+          "crates/norn/src/config/types.rs",
+          "crates/norn/src/config/validate.rs",
+          "crates/norn/src/runtime_init/base.rs",
+          "crates/norn/src/agent/variants/catalog.rs",
+          "docs/design/norn-cli/DESIGN.md",
+          "docs/design/norn-cli/checklist.json",
+          "docs/design/norn-cli/CHECKLIST.md",
+          "docs/design/norn-cli/briefs/NC-004.json",
+          "docs/design/norn-cli/briefs/NC-004.md"
+        ],
+        "create": [
+          "assets/codex-model-metadata-20260905.json",
+          "crates/norn/tests/codex_catalogue_snapshot.rs",
+          "docs/release-notes/UNRELEASED.md"
+        ]
+      },
+      "acceptance": [
+        "The seven visible snapshot entries match the normalized reference fields and the two hidden entries are absent from the ordinary catalogue.",
+        "Astra resolves through its canonical ID and alias; Codex default272000 and maximum872000 are distinct. Sol/Terra/Luna limits are refreshed.",
+        "Ultra serde/label/config parsing is available; selected-route validation and CLI/slash wiring are required before this brief is complete.",
+        "No embedded prompts, arbitrary context defaults, public API values, unrelated branch commits or broad dependency bumps are introduced.",
+        "docs/release-notes/UNRELEASED.md describes empty-route metadata, explicit context requirements and factual validation limits without claiming live provider proof or a released version."
+      ],
+      "acceptance_greps": [
+        "rg -n \"gpt-6-astra|872000|ultra\" assets/models.json crates/norn/src/provider/request.rs",
+        "rg -n \"codex_catalogue_snapshot\" crates/norn/tests"
+      ],
+      "checklist": [
+        "C1"
+      ],
+      "stories": [
+        "S1"
+      ]
+    },
+    {
+      "id": "R2",
+      "title": "Resolve against the actual backend before launch",
+      "spec": "WHEN a model is selected, THE SYSTEM SHALL resolve its canonical identity, selected provider/backend capabilities and explicit context override before arming or reservation. THE SYSTEM SHALL NOT borrow another backend's context or effort policy. The outbound Responses and compatible Chat boundaries SHALL validate typed effort before network access, and raw provider options SHALL NOT override owned effort/tier policy. Already-resolved startup model IDs SHALL NOT be expanded through aliases a second time.",
+      "files": {
+        "modify": [
+          "crates/norn/src/lib.rs",
+          "crates/norn/src/model_catalog.rs",
+          "crates/norn/src/provider/traits.rs",
+          "crates/norn/src/provider/mock.rs",
+          "crates/norn/src/provider/openai/provider.rs",
+          "crates/norn/src/provider/openai/request.rs",
+          "crates/norn/src/provider/openai_compatible/provider.rs",
+          "crates/norn/src/integration/claude/adapter.rs",
+          "crates/norn/src/agent/arming.rs",
+          "crates/norn/src/agent/arming/tests/auto_compaction.rs",
+          "crates/norn/src/agent/arming/tests/child_configuration.rs",
+          "crates/norn/src/agent/builder/build.rs",
+          "crates/norn/src/agent/builder/prompt.rs",
+          "crates/norn/src/agent/builder/tests/compaction.rs",
+          "crates/norn/src/agent/builder/tests/schema_and_model.rs",
+          "crates/norn/src/agent/instance.rs",
+          "crates/norn/src/tools/agent/spawn/execute.rs",
+          "crates/norn/src/tools/agent/variant_resolve.rs",
+          "crates/norn/src/tools/agent/fork_tool.rs",
+          "crates/norn/src/tools/agent/fork_tool/runtime.rs",
+          "crates/norn/src/integration/rhai/agent_ops/spawn.rs",
+          "crates/norn-cli/src/config/model_aliases.rs",
+          "crates/norn-cli/src/config/provider_selection.rs",
+          "crates/norn-cli/src/runtime/resolve.rs",
+          "crates/norn/src/loop/command_options.rs",
+          "crates/norn/src/loop/commands.rs",
+          "crates/norn-cli/src/cli/args.rs",
+          "crates/norn-cli/src/config/overrides/profile.rs",
+          "crates/norn-cli/src/config/overrides/tests/profile.rs",
+          "crates/norn/src/tools/agent/fork_launch.rs",
+          "crates/norn/src/tools/agent/spawn_controller.rs",
+          "crates/norn/src/agent/builder/tests/base_runtime.rs",
+          "crates/norn/src/agent/builder.rs",
+          "crates/norn/src/agent/builder_setters.rs",
+          "crates/norn-cli/src/runtime/from_cli.rs",
+          "crates/norn/src/provider/openai_compatible/request.rs",
+          "crates/norn-cli/tests/driver_executor.rs",
+          "crates/norn-cli/tests/jsonrpc_driven_mode.rs",
+          "crates/norn-cli/tests/print_error_envelope.rs",
+          "crates/norn-cli/tests/retry_visibility.rs",
+          "crates/norn-cli/tests/signal_cancellation.rs",
+          "crates/norn-cli/tests/stdout_purity.rs",
+          "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+          "crates/norn/src/agent/builder/tests/setters.rs",
+          "crates/norn/src/agent/credential_affinity_tests.rs",
+          "crates/norn/src/tools/agent/spawn/tests/mod.rs",
+          "crates/norn/src/tools/agent/spawn/tests/grandchildren.rs",
+          "crates/norn/src/tools/agent/spawn/tests/cancellation.rs",
+          "crates/norn/src/tools/agent/spawn/tests/usage_rollup.rs",
+          "crates/norn/src/tools/agent/spawn/tests/close_and_routes.rs",
+          "crates/norn/src/tools/agent/spawn/tests/linger_and_limits.rs",
+          "crates/norn/src/tools/agent/spawn/tests/worker_survival.rs",
+          "crates/norn/src/tools/agent/fork_tool/tests/mod.rs",
+          "crates/norn/src/tools/agent/fork_tool/tests/coordination.rs",
+          "crates/norn/src/tools/agent/fork_tool/tests/recursive_delegation.rs",
+          "crates/norn/src/tools/agent/fork_tool/tests/shutdown_logging.rs",
+          "crates/norn/src/tools/agent/fork_tool/tests/tool_surface.rs",
+          "crates/norn/src/integration/rhai/agent_ops/tests/spawn_cancellation.rs",
+          "crates/norn/src/integration/rhai/agent_ops/tests/spawn_compaction.rs",
+          "crates/norn/src/loop/mod.rs",
+          "crates/norn-cli/tests/assembly_flag_wiring.rs",
+          "crates/norn/src/agent/mcp_tests.rs",
+          "crates/norn/src/tools/agent/spawn_context.rs"
+        ],
+        "create": [
+          "crates/norn/src/model_selection.rs",
+          "crates/norn/src/model_selection/tests.rs",
+          "crates/norn/tests/model_selection.rs",
+          "crates/norn-cli/tests/model_selection.rs",
+          "crates/norn-cli/tests/child_context_window.rs"
+        ]
+      },
+      "acceptance": [
+        "Same model ID on two fixture backends uses only selected limits/efforts/tiers.",
+        "Unknown model needs explicit context; supported aliases retain startup precedence.",
+        "Derived window and explicit override are distinguished by provenance, not numeric equality.",
+        "Children validate before reservation/persistence.",
+        "Ultra parsing/help and CLI mapping work; unsupported Ultra refused on Luna/undeclared API route before request.",
+        "Existing stale metadata tests are updated to the supplied facts, without importing unmerged branches.",
+        "CLI alias work -> local-v1 with another alias local-v1 -> local-v2 starts local-v1 and live /model work also selects local-v1. Literal targets retain their identity even when an alias key shares the spelling.",
+        "Compatible Chat refuses undeclared typed efforts and raw reasoning_effort/service_tier overrides before request dispatch; ordinary unrelated provider options remain usable.",
+        "Real CLI assembly on Responses and compatible Chat admits spawn/fork for the same model/route using the operator-explicit root context. Explicit child policy wins; different-model or different-route children never borrow it; live model publication and descendants preserve its provenance. Missing metadata refusals name the route, not a guessed typo.",
+        "Raw reasoning.effort and service_tier cannot override typed policy through top-level, openai or openai_responses provider option scopes on either Responses backend; unrelated options remain usable.",
+        "Missing metadata and unsupported declared capabilities have distinct source-aware diagnostics. CLI startup refusals use argument exit 2, one norn prefix and empty stdout.",
+        "An operator alias targeting a bundled alias resolves once to its canonical identity; user-alias chains are not followed. Whitespace model identities are refused even with an explicit window."
+      ],
+      "acceptance_greps": [
+        "rg -n \"model_catalog_backend|model_selection\" crates/norn/src/provider crates/norn/src/agent",
+        "rg -n \"ultra\" crates/norn-cli/src/cli/args.rs crates/norn/src/loop/command_options.rs"
+      ],
+      "checklist": [
+        "C2"
+      ],
+      "stories": [
+        "S2"
+      ]
+    },
+    {
+      "id": "R3",
+      "title": "Publish one validated model transition before the next turn",
+      "spec": "WHEN the user switches models, THE SYSTEM SHALL prepare and validate the complete destination state before atomically publishing model, effective context, tool-output budget, effort, tier and display under the driver owner. IF validation fails, THE SYSTEM SHALL preserve every previous value. A switch SHALL NOT replace provider/history behind the user.",
+      "files": {
+        "modify": [
+          "crates/norn/src/model_selection.rs",
+          "crates/norn/src/model_selection/tests.rs",
+          "crates/norn/src/agent/instance.rs",
+          "crates/norn-cli/src/commands/slash/state.rs",
+          "crates/norn-cli/src/commands/slash/registry.rs",
+          "crates/norn-cli/src/commands/slash/actions.rs",
+          "crates/norn-cli/src/commands/slash/dispatch.rs",
+          "crates/norn-cli/src/runtime/wiring.rs",
+          "crates/norn-cli/src/runtime/wiring/inline_tests.rs",
+          "crates/norn-cli/src/print/orchestrator.rs",
+          "crates/norn-cli/src/print/error.rs",
+          "crates/norn-cli/src/tui/driver.rs",
+          "crates/norn-tui/src/app/event_loop.rs",
+          "crates/norn-tui/src/app/slash.rs",
+          "crates/norn-tui/src/app/mod.rs",
+          "crates/norn-tui/src/app/turn/run.rs",
+          "crates/norn-tui/tests/pty_smoke.rs",
+          "crates/norn-cli/tests/model_selection.rs"
+        ],
+        "create": [
+          "crates/norn-tui/src/app/model_selection.rs",
+          "crates/norn-tui/tests/model_selection.rs"
+        ]
+      },
+      "acceptance": [
+        "Sol\u2192Spark\u2192Astra derived limits change before the next turn.",
+        "An explicit override equal to the original default remains explicit and rejects incompatible destination.",
+        "Failed switches retain context, ToolOutputBudget, model, effort/tier and display.",
+        "Startup and live aliases share precedence; aliases needing another provider/profile fail unchanged.",
+        "No unwrap/expect/suppression/ignored tests added; new modules stay below500productionlines.",
+        "The promised crates/norn-tui/tests/model_selection.rs drives the public TUI through real /model, /effort and /service-tier dispatch, asserting next-turn model/budgets and atomic refusal; inline helper tests do not substitute for this path.",
+        "The builder binds the effective compaction reserve used by the stable prompt. A live switch preserves that exact reserve and refuses atomically if the destination window would enable or disable automatic compaction; compatible transitions still succeed. CLI and real TUI dispatch exercise the refusal.",
+        "Print-mode orchestration remains below 500 production lines after shared model publication; existing failure reporting and pre-assembly error-envelope handling live in print/error.rs with identical messages, exit codes and envelope behavior."
+      ],
+      "acceptance_greps": [
+        "rg -n \"ToolOutputBudget|prepare|model_selection\" crates/norn-tui/src/app crates/norn-cli/src/commands/slash"
+      ],
+      "checklist": [
+        "C3"
+      ],
+      "stories": [
+        "S3"
+      ]
+    }
+  ],
+  "boundaries": [
+    "No landing or release without the independently rerun exact-commit205 battery and required Fable review.",
+    "A row that needs another file stops and names it; never edit outside the recorded wall and report green.",
+    "Do not copy unmerged Claude SDK/compaction changes wholesale.",
+    "No inference of API entitlement from Codex catalogue data."
+  ],
+  "verification": [
+    "cargo fmt --all -- --check",
+    "cargo clippy --workspace --all-targets -- -D warnings",
+    "Focused catalogue/selection/startup/live-switch regression tests",
+    "Exact file-wall and brief coverage checks; final venue battery receipt and Fable review before landing"
+  ],
+  "wall_amendments": [
+    {
+      "row": "R1",
+      "reason": "Source inspection found two additional user-facing effort diagnostics listing valid values. Editing paused to name and add their paths before changes; serde already accepts Ultra.",
+      "added": [
+        "crates/norn/src/runtime_init/base.rs",
+        "crates/norn/src/agent/variants/catalog.rs"
+      ]
+    },
+    {
+      "row": "R2",
+      "reason": "Implementation stopped at two additional child-arming call sites; both need the actual backend argument before child admission. Named and added before edits.",
+      "added": [
+        "crates/norn/src/tools/agent/fork_launch.rs",
+        "crates/norn/src/tools/agent/spawn_controller.rs"
+      ]
+    },
+    {
+      "row": "R2",
+      "reason": "A startup embedding fixture sets explicit High/Fast on fake test-model. Named before editing; change only this fixture to factual gpt-5.5 while preserving its explicit TEST_CONTEXT_WINDOW.",
+      "added": [
+        "crates/norn/src/agent/builder/tests/base_runtime.rs"
+      ]
+    },
+    {
+      "row": "R2",
+      "reason": "Independent source review found double alias expansion between CLI resolution and AgentBuilder, and a compatible Chat request boundary permitting undeclared typed/raw effort. Named these exact four paths before edits.",
+      "added": [
+        "crates/norn/src/agent/builder.rs",
+        "crates/norn/src/agent/builder_setters.rs",
+        "crates/norn-cli/src/runtime/from_cli.rs",
+        "crates/norn/src/provider/openai_compatible/request.rs"
+      ]
+    },
+    {
+      "row": "R2",
+      "reason": "The first full venue test run found fixtures relying on implicit cross-backend context defaults or overwriting their own explicit context. Name exact files before making fixture budgets explicit; preserve the tests intended error and behavior assertions.",
+      "added": [
+        "crates/norn-cli/tests/driver_executor.rs",
+        "crates/norn-cli/tests/jsonrpc_driven_mode.rs",
+        "crates/norn-cli/tests/print_error_envelope.rs",
+        "crates/norn-cli/tests/retry_visibility.rs",
+        "crates/norn-cli/tests/signal_cancellation.rs",
+        "crates/norn-cli/tests/stdout_purity.rs",
+        "crates/norn/src/agent/builder/tests/managed_sessions.rs",
+        "crates/norn/src/agent/builder/tests/setters.rs",
+        "crates/norn/src/agent/credential_affinity_tests.rs"
+      ]
+    },
+    {
+      "row": "R2",
+      "reason": "The first full venue run exposed 18 in-memory test providers using Codex fixture models without declaring their backend. Name exact fixture paths before declaring their existing Codex authority; production custom providers retain no implicit backend.",
+      "added": [
+        "crates/norn/src/tools/agent/spawn/tests/mod.rs",
+        "crates/norn/src/tools/agent/spawn/tests/grandchildren.rs",
+        "crates/norn/src/tools/agent/spawn/tests/cancellation.rs",
+        "crates/norn/src/tools/agent/spawn/tests/usage_rollup.rs",
+        "crates/norn/src/tools/agent/spawn/tests/close_and_routes.rs",
+        "crates/norn/src/tools/agent/spawn/tests/linger_and_limits.rs",
+        "crates/norn/src/tools/agent/spawn/tests/worker_survival.rs",
+        "crates/norn/src/tools/agent/fork_tool/tests/mod.rs",
+        "crates/norn/src/tools/agent/fork_tool/tests/coordination.rs",
+        "crates/norn/src/tools/agent/fork_tool/tests/recursive_delegation.rs",
+        "crates/norn/src/tools/agent/fork_tool/tests/shutdown_logging.rs",
+        "crates/norn/src/tools/agent/fork_tool/tests/tool_surface.rs",
+        "crates/norn/src/integration/rhai/agent_ops/tests/spawn_cancellation.rs",
+        "crates/norn/src/integration/rhai/agent_ops/tests/spawn_compaction.rs"
+      ]
+    },
+    {
+      "row": "R2",
+      "reason": "Official Fable review remediation, 5 September 2026. Named before editing: NMS-7 removes obsolete slash support re-exports with their replaced helpers.",
+      "added": [
+        "crates/norn/src/loop/mod.rs"
+      ]
+    },
+    {
+      "row": "R1",
+      "reason": "Official Fable review remediation, 5 September 2026. Named before editing: NMS-9 requires an in-repository release note for route metadata limits and the model/transition changes.",
+      "added": [
+        "docs/release-notes/UNRELEASED.md"
+      ]
+    },
+    {
+      "row": "R2",
+      "reason": "Official Fable NMS-1: add the named real CLI child-admission integration file before editing. Same canonical model and concrete backend may inherit only the immediate parent operator-explicit window; publish provenance through existing arming/build/tool/selection paths. No arbitrary context fallback.",
+      "added": [
+        "crates/norn-cli/tests/child_context_window.rs"
+      ]
+    },
+    {
+      "row": "R2",
+      "reason": "Read-only check of carried first-pass notes confirmed public cross-backend window helpers now have only fixture consumers, and CLI effort documentation lacks Ultra. Name these exact consumers/docs before removing obsolete helpers and binding fixtures to their actual Codex backend.",
+      "added": [
+        "crates/norn-cli/tests/assembly_flag_wiring.rs",
+        "crates/norn/src/agent/mcp_tests.rs",
+        "crates/norn/src/tools/agent/spawn_context.rs"
+      ]
+    },
+    {
+      "row": "R1",
+      "reason": "Read-only check of carried first-pass notes confirmed public cross-backend window helpers now have only fixture consumers, and CLI effort documentation lacks Ultra. Name these exact consumers/docs before removing obsolete helpers and binding fixtures to their actual Codex backend.",
+      "added": [
+        "docs/design/norn-cli/DESIGN.md"
+      ]
+    },
+    {
+      "row": "R1",
+      "reason": "The carried first-pass audit named the exact historical CLI checklist and NC-004 JSON/rendered Markdown still advertising old effort vocabulary. Add these documentation paths before updating that vocabulary only; preserve their existing work status.",
+      "added": [
+        "docs/design/norn-cli/checklist.json",
+        "docs/design/norn-cli/CHECKLIST.md",
+        "docs/design/norn-cli/briefs/NC-004.json",
+        "docs/design/norn-cli/briefs/NC-004.md"
+      ]
+    },
+    {
+      "row": "R3",
+      "reason": "5 September 2026, Melbourne: the candidate16 AST policy diagnostic measured print/orchestrator.rs at 502 production lines against baseline 495. Name and add print/error.rs before moving the existing report and fail_before_assembly helpers into the module that owns print failures. Preserve behavior and public API; remeasure both files with the existing P0 helpers.",
+      "added": [
+        "crates/norn-cli/src/print/error.rs"
+      ]
+    }
+  ],
+  "review_amendments": [
+    {
+      "date": "5 September 2026, Melbourne",
+      "source": "Official Fable second-run report plus coordinator ADD-1; first-run notes independently checked against source",
+      "rows": [
+        "R2",
+        "R3"
+      ],
+      "reason": "Clarify acceptance for confirmed review fixes and compaction consistency. Existing implementation paths cover these changes; no additional product files are added by this amendment."
+    }
+  ]
+}

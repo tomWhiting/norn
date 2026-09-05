@@ -40,7 +40,7 @@ use crate::runtime::build_write_tool;
 
 /// Map a resolved CLI invocation onto an [`AgentBuilder`].
 ///
-/// `profile` already carries the CLI model / tool / reasoning overrides
+/// `profile` carries an already-resolved model identity and CLI tool / reasoning overrides
 /// (the caller ran `apply_cli_profile_overrides`, which produced
 /// `applied`); the allow-list therefore rides on `profile.tools` and is
 /// not re-applied here. Prompt overrides remain on `applied` so they retain
@@ -82,7 +82,7 @@ pub fn builder_from_cli(
     let config_overrides = ConfigOverrides::parse(&cli.config)?;
     let write_tool = build_write_tool(&profile, &config_overrides)?;
 
-    let builder = AgentBuilder::new(provider);
+    let builder = AgentBuilder::new(provider).resolved_model(profile.model.clone());
     let mut builder = match profile_source {
         CliProfileSource::Operator => builder.profile(profile),
         CliProfileSource::Discovered(origin) => builder.profile_with_origin(profile, origin),

@@ -79,6 +79,7 @@ pub(super) fn assemble(inputs: ForkRuntimeInputs<'_>) -> Result<ForkRuntime, Too
     // fork model. Unsupported inherited pairings degrade to None in the shared
     // arming helper rather than failing the fork.
     loop_context.reasoning_effort = crate::agent::arming::arm_child_reasoning_effort(
+        inputs.parent_infra.provider.model_catalog_backend(),
         inputs
             .parent_context
             .get_extension::<AgentModel>()

@@ -22,6 +22,7 @@ use crate::r#loop::config::AgentLoopConfig;
 use crate::r#loop::inbound::InboundSender;
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::tokens::SimpleTokenEstimator;
+use crate::model_selection::CatalogBackend;
 use crate::process::{ProcessManager, ProcessManagerGuard};
 use crate::session::MailboxId;
 use crate::session::context_edit::ContextEdits;
@@ -53,6 +54,89 @@ pub(crate) fn publish_parent_execution_context(
     }));
 }
 
+/// Model-bound window provenance published by the current agent's owner.
+/// An absent explicit value stays absent even after catalogue arming.
+pub(crate) struct ContextWindowPolicy {
+    backend: Option<CatalogBackend>,
+    model: String,
+    explicit_window: Option<u64>,
+}
+
+impl ContextWindowPolicy {
+    /// Publish this agent's policy for its own descendants, without putting a
+    /// model-bound value into the model-independent delegation grant.
+    pub(crate) fn publish(self, context: &ToolContext) {
+        context.insert_extension(Arc::new(self));
+    }
+}
+
+/// A validated child window paired with its explicit/derived provenance.
+/// The effective value arms the child's tools as well as its agent loop.
+pub(crate) struct ResolvedChildWindow {
+    policy: ContextWindowPolicy,
+    window: u64,
+}
+
+impl ResolvedChildWindow {
+    /// Install the child's own effective tool budget and window provenance.
+    /// Child contexts are fresh; forwarding the parent's budget would be
+    /// incorrect when the child selects another model or explicit window.
+    pub(crate) fn publish(self, context: &ToolContext) {
+        crate::runtime_init::install_tool_output_budget(context, Some(self.window));
+        self.policy.publish(context);
+    }
+}
+
+/// Retain the root's operator-explicit window at build and live selection.
+pub(crate) fn publish_parent_context_window(
+    context: &ToolContext,
+    selection: &crate::model_selection::ModelRuntime,
+) {
+    ContextWindowPolicy {
+        backend: selection.backend(),
+        model: selection.model().to_owned(),
+        explicit_window: selection.explicit_window(),
+    }
+    .publish(context);
+}
+
+/// Resolve a child override, then an explicit window belonging to the same
+/// live parent model and concrete route, then the child's own catalogue.
+/// A stale policy, a different route/model, or a derived window never supplies
+/// an implicit override. The returned policy preserves that distinction for
+/// descendants and is published only after the child's context is assembled.
+///
+/// # Errors
+/// Refuses missing, zero, or over-ceiling context windows before child admission.
+pub(crate) fn resolve_child_context_window(
+    parent: Option<&ToolContext>,
+    backend: Option<CatalogBackend>,
+    config: &mut AgentLoopConfig,
+    model: &str,
+) -> Result<ResolvedChildWindow, ConfigError> {
+    let inherited = parent.and_then(|context| {
+        let policy = context.get_extension::<ContextWindowPolicy>()?;
+        let live = context.get_extension::<AgentModel>()?;
+        (backend.is_some()
+            && policy.backend == backend
+            && policy.model == model
+            && live.model == model)
+            .then_some(policy.explicit_window)
+            .flatten()
+    });
+    let explicit_window = config.context_window_limit.or(inherited);
+    config.context_window_limit = explicit_window;
+    let window = arm_child_window(backend, config, model)?;
+    Ok(ResolvedChildWindow {
+        policy: ContextWindowPolicy {
+            backend,
+            model: model.to_owned(),
+            explicit_window,
+        },
+        window,
+    })
+}
+
 /// Arm auto-compaction on a loop context and its effective agent-loop
 /// config — the single shared mechanism every agent launch path (root,
 /// spawned child, rhai-spawned child, fork) uses, so the trigger cannot
@@ -63,14 +147,14 @@ pub(crate) fn publish_parent_execution_context(
 /// request, the tracker for the usage floor and the compaction commit),
 /// and fills an unset `context_window_limit` from the model catalog for
 /// *this agent's* resolved model. An explicit window — from settings, a
-/// `-c` override, or any future child-policy field — always wins because
-/// the fill runs only when the merged value is still `None`. A model
-/// absent from the catalog keeps `None`, which leaves the trigger
-/// disabled (`maybe_auto_compact` returns early on a `None` window),
-/// matching the root behavior exactly. The reserve default
+/// `-c` override, or a child policy — always wins because the fill runs
+/// only when the merged value is still `None`. Missing metadata without
+/// an applicable explicit window stays unresolved here and is refused
+/// by the launch-path window guard. The reserve default
 /// (`AgentLoopConfig::default().auto_compact_reserve_tokens`) already
 /// flows through the config and is not touched here.
 pub(crate) fn arm_auto_compaction(
+    backend: Option<CatalogBackend>,
     loop_context: &mut LoopContext,
     config: &mut AgentLoopConfig,
     model: &str,
@@ -78,16 +162,17 @@ pub(crate) fn arm_auto_compaction(
     loop_context.token_estimator = Some(Arc::new(SimpleTokenEstimator));
     loop_context.context_edits = Some(ContextEdits::new());
     if config.context_window_limit.is_none() {
-        config.context_window_limit =
-            crate::model_catalog::smallest_context_window_for_model(model);
+        config.context_window_limit = backend
+            .and_then(|route| route.model(model))
+            .map(|entry| entry.context_window);
     }
 }
 
 /// Validate the armed context window against the model catalog — the
 /// post-arming guard for the 2026-07-05 incident (owner-ruled, Tom):
 /// the window is set by the model unless an override is wanted, an
-/// override the model cannot honour is an error, and an unknown model is
-/// an error ("it probably means the wrong model code").
+/// override above the selected route's declared ceiling is an error, and
+/// missing route metadata requires an explicit window.
 ///
 /// Two rejections, both loud, never a silent clamp (a clamp hides config
 /// drift — the incident's global 272k override on a 128k model would
@@ -95,7 +180,7 @@ pub(crate) fn arm_auto_compaction(
 ///
 /// - **Explicit window above the model's ceiling.** For a catalogued
 ///   model, an armed window above
-///   [`largest_max_context_window_for_model`](crate::model_catalog::largest_max_context_window_for_model)
+///   [`ModelEntry::max_context_window`](crate::model_catalog::ModelEntry::max_context_window)
 ///   can only come from explicit config (the fill never exceeds the
 ///   catalog) and means every protection threshold sits beyond the real
 ///   wall — token warnings and auto-compaction mathematically cannot
@@ -110,37 +195,19 @@ pub(crate) fn arm_auto_compaction(
 /// [`arm_child_window`] — by every child launch path (spawn, fork, rhai),
 /// so no agent at any depth ever launches with a lying window.
 pub(crate) fn validate_context_window(
+    backend: Option<CatalogBackend>,
     config: &AgentLoopConfig,
     model: &str,
 ) -> Result<(), ConfigError> {
-    match config.context_window_limit {
-        Some(limit) => {
-            if let Some(max) = crate::model_catalog::largest_max_context_window_for_model(model)
-                && limit > max
-            {
-                return Err(ConfigError::InvalidConfig {
-                    reason: format!(
-                        "configured context window {limit} exceeds model '{model}'s maximum \
-                         of {max} (model catalog) — token warnings and auto-compaction would \
-                         sit beyond the real window and never fire. Remove or lower the \
-                         explicit window (settings agent.context_window, -c context_window, \
-                         or the builder limit); with no explicit value the window is taken \
-                         from the model catalog",
-                    ),
-                });
-            }
-            Ok(())
-        }
-        None => Err(ConfigError::InvalidConfig {
+    crate::model_selection::resolve_window(backend, model, config.context_window_limit)?;
+    config
+        .context_window_limit
+        .ok_or_else(|| ConfigError::InvalidConfig {
             reason: format!(
-                "model '{model}' is not in the model catalog and no context window is \
-                 configured — check the model id for a typo first. For a deliberate \
-                 uncatalogued model, set agent.context_window in settings, pass \
-                 -c context_window=<tokens>, or set the builder's context window; without \
-                 one, token warnings and auto-compaction stay disabled",
+                "context window for model '{model}' was not resolved before agent arming"
             ),
-        }),
-    }
+        })?;
+    Ok(())
 }
 
 /// Resolve and validate a child's context window (owner ruling
@@ -161,30 +228,42 @@ pub(crate) fn validate_context_window(
 ///    ([`validate_context_window`]'s ceiling branch): a value above a
 ///    catalogued model's maximum is rejected (never a silent clamp), and
 ///    a deliberate uncatalogued model is accepted with the override
-///    armed. The rejection is worded with the CHILD remedy, not the
-///    root-only knobs (settings `agent.context_window`, `-c` overrides,
-///    the builder window), which do not exist on the child path.
+///    armed. The rejection names the child override; the root's explicit
+///    configuration applies only through the same-model, same-route
+///    inheritance performed by [`resolve_child_context_window`].
 /// 2. Else **catalog fill** for the child's own resolved model —
 ///    mirroring [`arm_auto_compaction`]'s fill exactly (and idempotent
 ///    with it: the later arming call finds the window set and leaves it
 ///    untouched).
 /// 3. Else a typed error naming the child remedies: a catalogued model,
 ///    or the explicit `child_policy.loop_config.context_window`
-///    override.
+///    override. [`resolve_child_context_window`] additionally supplies a
+///    parent's operator-explicit window before this guard, but only for the
+///    same live model and concrete backend.
 ///
 /// # Errors
 ///
 /// [`ConfigError::InvalidConfig`], worded with child remedies only, per
 /// the two rejection cases above.
 pub(crate) fn arm_child_window(
+    backend: Option<CatalogBackend>,
     config: &mut AgentLoopConfig,
     model: &str,
-) -> Result<(), ConfigError> {
+) -> Result<u64, ConfigError> {
+    if config.context_window_limit == Some(0) {
+        return Err(ConfigError::InvalidConfig {
+            reason: format!(
+                "child_policy.loop_config.context_window must be greater than zero for model '{model}'"
+            ),
+        });
+    }
     if let Some(limit) = config.context_window_limit {
         // The explicit child override: the same ceiling rule as the
         // root's explicit window (the fill below never exceeds the
         // catalog, so an over-ceiling value can only be the override).
-        if let Some(max) = crate::model_catalog::largest_max_context_window_for_model(model)
+        if let Some(max) = backend
+            .and_then(|route| route.model(model))
+            .map(|entry| entry.max_context_window)
             && limit > max
         {
             return Err(ConfigError::InvalidConfig {
@@ -197,23 +276,26 @@ pub(crate) fn arm_child_window(
                 ),
             });
         }
-        return Ok(());
+        return Ok(limit);
     }
-    config.context_window_limit = crate::model_catalog::smallest_context_window_for_model(model);
-    if config.context_window_limit.is_none() {
-        return Err(ConfigError::InvalidConfig {
+    config.context_window_limit = backend
+        .and_then(|route| route.model(model))
+        .map(|entry| entry.context_window);
+    config
+        .context_window_limit
+        .ok_or_else(|| ConfigError::InvalidConfig {
             reason: format!(
-                "child model '{model}' is not in the model catalog — check the model \
-                 id for a typo first. For a deliberate uncatalogued child model, use \
-                 a catalogued model instead, or set \
-                 child_policy.loop_config.context_window explicitly (owner ruling \
-                 2026-07-07: the child's window comes from the model catalog, \
-                 overrideable per child); without a window, token warnings and \
-                 auto-compaction cannot fire",
+                "{}: the selected route declares no capability metadata for child \
+                 model '{model}', and no applicable explicit context window was supplied. \
+                 Set child_policy.loop_config.context_window explicitly, or use the \
+                 same model and route as a parent with an operator-explicit window; \
+                 without a window, token warnings and auto-compaction cannot fire",
+                backend.map_or_else(
+                    || "provider without a model catalogue".to_owned(),
+                    |route| format!("{}.{}", route.provider, route.backend),
+                ),
             ),
-        });
-    }
-    Ok(())
+        })
 }
 
 /// Where a child's resolved reasoning effort came from — decides how
@@ -234,7 +316,7 @@ pub(crate) enum ChildEffortSource<'a> {
 /// Validate a child's resolved reasoning effort against the model catalog
 /// for the CHILD's resolved model — the child-path counterpart of the
 /// root's `--reasoning-effort` / `/effort` enforcement
-/// ([`reasoning_effort_supported_for_model`](crate::r#loop::commands::reasoning_effort_supported_for_model)),
+/// ([`supports_effort`](crate::model_selection::supports_effort)),
 /// called by every child launch site (spawn, fork, rhai) so an
 /// unsupported pairing surfaces at launch instead of as an opaque
 /// provider rejection (or a lenient backend's silent drop) after the
@@ -255,6 +337,7 @@ pub(crate) enum ChildEffortSource<'a> {
 ///
 /// [`ConfigError::InvalidConfig`] for the explicit-unsupported case only.
 pub(crate) fn arm_child_reasoning_effort(
+    backend: Option<CatalogBackend>,
     effort: Option<crate::provider::request::ReasoningEffort>,
     source: &ChildEffortSource<'_>,
     model: &str,
@@ -262,47 +345,25 @@ pub(crate) fn arm_child_reasoning_effort(
     let Some(value) = effort else {
         return Ok(None);
     };
-    if crate::r#loop::commands::reasoning_effort_supported_for_model(model, value) {
+    if crate::model_selection::supports_effort(backend, model, value) {
         return Ok(Some(value));
     }
     let label = crate::r#loop::commands::effort_label(value);
     match source {
-        ChildEffortSource::Explicit(setting) => {
-            let catalog_detail = crate::model_catalog::find_model(
-                crate::model_catalog::DEFAULT_PROVIDER,
-                crate::model_catalog::DEFAULT_BACKEND,
-                model,
-            )
-            .map_or_else(
-                || {
-                    format!(
-                        "model '{model}' is not in the model catalog, which therefore \
-                         declares no supported efforts for it"
-                    )
-                },
-                |entry| {
-                    format!(
-                        "model '{model}' supports: {} (model catalog)",
-                        entry.supported_reasoning_efforts.join(", "),
-                    )
-                },
-            );
-            Err(ConfigError::InvalidConfig {
-                reason: format!(
-                    "reasoning effort '{label}' ({setting}) is not supported for the \
-                     child's resolved model — {catalog_detail}. Set a supported effort \
-                     there, or resolve the child onto a model that supports it",
-                ),
-            })
-        }
+        ChildEffortSource::Explicit(setting) => Err(ConfigError::InvalidConfig {
+            reason: format!(
+                "{setting}: {}",
+                crate::model_selection::effort_refusal_message(backend, model, value),
+            ),
+        }),
         ChildEffortSource::Inherited { child } => {
             tracing::warn!(
                 child = %child,
                 model = %model,
                 effort = %label,
-                "inherited reasoning effort is not supported by the child's resolved \
-                 model (model catalog); running the child with no reasoning effort — \
-                 set a supported effort explicitly to silence this",
+                backend = ?backend,
+                "inherited reasoning effort is not declared for this route/model; \
+                 running the child with no reasoning effort",
             );
             Ok(None)
         }

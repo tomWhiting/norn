@@ -173,6 +173,9 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     startup_trace.mark("runtime_built");
 
     let mut parts = agent.into_parts();
+    parts
+        .model_selection
+        .bind_provider_profile(resolved.provider_profile);
 
     // Warn on `--allowed-tools` / `--disallowed-tools` names that match no
     // real tool: the gated registry is only known after `build()`.
@@ -259,6 +262,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         registry,
         agent_config: parts.config.clone(),
         model: parts.model.clone(),
+        model_selection: parts.model_selection.clone(),
         tools: std::mem::take(&mut parts.tool_defs),
         loop_context: std::mem::take(&mut parts.loop_context),
         history,

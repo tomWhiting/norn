@@ -1,9 +1,27 @@
-//! Typed failures emitted by print-mode execution.
+//! Typed print-mode failures, their display, and pre-assembly error envelopes.
 
 use norn::error::{ErrorClass, NornError};
 
-use crate::cli::{BuildError, ExitCode};
+use super::step_output::emit_error_envelope;
+use crate::cli::{BuildError, Cli, ExitCode};
 use crate::session::SessionPersistError;
+
+/// Display a print failure on stderr and retain its exit classification.
+pub(super) fn report(err: &PrintError) -> ExitCode {
+    eprintln!("norn: {err}");
+    err.exit_code()
+}
+
+/// Route a plain-mode pre-assembly failure through the error-envelope
+/// emitter and hand the error back unchanged for the stderr line + exit
+/// code. Argument errors emit nothing (clap parity — R2); the emitter
+/// filters by class. Driven mode branches into its executor first, and
+/// its post-acceptance failures are answered as id-matched JSON-RPC
+/// error responses.
+pub(super) fn fail_before_assembly(cli: &Cli, err: PrintError) -> PrintError {
+    emit_error_envelope(cli, &err, None, None);
+    err
+}
 
 /// Errors that surface from the print orchestrator. Each variant maps
 /// cleanly onto an [`ExitCode`] via [`PrintError::exit_code`].

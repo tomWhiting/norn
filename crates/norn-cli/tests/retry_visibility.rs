@@ -135,6 +135,9 @@ fn run_against_mock(port: u16, extra_args: &[&str]) -> Output {
         "openai-compatible",
         "-c",
         &format!("base_url={base_url}"),
+        // Explicit Sol fixture budget: the mock route has no model catalogue.
+        "-c",
+        "context_window=272000",
         "-c",
         "max_retries=0",
         "-c",

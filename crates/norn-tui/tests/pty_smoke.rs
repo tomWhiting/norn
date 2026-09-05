@@ -575,6 +575,14 @@ async fn run_fixture_app() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     norn_tui::run_app(norn_tui::TuiInputs {
+        model_selection: norn::model_selection::ModelRuntime::new(
+            provider.model_catalog_backend(),
+            "gpt-5.5",
+            Some(272_000),
+            None,
+            None,
+            std::collections::BTreeMap::new(),
+        )?,
         provider,
         executor,
         store,

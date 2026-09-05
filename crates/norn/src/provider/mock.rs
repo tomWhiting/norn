@@ -82,6 +82,11 @@ impl MockProvider {
 }
 
 impl Provider for MockProvider {
+    // This fixture explicitly models the Codex catalogue; custom Provider implementations do not.
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        Some(crate::model_selection::CatalogBackend::CODEX)
+    }
+
     fn state_identity(&self) -> Option<ProviderStateIdentity> {
         self.state_identity
     }

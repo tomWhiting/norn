@@ -109,7 +109,7 @@ fn parse_reasoning_effort(raw: &str) -> Result<ReasoningEffort, BuildError> {
     let value = serde_json::Value::String(raw.to_lowercase());
     serde_json::from_value::<ReasoningEffort>(value).map_err(|err| {
         BuildError::Argument(format!(
-            "invalid value for agent.reasoning_effort: '{raw}' ({err}); expected one of none, low, medium, high, xhigh, max",
+            "invalid value for agent.reasoning_effort: '{raw}' ({err}); expected one of low, medium, high, xhigh, max, ultra",
         ))
     })
 }
@@ -134,12 +134,12 @@ fn parse_service_tier(raw: &str) -> Result<ServiceTier, BuildError> {
 
 fn convert_reasoning_effort(value: CliReasoningEffort) -> ReasoningEffort {
     match value {
-        CliReasoningEffort::None => ReasoningEffort::None,
         CliReasoningEffort::Low => ReasoningEffort::Low,
         CliReasoningEffort::Medium => ReasoningEffort::Medium,
         CliReasoningEffort::High => ReasoningEffort::High,
         CliReasoningEffort::XHigh => ReasoningEffort::XHigh,
         CliReasoningEffort::Max => ReasoningEffort::Max,
+        CliReasoningEffort::Ultra => ReasoningEffort::Ultra,
     }
 }
 

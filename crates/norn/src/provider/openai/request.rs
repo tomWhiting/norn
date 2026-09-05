@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use super::tools::serialize_tool;
 use crate::error::ProviderError;
+use crate::model_selection::{CatalogBackend, effort_refusal_message, tier_refusal_message};
 use crate::provider::request::{
     Message, MessageRole, ProviderOptions, ProviderRequest, ReasoningEffort, ReasoningSummary,
     ToolCallKind,
@@ -114,8 +115,28 @@ pub(crate) enum ContextManagementItem {
 /// is not supported for the model on `catalog_backend`.
 pub(crate) fn build_payload(
     request: &ProviderRequest,
-    catalog_backend: &str,
+    catalog_backend: &'static str,
 ) -> Result<serde_json::Value, ProviderError> {
+    if let Some(effort) = request.reasoning_effort {
+        let supported =
+            crate::model_catalog::find_model(CATALOG_PROVIDER, catalog_backend, &request.model)
+                .is_some_and(|entry| entry.supported_reasoning_efforts.contains(&effort.as_str()));
+        if !supported {
+            return Err(ProviderError::InvalidRequest {
+                message: format!(
+                    "request.reasoning_effort: {}",
+                    effort_refusal_message(
+                        Some(CatalogBackend {
+                            provider: CATALOG_PROVIDER,
+                            backend: catalog_backend
+                        }),
+                        &request.model,
+                        effort
+                    )
+                ),
+            });
+        }
+    }
     validate_replayable_reasoning(&request.messages)?;
     let mut instructions = String::new();
     let mut input = Vec::new();
@@ -279,6 +300,7 @@ fn reject_protected_option_key(key: &str) -> Result<(), ProviderError> {
             | "store"
             | "include"
             | "reasoning"
+            | "service_tier"
             | "prompt_cache_key"
             | "previous_response_id"
             | "context_management"
@@ -299,7 +321,7 @@ fn reject_protected_option_key(key: &str) -> Result<(), ProviderError> {
 /// Responses API connection.
 fn service_tier_provider_value(
     request: &ProviderRequest,
-    catalog_backend: &str,
+    catalog_backend: &'static str,
 ) -> Result<Option<String>, ProviderError> {
     let Some(tier) = request.service_tier else {
         return Ok(None);
@@ -312,9 +334,15 @@ fn service_tier_provider_value(
     ) else {
         return Err(ProviderError::InvalidRequest {
             message: format!(
-                "service tier '{}' is not supported for model '{}' on {CATALOG_PROVIDER}.{catalog_backend}",
-                tier.as_str(),
-                request.model,
+                "request.service_tier: {}",
+                tier_refusal_message(
+                    Some(CatalogBackend {
+                        provider: CATALOG_PROVIDER,
+                        backend: catalog_backend
+                    }),
+                    &request.model,
+                    tier
+                )
             ),
         });
     };
@@ -739,6 +767,7 @@ mod tests {
     #[test]
     fn reasoning_effort_high() {
         let mut req = make_request();
+        req.model = "gpt-5.5".to_owned();
         req.reasoning_effort = Some(ReasoningEffort::High);
         let payload =
             build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
@@ -748,18 +777,118 @@ mod tests {
     }
 
     #[test]
-    fn reasoning_effort_none_serializes_as_none() {
+    fn reasoning_effort_none_is_rejected_when_not_declared() {
         let mut req = make_request();
+        req.model = "gpt-6-astra".to_owned();
         req.reasoning_effort = Some(ReasoningEffort::None);
-        let payload =
-            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
-        let json = serde_json::to_value(&payload).expect("serialize");
-        assert_eq!(json["reasoning"]["effort"], "none");
+        assert!(matches!(
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION),
+            Err(ProviderError::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn ultra_is_validated_against_the_actual_backend_before_payload() -> Result<(), ProviderError> {
+        let mut req = make_request();
+        req.model = "gpt-6-astra".to_owned();
+        req.reasoning_effort = Some(ReasoningEffort::Ultra);
+        let payload = build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION)?;
+        assert_eq!(payload["reasoning"]["effort"], "ultra");
+        assert!(matches!(
+            build_payload(&req, CATALOG_BACKEND_RESPONSES_API),
+            Err(ProviderError::InvalidRequest { .. })
+        ));
+        req.model = "gpt-5.6-luna".to_owned();
+        assert!(matches!(
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION),
+            Err(ProviderError::InvalidRequest { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn refused_request_policy_reports_missing_metadata_or_declared_values()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (backend, model, effort, missing) in [
+            (
+                CATALOG_BACKEND_CODEX_SUBSCRIPTION,
+                "gpt-5.6-luna",
+                ReasoningEffort::Ultra,
+                false,
+            ),
+            (
+                CATALOG_BACKEND_RESPONSES_API,
+                "gpt-5.5",
+                ReasoningEffort::Medium,
+                true,
+            ),
+        ] {
+            let mut request = make_request();
+            request.model = model.to_owned();
+            request.reasoning_effort = Some(effort);
+            let Err(ProviderError::InvalidRequest { message }) = build_payload(&request, backend)
+            else {
+                return Err("undeclared effort must be refused before dispatch".into());
+            };
+            assert!(message.contains("request.reasoning_effort"));
+            assert!(message.contains(model));
+            assert!(message.contains(backend));
+            assert_eq!(message.contains("declares no capability metadata"), missing);
+            assert_eq!(message.contains("is not supported"), !missing);
+            if !missing {
+                assert!(message.contains("declared values: low, medium, high, xhigh, max"));
+            }
+            request.reasoning_effort = None;
+            request.service_tier = Some(ServiceTier::Fast);
+            request.model = "gpt-5.4-mini".to_owned();
+            let Err(ProviderError::InvalidRequest { message }) = build_payload(&request, backend)
+            else {
+                return Err("undeclared tier must be refused before dispatch".into());
+            };
+            assert!(message.contains("request.service_tier"));
+            assert_eq!(message.contains("declares no capability metadata"), missing);
+            assert_eq!(message.contains("is not supported"), !missing);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn provider_options_cannot_override_effort_or_tier_in_any_scope_on_either_backend()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for backend in [
+            CATALOG_BACKEND_CODEX_SUBSCRIPTION,
+            CATALOG_BACKEND_RESPONSES_API,
+        ] {
+            for (key, value) in [
+                ("reasoning", serde_json::json!({"effort": "ultra"})),
+                ("service_tier", serde_json::json!("priority")),
+            ] {
+                let fields = serde_json::json!({(key): value});
+                for options in [
+                    fields.clone(),
+                    serde_json::json!({"openai_responses": fields.clone()}),
+                    serde_json::json!({"api_options": {"openai_responses": fields}}),
+                ] {
+                    let mut request = make_request();
+                    request.model = "gpt-5.4-mini".to_owned();
+                    request.config = Some(ProviderOptions(options));
+                    let Err(ProviderError::InvalidRequest { message }) =
+                        build_payload(&request, backend)
+                    else {
+                        return Err("raw options must not override owned Responses policy".into());
+                    };
+                    assert!(message.contains(&format!("openai_responses.{key}")));
+                    assert!(message.contains("owned by Norn"));
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]
     fn reasoning_effort_xhigh_serializes_as_xhigh() {
         let mut req = make_request();
+        req.model = "gpt-5.5".to_owned();
         req.reasoning_effort = Some(ReasoningEffort::XHigh);
         let payload =
             build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
@@ -889,6 +1018,7 @@ mod tests {
     #[test]
     fn reasoning_effort_medium() {
         let mut req = make_request();
+        req.model = "gpt-5.5".to_owned();
         req.reasoning_effort = Some(ReasoningEffort::Medium);
         let payload =
             build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
@@ -899,6 +1029,7 @@ mod tests {
     #[test]
     fn reasoning_effort_low() {
         let mut req = make_request();
+        req.model = "gpt-5.5".to_owned();
         req.reasoning_effort = Some(ReasoningEffort::Low);
         let payload =
             build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
@@ -973,6 +1104,7 @@ mod tests {
         // blob (it always did, incidentally, but pin it so a future refactor
         // cannot re-couple the two knobs).
         let mut req = make_request();
+        req.model = "gpt-5.5".to_owned();
         req.reasoning_effort = Some(ReasoningEffort::High);
 
         let payload =
@@ -1356,7 +1488,7 @@ mod tests {
                 tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
             }],
             tools: vec![],
-            model: "gpt-5".to_string(),
+            model: "gpt-5.5".to_string(),
             reasoning_effort: Some(ReasoningEffort::Medium),
             reasoning_summary: None,
             service_tier: None,

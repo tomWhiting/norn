@@ -13,12 +13,6 @@ use std::fmt::Write as _;
 use std::io::Write as IoWrite;
 use std::sync::Arc;
 
-use norn::agent_loop::{
-    ServiceTierCommand, parse_service_tier_command, reasoning_effort_supported_for_model,
-    service_tier_supported_for_model, unsupported_reasoning_effort_message,
-    unsupported_service_tier_message,
-};
-use norn::provider::request::{ReasoningEffort, ServiceTier};
 use norn::session::context_edit::ContextEdits;
 use norn::session::{
     CreateSessionOptions, DurabilityPolicy, EventStore, SessionBinding, SessionBrancher,
@@ -32,14 +26,16 @@ use crate::terminal::setup::TerminalGuard;
 use super::dispatch::write_error_line;
 use super::event_loop::RuntimeRefs;
 use super::mcp_slash::{handle_mcp, mcp_exit_is_blocked, render_pending_mcp_exit};
+use super::model_selection::{
+    handle_model, handle_reasoning_effort, handle_service_tier, set_fast_service_tier,
+};
 use super::slash_catalog::{
-    EffortCommand, SlashClass, TuiBuiltinKind, classify_slash, effort_label,
-    find_tui_builtin_command, parse_effort_command, tui_builtin_commands,
+    SlashClass, TuiBuiltinKind, classify_slash, find_tui_builtin_command, tui_builtin_commands,
 };
 use super::state::AppState;
 
 #[cfg(test)]
-use super::slash_catalog::{is_tui_builtin, split_first_word};
+use super::slash_catalog::{EffortCommand, is_tui_builtin, parse_effort_command, split_first_word};
 
 /// Outcome of a recognised slash command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -386,177 +382,6 @@ fn handle_help(guard: &mut TerminalGuard) -> Result<(), TuiError> {
     guard.note_scroll_newlines(&block)?;
     guard.terminal_mut().flush()?;
     Ok(())
-}
-
-/// `/model <name>` — validate the name, mutate
-/// [`RuntimeRefs::model`] and the status bar's model display, then
-/// surface a confirmation crumb.
-///
-/// Per-turn `run_turn` reads `runtime.model.clone()` at the top of
-/// the function, so the new model takes effect on the next submission
-/// without further plumbing. The current turn (if mid-flight, which
-/// it cannot be because we hold `&mut runtime`) is unaffected.
-fn handle_model(
-    state: &mut AppState,
-    runtime: &mut RuntimeRefs,
-    guard: &mut TerminalGuard,
-    arg: &str,
-) -> Result<(), TuiError> {
-    let name = arg.trim();
-    if name.is_empty() {
-        return write_dim_line("usage: /model <name>", guard);
-    }
-    runtime.model = name.to_string();
-    state.fixed_panel.status_bar_mut().model_name = name.to_string();
-    let cleared_effort = clear_unsupported_reasoning_effort(
-        &runtime.model,
-        &mut runtime.loop_context.reasoning_effort,
-        &mut state.fixed_panel.status_bar_mut().reasoning_effort,
-    );
-    let cleared_tier = clear_unsupported_service_tier(
-        &runtime.model,
-        &mut runtime.loop_context.service_tier,
-        &mut state.fixed_panel.status_bar_mut().service_tier,
-    );
-    let line = match (cleared_effort, cleared_tier) {
-        (Some(effort), Some(tier)) => format!(
-            "Switched model to {name}; cleared reasoning effort '{}' and service tier '{}' because they are unsupported",
-            effort_label(effort),
-            tier.as_str(),
-        ),
-        (Some(effort), None) => format!(
-            "Switched model to {name}; cleared reasoning effort '{}' because it is unsupported",
-            effort_label(effort),
-        ),
-        (None, Some(tier)) => format!(
-            "Switched model to {name}; cleared service tier '{}' because it is unsupported",
-            tier.as_str(),
-        ),
-        (None, None) => format!("Switched model to {name}"),
-    };
-    write_dim_line(&line, guard)
-}
-
-/// `/effort <none|low|medium|high|xhigh|max|default>` — mutate the reasoning
-/// effort read by the next `run_turn` provider request.
-fn handle_reasoning_effort(
-    state: &mut AppState,
-    runtime: &mut RuntimeRefs,
-    guard: &mut TerminalGuard,
-    arg: &str,
-) -> Result<(), TuiError> {
-    let value = arg.trim();
-    if value.is_empty() {
-        let current = runtime
-            .loop_context
-            .reasoning_effort
-            .map_or("default", effort_label);
-        return write_dim_line(current, guard);
-    }
-
-    match parse_effort_command(value) {
-        Some(EffortCommand::Set(effort)) => {
-            if !reasoning_effort_supported_for_model(&runtime.model, effort) {
-                return write_dim_line(
-                    &unsupported_reasoning_effort_message(&runtime.model, effort_label(effort)),
-                    guard,
-                );
-            }
-            runtime.loop_context.reasoning_effort = Some(effort);
-            state.fixed_panel.status_bar_mut().reasoning_effort =
-                Some(effort_label(effort).to_string());
-            write_dim_line(
-                &format!("Reasoning effort: {}", effort_label(effort)),
-                guard,
-            )
-        }
-        Some(EffortCommand::Clear) => {
-            runtime.loop_context.reasoning_effort = None;
-            state.fixed_panel.status_bar_mut().reasoning_effort = None;
-            write_dim_line("Reasoning effort cleared.", guard)
-        }
-        None => write_dim_line(
-            &format!(
-                "norn: invalid reasoning effort '{value}'; expected none, low, medium, high, xhigh, max, or default"
-            ),
-            guard,
-        ),
-    }
-}
-
-/// `/service-tier <fast|none>` — mutate the service tier read by the
-/// next `run_turn` provider request.
-fn handle_service_tier(
-    state: &mut AppState,
-    runtime: &mut RuntimeRefs,
-    guard: &mut TerminalGuard,
-    arg: &str,
-) -> Result<(), TuiError> {
-    let value = arg.trim().to_ascii_lowercase();
-    if value.is_empty() {
-        let current = match runtime.loop_context.service_tier {
-            Some(tier) => tier.as_str(),
-            None => "none",
-        };
-        return write_dim_line(current, guard);
-    }
-    match parse_service_tier_command(&value) {
-        Some(ServiceTierCommand::Fast) => set_fast_service_tier(state, runtime, guard),
-        Some(ServiceTierCommand::Clear) => {
-            runtime.loop_context.service_tier = None;
-            state.fixed_panel.status_bar_mut().service_tier = None;
-            write_dim_line("Service tier cleared.", guard)
-        }
-        None => write_dim_line(
-            &format!("norn: invalid service tier '{value}'; expected fast or none"),
-            guard,
-        ),
-    }
-}
-
-fn set_fast_service_tier(
-    state: &mut AppState,
-    runtime: &mut RuntimeRefs,
-    guard: &mut TerminalGuard,
-) -> Result<(), TuiError> {
-    if service_tier_supported_for_model(&runtime.model, ServiceTier::Fast) {
-        runtime.loop_context.service_tier = Some(ServiceTier::Fast);
-        state.fixed_panel.status_bar_mut().service_tier = Some("fast".to_string());
-        return write_dim_line("Service tier: fast", guard);
-    }
-
-    write_dim_line(
-        &unsupported_service_tier_message(&runtime.model, "fast"),
-        guard,
-    )
-}
-
-fn clear_unsupported_reasoning_effort(
-    model: &str,
-    reasoning_effort: &mut Option<ReasoningEffort>,
-    status_effort: &mut Option<String>,
-) -> Option<ReasoningEffort> {
-    let effort = (*reasoning_effort)?;
-    if reasoning_effort_supported_for_model(model, effort) {
-        return None;
-    }
-    *reasoning_effort = None;
-    *status_effort = None;
-    Some(effort)
-}
-
-fn clear_unsupported_service_tier(
-    model: &str,
-    service_tier: &mut Option<ServiceTier>,
-    status_tier: &mut Option<String>,
-) -> Option<ServiceTier> {
-    let tier = (*service_tier)?;
-    if service_tier_supported_for_model(model, tier) {
-        return None;
-    }
-    *service_tier = None;
-    *status_tier = None;
-    Some(tier)
 }
 
 /// `/tools` — list every [`ToolDefinition`] currently advertised to
@@ -919,58 +744,6 @@ mod tests {
                 "case-insensitive match must collapse `{raw}` to `new`",
             );
         }
-    }
-
-    #[test]
-    fn service_tier_support_uses_model_catalog() {
-        assert!(service_tier_supported_for_model(
-            "gpt-5.5",
-            ServiceTier::Fast,
-        ));
-        assert!(!service_tier_supported_for_model(
-            "gpt-5.4-mini",
-            ServiceTier::Fast,
-        ));
-        assert!(unsupported_service_tier_message("gpt-5.4-mini", "fast").contains("gpt-5.4-mini"),);
-    }
-
-    #[test]
-    fn reasoning_effort_support_uses_model_catalog() {
-        assert!(reasoning_effort_supported_for_model(
-            "gpt-5.5",
-            ReasoningEffort::High,
-        ));
-        assert!(!reasoning_effort_supported_for_model(
-            "unknown-local-model",
-            ReasoningEffort::High,
-        ));
-        assert!(
-            unsupported_reasoning_effort_message("unknown-local-model", "high")
-                .contains("unknown-local-model"),
-        );
-    }
-
-    #[test]
-    fn model_switch_clears_unsupported_max_and_preserves_supported_fast_tier() {
-        let mut reasoning_effort = Some(ReasoningEffort::Max);
-        let mut status_effort = Some("max".to_string());
-        let mut service_tier = Some(ServiceTier::Fast);
-        let mut status_tier = Some("fast".to_string());
-
-        let cleared_effort = clear_unsupported_reasoning_effort(
-            "gpt-5.5",
-            &mut reasoning_effort,
-            &mut status_effort,
-        );
-        let cleared_tier =
-            clear_unsupported_service_tier("gpt-5.5", &mut service_tier, &mut status_tier);
-
-        assert_eq!(cleared_effort, Some(ReasoningEffort::Max));
-        assert_eq!(reasoning_effort, None);
-        assert_eq!(status_effort, None);
-        assert_eq!(cleared_tier, None);
-        assert_eq!(service_tier, Some(ServiceTier::Fast));
-        assert_eq!(status_tier.as_deref(), Some("fast"));
     }
 
     fn tool_def(name: &str, description: &str) -> norn::provider::request::ToolDefinition {

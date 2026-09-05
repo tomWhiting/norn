@@ -86,7 +86,7 @@ pub enum VariantCatalogError {
     /// A variant's `reasoning_effort` is not a recognised effort name.
     #[error(
         "variant '{name}': unrecognised reasoning_effort '{value}' \
-         (expected one of: none, low, medium, high, xhigh, max)"
+         (expected one of: none, low, medium, high, xhigh, max, ultra)"
     )]
     InvalidReasoningEffort {
         /// The offending variant name.

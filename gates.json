@@ -1,0 +1,38 @@
+{
+  "repo": "norn",
+  "authority_note": "Only the exact-commit repo_battery_205 terminal receipt determines the measured verdict. Workflow success alone and scripts/remote-battery.sh diagnostics are not landing receipts.",
+  "source_binding_note": "Known Aion source-binding limitation remains open globally. Every declared Norn leg uses scripts/source-bound-leg.py to require clean tracked/index/non-ignored untracked source before execution, then the same HEAD and clean source afterward. Every tracked file blob, symlink target and executable mode is compared directly with HEAD without trusting Git stat-cache metadata. The leg logs declaration and guard SHA256 witnesses; the landing desk must match both with the exact reviewed commit. This Norn-specific mitigation addresses persistent dirty-source execution, not Aion X.1 globally. Pre/post checks cannot detect edit-execute-restore within a leg or protect a guard/declaration replaced by an unreviewed writer. The venue must exclude such writers; no immutable-execution claim is made.",
+  "band_note": "All Cargo legs run serially against the shared target directory. The Python runner fixtures share no build state and run in fanout. Parallelism caps belong exclusively to the venue; none are defaulted here.",
+  "legs": [
+    {
+      "name": "fmt",
+      "band": "serial",
+      "kind": "check",
+      "cmd": "python3 scripts/source-bound-leg.py -- cargo fmt --all -- --check"
+    },
+    {
+      "name": "clippy",
+      "band": "serial",
+      "kind": "check",
+      "cmd": "python3 scripts/source-bound-leg.py -- cargo clippy --locked --workspace --all-targets -- -D warnings"
+    },
+    {
+      "name": "tests",
+      "band": "serial",
+      "kind": "cargo-test",
+      "cmd": "python3 scripts/source-bound-leg.py -- env NORN_HOME=\"$PWD/target/repo-battery-norn-home\" cargo test --locked --workspace --all-targets --no-fail-fast -- --nocapture"
+    },
+    {
+      "name": "doctests",
+      "band": "serial",
+      "kind": "cargo-test",
+      "cmd": "python3 scripts/source-bound-leg.py -- env NORN_HOME=\"$PWD/target/repo-battery-norn-home\" cargo test --locked --workspace --doc --no-fail-fast -- --nocapture"
+    },
+    {
+      "name": "diagnostic-runner",
+      "band": "fanout",
+      "kind": "check",
+      "cmd": "python3 scripts/source-bound-leg.py -- bash -c 'python3 scripts/tests/remote_battery_test.py && python3 scripts/tests/source_bound_leg_test.py'"
+    }
+  ]
+}

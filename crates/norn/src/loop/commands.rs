@@ -20,9 +20,7 @@ use crate::provider::request::{AssistantToolCall, Message, MessageRole};
 mod command_options;
 pub use command_options::{
     EffortCommand, ServiceTierCommand, effort_label, parse_effort_command,
-    parse_service_tier_command, reasoning_effort_supported_for_model,
-    service_tier_supported_for_model, unsupported_reasoning_effort_message,
-    unsupported_service_tier_message,
+    parse_service_tier_command,
 };
 
 #[cfg(test)]
@@ -179,7 +177,7 @@ pub const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     BuiltinSlashCommand {
         kind: BuiltinSlashKind::Effort,
         name: "effort",
-        usage: "/effort <none|low|medium|high|xhigh|max|default>",
+        usage: "/effort <low|medium|high|xhigh|max|ultra|default>",
         help: "Show, set, or clear reasoning effort",
         autocomplete: "Set reasoning effort",
         cli_description: "Show, set, or clear the active reasoning effort",
@@ -189,7 +187,7 @@ pub const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     BuiltinSlashCommand {
         kind: BuiltinSlashKind::Effort,
         name: "reasoning-effort",
-        usage: "/reasoning-effort <none|low|medium|high|xhigh|max|default>",
+        usage: "/reasoning-effort <low|medium|high|xhigh|max|ultra|default>",
         help: "Alias for /effort",
         autocomplete: "Set reasoning effort",
         cli_description: "Alias for /effort",
@@ -738,28 +736,84 @@ mod tests {
 
     #[test]
     fn reasoning_effort_support_uses_model_catalog() {
-        assert!(reasoning_effort_supported_for_model(
+        assert!(crate::model_selection::supports_effort(
+            Some(crate::model_selection::CatalogBackend::CODEX),
             "gpt-5.5",
             ReasoningEffort::High,
         ));
-        assert!(reasoning_effort_supported_for_model(
+        assert!(crate::model_selection::supports_effort(
+            Some(crate::model_selection::CatalogBackend::CODEX),
             "gpt-5.5",
             ReasoningEffort::XHigh,
         ));
-        assert!(!reasoning_effort_supported_for_model(
+        assert!(!crate::model_selection::supports_effort(
+            Some(crate::model_selection::CatalogBackend::CODEX),
             "gpt-5.5",
             ReasoningEffort::Max,
         ));
         for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
             assert!(
-                reasoning_effort_supported_for_model(model, ReasoningEffort::Max),
+                crate::model_selection::supports_effort(
+                    Some(crate::model_selection::CatalogBackend::CODEX),
+                    model,
+                    ReasoningEffort::Max
+                ),
                 "{model} must support max reasoning effort",
             );
         }
-        assert!(!reasoning_effort_supported_for_model(
+        assert!(!crate::model_selection::supports_effort(
+            Some(crate::model_selection::CatalogBackend::CODEX),
             "unknown-local-model",
             ReasoningEffort::High,
         ));
+    }
+
+    #[test]
+    fn advertised_efforts_have_a_catalogued_route_that_accepts_them()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for command in builtin_slash_commands(SlashSurface::Cli)
+            .filter(|command| command.kind == BuiltinSlashKind::Effort)
+        {
+            let choices = command
+                .usage
+                .split_once('<')
+                .ok_or("effort usage has no choices")?
+                .1;
+            for choice in choices.trim_end_matches('>').split('|') {
+                let parsed = parse_effort_command(choice)
+                    .ok_or_else(|| format!("advertised effort '{choice}' does not parse"))?;
+                let EffortCommand::Set(effort) = parsed else {
+                    continue;
+                };
+                let accepted = crate::model_catalog::catalog()
+                    .providers
+                    .iter()
+                    .any(|provider| {
+                        provider.backends.iter().any(|backend| {
+                            backend.models.iter().any(|model| {
+                                crate::model_selection::ModelRuntime::new(
+                                    Some(crate::model_selection::CatalogBackend {
+                                        provider: provider.id,
+                                        backend: backend.id,
+                                    }),
+                                    model.id,
+                                    None,
+                                    None,
+                                    None,
+                                    std::collections::BTreeMap::new(),
+                                )
+                                .and_then(|mut selection| selection.set_effort(Some(effort)))
+                                .is_ok()
+                            })
+                        })
+                    });
+                assert!(
+                    accepted,
+                    "advertised effort '{choice}' has no accepting route"
+                );
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -773,14 +827,10 @@ mod tests {
             Some(EffortCommand::Set(ReasoningEffort::Max)),
         );
         assert_eq!(parse_effort_command("x-high"), None);
-        assert_eq!(parse_effort_command("ultra"), None);
-    }
-
-    #[test]
-    fn unsupported_reasoning_effort_message_names_model_and_effort() {
-        let message = unsupported_reasoning_effort_message("local", "high");
-        assert!(message.contains("local"));
-        assert!(message.contains("high"));
+        assert_eq!(
+            parse_effort_command("ultra"),
+            Some(EffortCommand::Set(ReasoningEffort::Ultra))
+        );
     }
 
     #[test]

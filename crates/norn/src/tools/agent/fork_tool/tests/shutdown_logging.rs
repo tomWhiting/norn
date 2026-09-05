@@ -130,6 +130,11 @@ async fn close_mid_run_cancels_fork_inner_run_and_records_cancelled_outcome() ->
     }
 
     impl Provider for ParkedProvider {
+        // This scripted provider represents the catalogued Codex models used by these tests.
+        fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+            Some(crate::model_selection::CatalogBackend::CODEX)
+        }
+
         fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             self.entered.notify_one();

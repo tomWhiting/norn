@@ -13,7 +13,9 @@ fn builder_publishes_only_the_selected_root_view() -> Result<(), Box<dyn std::er
     let alpha_name = alpha.first().ok_or("alpha fixture exposed no tool")?;
     let beta_name = beta.first().ok_or("beta fixture exposed no tool")?;
     let selection = crate::model_catalog::default_selection();
-    let context_window = crate::model_catalog::smallest_context_window_for_model(selection.model)
+    let context_window = crate::model_selection::CatalogBackend::CODEX
+        .model(selection.model)
+        .map(|entry| entry.context_window)
         .ok_or("catalogued test model has no context window")?;
     let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
     let working_dir = tempfile::tempdir()?;
@@ -57,9 +59,10 @@ async fn built_handle_controls_live_mcp_state_without_an_initial_runtime()
             std::collections::BTreeMap::new(),
         )?;
         let selection = crate::model_catalog::default_selection();
-        let context_window =
-            crate::model_catalog::smallest_context_window_for_model(selection.model)
-                .ok_or("catalogued test model has no context window")?;
+        let context_window = crate::model_selection::CatalogBackend::CODEX
+            .model(selection.model)
+            .map(|entry| entry.context_window)
+            .ok_or("catalogued test model has no context window")?;
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         let agent = AgentBuilder::new(provider)
             .model(selection.model)
@@ -118,9 +121,10 @@ async fn startup_runtime_is_reported_and_reused_by_the_first_live_mutation()
         )?;
         let runtime = Arc::new(runtime_with_servers(&["alpha"]));
         let selection = crate::model_catalog::default_selection();
-        let context_window =
-            crate::model_catalog::smallest_context_window_for_model(selection.model)
-                .ok_or("catalogued test model has no context window")?;
+        let context_window = crate::model_selection::CatalogBackend::CODEX
+            .model(selection.model)
+            .map(|entry| entry.context_window)
+            .ok_or("catalogued test model has no context window")?;
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         let agent = AgentBuilder::new(provider)
             .model(selection.model)

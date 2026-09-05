@@ -125,6 +125,10 @@ fn validate_auth_source(auth_source: &AuthSource) -> Result<(), ProviderError> {
 }
 
 impl Provider for OpenAiCompatibleProvider {
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        Some(crate::model_selection::CatalogBackend::CHAT)
+    }
+
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities::default()
     }

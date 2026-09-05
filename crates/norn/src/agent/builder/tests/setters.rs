@@ -68,6 +68,7 @@ fn variables_setter_conflicting_session_id_fails_build() {
     let reason = invalid_config_reason(
         AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .open_session(
                 &manager,

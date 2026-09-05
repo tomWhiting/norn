@@ -11,6 +11,11 @@ pub(super) struct ParkedProvider {
 }
 
 impl Provider for ParkedProvider {
+    // This scripted provider represents the catalogued Codex models used by these tests.
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        Some(crate::model_selection::CatalogBackend::CODEX)
+    }
+
     fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.entered.notify_one();

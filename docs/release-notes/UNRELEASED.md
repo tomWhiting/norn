@@ -1,0 +1,17 @@
+# Unreleased — model selection and Codex catalogue
+
+5 September 2026, Melbourne time. Candidate changes under review; no version or release is declared. Source: `docs/design/norn-model-selection/briefs/NMS-001.json` and the supplied Codex metadata snapshot in `assets/codex-model-metadata-20260905.json`.
+
+The Codex subscription catalogue adds GPT-6 Astra and refreshes the visible Sol, Terra, Luna and Spark metadata from the supplied export. Sol remains the default. Astra's default context is 272,000 tokens and its declared maximum is 872,000; these are distinct values. Ultra is an effort identifier on the models whose route metadata declares it. It does not imply automatic delegation. Hidden entries and bundled prompt bodies are excluded from ordinary model selection.
+
+Startup and live model changes validate the selected provider/backend, context override, effort and service tier before publishing the new state. An explicit window stays explicit even when it equals the old model's default. Refused changes preserve the previous model and budgets. User alias targets are canonicalised through bundled model aliases once; another user alias is not followed recursively. A live model change does not replace provider credentials or conversation history.
+
+The public Responses API and compatible Chat catalogues currently declare no model capability entries. They require an operator-explicit context window, for example `-c context_window=272000` when that is the value the operator intends. That example is not a claim about a public API model's actual limit. Explicit effort and tier selections are refused until the selected route declares the corresponding metadata; the diagnostic names the absent metadata rather than claiming the model itself lacks the feature. No Codex-route capability is borrowed. Raw provider options cannot override Norn's effort or tier policy.
+
+On those routes, a child using the same canonical model and concrete backend may inherit the immediate parent's operator-explicit context window. An explicit child policy takes precedence. A different model/backend must supply its own explicit child window while route metadata is absent. Derived catalogue windows are not relabelled as operator configuration.
+
+CLI model/effort/tier/window configuration mistakes are argument errors before agent execution. Slash help advertises supported effort choices; `default`, `off` and `clear` clear the effort override. Service-tier `none` clears that separate override.
+
+The diagnostic runner now reports missing utilities and failed legs explicitly, checks formatting without rewriting source, and refuses dirty tracked inputs. These diagnostics are not a landing receipt. An independently rerun exact-commit battery on 205 and the required source review still govern landing; the known Aion source-binding issue remains open.
+
+No live provider request is proved by this metadata and fixture work. Public-route metadata, live Astra/Ultra acceptance, release-platform coverage, release artifacts and installer publication retain their own verification obligations.

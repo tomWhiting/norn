@@ -26,6 +26,8 @@ pub enum ReasoningEffort {
     XHigh,
     /// Maximum reasoning effort.
     Max,
+    /// Codex-advertised ultra effort; does not itself enable task delegation.
+    Ultra,
 }
 
 impl ReasoningEffort {
@@ -39,6 +41,7 @@ impl ReasoningEffort {
             Self::High => "high",
             Self::XHigh => "xhigh",
             Self::Max => "max",
+            Self::Ultra => "ultra",
         }
     }
 }

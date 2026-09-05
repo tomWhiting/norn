@@ -9,7 +9,9 @@ use super::super::*;
 #[test]
 fn arm_auto_compaction_installs_estimator_edits_and_catalog_window() {
     let model = crate::model_catalog::default_selection().model;
-    let catalog_window = crate::model_catalog::smallest_context_window_for_model(model);
+    let catalog_window = crate::model_selection::CatalogBackend::CODEX
+        .model(model)
+        .map(|entry| entry.context_window);
     assert!(
         catalog_window.is_some(),
         "test precondition: the default model must be catalogued",
@@ -21,7 +23,12 @@ fn arm_auto_compaction_installs_estimator_edits_and_catalog_window() {
     assert!(loop_context.context_edits.is_none());
     assert!(config.context_window_limit.is_none());
 
-    arm_auto_compaction(&mut loop_context, &mut config, model);
+    arm_auto_compaction(
+        Some(crate::model_selection::CatalogBackend::CODEX),
+        &mut loop_context,
+        &mut config,
+        model,
+    );
 
     assert!(
         loop_context.token_estimator.is_some(),
@@ -54,7 +61,12 @@ fn arm_auto_compaction_explicit_window_beats_catalog() {
         ..AgentLoopConfig::default()
     };
 
-    arm_auto_compaction(&mut loop_context, &mut config, model);
+    arm_auto_compaction(
+        Some(crate::model_selection::CatalogBackend::CODEX),
+        &mut loop_context,
+        &mut config,
+        model,
+    );
 
     assert_eq!(
         config.context_window_limit,
@@ -74,7 +86,12 @@ fn arm_auto_compaction_non_catalog_model_leaves_window_none() {
     let mut loop_context = LoopContext::new("base");
     let mut config = AgentLoopConfig::default();
 
-    arm_auto_compaction(&mut loop_context, &mut config, "not-in-catalog-model-xyz");
+    arm_auto_compaction(
+        Some(crate::model_selection::CatalogBackend::CODEX),
+        &mut loop_context,
+        &mut config,
+        "not-in-catalog-model-xyz",
+    );
 
     assert_eq!(
         config.context_window_limit, None,
@@ -94,12 +111,16 @@ fn validate_rejects_explicit_window_above_catalog_max() {
         context_window_limit: Some(272_000),
         ..AgentLoopConfig::default()
     };
-    let reason = validate_context_window(&config, "gpt-5.3-codex-spark")
-        .err()
-        .map_or_else(
-            || "unexpected validation success".to_owned(),
-            |error| error.to_string(),
-        );
+    let reason = validate_context_window(
+        Some(crate::model_selection::CatalogBackend::CODEX),
+        &config,
+        "gpt-5.3-codex-spark",
+    )
+    .err()
+    .map_or_else(
+        || "unexpected validation success".to_owned(),
+        |error| error.to_string(),
+    );
     assert!(
         reason.contains("gpt-5.3-codex-spark"),
         "names the model: {reason}"
@@ -122,12 +143,19 @@ fn validate_accepts_windows_up_to_catalog_max() {
         ..AgentLoopConfig::default()
     };
     assert!(
-        validate_context_window(&exact, "gpt-5.3-codex-spark").is_ok(),
+        validate_context_window(
+            Some(crate::model_selection::CatalogBackend::CODEX),
+            &exact,
+            "gpt-5.3-codex-spark"
+        )
+        .is_ok(),
         "a window equal to the model max is valid",
     );
 
     let model = crate::model_catalog::default_selection().model;
-    let catalog_max = crate::model_catalog::largest_max_context_window_for_model(model);
+    let catalog_max = crate::model_selection::CatalogBackend::CODEX
+        .model(model)
+        .map(|entry| entry.max_context_window);
     assert!(
         catalog_max.is_some(),
         "test precondition: default model is catalogued",
@@ -138,7 +166,12 @@ fn validate_accepts_windows_up_to_catalog_max() {
         ..AgentLoopConfig::default()
     };
     assert!(
-        validate_context_window(&at_max, model).is_ok(),
+        validate_context_window(
+            Some(crate::model_selection::CatalogBackend::CODEX),
+            &at_max,
+            model
+        )
+        .is_ok(),
         "catalog max is valid",
     );
 }
@@ -150,34 +183,63 @@ fn validate_accepts_windows_up_to_catalog_max() {
 fn validate_accepts_catalog_filled_window() {
     let mut loop_context = LoopContext::new("base");
     let mut config = AgentLoopConfig::default();
-    arm_auto_compaction(&mut loop_context, &mut config, "gpt-5.3-codex-spark");
+    arm_auto_compaction(
+        Some(crate::model_selection::CatalogBackend::CODEX),
+        &mut loop_context,
+        &mut config,
+        "gpt-5.3-codex-spark",
+    );
     assert_eq!(config.context_window_limit, Some(128_000));
     assert!(
-        validate_context_window(&config, "gpt-5.3-codex-spark").is_ok(),
+        validate_context_window(
+            Some(crate::model_selection::CatalogBackend::CODEX),
+            &config,
+            "gpt-5.3-codex-spark"
+        )
+        .is_ok(),
         "catalog-filled window validates",
     );
 }
 
-/// Owner ruling (Tom, 2026-07-05): an unknown model "probably means
-/// the wrong model code" — running with protections silently disabled
-/// is the ruled-against state, so a None window after the fill is a
-/// hard error that leads with the typo hypothesis.
+/// Preserve the 2026-07-05 owner ruling against silently disabled protections.
+/// Refusal names the selected route's missing metadata and the explicit-window
+/// remedy without presenting a misspelled model as the established cause.
 #[test]
 fn validate_rejects_non_catalog_model_without_explicit_window() {
     let config = AgentLoopConfig::default();
-    let reason = validate_context_window(&config, "not-in-catalog-model-xyz")
-        .err()
-        .map_or_else(
-            || "unexpected validation success".to_owned(),
-            |error| error.to_string(),
-        );
+    let reason = validate_context_window(
+        Some(crate::model_selection::CatalogBackend::CODEX),
+        &config,
+        "not-in-catalog-model-xyz",
+    )
+    .err()
+    .map_or_else(
+        || "unexpected validation success".to_owned(),
+        |error| error.to_string(),
+    );
     assert!(
         reason.contains("not-in-catalog-model-xyz"),
         "names the model: {reason}"
     );
     assert!(
-        reason.contains("typo"),
-        "leads with the typo hypothesis: {reason}"
+        reason.contains("openai.codex_subscription"),
+        "names the selected route: {reason}"
+    );
+    assert!(
+        reason.contains("declares no capability metadata for model 'not-in-catalog-model-xyz'"),
+        "states the missing declaration: {reason}"
+    );
+    assert!(
+        reason.contains("no context window is configured"),
+        "states why this configuration cannot be admitted: {reason}"
+    );
+    assert!(
+        reason.contains("-c context_window=<tokens>"),
+        "names the operator's explicit-window remedy: {reason}"
+    );
+    assert!(
+        !reason.contains("typo"),
+        "does not speculate about spelling: {reason}"
     );
     assert!(
         reason.contains("agent.context_window"),
@@ -195,7 +257,12 @@ fn validate_accepts_non_catalog_model_with_explicit_window() {
         ..AgentLoopConfig::default()
     };
     assert!(
-        validate_context_window(&config, "not-in-catalog-model-xyz").is_ok(),
+        validate_context_window(
+            Some(crate::model_selection::CatalogBackend::CODEX),
+            &config,
+            "not-in-catalog-model-xyz"
+        )
+        .is_ok(),
         "explicit window on an uncatalogued model is valid",
     );
 }

@@ -211,13 +211,8 @@ pub struct SlashStateInputs<'a> {
     /// The gated tool registry whose names/descriptions populate the
     /// slash `/tools` surface.
     pub registry: &'a ToolRegistry,
-    /// The resolved model identifier shown in the status surface and
-    /// swapped by `/model`.
-    pub model: &'a str,
-    /// The resolved service tier, when set.
-    pub service_tier: Option<norn::provider::request::ServiceTier>,
-    /// The resolved reasoning effort, when set.
-    pub reasoning_effort: Option<norn::provider::request::ReasoningEffort>,
+    /// The builder's validated model policy and override provenance.
+    pub model_selection: &'a norn::model_selection::ModelRuntime,
 }
 
 /// Build a [`SlashState`] and [`SlashCommandRegistry`] from the assembled
@@ -313,9 +308,7 @@ fn build_slash_state_inner(
         .or_else(|| parse_output_schema_for_state(cli.output_schema.as_deref()));
 
     let seed = SlashStateSeed {
-        model: inputs.model.to_owned(),
-        service_tier: inputs.service_tier,
-        reasoning_effort: inputs.reasoning_effort,
+        model_selection: inputs.model_selection.clone(),
         output_schema,
         session_name: cli.session_name.clone(),
         session_id,

@@ -136,6 +136,8 @@ impl DrivenChild {
         let mut child = Command::new(norn_bin())
             .arg("--protocol")
             .arg("jsonrpc")
+            // Explicit Sol fixture budget: the mock route has no model catalogue.
+            .args(["-c", "context_window=272000"])
             .args(extra_args)
             .env("NORN_HOME", home.path())
             .env("NORN_OPENAI_COMPAT_API_KEY", "test-key")

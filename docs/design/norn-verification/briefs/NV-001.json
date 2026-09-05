@@ -1,0 +1,237 @@
+{
+  "id": "NV-001",
+  "cluster": "norn-verification",
+  "title": "Truthful diagnostics and declared venue verification",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": [
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C5",
+    "C6",
+    "C7"
+  ],
+  "stories": [
+    "S1",
+    "S2",
+    "S3"
+  ],
+  "purpose": "The legacy script can print green after red checks and can discard tracked changes; Norn also lacks the canonical venue leg declaration.",
+  "task": "Implement only these independent verification surfaces. Use the existing Aion workflow for structural measurement. Never treat diagnostic output as the final landing receipt.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Repair the diagnostic battery runner without destructive formatting",
+      "spec": "THE SYSTEM SHALL propagate each formatter/check/test failure to an overall nonzero exit. THE SYSTEM SHALL use cargo fmt --check and SHALL NOT reset source files. THE SYSTEM SHALL refuse an initially dirty tracked tree before running legs. It SHALL label these diagnostics as insufficient for landing authority.",
+      "files": {
+        "modify": [
+          "scripts/remote-battery.sh"
+        ]
+      },
+      "acceptance": [
+        "Failed ordinary leg yields a red/nonzero verdict while later declared legs still execute.",
+        "Formatter error yields red even when no file diff exists.",
+        "Dirty tracked source is refused and unchanged; no git checkout/reset cleanup.",
+        "Log paths and recorded raw per-leg exits remain usable; output explicitly requires venue workflow receipt for landing.",
+        "All required utilities, including dirname, are checked before first use; a missing utility produces the deliberate refusal before paths, logs or legs are evaluated."
+      ],
+      "checklist": [
+        "C1"
+      ],
+      "stories": [
+        "S1"
+      ]
+    },
+    {
+      "id": "R2",
+      "title": "Exercise the actual shell runner in isolated failure fixtures",
+      "spec": "WHEN the runner is tested, THE SYSTEM SHALL execute the real script in temporary fixture repositories with controlled command doubles, without running Cargo or touching operator state.",
+      "files": {
+        "create": [
+          "scripts/tests/remote_battery_test.py"
+        ]
+      },
+      "acceptance": [
+        "Happy path, failed leg plus later execution, formatter failure with no diff, dirty-tree preservation and missing command cases are checked.",
+        "Fixture files/processes are isolated and cleaned; no network/model credentials required.",
+        "The isolated missing-dirname fixture asserts exit 3, a named refusal and no leg calls or created logs."
+      ],
+      "checklist": [
+        "C2"
+      ],
+      "stories": [
+        "S1"
+      ]
+    },
+    {
+      "id": "R3",
+      "title": "Declare exact venue legs through the canonical Aion battery contract",
+      "spec": "THE SYSTEM SHALL declare a single gates.json leg list consumed by the existing repo_battery_205 workflow, including fmt, strict all-target clippy, workspace tests, doc tests and runner regressions. Each leg SHALL declare its execution band; no new orchestration loop or receipt substitute is introduced.",
+      "files": {
+        "create": [
+          "gates.json"
+        ]
+      },
+      "acceptance": [
+        "Every leg has name/cmd/band and uses pinned/locked Rust inputs where applicable.",
+        "Cargo legs are serial; shell regression is isolated.",
+        "Workflow terminal receipt, not workflow success alone, determines measured result.",
+        "Known Aion source-binding limitation remains explicit until revalidated/closed; no landing claim from a local diagnostic result."
+      ],
+      "checklist": [
+        "C3"
+      ],
+      "stories": [
+        "S2"
+      ]
+    },
+    {
+      "id": "R4",
+      "title": "Repair pinned baseline Clippy failures without suppressions",
+      "spec": "WHEN the unchanged cf6c44cad8a534910f614f703a36bbd26a4fdcbc baseline fails strict all-target Clippy on the pinned Rust1.94.0 venue toolchain, THE SYSTEM SHALL compile the descriptor constant and re-export only on the same platforms and test configurations as their actual browser consumers, remove platform-specific unnecessary mutability through appropriate ownership, and use fallible direct string formatting in the migration-test hex helper.",
+      "files": {
+        "modify": [
+          "crates/norn/src/resource/mod.rs",
+          "crates/norn/src/resource/descriptor_governor.rs",
+          "crates/norn/src/provider/openai_oauth/auth_root.rs",
+          "crates/norn/src/session/migration/hardening_tests.rs"
+        ]
+      },
+      "acceptance": [
+        "The four diagnosed baseline failures are absent on the pinned venue check.",
+        "No warning suppression, underscore variable rename, unwrap/expect or unrelated changes.",
+        "Retain correct behavior on macOS and Linux; handle formatting errors explicitly."
+      ],
+      "checklist": [
+        "C4"
+      ],
+      "stories": [
+        "S3"
+      ]
+    },
+    {
+      "id": "R5",
+      "title": "Make prompt-refresh fixture establish a distinct timestamp",
+      "spec": "WHEN the venue filesystem coalesces immediate modification timestamps, THE TEST SHALL set the initial fixture file modification time to UNIX_EPOCH before loading it, so the existing rewrite establishes the mtime change required by this request-boundary test. The test SHALL preserve its first-request/second-request assertions and SHALL NOT sleep or change production freshness behavior.",
+      "files": {
+        "modify": [
+          "crates/norn/src/loop/runner/tests/d8_parent_prompt_hot_reload.rs"
+        ]
+      },
+      "acceptance": [
+        "The isolated request-boundary test passes on205 without sleeps or retries.",
+        "The full suite still exercises the unchanged prompt ordering assertions.",
+        "Production same-mtime context refresh remains separately tracked as NWP-00.5 in the owner-requested norn-work-program/execution-plan.json, with evidence/prompt-refresh-diagnostic.md. This fixture repair does not close it."
+      ],
+      "checklist": [
+        "C5"
+      ],
+      "stories": [
+        "S3"
+      ]
+    },
+    {
+      "id": "R6",
+      "title": "Separate account-catalog fixture setup from its deliberate lock fault",
+      "spec": "WHEN the account-catalog recovery test deliberately holds the catalog transaction during abort, THE TEST SHALL prepare the initial login reservation with existing OAuthHttpOptions defaults and apply its original 20 ms lock timeout and 1 ms polling interval only to the abort phase. The test SHALL preserve credential-scrub, pending-record and successful recovery assertions; it SHALL NOT change production options or invent a longer timeout.",
+      "files": {
+        "modify": [
+          "crates/norn/src/provider/openai_oauth/account_catalog_tests.rs"
+        ]
+      },
+      "acceptance": [
+        "Successful initial reservation setup uses OAuthHttpOptions::default(); only the prepared reservation receives the original short fault timing immediately before abort.",
+        "The held catalog transaction still forces abort to return Coordination after removing old credentials, and the pending record survives until the existing credential-free recovery and commit succeed.",
+        "The exact fixture and full workspace tests pass on 205 without ignored tests, retries, sleeps, warning suppressions or production timeout changes."
+      ],
+      "checklist": [
+        "C6"
+      ],
+      "stories": [
+        "S3"
+      ]
+    },
+    {
+      "id": "R7",
+      "title": "Guard every Norn venue leg against persistent dirty source",
+      "spec": "THE SYSTEM SHALL run every gates.json command through scripts/source-bound-leg.py. Before executing the command it SHALL require a clean tracked/index/non-ignored untracked tree and capture HEAD, then require the same HEAD and a clean tree afterward. Git probe failures SHALL refuse the leg. Command failure SHALL remain nonzero even if postchecks also fail. The guard SHALL record declaration and guard SHA256 witnesses. This subject-owned mitigation SHALL NOT claim immutable execution or closure of Aion X.1: edit-execute-restore inside a leg and replacement of the declaration/guard by an unreviewed writer remain outside the pre/post guarantee. Each witness SHALL compare every tracked working-tree blob directly with its HEAD tree object identity using the repository object format, including symlink targets and executable mode, without trusting Git stat-cache cleanliness. Unsupported tracked entry types SHALL refuse.",
+      "files": {
+        "create": [
+          "scripts/source-bound-leg.py",
+          "scripts/tests/source_bound_leg_test.py"
+        ],
+        "modify": [
+          "gates.json"
+        ]
+      },
+      "acceptance": [
+        "Real committed temporary Git fixtures prove clean execution, tracked/index/untracked refusal before execution, ignored build-output acceptance, moved HEAD refusal, post-execution dirtiness refusal, Git failure refusal and command exit propagation.",
+        "A change restored inside the command is explicitly tested as a documented limitation, not reported as immutable execution.",
+        "All five declared legs invoke the guard; diagnostic-runner runs both Python regression suites with first-failure propagation.",
+        "Guard logs name HEAD, declaration SHA256, guard SHA256, command exit and any failed probe; landing review compares digests with the exact reviewed commit.",
+        "No Cargo/build/service operations occur in these fixture tests; no invented timeouts, waivers or source cleanup.",
+        "A same-length source edit with restored mtime and a clean Git status is still refused by direct blob identity; mode changes with core.fileMode disabled and symlink-target changes are refused. Blob/filter normalization is not silently accepted: this guard requires the checked-out bytes to match committed blobs."
+      ],
+      "checklist": [
+        "C7"
+      ],
+      "stories": [
+        "S2"
+      ]
+    }
+  ],
+  "boundaries": [
+    "No edits outside row walls; stop and name files required.",
+    "No deployment, worker reconfiguration or Aion correctness changes in this brief.",
+    "Do not invent waivers, skip tests or suppress warnings."
+  ],
+  "verification": [
+    "python3 scripts/tests/remote_battery_test.py",
+    "python3 scripts/tests/source_bound_leg_test.py",
+    "bash -n scripts/remote-battery.sh",
+    "Brief coverage and explicit gates declaration validation",
+    "205 exact-commit receipt plus Fable review before landing"
+  ],
+  "wall_amendments": [
+    {
+      "row": "R4",
+      "reason": "Pinned baseline go-look on205 failed before candidate compilation. Added exact four-file repair row before touching those paths; baseline log is /home/aion/venue/.dev-battery/nwp-01-baseline-clippy.log.",
+      "added": [
+        "crates/norn/src/resource/mod.rs",
+        "crates/norn/src/resource/descriptor_governor.rs",
+        "crates/norn/src/provider/openai_oauth/auth_root.rs",
+        "crates/norn/src/session/migration/hardening_tests.rs"
+      ]
+    },
+    {
+      "row": "R4",
+      "reason": "Consumer search before edits found the descriptor constant is required by macOS browser launch and Unix browser tests. Match those existing compilation conditions rather than deleting it. No additional files needed.",
+      "added": []
+    },
+    {
+      "row": "R5",
+      "reason": "Isolated test failure reproduced on205; scratch probe observed 5/8 same-mtime rewrites despite size13 to22. Exact fixture path named before edit.",
+      "added": [
+        "crates/norn/src/loop/runner/tests/d8_parent_prompt_hot_reload.rs"
+      ]
+    },
+    {
+      "row": "R6",
+      "reason": "The unchanged account-catalog fixture failed in candidate14/candidate15 full-suite runs and the coordinator isolated rerun. Source diagnosis in /private/tmp/nwp-01-proof/account-lock-source-diagnosis.json confirms that the deliberate 20 ms fault deadline also constrains successful setup I/O. Register this test-only repair before edit: use existing default setup timing and retain the original abort-fault timing and recovery assertions.",
+      "added": [
+        "crates/norn/src/provider/openai_oauth/account_catalog_tests.rs"
+      ]
+    },
+    {
+      "row": "R7",
+      "reason": "Parent authorized a bounded Norn-specific source guard after read-only inspection confirmed the live Aion runner still checks only HEAD/origin. Register the exact wall before implementation; retain the global Aion limitation explicitly.",
+      "added": [
+        "scripts/source-bound-leg.py",
+        "scripts/tests/source_bound_leg_test.py",
+        "gates.json"
+      ]
+    }
+  ]
+}

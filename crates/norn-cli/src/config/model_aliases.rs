@@ -29,7 +29,9 @@ pub fn resolve_model_alias(model: &str, settings: &NornSettings) -> Result<Strin
     Ok(resolve_model_selection(model, settings)?.model)
 }
 
-/// Resolve `model` into a full model/backend selection.
+/// Resolve an operator token into a full model/backend selection.
+/// Surrounding whitespace is trimmed; alias targets retain their exact identity
+/// for validation by the selected backend's model-selection preflight.
 ///
 /// # Errors
 ///
@@ -38,41 +40,13 @@ pub fn resolve_model_selection(
     model: &str,
     settings: &NornSettings,
 ) -> Result<ResolvedModelSelection, BuildError> {
-    if is_catalog_model(model) {
-        return Ok(model_only_selection(model));
-    }
-
-    if let Some(target) = settings
-        .model_aliases
-        .as_ref()
-        .and_then(|aliases| aliases.get(model))
-    {
-        return Ok(ResolvedModelSelection {
-            model: target.model().to_owned(),
-            provider_profile: target.provider_profile().map(str::to_owned),
-            api_shape: target.api_shape().map(str::to_owned),
-        });
-    }
-
-    let canonical = norn::model_catalog::resolve_model_alias(model).unwrap_or(model);
-    Ok(model_only_selection(canonical))
-}
-
-fn model_only_selection(model: &str) -> ResolvedModelSelection {
-    ResolvedModelSelection {
-        model: model.to_owned(),
-        provider_profile: None,
-        api_shape: None,
-    }
-}
-
-fn is_catalog_model(model: &str) -> bool {
-    norn::model_catalog::catalog()
-        .providers
-        .iter()
-        .flat_map(|provider| provider.backends)
-        .flat_map(|backend| backend.models)
-        .any(|entry| entry.id == model)
+    let aliases = settings.model_aliases.clone().unwrap_or_default();
+    let resolved = norn::model_selection::resolve_alias(model.trim(), &aliases);
+    Ok(ResolvedModelSelection {
+        model: resolved.model,
+        provider_profile: resolved.provider_profile,
+        api_shape: resolved.api_shape,
+    })
 }
 
 #[cfg(test)]

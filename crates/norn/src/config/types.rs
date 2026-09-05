@@ -519,7 +519,7 @@ pub struct AgentSettings {
     pub server_compaction_threshold_tokens: Option<u64>,
 
     /// Reasoning-effort hint, stored as a raw string here (e.g. `"low"`,
-    /// `"medium"`, `"high"`, `"xhigh"`, `"max"`). Translated to
+    /// `"medium"`, `"high"`, `"xhigh"`, `"max"`, `"ultra"`). Translated to
     /// [`crate::provider::request::ReasoningEffort`] in NC-003.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
@@ -956,7 +956,7 @@ pub struct VariantSettings {
 
     /// Reasoning effort for children of this variant: one of the
     /// [`crate::provider::request::ReasoningEffort`] serde names
-    /// (`"none"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`). Validated at
+    /// (`"none"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`, `"ultra"`). Validated at
     /// config-validate time, parsed to the typed enum at catalog build.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,

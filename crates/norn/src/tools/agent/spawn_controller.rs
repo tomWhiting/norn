@@ -112,7 +112,12 @@ impl SpawnController {
             terminal_transition_gate,
         } = self;
 
-        crate::agent::arming::arm_auto_compaction(&mut loop_ctx, &mut child_config, &model);
+        crate::agent::arming::arm_auto_compaction(
+            provider.model_catalog_backend(),
+            &mut loop_ctx,
+            &mut child_config,
+            &model,
+        );
         let delivered_children = loop_ctx.children_usage.clone();
         let agent_role = format!("spawn/{model}");
         let mut initial = Some(task);

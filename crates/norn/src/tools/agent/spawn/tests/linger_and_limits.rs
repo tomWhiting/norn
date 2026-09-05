@@ -84,6 +84,11 @@ struct LingerTreeProvider {
 }
 
 impl Provider for LingerTreeProvider {
+    // This scripted provider represents the catalogued Codex models used by these tests.
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        Some(crate::model_selection::CatalogBackend::CODEX)
+    }
+
     fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         use std::sync::atomic::Ordering as AtomicOrdering;
         // The managed dynamic-context Developer message now rides at the

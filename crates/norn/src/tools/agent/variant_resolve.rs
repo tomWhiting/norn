@@ -104,7 +104,7 @@ pub(crate) fn resolve_child_model(
 /// step's provider request actually uses — then the caller's
 /// [`AgentRegistry`] entry. The extension wins because the registry row
 /// is stamped once at build/launch and goes stale across runtime model
-/// switches (the CLI's `/model` re-reads `SlashState.model` before each
+/// switches (the CLI's `/model` re-reads `SlashState.model_selection` before each
 /// step; only the per-step refresh tracks it). Settings are never
 /// re-read and nothing is invented: with neither source the caller gets
 /// a typed error telling it to pass `model` explicitly.
@@ -138,6 +138,8 @@ pub(crate) fn resolve_parent_model(
 /// in precedence order plus the labels the validation errors/warnings
 /// name.
 pub(crate) struct ChildEffortInputs<'a> {
+    /// The actual provider route used by the child.
+    pub(crate) backend: Option<crate::model_selection::CatalogBackend>,
     /// The variant's parsed effort, if the spawn resolved a variant that
     /// carries one.
     pub(crate) variant_effort: Option<crate::provider::request::ReasoningEffort>,
@@ -207,7 +209,7 @@ pub(crate) fn resolve_child_reasoning_effort(
             child: inputs.child_role,
         },
     };
-    arm_child_reasoning_effort(effort, &source, inputs.child_model).map_err(|e| {
+    arm_child_reasoning_effort(inputs.backend, effort, &source, inputs.child_model).map_err(|e| {
         ToolError::ExecutionFailed {
             reason: format!("{}: {e}", inputs.surface),
         }

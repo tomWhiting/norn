@@ -121,11 +121,16 @@ mod tests {
     use super::super::state::{SlashState, SlashStateSeed};
     use super::*;
 
-    fn empty_seed() -> SlashStateSeed {
-        SlashStateSeed {
-            model: "gpt-x".to_owned(),
-            service_tier: None,
-            reasoning_effort: None,
+    fn empty_seed() -> Result<SlashStateSeed, norn::error::ConfigError> {
+        Ok(SlashStateSeed {
+            model_selection: norn::model_selection::ModelRuntime::new(
+                Some(norn::model_selection::CatalogBackend::CODEX),
+                "gpt-x",
+                Some(272_000),
+                None,
+                None,
+                std::collections::BTreeMap::new(),
+            )?,
             output_schema: None,
             session_name: None,
             session_id: None,
@@ -136,76 +141,84 @@ mod tests {
             variable_pairs: Vec::new(),
             tools: Vec::new(),
             store: Arc::new(EventStore::new()),
-        }
+        })
     }
 
     #[test]
-    fn non_slash_input_passes_through() {
-        let state = SlashState::new(empty_seed());
+    fn non_slash_input_passes_through() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         let outcome = dispatch_input("hello there", &registry).unwrap();
         match outcome {
             DispatchOutcome::PassToAgent(s) => assert_eq!(s, "hello there"),
             DispatchOutcome::HandledLocally => panic!("expected PassToAgent"),
         }
+        Ok(())
     }
 
     #[test]
-    fn cli_builtin_help_is_intercepted() {
-        let state = SlashState::new(empty_seed());
+    fn cli_builtin_help_is_intercepted() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         let outcome = dispatch_input("/help", &registry).unwrap();
         assert!(matches!(outcome, DispatchOutcome::HandledLocally));
+        Ok(())
     }
 
     #[tokio::test]
-    async fn live_mcp_help_is_handled_without_a_control_plane() {
-        let state = SlashState::new(empty_seed());
+    async fn live_mcp_help_is_handled_without_a_control_plane()
+    -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         let outcome = dispatch_input_with_mcp("/mcp help", &registry, None).await;
         assert!(matches!(outcome, Ok(DispatchOutcome::HandledLocally)));
+        Ok(())
     }
 
     #[test]
-    fn cli_builtin_compact_sets_flag_and_handles_locally() {
-        let state = SlashState::new(empty_seed());
+    fn cli_builtin_compact_sets_flag_and_handles_locally() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         let outcome = dispatch_input("/compact", &registry).unwrap();
         assert!(matches!(outcome, DispatchOutcome::HandledLocally));
         assert!(state.compact_requested.load(Ordering::Relaxed));
+        Ok(())
     }
 
     #[test]
-    fn cli_builtin_exit_sets_flag_and_handles_locally() {
-        let state = SlashState::new(empty_seed());
+    fn cli_builtin_exit_sets_flag_and_handles_locally() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         let outcome = dispatch_input("/exit", &registry).unwrap();
         assert!(matches!(outcome, DispatchOutcome::HandledLocally));
         assert!(state.exit_requested.load(Ordering::Relaxed));
+        Ok(())
     }
 
     #[test]
-    fn cli_builtin_compact_absorbs_trailing_argument() {
-        let state = SlashState::new(empty_seed());
+    fn cli_builtin_compact_absorbs_trailing_argument() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         let outcome = dispatch_input("/compact now please", &registry).unwrap();
         assert!(matches!(outcome, DispatchOutcome::HandledLocally));
         assert!(state.compact_requested.load(Ordering::Relaxed));
+        Ok(())
     }
 
     #[test]
-    fn unknown_slash_passes_through_to_agent() {
-        let state = SlashState::new(empty_seed());
+    fn unknown_slash_passes_through_to_agent() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         let outcome = dispatch_input("/unknown foo bar", &registry).unwrap();
         match outcome {
             DispatchOutcome::PassToAgent(s) => assert_eq!(s, "/unknown foo bar"),
             DispatchOutcome::HandledLocally => panic!("unknown slash must pass to agent"),
         }
+        Ok(())
     }
 
     #[test]
-    fn profile_command_passes_through_to_agent() {
+    fn profile_command_passes_through_to_agent() -> Result<(), norn::error::ConfigError> {
         let mut profile = SlashCommandRegistry::new();
         profile.register(SlashCommand {
             name: "deploy".to_owned(),
@@ -213,23 +226,25 @@ mod tests {
                 skill_name: "deploy".to_owned(),
             },
         });
-        let state = SlashState::new(empty_seed());
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, Some(&profile));
         let outcome = dispatch_input("/deploy staging", &registry).unwrap();
         match outcome {
             DispatchOutcome::PassToAgent(s) => assert_eq!(s, "/deploy staging"),
             DispatchOutcome::HandledLocally => panic!("profile command must pass to agent"),
         }
+        Ok(())
     }
 
     #[test]
-    fn empty_slash_passes_through_to_agent() {
-        let state = SlashState::new(empty_seed());
+    fn empty_slash_passes_through_to_agent() -> Result<(), norn::error::ConfigError> {
+        let state = SlashState::new(empty_seed()?);
         let registry = build_slash_registry(&state, None);
         let outcome = dispatch_input("/   ", &registry).unwrap();
         match outcome {
             DispatchOutcome::PassToAgent(s) => assert_eq!(s, "/   "),
             DispatchOutcome::HandledLocally => panic!("empty slash must pass to agent"),
         }
+        Ok(())
     }
 }

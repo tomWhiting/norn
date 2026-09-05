@@ -185,7 +185,7 @@ pub fn apply_clear_request(
     let old_entry = norn::session::resolve_session(&state.data_dir, &old_session_id)?;
     let opened = manager.create(
         CreateSessionOptions {
-            model: state.model.lock().clone(),
+            model: state.model_snapshot(),
             working_dir: old_entry.working_dir,
             name: None,
         },
@@ -253,11 +253,16 @@ mod tests {
         (opened.entry.id, Arc::new(opened.store))
     }
 
-    fn make_state(store: Arc<EventStore>) -> SlashState {
-        SlashState::new(SlashStateSeed {
-            model: "gpt-x".to_owned(),
-            service_tier: None,
-            reasoning_effort: None,
+    fn make_state(store: Arc<EventStore>) -> Result<SlashState, norn::error::ConfigError> {
+        Ok(SlashState::new(SlashStateSeed {
+            model_selection: norn::model_selection::ModelRuntime::new(
+                Some(norn::model_selection::CatalogBackend::CODEX),
+                "gpt-x",
+                Some(272_000),
+                None,
+                None,
+                std::collections::BTreeMap::new(),
+            )?,
             output_schema: None,
             session_name: None,
             session_id: None,
@@ -268,7 +273,7 @@ mod tests {
             variable_pairs: Vec::new(),
             tools: Vec::new(),
             store,
-        })
+        }))
     }
 
     /// A persisted-session slash state, as print mode builds it when
@@ -277,11 +282,16 @@ mod tests {
         store: Arc<EventStore>,
         session_id: &str,
         data_dir: &std::path::Path,
-    ) -> SlashState {
-        SlashState::new(SlashStateSeed {
-            model: "gpt-x".to_owned(),
-            service_tier: None,
-            reasoning_effort: None,
+    ) -> Result<SlashState, norn::error::ConfigError> {
+        Ok(SlashState::new(SlashStateSeed {
+            model_selection: norn::model_selection::ModelRuntime::new(
+                Some(norn::model_selection::CatalogBackend::CODEX),
+                "gpt-x",
+                Some(272_000),
+                None,
+                None,
+                std::collections::BTreeMap::new(),
+            )?,
             output_schema: None,
             session_name: Some("original".to_owned()),
             session_id: Some(session_id.to_owned()),
@@ -292,7 +302,7 @@ mod tests {
             variable_pairs: Vec::new(),
             tools: Vec::new(),
             store,
-        })
+        }))
     }
 
     fn user(content: &str) -> SessionEvent {
@@ -317,10 +327,10 @@ mod tests {
     }
 
     #[test]
-    fn compact_flag_not_set_returns_none() {
+    fn compact_flag_not_set_returns_none() -> Result<(), norn::error::ConfigError> {
         let store = Arc::new(EventStore::new());
         let mut parts = built_parts();
-        let state = make_state(Arc::clone(&store));
+        let state = make_state(Arc::clone(&store))?;
         let outcome = apply_compact_request(
             parts.config.auto_compact_keep_recent_turns,
             &mut parts.loop_context,
@@ -329,13 +339,14 @@ mod tests {
         )
         .unwrap();
         assert!(outcome.is_none());
+        Ok(())
     }
 
     #[test]
-    fn compact_on_empty_store_reports_nothing() {
+    fn compact_on_empty_store_reports_nothing() -> Result<(), norn::error::ConfigError> {
         let store = Arc::new(EventStore::new());
         let mut parts = built_parts();
-        let state = make_state(Arc::clone(&store));
+        let state = make_state(Arc::clone(&store))?;
         state.compact_requested.store(true, Ordering::Relaxed);
         let outcome = apply_compact_request(
             parts.config.auto_compact_keep_recent_turns,
@@ -346,10 +357,11 @@ mod tests {
         .unwrap();
         assert!(matches!(outcome, Some(CompactOutcome::Nothing)));
         assert!(!state.compact_requested.load(Ordering::Relaxed));
+        Ok(())
     }
 
     #[test]
-    fn compact_with_many_turns_supersedes_older_events() {
+    fn compact_with_many_turns_supersedes_older_events() -> Result<(), norn::error::ConfigError> {
         // 12 user/assistant pairs => 12 assistant turns => keep=10 means
         // 2 oldest turns (4 events) get superseded.
         let store = Arc::new(EventStore::new());
@@ -358,7 +370,7 @@ mod tests {
             store.append(assistant(&format!("a{i}"))).unwrap();
         }
         let mut parts = built_parts();
-        let state = make_state(Arc::clone(&store));
+        let state = make_state(Arc::clone(&store))?;
         state.compact_requested.store(true, Ordering::Relaxed);
         let outcome = apply_compact_request(
             parts.config.auto_compact_keep_recent_turns,
@@ -381,10 +393,12 @@ mod tests {
                 debug_outcome(other.as_ref())
             ),
         }
+        Ok(())
     }
 
     #[test]
-    fn compact_persists_compaction_once_and_stays_resumable() {
+    fn compact_persists_compaction_once_and_stays_resumable() -> Result<(), norn::error::ConfigError>
+    {
         // Regression for the /compact double-write: the Compaction event
         // is written through the attached sink; apply_compact_request
         // must not re-append it (nor touch the index).
@@ -396,7 +410,7 @@ mod tests {
             store.append(assistant(&format!("a{i}"))).unwrap();
         }
         let mut parts = built_parts();
-        let state = make_state(Arc::clone(&store));
+        let state = make_state(Arc::clone(&store))?;
         state.compact_requested.store(true, Ordering::Relaxed);
 
         let outcome = apply_compact_request(
@@ -429,10 +443,11 @@ mod tests {
             .unwrap();
         assert_eq!(resumed.store.len(), 25);
         assert_eq!(resumed.replay.replayed_events, 25);
+        Ok(())
     }
 
     #[test]
-    fn compact_counts_index_events_exactly_once() {
+    fn compact_counts_index_events_exactly_once() -> Result<(), norn::error::ConfigError> {
         // Regression for the /compact index double-count: the registered
         // write-through sink already updates index.jsonl per persisted
         // event, so apply_compact_request must NOT hand-reconcile the
@@ -445,7 +460,7 @@ mod tests {
             store.append(assistant(&format!("a{i}"))).unwrap();
         }
         let mut parts = built_parts();
-        let state = make_state(Arc::clone(&store));
+        let state = make_state(Arc::clone(&store))?;
         state.compact_requested.store(true, Ordering::Relaxed);
 
         let outcome = apply_compact_request(
@@ -472,13 +487,14 @@ mod tests {
              events + 1 Compaction event); a hand-reconcile on top of the \
              registered sink double-counts",
         );
+        Ok(())
     }
 
     #[test]
-    fn clear_request_swaps_store_only_when_flag_is_set() {
+    fn clear_request_swaps_store_only_when_flag_is_set() -> Result<(), norn::error::ConfigError> {
         let store = Arc::new(EventStore::new());
         store.append(user("first")).unwrap();
-        let state = make_state(Arc::clone(&store));
+        let state = make_state(Arc::clone(&store))?;
         assert!(
             apply_clear_request(&state, norn::session::DurabilityPolicy::Flush)
                 .unwrap()
@@ -498,6 +514,7 @@ mod tests {
         assert_eq!(state.current_store().len(), 0);
         // original Arc kept by caller is not affected.
         assert_eq!(store.len(), 1);
+        Ok(())
     }
 
     /// Gap 12 regression: on a persisted invocation, `/clear` must rotate
@@ -506,11 +523,12 @@ mod tests {
     /// like pre-clear ones. A sink-less swap would pass every in-memory
     /// assertion and silently lose everything after the clear.
     #[test]
-    fn clear_on_persisted_session_rotates_into_a_durable_store() {
+    fn clear_on_persisted_session_rotates_into_a_durable_store()
+    -> Result<(), norn::error::ConfigError> {
         let tmp = tempfile::tempdir().unwrap();
         let (old_id, old_store) = open_persisted(tmp.path());
         old_store.append(user("pre-clear")).unwrap();
-        let state = make_persisted_state(Arc::clone(&old_store), &old_id, tmp.path());
+        let state = make_persisted_state(Arc::clone(&old_store), &old_id, tmp.path())?;
 
         state.clear_requested.store(true, Ordering::Relaxed);
         let outcome = apply_clear_request(&state, norn::session::DurabilityPolicy::Flush)
@@ -553,18 +571,20 @@ mod tests {
             .resume(&new_session_id, norn::session::DurabilityPolicy::Flush)
             .unwrap();
         assert_eq!(resumed.store.len(), 1);
+        Ok(())
     }
 
     /// A rotation failure must leave the pre-clear state fully intact —
     /// typed error out, no silent memory-only fallback, store and
     /// session id untouched.
     #[test]
-    fn clear_rotation_failure_leaves_pre_clear_state_intact() {
+    fn clear_rotation_failure_leaves_pre_clear_state_intact() -> Result<(), norn::error::ConfigError>
+    {
         let tmp = tempfile::tempdir().unwrap();
         let store = Arc::new(EventStore::new());
         store.append(user("kept")).unwrap();
         // A session id that is not in the (empty) index: resolution fails.
-        let state = make_persisted_state(Arc::clone(&store), "missing-session", tmp.path());
+        let state = make_persisted_state(Arc::clone(&store), "missing-session", tmp.path())?;
 
         state.clear_requested.store(true, Ordering::Relaxed);
         let err = apply_clear_request(&state, norn::session::DurabilityPolicy::Flush)
@@ -583,6 +603,7 @@ mod tests {
             Some("missing-session"),
             "the session id must not rotate on error",
         );
+        Ok(())
     }
 
     fn debug_outcome(outcome: Option<&CompactOutcome>) -> String {

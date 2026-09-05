@@ -19,6 +19,11 @@ struct TreeProvider {
 }
 
 impl Provider for TreeProvider {
+    // This scripted provider represents the catalogued Codex models used by these tests.
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        Some(crate::model_selection::CatalogBackend::CODEX)
+    }
+
     fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         use std::sync::atomic::Ordering as AtomicOrdering;
         // The grandchild's run always ends its request with its own

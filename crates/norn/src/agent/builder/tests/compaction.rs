@@ -107,7 +107,9 @@ fn catalog_arms_window_and_reserve_by_default() {
         .build()
         .expect("build succeeds");
 
-    let catalog_window = crate::model_catalog::smallest_context_window_for_model("gpt-5.5");
+    let catalog_window = crate::model_selection::CatalogBackend::CODEX
+        .model("gpt-5.5")
+        .map(|entry| entry.context_window);
     assert!(catalog_window.is_some(), "gpt-5.5 must be in the catalog");
     assert_eq!(
         agent.config.context_window_limit, catalog_window,
@@ -151,9 +153,9 @@ fn explicit_window_beats_catalog() {
 }
 
 /// 2026-07-05 incident guard (owner-ruled): a model absent from the
-/// catalog with no explicit window is rejected at build — running with
-/// the protections silently disabled is the ruled-against state, and
-/// an unknown model "probably means the wrong model code".
+/// selected route's catalog with no explicit window is rejected at build.
+/// The diagnostic names the missing metadata and operator remedy without
+/// speculating about a typo; protections must not be silently disabled.
 #[test]
 fn unknown_model_without_window_is_rejected_at_build() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -171,8 +173,24 @@ fn unknown_model_without_window_is_rejected_at_build() {
         "names the model: {reason}"
     );
     assert!(
-        reason.contains("typo"),
-        "leads with the typo hypothesis: {reason}"
+        reason.contains("openai.codex_subscription"),
+        "names the selected route: {reason}"
+    );
+    assert!(
+        reason.contains("declares no capability metadata for model 'not-in-catalog'"),
+        "states the missing declaration: {reason}"
+    );
+    assert!(
+        reason.contains("no context window is configured"),
+        "states why assembly refuses the model: {reason}"
+    );
+    assert!(
+        reason.contains("set agent.context_window (-c context_window=<tokens>)"),
+        "names the operator's explicit-window remedies: {reason}"
+    );
+    assert!(
+        !reason.contains("typo"),
+        "does not speculate about spelling: {reason}"
     );
 
     // The explicit-window escape hatch assembles fine.
@@ -235,11 +253,15 @@ fn catalog_window_is_resolved_per_model() {
 
     assert_eq!(
         big.config.context_window_limit,
-        crate::model_catalog::smallest_context_window_for_model("gpt-5.5"),
+        crate::model_selection::CatalogBackend::CODEX
+            .model("gpt-5.5")
+            .map(|entry| entry.context_window),
     );
     assert_eq!(
         small.config.context_window_limit,
-        crate::model_catalog::smallest_context_window_for_model("gpt-5.3-codex-spark"),
+        crate::model_selection::CatalogBackend::CODEX
+            .model("gpt-5.3-codex-spark")
+            .map(|entry| entry.context_window),
     );
     assert_ne!(
         big.config.context_window_limit, small.config.context_window_limit,

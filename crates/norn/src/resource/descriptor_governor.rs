@@ -52,6 +52,7 @@ pub(crate) const NULL_STDIO_SUBPROCESS_PEAK: u32 = 5;
 
 /// Child with piped stdin and null stdout/stderr: two pipe ends, two
 /// `/dev/null` handles, and both Unix exec-status pipe ends.
+#[cfg(any(all(test, unix), target_os = "macos"))]
 pub(crate) const STDIN_PIPE_NULL_OUTPUT_SPAWN_PEAK: u32 = 6;
 
 static GLOBAL: OnceLock<Arc<DescriptorGovernor>> = OnceLock::new();

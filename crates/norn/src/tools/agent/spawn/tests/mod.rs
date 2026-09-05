@@ -353,6 +353,11 @@ struct GatedProvider {
 }
 
 impl Provider for GatedProvider {
+    // This scripted provider represents the catalogued Codex models used by these tests.
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        Some(crate::model_selection::CatalogBackend::CODEX)
+    }
+
     fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         let mut seq = Some(self.responses.lock().remove(0));
         let gate = Arc::clone(&self.gate);
@@ -369,6 +374,11 @@ struct CapturingProvider {
 }
 
 impl Provider for CapturingProvider {
+    // This scripted provider represents the catalogued Codex models used by these tests.
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        Some(crate::model_selection::CatalogBackend::CODEX)
+    }
+
     fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         self.captured.lock().clone_from(&request.tools);
         let seq = self.responses.lock().remove(0);
@@ -382,6 +392,11 @@ struct RequestCapturingProvider {
 }
 
 impl Provider for RequestCapturingProvider {
+    // This scripted provider represents the catalogued Codex models used by these tests.
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        Some(crate::model_selection::CatalogBackend::CODEX)
+    }
+
     fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         self.captured.lock().push(request);
         let seq = self.responses.lock().remove(0);

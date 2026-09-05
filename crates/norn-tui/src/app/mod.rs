@@ -8,6 +8,7 @@ pub mod edit;
 pub mod event_loop;
 pub mod helpers;
 mod mcp_slash;
+mod model_selection;
 pub mod render;
 pub mod rotation;
 mod session_replay;

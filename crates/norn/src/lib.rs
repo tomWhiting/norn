@@ -8,6 +8,7 @@ pub mod integration;
 pub mod internal;
 pub(crate) mod r#loop;
 pub mod model_catalog;
+pub mod model_selection;
 pub mod process;
 pub mod profile;
 pub mod provider;

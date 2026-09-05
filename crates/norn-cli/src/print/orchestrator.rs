@@ -39,7 +39,7 @@ use std::sync::atomic::Ordering;
 
 use norn::agent::AgentParts;
 use norn::agent::registry::AgentRegistry;
-use norn::agent_loop::config::AgentStepResult;
+use norn::agent_loop::config::{AgentStepResult, ToolExecutor};
 use norn::agent_loop::runner::{AgentStepRequest, run_agent_step};
 use norn::session::events::SessionEvent;
 use norn::session::store::EventStore;
@@ -49,7 +49,7 @@ use serde_json::Value;
 use super::driven::{
     driven_background_failure, execute_driven, finish_intervene_loop, spawn_intervene_loop,
 };
-use super::error::{merge_background_failures, preserve_run_failure};
+use super::error::{fail_before_assembly, merge_background_failures, preserve_run_failure, report};
 use super::jsonrpc::{DrivenRun, SharedRunDriver};
 use super::output::{StopInfo, drain_diagnostics, extract_output_and_usage};
 use super::provider::build_provider;
@@ -155,11 +155,6 @@ pub async fn run_async(cli: &Cli) -> ExitCode {
     }
 }
 
-fn report(err: &PrintError) -> ExitCode {
-    eprintln!("norn: {err}");
-    err.exit_code()
-}
-
 /// Read stdin if it's piped, then dispatch to the orchestrator core.
 ///
 /// When `--protocol jsonrpc` is set the driven duplex path is taken instead
@@ -199,17 +194,6 @@ pub(super) struct PrintAssembly {
     /// surface to every lock-taking `SessionManager` it constructs
     /// (`/name`'s index rename).
     pub index_lock_deadline: std::time::Duration,
-}
-
-/// Route a plain-mode pre-assembly failure through the error-envelope
-/// emitter and hand the error back unchanged for the stderr line + exit
-/// code. Argument errors emit nothing (clap parity — R2); the emitter
-/// filters by class. Driven mode never reaches this path — [`execute`]
-/// branches into [`execute_driven`] first, and its post-acceptance
-/// failures are answered as id-matched JSON-RPC error responses.
-fn fail_before_assembly(cli: &Cli, err: PrintError) -> PrintError {
-    emit_error_envelope(cli, &err, None, None);
-    err
 }
 
 /// Assemble the headless print agent through the single library-owned
@@ -313,7 +297,10 @@ pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<PrintAssembly, Pri
         .register_root("/root".to_string(), "lead".to_string())
         .terminal_reclamation(true)
         .build()?;
-    let parts = agent.into_parts();
+    let mut parts = agent.into_parts();
+    parts
+        .model_selection
+        .bind_provider_profile(resolved.provider_profile);
     // Deferred until here (not inside `builder_from_cli`) because gating
     // happens during `build()`: the assembled registry is the authoritative
     // reference for which flag-named tools exist.
@@ -495,9 +482,7 @@ async fn orchestrate_run(
         cli,
         SlashStateInputs {
             registry: &parts.registry,
-            model: &parts.model,
-            service_tier: parts.loop_context.service_tier,
-            reasoning_effort: parts.loop_context.reasoning_effort,
+            model_selection: &parts.model_selection,
         },
         Arc::clone(&store),
         output_session_id.clone(),
@@ -593,9 +578,15 @@ async fn orchestrate_run(
     }
 
     let active_schema = slash_state.output_schema_snapshot();
-    let active_model = slash_state.model_snapshot();
-    parts.loop_context.service_tier = slash_state.service_tier_snapshot();
-    parts.loop_context.reasoning_effort = slash_state.reasoning_effort_snapshot();
+    let selected = slash_state.model_selection.lock().clone();
+    let active_model = selected.model().to_owned();
+    selected.apply(
+        &mut parts.config,
+        &mut parts.loop_context,
+        parts.registry.shared_context().as_deref(),
+    );
+    parts.model.clone_from(&active_model);
+    parts.model_selection = selected;
 
     // Session-lifecycle hooks (D1 / R1.7): the `into_parts` step-loop
     // driver fires them explicitly around the run with the resolved
@@ -902,11 +893,16 @@ mod tests {
         data_dir: &std::path::Path,
         session_id: Option<String>,
         no_session: bool,
-    ) -> SlashState {
-        SlashState::new(SlashStateSeed {
-            model: "test-model".to_owned(),
-            service_tier: None,
-            reasoning_effort: None,
+    ) -> Result<SlashState, norn::error::ConfigError> {
+        Ok(SlashState::new(SlashStateSeed {
+            model_selection: norn::model_selection::ModelRuntime::new(
+                Some(norn::model_selection::CatalogBackend::CODEX),
+                "test-model",
+                Some(272_000),
+                None,
+                None,
+                std::collections::BTreeMap::new(),
+            )?,
             output_schema: None,
             session_name: None,
             session_id,
@@ -917,7 +913,7 @@ mod tests {
             variable_pairs: Vec::new(),
             tools: Vec::new(),
             store: Arc::new(EventStore::new()),
-        })
+        }))
     }
 
     /// Gap 12 operator surface: after a `/clear` rotation, the envelope
@@ -925,7 +921,7 @@ mod tests {
     /// driver resuming by the reported id must land on the post-clear
     /// timeline, never the retired session's full history.
     #[test]
-    fn clear_report_carries_the_rotated_session_id() {
+    fn clear_report_carries_the_rotated_session_id() -> Result<(), norn::error::ConfigError> {
         let tmp = tempfile::tempdir().unwrap();
         let opened = SessionManager::new(tmp.path())
             .create(
@@ -938,7 +934,7 @@ mod tests {
             )
             .expect("create session");
         let old_id = opened.entry.id;
-        let state = slash_state_for(tmp.path(), Some(old_id.clone()), false);
+        let state = slash_state_for(tmp.path(), Some(old_id.clone()), false)?;
         state
             .clear_requested
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -959,28 +955,32 @@ mod tests {
             line.contains(&new_id),
             "the stderr line must name the rotated id: {line}",
         );
+        Ok(())
     }
 
     /// No pending `/clear`: nothing is printed and the envelope keeps the
     /// original session id.
     #[test]
-    fn clear_report_without_pending_clear_keeps_the_original_id() {
+    fn clear_report_without_pending_clear_keeps_the_original_id()
+    -> Result<(), norn::error::ConfigError> {
         let tmp = tempfile::tempdir().unwrap();
-        let state = slash_state_for(tmp.path(), Some("original-id".to_owned()), false);
+        let state = slash_state_for(tmp.path(), Some("original-id".to_owned()), false)?;
 
         let report = apply_clear_and_report(&state).expect("no-op succeeds");
 
         assert!(report.operator_line.is_none());
         assert_eq!(report.envelope_session_id.as_deref(), Some("original-id"));
+        Ok(())
     }
 
     /// `--no-session` `/clear`: the sink-less choice propagates, the
     /// operator still gets the confirmation, and the envelope keeps
     /// reporting no session.
     #[test]
-    fn clear_report_no_session_confirms_without_a_session_id() {
+    fn clear_report_no_session_confirms_without_a_session_id()
+    -> Result<(), norn::error::ConfigError> {
         let tmp = tempfile::tempdir().unwrap();
-        let state = slash_state_for(tmp.path(), None, true);
+        let state = slash_state_for(tmp.path(), None, true)?;
         state
             .clear_requested
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -992,15 +992,16 @@ mod tests {
             Some("Conversation cleared.")
         );
         assert!(report.envelope_session_id.is_none());
+        Ok(())
     }
 
     /// A failed rotation surfaces typed and reports NOTHING — the
     /// "Conversation cleared." line can never precede a failed rotation.
     #[test]
-    fn clear_report_failure_prints_nothing() {
+    fn clear_report_failure_prints_nothing() -> Result<(), norn::error::ConfigError> {
         let tmp = tempfile::tempdir().unwrap();
         // A session id absent from the (empty) index: resolution fails.
-        let state = slash_state_for(tmp.path(), Some("missing-session".to_owned()), false);
+        let state = slash_state_for(tmp.path(), Some("missing-session".to_owned()), false)?;
         state
             .clear_requested
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1012,6 +1013,7 @@ mod tests {
             Some("missing-session"),
             "the pre-clear state stays intact on error",
         );
+        Ok(())
     }
 
     #[test]

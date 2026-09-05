@@ -226,6 +226,11 @@ async fn prompt_command_file_change_waits_for_the_next_request_boundary() -> Tes
     let workspace = tempfile::tempdir()?;
     let project_context_path = workspace.path().join("NORN.md");
     std::fs::write(&project_context_path, "repository-v1")?;
+    // The command must establish a distinct mtime even on coarse filesystems.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&project_context_path)?
+        .set_modified(SystemTime::UNIX_EPOCH)?;
 
     let mut handlers: std::collections::HashMap<String, ToolHandler> =
         std::collections::HashMap::new();

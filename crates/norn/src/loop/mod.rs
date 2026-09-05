@@ -11,9 +11,7 @@ pub use crate::r#loop::commands::{
     BuiltinSlashCommand, BuiltinSlashKind, CustomSlashHandler, EffortCommand, PreprocessResult,
     ServiceTierCommand, SlashCommand, SlashCommandHandler, SlashCommandRegistry, SlashSurface,
     builtin_slash_commands, effort_label, find_builtin_slash_command, parse_effort_command,
-    parse_service_tier_command, preprocess_input, reasoning_effort_supported_for_model,
-    service_tier_supported_for_model, unsupported_reasoning_effort_message,
-    unsupported_service_tier_message,
+    parse_service_tier_command, preprocess_input,
 };
 pub use crate::r#loop::compaction::{
     AutoCompactArgs, AutoCompactDecision, AutoCompactionRun, CompactionState,

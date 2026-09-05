@@ -65,7 +65,7 @@ These flags configure the agent step. All are available in both REPL and print m
     --append-system-prompt <TEXT>  Append to system prompt (additive)
     --allowed-tools <PATTERNS>    Tool allow-list, comma-separated
     --disallowed-tools <PATTERNS> Tool deny-list, comma-separated
-    --reasoning-effort <LEVEL>    none | low | medium | high | xhigh | max
+    --reasoning-effort <LEVEL>    low | medium | high | xhigh | max | ultra
     --max-turns <N>               Maximum provider round-trips per step
     --timeout <DURATION>          Step timeout (e.g. 2m, 30s)
 -C, --working-dir <DIR>           Working directory for tool execution
@@ -74,6 +74,8 @@ These flags configure the agent step. All are available in both REPL and print m
     --variables <KEY=VALUE>       Session variable ({{key}} expansion), repeatable
 -e, --extension <URI>             Connect MCP extension, repeatable
 ```
+
+Ultra is a Codex-advertised effort identifier, accepted only when the selected route and model declare it; it does not enable automatic delegation. See the NMS-001 model-selection brief for the current route policy.
 
 Config overrides (`-c`) map to `AgentLoopConfig` and `ProviderConfig` fields: `timeout`, `max_turns`, `schema_budget`, `context_window`, `compact_threshold`, `compact_keep_turns`, `retry_max`, `retry_base_delay`.
 

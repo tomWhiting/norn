@@ -77,6 +77,7 @@ fn open_session_conflicts_with_explicit_cache_key() {
         .working_dir(std::env::temp_dir())
         .agent_config(AgentLoopConfig {
             cache_key: Some("explicit-key".to_owned()),
+            context_window_limit: Some(TEST_CONTEXT_WINDOW),
             ..AgentLoopConfig::default()
         })
         .open_session(

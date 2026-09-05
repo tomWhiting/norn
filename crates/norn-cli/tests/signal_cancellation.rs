@@ -108,6 +108,9 @@ fn spawn_norn(port: u16, extra_args: &[&str]) -> (Child, tempfile::TempDir) {
             "openai-compatible",
             "-c",
             &format!("base_url={base_url}"),
+            // Explicit Sol fixture budget: the mock route has no model catalogue.
+            "-c",
+            "context_window=272000",
             "--no-session",
         ])
         .args(extra_args)

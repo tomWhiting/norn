@@ -15,6 +15,7 @@ pub(super) struct PromptInstallParts {
     pub(super) append_system_prompt: Option<String>,
     pub(super) profile_source: PromptSource,
     pub(super) capabilities: ProviderCapabilities,
+    pub(super) backend: Option<crate::model_selection::CatalogBackend>,
 }
 
 /// Arm the effective context window and install the provider-bound prompt.
@@ -28,8 +29,9 @@ pub(super) fn install_effective_prompt(
     // The same effective config drives compaction, prompt guidance, and
     // tool-output budgeting. Catalog filling never replaces an explicit
     // context window, and unsupported windows fail before execution.
-    crate::agent::arming::arm_auto_compaction(loop_context, config, model);
-    crate::agent::arming::validate_context_window(config, model).map_err(NornError::Config)?;
+    crate::agent::arming::arm_auto_compaction(parts.backend, loop_context, config, model);
+    crate::agent::arming::validate_context_window(parts.backend, config, model)
+        .map_err(NornError::Config)?;
 
     // The runtime disables compaction when the reserve reaches the window,
     // so the prompt must not promise compaction for that shape.

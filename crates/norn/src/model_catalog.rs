@@ -168,44 +168,6 @@ pub fn resolve_model_alias(model: &str) -> Option<&'static str> {
         .map(|entry| entry.id)
 }
 
-/// Return the smallest catalogued context window for a model id.
-///
-/// The same provider model id can appear under several backends with different
-/// limits. Budgeting code should use the smallest known value unless it has a
-/// more specific provider/backend selection.
-#[must_use]
-pub fn smallest_context_window_for_model(model: &str) -> Option<u64> {
-    catalog()
-        .providers
-        .iter()
-        .flat_map(|provider| provider.backends)
-        .flat_map(|backend| backend.models)
-        .filter(|entry| entry.id == model)
-        .map(|entry| entry.context_window)
-        .min()
-}
-
-/// Return the largest catalogued `max_context_window` for a model id.
-///
-/// The counterpart to [`smallest_context_window_for_model`] for
-/// *validation*: an explicitly configured window is legitimate as long as
-/// at least one backend serving this model id can honour it (e.g.
-/// gpt-5.4's standard window is 272k but its maximum is 1M, so an
-/// explicit 1M passes), and rejected only when it exceeds every backend's
-/// ceiling — the shape of the 2026-07-05 incident, where a global 272k
-/// override mis-armed a 128k model.
-#[must_use]
-pub fn largest_max_context_window_for_model(model: &str) -> Option<u64> {
-    catalog()
-        .providers
-        .iter()
-        .flat_map(|provider| provider.backends)
-        .flat_map(|backend| backend.models)
-        .filter(|entry| entry.id == model)
-        .map(|entry| entry.max_context_window)
-        .max()
-}
-
 /// Find a service tier supported by the selected backend/model pair.
 #[must_use]
 pub fn find_service_tier(
@@ -261,16 +223,16 @@ mod tests {
             assert!(entry.is_some(), "{model} must be in the catalog");
             if let Some(entry) = entry {
                 assert_eq!(resolve_model_alias(entry.alias), Some(model), "{model}");
-                assert_eq!(entry.context_window, 372_000, "{model}");
-                assert_eq!(entry.max_context_window, 372_000, "{model}");
+                assert_eq!(entry.context_window, 272_000, "{model}");
+                assert_eq!(entry.max_context_window, 872_000, "{model}");
                 assert_eq!(entry.default_reasoning_effort, default_effort, "{model}");
                 assert!(
                     entry.supported_reasoning_efforts.contains(&"max"),
                     "{model}"
                 );
-                assert!(
-                    !entry.supported_reasoning_efforts.contains(&"ultra"),
-                    "{model} must not expose ultra as a distinct effort",
+                assert_eq!(
+                    entry.supported_reasoning_efforts.contains(&"ultra"),
+                    model != "gpt-5.6-luna"
                 );
                 assert_eq!(
                     service_tier_provider_value("openai", "codex_subscription", model, "fast",),
@@ -312,11 +274,5 @@ mod tests {
             service_tier_provider_value("openai", "codex_subscription", "gpt-5.5", "fast"),
             Some("priority"),
         );
-    }
-
-    #[test]
-    fn smallest_context_window_returns_catalogued_model_limit() {
-        assert!(smallest_context_window_for_model(default_selection().model).is_some());
-        assert_eq!(smallest_context_window_for_model("not-in-catalog"), None);
     }
 }

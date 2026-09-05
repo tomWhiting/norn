@@ -69,6 +69,8 @@ pub struct TuiInputs {
     pub agent_config: AgentLoopConfig,
     /// Model identifier.
     pub model: String,
+    /// Validated model policy including explicit context provenance.
+    pub model_selection: norn::model_selection::ModelRuntime,
     /// Tool definitions advertised to the provider.
     pub tools: Vec<ToolDefinition>,
     /// Input history (already loaded from disk by the caller).
@@ -250,6 +252,7 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         loop_context: inputs.loop_context,
         agent_config: inputs.agent_config,
         model: inputs.model,
+        model_selection: inputs.model_selection,
         tools: inputs.tools,
         data_dir: inputs.data_dir,
         session_id: inputs.session_id,
@@ -339,6 +342,7 @@ pub(super) struct RuntimeRefs {
     pub(super) loop_context: LoopContext,
     pub(super) agent_config: AgentLoopConfig,
     pub(super) model: String,
+    pub(super) model_selection: norn::model_selection::ModelRuntime,
     pub(super) tools: Vec<ToolDefinition>,
     /// Session data directory for persistence. `None` in ephemeral mode.
     pub(super) data_dir: Option<std::path::PathBuf>,
