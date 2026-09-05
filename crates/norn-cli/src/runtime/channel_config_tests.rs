@@ -214,7 +214,7 @@ async fn cli_channel_startup_uses_registered_root_and_preserves_project_approval
     use norn::profile::Profile;
     use norn::provider::mock::MockProvider;
 
-    use crate::config::{AppliedOverrides, CliProfileSource};
+    use crate::config::{CliProfileSource, apply_cli_profile_overrides};
     use crate::runtime::{
         builder_from_cli, cli_coordination_envelope, initialize_cli_channels, prepare_cli_mcp,
     };
@@ -239,8 +239,17 @@ async fn cli_channel_startup_uses_registered_root_and_preserves_project_approval
         ],
         async {
             let mut values = arguments("source=wake");
-            values.extend(["--no-session", "-c", "context_window=96000"]);
+            // MockProvider declares the Codex backend; use one of its catalogued models.
+            values.extend([
+                "--no-session",
+                "--model",
+                "gpt-5.5",
+                "-c",
+                "context_window=96000",
+            ]);
             let cli = Cli::try_parse_from(values)?;
+            let mut profile = Profile::default();
+            let applied = apply_cli_profile_overrides(&cli, &mut profile)?;
             let resolved = load_resolved_settings(project.path(), &McpRuntimeOverrides::default())?;
             let config = resolve_channel_config(&cli, &resolved.mcp_servers)?
                 .ok_or("channel config missing")?;
@@ -257,10 +266,10 @@ async fn cli_channel_startup_uses_registered_root_and_preserves_project_approval
             let agent = builder_from_cli(
                 &cli,
                 Arc::new(MockProvider::new(Vec::new())),
-                Profile::default(),
+                profile,
                 CliProfileSource::Operator,
                 &resolved.settings,
-                &AppliedOverrides::default(),
+                &applied,
             )?
             .working_dir(project.path())
             .mcp_config_state(state)
@@ -271,6 +280,8 @@ async fn cli_channel_startup_uses_registered_root_and_preserves_project_approval
             .register_root("/root".to_owned(), "lead".to_owned())
             .build()?;
             let mut parts = agent.into_parts();
+            assert_eq!(parts.model, "gpt-5.5");
+            assert_eq!(parts.config.context_window_limit, Some(96_000));
             let registered = registry
                 .read()
                 .get_by_path("/root")
