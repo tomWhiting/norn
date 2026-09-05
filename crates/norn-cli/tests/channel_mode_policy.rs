@@ -145,7 +145,7 @@ fn help_states_the_cli_policy_lifetime_and_hold_boundary() -> TestResult {
     let stdout = std::str::from_utf8(&output.stdout)?;
     let help = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
     for statement in [
-        "NAME=next-turn|wake",
+        "NAME=off|next-turn|wake",
         "Next-turn requires the interactive TUI",
         "Wake in print/driven mode joins the active run only",
         "Hold is unavailable until CLI inbox release/deny controls exist",

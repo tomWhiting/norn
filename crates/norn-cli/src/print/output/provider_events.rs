@@ -5,7 +5,12 @@ use serde_json::{Value, json};
 /// Derive the JSON-RPC `event/*` method name from the native event kind.
 #[must_use]
 pub(crate) fn agent_event_method(agent_event: &norn::provider::AgentEvent) -> &'static str {
-    match &agent_event.event {
+    agent_event_kind_method(&agent_event.event)
+}
+
+fn agent_event_kind_method(event: &AgentEventKind) -> &'static str {
+    match event {
+        AgentEventKind::Observed(observed) => agent_event_kind_method(observed.event()),
         AgentEventKind::Provider(event) => match event {
             ProviderEvent::TextComplete { .. }
             | ProviderEvent::ThinkingComplete { .. }

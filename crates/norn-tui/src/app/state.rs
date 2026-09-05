@@ -18,6 +18,9 @@ use parking_lot::RwLock;
 use uuid::Uuid;
 
 use norn::agent::registry::AgentRegistry;
+use norn::session_view::ViewSource;
+
+use super::transcript::Transcript;
 
 use super::active_input::InFlightInputState;
 use crate::agents::activity_log::ActivityLog;
@@ -27,7 +30,6 @@ use crate::events::DisplayToggles;
 use crate::input::autocomplete::AutocompletePopup;
 use crate::input::editor::InputEditor;
 use crate::input::history::InputHistory;
-use crate::render::SyntaxHighlighter;
 use crate::render::fixed_panel::{FixedPanel, StatusBar};
 use crate::render::streaming_indicator::{StreamingIndicator, ToolUseInFlight};
 use crate::terminal::caps::TerminalCaps;
@@ -51,26 +53,19 @@ fn estimated_tokens(bytes: usize) -> u64 {
     u64::try_from(bytes).unwrap_or(u64::MAX) / BYTES_PER_TOKEN
 }
 
-/// Pending tool call accumulator — argument fragments stream in via
-/// [`norn::provider::events::ProviderEvent::ToolCallDelta`] until either
-/// `ToolCallComplete` (which finalises name + arguments) or a
-/// `ToolResult` arrives.
-#[derive(Clone, Debug, Default)]
-pub struct PendingToolCall {
-    /// Tool name — set from the first delta that carries it, then
-    /// finalised by `ToolCallComplete` when it arrives.
-    pub name: Option<String>,
-    /// Concatenated argument fragments. May not be valid JSON until
-    /// `ToolCallComplete` arrives.
-    pub arguments: String,
-}
-
 /// Central TUI state.
 ///
 /// Every field is owned (no borrows of the runtime) so `AppState` can be
 /// constructed once at startup and threaded through the event loop by
 /// `&mut`.
 pub struct AppState {
+    /// Retained semantic state bound to the actual store/agent source.
+    pub transcript: Transcript,
+    /// Retained full-screen geometry, focus and presentation cache.
+    pub screen: super::render::ScreenState,
+    /// Accepted explicit exports remain supervised across view/source replacement.
+    pub(in crate::app) export_tasks:
+        tokio::task::JoinSet<super::view_actions::reading::ExportResult>,
     /// Multi-line input editor in the fixed panel.
     pub input_editor: InputEditor,
     /// Visibility toggles for thinking and secondary structured-output
@@ -92,25 +87,15 @@ pub struct AppState {
     /// Cached terminal capabilities. Cloned from the [`TerminalGuard`]
     /// at startup; rendering helpers borrow this rather than the guard.
     pub terminal_caps: TerminalCaps,
-    /// Pending tool calls keyed by provider tool-call id. Holds
-    /// accumulated argument deltas until `ToolResult` arrives.
-    pub pending_tools: HashMap<String, PendingToolCall>,
-    /// Wall-clock instant the current turn began, set on the first
-    /// `ProviderEvent` of a turn and cleared after the indicator's hold
-    /// window elapses.
+    /// Monotonic whole-turn admission instant, preserved across provider responses and retries.
+    /// An isolated event consumer without an admission uses its first observed event;
+    /// completion expiry clears the instant only once the root turn is no longer running.
     pub turn_start: Option<Instant>,
     /// Wall-clock instant the streaming indicator transitioned to
     /// [`StreamingIndicator::Complete`]. The render tick uses this to
     /// drop the indicator back to [`StreamingIndicator::Idle`] after
     /// [`STREAMING_COMPLETE_HOLD`].
     pub complete_at: Option<Instant>,
-    /// Whether any `TextDelta` has been written in the current turn.
-    /// Used to decide whether to append a trailing newline after the
-    /// turn completes.
-    pub text_streamed_this_turn: bool,
-    /// Whether the last scroll-region write was a tool result. Used to
-    /// insert spacing on tool→text and tool→tool transitions.
-    pub last_was_tool_result: bool,
     /// Live autocomplete popup, populated by the event loop's
     /// `refresh_autocomplete` helper. `None` when no trigger is active.
     /// Owned by `AppState` so the popup survives across event-loop
@@ -131,24 +116,6 @@ pub struct AppState {
     /// "● {tool}: '{desc}'" form stays in sync without storing the
     /// rendering state on the dispatch path.
     pub current_tool_use: Option<ToolUseInFlight>,
-    /// Number of terminal lines the current dim preview occupies after
-    /// soft-wrapping at the terminal width. Used by `handle_text_delta`
-    /// and the tick handler to move the cursor back to the start of the
-    /// dim region before erasing — `\r\x1b[2K` only clears one line.
-    pub dim_wrapped_lines: u16,
-    /// Raw thinking text accumulated during the current turn. A
-    /// non-empty buffer means a reasoning summary is pending and must be
-    /// rendered before answer text, tool output, or final status.
-    pub thinking_buffer: String,
-    /// `true` when the last styled write did not end with `\n`, meaning
-    /// the cursor is mid-line after committed content. Dim preview must
-    /// start on a fresh line to avoid `erase_dim_lines` destroying the
-    /// styled text via `\r\x1b[2K`.
-    pub styled_mid_line: bool,
-    /// Session-scoped syntax highlighter for tool output content blocks.
-    /// Loaded once with syntect's ~100 bundled grammars; shared across
-    /// all tool result renders via [`crate::render::content::render_blocks`].
-    pub highlighter: SyntaxHighlighter,
     /// Activity log — backing ring of recent tool-call initiations.
     /// Dispatch still records entries for diagnostics/replay, while the
     /// fixed panel folds live work into per-agent rows.
@@ -180,10 +147,14 @@ impl AppState {
         caps: TerminalCaps,
         history: InputHistory,
         registry: Arc<RwLock<AgentRegistry>>,
-        root_id: Uuid,
+        source: ViewSource,
         status_bar: StatusBar,
     ) -> Self {
+        let root_id = source.agent_id;
         Self {
+            transcript: Transcript::new(source.clone()),
+            screen: super::render::ScreenState::new(source),
+            export_tasks: tokio::task::JoinSet::new(),
             input_editor: InputEditor::new(history),
             display_toggles: DisplayToggles::default(),
             verbosity: VerbosityState::default(),
@@ -192,18 +163,11 @@ impl AppState {
             tab_state: TabState::new(root_id),
             fixed_panel: FixedPanel::new(status_bar),
             terminal_caps: caps,
-            pending_tools: HashMap::new(),
             turn_start: None,
             complete_at: None,
-            text_streamed_this_turn: false,
-            last_was_tool_result: false,
             autocomplete: None,
             est_output_bytes: 0,
             current_tool_use: None,
-            dim_wrapped_lines: 0,
-            thinking_buffer: String::new(),
-            styled_mid_line: false,
-            highlighter: SyntaxHighlighter::new(),
             activity_log: ActivityLog::new(),
             usage_totals: HashMap::new(),
             live_root_usage: (0, 0),
@@ -336,7 +300,9 @@ impl AppState {
                 {
                     self.streaming_indicator = StreamingIndicator::Idle;
                     self.complete_at = None;
-                    self.turn_start = None;
+                    if !self.in_flight_input.is_running() {
+                        self.turn_start = None;
+                    }
                 }
             }
             StreamingIndicator::Idle => {}
@@ -432,6 +398,20 @@ impl AppState {
         self.record_agent_usage_delta(agent_id, delta_input, delta_output);
     }
 
+    /// Reconcile this root turn against its own observed provider usage, then publish actual totals.
+    /// Earlier turns remain in the agent ledger and never offset a later equal-cost turn.
+    pub fn reconcile_root_turn_usage(&mut self, input_tokens: u64, output_tokens: u64) {
+        let delta_input = input_tokens.saturating_sub(self.live_root_usage.0);
+        let delta_output = output_tokens.saturating_sub(self.live_root_usage.1);
+        self.record_agent_usage_delta(self.tab_state.root_id(), delta_input, delta_output);
+        self.live_root_usage = (input_tokens, output_tokens);
+        let status = self.fixed_panel.status_bar_mut();
+        status.input_tokens = input_tokens;
+        status.output_tokens = output_tokens;
+        status.input_tokens_estimated = false;
+        status.output_tokens_estimated = false;
+    }
+
     /// Reset the top-chip live counters for a new root turn.
     pub fn reset_live_usage(&mut self) {
         self.live_root_usage = (0, 0);
@@ -451,12 +431,21 @@ impl AppState {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+pub(crate) fn test_view_source(agent_id: Uuid) -> ViewSource {
+    ViewSource {
+        session: norn::session_view::SessionIdentity::Ephemeral(Uuid::new_v4()),
+        agent_id,
+        parent_agent_id: None,
+        store_generation: Uuid::new_v4(),
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use norn::agent::registry::AgentRegistry;
 
-    fn fresh_state() -> AppState {
+    fn fresh_state() -> Result<AppState, Box<dyn std::error::Error>> {
         let registry = AgentRegistry::shared();
         let guard = AgentRegistry::reserve(
             &registry,
@@ -474,22 +463,21 @@ mod tests {
                 loop_config: None,
             },
             None,
-        )
-        .unwrap();
+        )?;
         let root_id = guard.id();
-        guard.confirm().unwrap();
-        AppState::new(
+        guard.confirm()?;
+        Ok(AppState::new(
             TerminalCaps::baseline(),
             InputHistory::in_memory(),
             registry,
-            root_id,
+            crate::app::state::test_view_source(root_id),
             StatusBar::default(),
-        )
+        ))
     }
 
     #[test]
-    fn new_state_has_default_subsystems() {
-        let state = fresh_state();
+    fn new_state_has_default_subsystems() -> Result<(), Box<dyn std::error::Error>> {
+        let state = fresh_state()?;
         assert!(state.input_editor.is_empty());
         assert_eq!(state.display_toggles, DisplayToggles::default());
         assert_eq!(state.verbosity, VerbosityState::Expanded);
@@ -497,36 +485,40 @@ mod tests {
             state.streaming_indicator,
             StreamingIndicator::Idle
         ));
-        assert!(state.pending_tools.is_empty());
         assert!(state.turn_start.is_none());
         assert!(state.complete_at.is_none());
-        assert!(!state.text_streamed_this_turn);
+        assert_eq!(state.transcript.projection.items().len(), 0);
+        Ok(())
     }
 
     #[test]
-    fn note_event_received_transitions_idle_to_generating() {
-        let mut state = fresh_state();
+    fn note_event_received_transitions_idle_to_generating() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut state = fresh_state()?;
         state.note_event_received(Instant::now());
         assert!(matches!(
             state.streaming_indicator,
             StreamingIndicator::Generating { .. }
         ));
         assert!(state.turn_start.is_some());
+        Ok(())
     }
 
     #[test]
-    fn note_event_received_keeps_turn_start_across_calls() {
-        let mut state = fresh_state();
+    fn note_event_received_keeps_turn_start_across_calls() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut state = fresh_state()?;
         let t0 = Instant::now();
         state.note_event_received(t0);
         let first = state.turn_start;
         state.note_event_received(t0 + Duration::from_millis(500));
         assert_eq!(state.turn_start, first);
+        Ok(())
     }
 
     #[test]
-    fn mark_complete_transitions_to_complete() {
-        let mut state = fresh_state();
+    fn mark_complete_transitions_to_complete() -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         let now = Instant::now();
         state.note_event_received(now);
         state.mark_complete("[1 in / 2 out, 0.5s]".to_string(), now);
@@ -535,11 +527,12 @@ mod tests {
             StreamingIndicator::Complete { .. }
         ));
         assert!(state.complete_at.is_some());
+        Ok(())
     }
 
     #[test]
-    fn tick_drops_complete_to_idle_after_hold() {
-        let mut state = fresh_state();
+    fn tick_drops_complete_to_idle_after_hold() -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         let now = Instant::now();
         state.note_event_received(now);
         state.mark_complete("done".to_string(), now);
@@ -547,7 +540,7 @@ mod tests {
         state.tick(
             (now + STREAMING_COMPLETE_HOLD)
                 .checked_sub(Duration::from_millis(1))
-                .unwrap(),
+                .ok_or("fixture instant underflow")?,
         );
         assert!(matches!(
             state.streaming_indicator,
@@ -561,11 +554,12 @@ mod tests {
         ));
         assert!(state.complete_at.is_none());
         assert!(state.turn_start.is_none());
+        Ok(())
     }
 
     #[test]
-    fn tick_advances_generating_elapsed() {
-        let mut state = fresh_state();
+    fn tick_advances_generating_elapsed() -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         let t0 = Instant::now();
         state.note_event_received(t0);
         state.tick(t0 + Duration::from_secs(3));
@@ -577,39 +571,44 @@ mod tests {
             "expected Generating with elapsed >= 3s, got {:?}",
             state.streaming_indicator,
         );
+        Ok(())
     }
 
     #[test]
-    fn tick_repaint_ignores_subsecond_elapsed() {
-        let mut state = fresh_state();
+    fn tick_repaint_ignores_subsecond_elapsed() -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         let t0 = Instant::now();
         state.note_event_received(t0);
 
         assert!(!state.tick_indicator_repaint_needed(t0 + Duration::from_millis(8), 80));
+        Ok(())
     }
 
     #[test]
-    fn tick_repaint_reports_elapsed_second_boundary() {
-        let mut state = fresh_state();
+    fn tick_repaint_reports_elapsed_second_boundary() -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         let t0 = Instant::now();
         state.note_event_received(t0);
 
         assert!(state.tick_indicator_repaint_needed(t0 + Duration::from_secs(1), 80));
+        Ok(())
     }
 
     #[test]
-    fn tick_repaint_ignores_token_estimate_churn() {
-        let mut state = fresh_state();
+    fn tick_repaint_ignores_token_estimate_churn() -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         let t0 = Instant::now();
         state.note_event_received(t0);
         state.est_output_bytes = 4_000;
 
         assert!(!state.tick_indicator_repaint_needed(t0 + Duration::from_millis(8), 80));
+        Ok(())
     }
 
     #[test]
-    fn tick_repaint_reports_complete_to_idle_transition() {
-        let mut state = fresh_state();
+    fn tick_repaint_reports_complete_to_idle_transition() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut state = fresh_state()?;
         let t0 = Instant::now();
         state.note_event_received(t0);
         state.mark_complete("done".to_string(), t0);
@@ -618,11 +617,13 @@ mod tests {
             state.tick_indicator_repaint_needed(t0 + STREAMING_COMPLETE_HOLD, 80),
             "dropping the visible complete row must repaint the panel"
         );
+        Ok(())
     }
 
     #[test]
-    fn note_event_received_resets_byte_estimate_at_turn_boundary() {
-        let mut state = fresh_state();
+    fn note_event_received_resets_byte_estimate_at_turn_boundary()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         // First turn — bytes accumulate.
         state.note_event_received(Instant::now());
         state.est_output_bytes = 1_024;
@@ -637,11 +638,13 @@ mod tests {
             state.est_output_bytes, 0,
             "turn boundary must zero the estimate"
         );
+        Ok(())
     }
 
     #[test]
-    fn tick_threads_byte_estimate_into_generating_token_field() {
-        let mut state = fresh_state();
+    fn tick_threads_byte_estimate_into_generating_token_field()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         let t0 = Instant::now();
         state.note_event_received(t0);
         state.est_output_bytes = 4_000; // → ~1000 tokens
@@ -657,11 +660,13 @@ mod tests {
             "expected Generating with 1_000 estimated tokens, got {:?}",
             state.streaming_indicator,
         );
+        Ok(())
     }
 
     #[test]
-    fn tick_threads_current_tool_use_into_generating_in_flight() {
-        let mut state = fresh_state();
+    fn tick_threads_current_tool_use_into_generating_in_flight()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         let t0 = Instant::now();
         state.note_event_received(t0);
         state.current_tool_use = Some(ToolUseInFlight {
@@ -684,11 +689,13 @@ mod tests {
             "expected Generating with in_flight = bash/'listing', got {:?}",
             state.streaming_indicator,
         );
+        Ok(())
     }
 
     #[test]
-    fn root_provider_usage_accumulates_live_status_totals() {
-        let mut state = fresh_state();
+    fn root_provider_usage_accumulates_live_status_totals() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut state = fresh_state()?;
         let agent_id = state.tab_state.root_id();
         state.record_root_provider_usage(agent_id, 1_000, 2_000);
         state.record_root_provider_usage(agent_id, 3_000, 4_000);
@@ -703,11 +710,13 @@ mod tests {
             Some((4_000, 6_000)),
             "agent-row ledger still accumulates actual provider spend"
         );
+        Ok(())
     }
 
     #[test]
-    fn root_input_estimate_preserves_turn_output_so_far() {
-        let mut state = fresh_state();
+    fn root_input_estimate_preserves_turn_output_so_far() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut state = fresh_state()?;
         let agent_id = state.tab_state.root_id();
         state.record_root_provider_usage(agent_id, 1_000, 2_000);
         state.set_root_input_estimate(12_345);
@@ -717,22 +726,26 @@ mod tests {
         assert!(status.input_tokens_estimated);
         assert_eq!(status.output_tokens, 2_000);
         assert!(!status.output_tokens_estimated);
+        Ok(())
     }
 
     #[test]
-    fn child_usage_delta_does_not_update_live_status_totals() {
-        let mut state = fresh_state();
+    fn child_usage_delta_does_not_update_live_status_totals()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         let child_id = Uuid::new_v4();
         state.record_agent_usage_delta(child_id, 1_000, 2_000);
 
         let status = state.fixed_panel.status_bar();
         assert_eq!(status.input_tokens, 0);
         assert_eq!(status.output_tokens, 0);
+        Ok(())
     }
 
     #[test]
-    fn usage_reconcile_records_only_missing_positive_delta() {
-        let mut state = fresh_state();
+    fn usage_reconcile_records_only_missing_positive_delta()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         let agent_id = state.tab_state.root_id();
         state.record_agent_usage_delta(agent_id, 1_000, 2_000);
         state.reconcile_usage_total(agent_id, 1_500, 2_500);
@@ -745,6 +758,7 @@ mod tests {
         let status = state.fixed_panel.status_bar();
         assert_eq!(status.input_tokens, 0);
         assert_eq!(status.output_tokens, 0);
+        Ok(())
     }
 
     // ---------------- Retry visibility (C6 / DESIGN D8) ----------------
@@ -752,8 +766,9 @@ mod tests {
     /// The marker arrives BEFORE the wait, so the row must show the full
     /// announced delay immediately — and keep the turn running.
     #[test]
-    fn note_retry_shows_the_announced_wait_and_keeps_the_turn_alive() {
-        let mut state = fresh_state();
+    fn note_retry_shows_the_announced_wait_and_keeps_the_turn_alive()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         let t0 = Instant::now();
         state.note_event_received(t0);
         state.note_retry(
@@ -785,13 +800,15 @@ mod tests {
             "a retry is the same turn, not a new one"
         );
         assert!(state.complete_at.is_none());
+        Ok(())
     }
 
     /// A long wait counts down on the render tick instead of freezing at
     /// the announced value.
     #[test]
-    fn tick_counts_the_retry_wait_down_and_then_reads_as_now() {
-        let mut state = fresh_state();
+    fn tick_counts_the_retry_wait_down_and_then_reads_as_now()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         let t0 = Instant::now();
         state.note_event_received(t0);
         state.note_retry(2, None, Duration::from_secs(30), "timeout".to_string(), t0);
@@ -818,13 +835,14 @@ mod tests {
             "a wait that has run out must not go negative or vanish: {:?}",
             state.streaming_indicator
         );
+        Ok(())
     }
 
     /// Each whole second of the countdown repaints the panel; sub-second
     /// tick noise does not.
     #[test]
-    fn retry_countdown_repaints_once_per_second() {
-        let mut state = fresh_state();
+    fn retry_countdown_repaints_once_per_second() -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         let t0 = Instant::now();
         state.note_retry(2, None, Duration::from_secs(30), "timeout".to_string(), t0);
 
@@ -836,13 +854,15 @@ mod tests {
             state.tick_indicator_repaint_needed(t0 + Duration::from_secs(1), 80),
             "each second of the wait must repaint the countdown"
         );
+        Ok(())
     }
 
     /// The wait vanishes the moment the replayed attempt produces
     /// anything — and the failed attempt's estimate goes with it.
     #[test]
-    fn the_next_attempts_first_event_clears_the_retry_row() {
-        let mut state = fresh_state();
+    fn the_next_attempts_first_event_clears_the_retry_row() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut state = fresh_state()?;
         let t0 = Instant::now();
         state.note_event_received(t0);
         state.est_output_bytes = 4_000;
@@ -861,13 +881,14 @@ mod tests {
             "got {:?}",
             state.streaming_indicator
         );
+        Ok(())
     }
 
     /// Success ends the turn: the retry row is replaced by the usage
     /// summary, never left behind.
     #[test]
-    fn completion_replaces_the_retry_row() {
-        let mut state = fresh_state();
+    fn completion_replaces_the_retry_row() -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         let t0 = Instant::now();
         state.note_retry(2, None, Duration::from_secs(5), "timeout".to_string(), t0);
         state.mark_complete("[1 in / 2 out, 0.5s]".to_string(), t0);
@@ -875,15 +896,161 @@ mod tests {
             state.streaming_indicator,
             StreamingIndicator::Complete { .. }
         ));
+        Ok(())
     }
 
     #[test]
-    fn sync_indicator_into_panel_mirrors_state() {
-        let mut state = fresh_state();
+    fn sync_indicator_into_panel_mirrors_state() -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         state.note_event_received(Instant::now());
         state.sync_indicator_into_panel();
         // Generating lives in the top chip, so mirroring state should
         // keep the fixed panel at least at its always-present minimum.
         assert!(state.fixed_panel.total_height() >= 4);
+        Ok(())
+    }
+    #[test]
+    fn final_usage_counts_equal_successive_turns_and_only_missing_live_amounts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
+        let root = state.tab_state.root_id();
+        state.reconcile_root_turn_usage(3, 4);
+        state.reconcile_root_turn_usage(3, 4);
+        assert_eq!(state.usage_totals.get(&root), Some(&(3, 4)));
+        state.reset_live_usage();
+        state.set_root_input_estimate(99);
+        state.record_root_provider_usage(root, 1, 2);
+        state.reconcile_root_turn_usage(3, 4);
+        assert_eq!(
+            state.usage_totals.get(&root),
+            Some(&(6, 8)),
+            "second equal-cost turn must add its own missing usage"
+        );
+        assert_eq!(state.fixed_panel.status_bar().input_tokens, 3);
+        assert_eq!(state.fixed_panel.status_bar().output_tokens, 4);
+        assert!(!state.fixed_panel.status_bar().input_tokens_estimated);
+        assert!(!state.fixed_panel.status_bar().output_tokens_estimated);
+        state.reset_live_usage();
+        state.reconcile_root_turn_usage(3, 4);
+        assert_eq!(
+            state.usage_totals.get(&root),
+            Some(&(9, 12)),
+            "entirely missed live usage still counts after prior turns"
+        );
+        Ok(())
+    }
+    #[test]
+    fn running_turn_keeps_admission_time_across_response_hold_and_retry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
+        let admitted = Instant::now();
+        state.turn_start = Some(admitted);
+        state.in_flight_input.set_running(true);
+        state.note_event_received(admitted + Duration::from_secs(1));
+        state.mark_complete(
+            "response completed".to_owned(),
+            admitted + Duration::from_secs(2),
+        );
+        let later = admitted + Duration::from_secs(2) + STREAMING_COMPLETE_HOLD;
+        state.tick(later);
+        assert_eq!(state.turn_start, Some(admitted));
+        state.note_retry(2, None, Duration::from_secs(1), "fixture".to_owned(), later);
+        assert_eq!(state.turn_start, Some(admitted));
+        state.note_event_received(later + Duration::from_secs(1));
+        assert_eq!(state.turn_start, Some(admitted));
+        state.in_flight_input.set_running(false);
+        state.mark_complete("turn completed".to_owned(), later + Duration::from_secs(2));
+        state.tick(later + Duration::from_secs(2) + STREAMING_COMPLETE_HOLD);
+        assert!(state.turn_start.is_none());
+        Ok(())
+    }
+    #[tokio::test]
+    async fn buffered_duplicate_done_cannot_recount_usage_after_publication()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::app::dispatch::{finalise_turn, handle_agent_event};
+        use norn::agent_loop::runner::{AgentStepRequest, ToolExecutor, run_agent_step};
+        use norn::agent_loop::{LoopContext, config::AgentLoopConfig};
+        use norn::provider::agent_event::AgentEventKind;
+        use norn::provider::{AgentEventSender, StopReason, mock::MockProvider};
+        use norn::provider::{ProviderEvent, Usage};
+        use norn::session::{EventStore, SessionBinding};
+        let mut state = fresh_state()?;
+        let root_id = state.tab_state.root_id();
+        let store = EventStore::new();
+        let source = store.bind_view_source(&SessionBinding::ephemeral_root(), root_id, None)?;
+        state.transcript = crate::app::transcript::Transcript::new(source);
+        let input = crate::app::notices::input(&mut state, "You · submitted", "fixture prompt")?;
+        let model = norn::model_selection::ModelRuntime::new(
+            None,
+            "gpt-5.5",
+            Some(272_000),
+            None,
+            None,
+            std::collections::BTreeMap::new(),
+        )?;
+        // Explicit fixture capacity is larger than the finite scripted native event sequence.
+        let (tx, mut receiver) = tokio::sync::broadcast::channel(32);
+        let sender = state.transcript.observe_execution(
+            &AgentEventSender::new(tx, root_id, "root".to_owned()),
+            &store,
+            &model,
+            Some(input),
+        )?;
+        let provider = MockProvider::new(vec![vec![
+            ProviderEvent::TextDelta {
+                text: "fixture answer".to_owned(),
+            },
+            ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                response_id: None,
+                usage: Usage {
+                    input_tokens: 3,
+                    output_tokens: 4,
+                    ..Usage::default()
+                },
+            },
+        ]]);
+        let executor: Arc<dyn ToolExecutor> = Arc::new(norn::tool::ToolRegistry::new());
+        let mut context = LoopContext::new("deterministic fixture");
+        let result = run_agent_step(AgentStepRequest {
+            provider: &provider,
+            executor: &executor,
+            store: &store,
+            user_prompt: "fixture prompt",
+            tools: &[],
+            output_schema: None,
+            model: "gpt-5.5",
+            config: &AgentLoopConfig::default(),
+            event_tx: Some(&sender),
+            inbound: None,
+            loop_context: &mut context,
+            cancel: None,
+        })
+        .await?;
+        let mut duplicate = None;
+        loop {
+            match receiver.try_recv() {
+                Ok(event) => {
+                    if matches!(&event.event, AgentEventKind::Observed(observed) if matches!(observed.event(), AgentEventKind::Provider(ProviderEvent::Done { .. })))
+                    {
+                        duplicate = Some(event.clone());
+                    }
+                    handle_agent_event(&mut state, event)?;
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        handle_agent_event(&mut state, duplicate.ok_or("missing actual Done envelope")?)?;
+        assert_eq!(
+            state.usage_totals.get(&root_id),
+            None,
+            "retired attempt data must not create live usage side effects"
+        );
+        finalise_turn(&mut state, Some(Ok(result)))?;
+        assert_eq!(state.usage_totals.get(&root_id), Some(&(3, 4)));
+        assert_eq!(state.fixed_panel.status_bar().input_tokens, 3);
+        assert_eq!(state.fixed_panel.status_bar().output_tokens, 4);
+        Ok(())
     }
 }

@@ -3,14 +3,12 @@
 //! [`run_app`] drives pre-built [`TuiInputs`]. CLI construction stays in
 //! `norn-cli` to preserve the one-way `norn-cli` to `norn-tui` dependency.
 
-use std::io::Write as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
-use termina::Terminal as _;
 use termina::event::{KeyCode, KeyEventKind, Modifiers};
-use termina::{Event, EventReader};
+use termina::{Event, EventReader, Terminal as _};
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
@@ -34,16 +32,14 @@ use crate::terminal::caps::TerminalCaps;
 use crate::terminal::setup::TerminalGuard;
 
 use super::autocomplete::{PopupKeyOutcome, dismiss as dismiss_autocomplete, handle_popup_key};
-use super::child_results::{ChildResultRx, PendingChildPrompts, drain_ready_child_results};
+use super::child_results::{ChildResultRx, PendingChildPrompts};
 use super::dispatch::handle_agent_event;
 use super::edit::apply_edit_action;
 use super::mcp_slash::{
     McpCommandTask, mcp_exit_is_blocked, render_completed_mcp, render_pending_mcp_exit,
+    wait_mcp_result,
 };
-use super::render::{
-    redraw_all, redraw_panel, render_input, sync_input_area, with_scroll_region_cursor_async,
-    write_user_message,
-};
+use super::render::{load_visible, redraw_all, sync_input_area, write_user_message};
 use super::session_replay::replay_visible_session_history;
 use super::slash::{SlashOutcome, try_dispatch_slash};
 use super::state::AppState;
@@ -63,6 +59,8 @@ pub struct TuiInputs {
     pub executor: Arc<dyn ToolExecutor>,
     /// Session event store.
     pub store: Arc<EventStore>,
+    /// Actual session owner binding supplied by the assembled runtime.
+    pub session_binding: Arc<norn::session::SessionBinding>,
     /// Shared agent registry — read by the agent status panel.
     pub registry: Arc<RwLock<AgentRegistry>>,
     /// Loop context with system sections, rules, hooks, event schemas.
@@ -209,34 +207,25 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
     let root_cancel = RootCancelOnExit::new(inputs.root_cancel);
     TerminalCaps::check_hard_requirements()?;
     let mut guard = TerminalGuard::new()?;
-    // Clear screen, home the cursor, and save the initial scroll-region
-    // position via the guard's clamping save helper. The DECSC slot is
-    // the single source of truth for "where should the next
-    // write_to_scroll go" — only updated when the cursor is known to
-    // be inside the scroll region. The guard also tracks the row in
-    // software so DECRC restores after a panel grow get clamped back
-    // into the scroll region instead of writing into the panel area.
-    write!(guard.terminal_mut(), "\x1b[2J\x1b[H")?;
-    guard.terminal_mut().flush()?;
-    guard.reset_scroll_cursor(1);
-
+    let source = inputs
+        .store
+        .bind_view_source(&inputs.session_binding, inputs.root_id, None)?;
     let caps = guard.caps().clone();
     let pending_messages = inputs.loop_context.pending_agent_messages.clone();
     let mut state = AppState::new(
         caps,
         inputs.history,
         Arc::clone(&inputs.registry),
-        inputs.root_id,
+        source,
         inputs.status_bar,
     );
     state.agent_panel.set_pending_messages(pending_messages);
 
-    replay_visible_session_history(&state, &inputs.store, &mut guard)?;
-    guard.save_scroll_cursor()?;
-    guard.terminal_mut().flush()?;
+    replay_visible_session_history(&mut state, &inputs.store).await?;
 
-    redraw_panel(&mut state, &mut guard)?;
-    render_input(&state, &mut guard)?;
+    redraw_all(&mut state, &mut guard)?;
+    load_visible(&mut state, &inputs.store)?;
+    redraw_all(&mut state, &mut guard)?;
 
     // Spawn the terminal-event reader thread up front so the initial
     // prompt path (below) can observe Ctrl+C just like the outer-loop
@@ -251,6 +240,7 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         provider: inputs.provider,
         executor: inputs.executor,
         store: inputs.store,
+        session_binding: inputs.session_binding,
         loop_context: inputs.loop_context,
         agent_config: inputs.agent_config,
         model: inputs.model,
@@ -272,34 +262,38 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
     // and processed at the next safe root-turn boundary.
     let mut child_results = ChildResultState::new(runtime.loop_context.child_result_rx.take());
 
-    if let Some(prompt) = inputs.initial_prompt
-        && !prompt.trim().is_empty()
-    {
-        let trimmed = prompt.trim().to_string();
-        write_user_message(&trimmed, &mut state, &mut guard)?;
-        run_turn_and_pending(
+    let outcome = async {
+        if let Some(prompt) = inputs.initial_prompt
+            && !prompt.trim().is_empty()
+        {
+            let trimmed = prompt.trim().to_string();
+            let input = write_user_message(trimmed, &mut state)?;
+            run_turn_and_pending(
+                &mut state,
+                &mut runtime,
+                &mut guard,
+                input,
+                &mut term_rx,
+                &mut agent_event_rx,
+                &mut child_results,
+            )
+            .await?;
+            redraw_all(&mut state, &mut guard)?;
+        }
+
+        outer_loop(
             &mut state,
             &mut runtime,
             &mut guard,
-            &trimmed,
-            &mut term_rx,
+            term_rx,
+            child_results,
             &mut agent_event_rx,
-            &mut child_results,
         )
-        .await?;
-        redraw_panel(&mut state, &mut guard)?;
-        render_input(&state, &mut guard)?;
+        .await
     }
-
-    outer_loop(
-        &mut state,
-        &mut runtime,
-        &mut guard,
-        term_rx,
-        child_results,
-        &mut agent_event_rx,
-    )
-    .await
+    .await;
+    super::view_actions::reading::drain_exports(&mut state).await?;
+    outcome
 }
 
 /// Spawn the dedicated OS thread that reads terminal events.
@@ -322,7 +316,9 @@ fn spawn_event_reader(
                     }
                 }
                 Err(err) => {
-                    let _ = term_tx.send(Err(err));
+                    if term_tx.send(Err(err)).is_err() {
+                        tracing::debug!("terminal error receiver has closed");
+                    }
                     break;
                 }
             }
@@ -341,6 +337,7 @@ pub(super) struct RuntimeRefs {
     pub(super) provider: Arc<dyn Provider>,
     pub(super) executor: Arc<dyn ToolExecutor>,
     pub(super) store: Arc<EventStore>,
+    pub(super) session_binding: Arc<norn::session::SessionBinding>,
     pub(super) loop_context: LoopContext,
     pub(super) agent_config: AgentLoopConfig,
     pub(super) model: String,
@@ -404,35 +401,48 @@ async fn outer_loop(
     let mut tick = tokio::time::interval(RENDER_TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut channel_wake_paused = false;
-
+    let mut events_closed = false;
+    let mut inbound_closed = false;
     loop {
+        redraw_all(state, guard)?;
+        load_visible(state, &runtime.store)?;
+        redraw_all(state, guard)?;
         tokio::select! {
             biased;
             msg = term_rx.recv() => {
                 let Some(result) = msg else { return Ok(()); };
-                let event = result.map_err(TuiError::Io)?;
-                match dispatch_input(
-                    event,
-                    state,
-                    runtime,
-                    guard,
-                    &mut term_rx,
-                    agent_event_rx,
-                    &mut child_results,
-                ).await? {
-                    InputOutcome::Continue => {}
+                state.screen.terminal_event(term_rx.len());
+                match dispatch_input(result?, state, runtime, guard, &mut term_rx, agent_event_rx, &mut child_results).await? {
+                    InputOutcome::Continue => {},
                     InputOutcome::OperatorTurn => channel_wake_paused = false,
                     InputOutcome::Exit => return Ok(()),
                 }
             }
-            event = agent_event_rx.recv() => {
-                if let Ok(agent_ev) = event {
-                    guard.restore_scroll_cursor_clamped()?;
-                    handle_agent_event(state, guard, &mut None, agent_ev)?;
-                    guard.save_scroll_cursor()?;
-                    redraw_panel(state, guard)?;
-                    render_input(state, guard)?;
+            event = agent_event_rx.recv(), if !events_closed => {
+                match event {
+                    Ok(event) => { handle_agent_event(state, event)?; state.screen.allow_body_load = true; }
+                    Err(broadcast::error::RecvError::Lagged(missed)) => { state.transcript.projection.mark_lagged(missed)?; }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        events_closed = true;
+                        super::notices::notice(state, "Live event source closed", None)?;
+                    }
                 }
+            }
+            Some(result) = state.export_tasks.join_next() => {
+                    crate::app::view_actions::reading::finish_export(state, result)?;
+                }
+                Some(result) = state.screen.changes.jobs.join_next() => {
+                    crate::app::render::changes::finish(state, result)?;
+                }
+                Some(result) = state.transcript.history_tasks.join_next() => {
+                crate::app::view_actions::reading::finish_history(state, result)?;
+            }
+            Some(result) = state.transcript.body_tasks.join_next() => {
+                state.transcript.finish_body(result)?; state.screen.allow_body_load = true; state.screen.dirty = true;
+            }
+            result = wait_mcp_result(&mut runtime.mcp_command) => {
+                render_completed_mcp(state, &mut runtime.mcp_command, result)?;
+                state.screen.allow_body_load = true;
             }
             readiness = async {
                 match runtime.loop_context.mcp_channel_session.as_ref() {
@@ -441,58 +451,23 @@ async fn outer_loop(
                 }
             }, if !channel_wake_paused => {
                 readiness?;
-                channel_wake_paused = !run_ready_mcp_channels(
-                    state,
-                    runtime,
-                    guard,
-                    &mut term_rx,
-                    agent_event_rx,
-                    &mut child_results,
-                ).await?;
-                redraw_panel(state, guard)?;
-                render_input(state, guard)?;
+                channel_wake_paused = !run_ready_mcp_channels(state, runtime, guard, &mut term_rx, agent_event_rx, &mut child_results).await?;
             }
-            _ = tick.tick() => {
-                if runtime
-                    .mcp_command
-                    .as_ref()
-                    .is_some_and(McpCommandTask::is_finished)
-                {
-                    guard.restore_scroll_cursor_clamped()?;
-                    render_completed_mcp(&mut runtime.mcp_command, guard).await?;
-                    guard.save_scroll_cursor()?;
-                    redraw_panel(state, guard)?;
-                    render_input(state, guard)?;
+            ready = async {
+                match runtime.root_inbound.as_mut() {
+                    Some(inbound) => inbound.steer_ready().await,
+                    None => std::future::pending().await,
                 }
-                drain_ready_child_results(
-                    state,
-                    guard,
-                    &mut child_results.rx,
-                    &mut child_results.pending_prompts,
-                )?;
-                run_ready_root_inbound(
-                    state,
-                    runtime,
-                    guard,
-                    &mut term_rx,
-                    agent_event_rx,
-                    &mut child_results,
-                ).await?;
-                run_pending_child_prompts(
-                    state,
-                    runtime,
-                    guard,
-                    &mut term_rx,
-                    agent_event_rx,
-                    &mut child_results,
-                ).await?;
-                let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
-                if state.tick_indicator_repaint_needed(Instant::now(), cols) {
-                    state.sync_indicator_into_panel();
-                    redraw_panel(state, guard)?;
-                    render_input(state, guard)?;
-                }
+            }, if !inbound_closed => {
+                if ready { run_ready_root_inbound(state, runtime, guard, &mut term_rx, agent_event_rx, &mut child_results).await?; }
+                else { inbound_closed = true; }
             }
+            Some(first) = super::child_results::recv_child_result(&mut child_results.rx) => {
+                super::child_results::render_child_result_batch(state, &mut child_results.rx, &mut child_results.pending_prompts, first)?;
+                state.screen.allow_body_load = true;
+                run_pending_child_prompts(state, runtime, guard, &mut term_rx, agent_event_rx, &mut child_results).await?;
+            }
+            _ = tick.tick() => { state.tick(Instant::now()); }
         }
     }
 }
@@ -545,7 +520,7 @@ async fn dispatch_input(
 ) -> Result<InputOutcome, TuiError> {
     match event {
         Event::Key(key) => {
-            let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
+            let cols = guard.terminal_columns();
             if state.autocomplete.is_some()
                 && key.kind == KeyEventKind::Press
                 && matches!(
@@ -554,6 +529,11 @@ async fn dispatch_input(
                 )
             {
                 redraw_all(state, guard)?;
+                return Ok(InputOutcome::Continue);
+            }
+            if super::view_actions::key(key, state) {
+                redraw_all(state, guard)?;
+                load_visible(state, &runtime.store)?;
                 return Ok(InputOutcome::Continue);
             }
             let caps = state.terminal_caps.clone();
@@ -572,18 +552,25 @@ async fn dispatch_input(
             )
             .await
         }
+        Event::Mouse(event) => {
+            if super::view_actions::mouse(event, state) {
+                redraw_all(state, guard)?;
+                load_visible(state, &runtime.store)?;
+            }
+            Ok(InputOutcome::Continue)
+        }
         Event::Paste(text) => {
+            super::view_actions::pin_visible(state)?;
             insert_paste_text(state, &text);
             sync_input_for_current_geometry(state, guard);
-            redraw_panel(state, guard)?;
-            render_input(state, guard)?;
+            redraw_all(state, guard)?;
             Ok(InputOutcome::Continue)
         }
         Event::WindowResized(size) => {
-            guard.handle_resize(size.rows)?;
+            guard.handle_resize(size.cols, size.rows);
+            state.screen.allow_body_load = false;
             sync_input_for_current_geometry(state, guard);
-            redraw_panel(state, guard)?;
-            render_input(state, guard)?;
+            redraw_all(state, guard)?;
             Ok(InputOutcome::Continue)
         }
         _ => Ok(InputOutcome::Continue),
@@ -596,7 +583,8 @@ async fn dispatch_input(
 /// it is forwarded into [`run_turn`] so a mid-turn Ctrl+C key event can
 /// abort the in-flight agent step.
 pub(super) fn sync_input_for_current_geometry(state: &mut AppState, guard: &mut TerminalGuard) {
-    let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
+    state.screen.dirty = true;
+    let cols = guard.terminal_columns();
     let input_rows = sync_input_area(&mut state.input_editor, cols, guard.terminal_rows());
     state.fixed_panel.set_input_area(input_rows);
 }
@@ -626,9 +614,7 @@ async fn handle_action(
         InputAction::Exit => {
             if state.input_editor.is_empty() {
                 if mcp_exit_is_blocked(runtime.mcp_command.as_ref()) {
-                    guard.restore_scroll_cursor_clamped()?;
-                    render_pending_mcp_exit(guard)?;
-                    guard.save_scroll_cursor()?;
+                    render_pending_mcp_exit(state)?;
                 } else {
                     return Ok(InputOutcome::Exit);
                 }
@@ -648,20 +634,17 @@ async fn handle_action(
             // fall through to the normal run_turn pipeline. Some =
             // handled here; skip run_turn. Exit short-circuits the
             // outer loop directly.
-            let slash = with_scroll_region_cursor_async(guard, async |guard| {
-                try_dispatch_slash(&text, state, runtime, guard).await
-            })
-            .await?;
+            let slash = try_dispatch_slash(&text, state, runtime).await?;
             match slash {
                 Some(SlashOutcome::Exit) => return Ok(InputOutcome::Exit),
                 Some(SlashOutcome::Continue) => {}
                 None => {
-                    write_user_message(&text, state, guard)?;
+                    let input = write_user_message(text, state)?;
                     run_turn_and_pending(
                         state,
                         runtime,
                         guard,
-                        &text,
+                        input,
                         term_rx,
                         agent_event_rx,
                         child_results,
@@ -675,7 +658,7 @@ async fn handle_action(
             state.in_flight_input.toggle_mode();
         }
         other => {
-            let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
+            let cols = guard.terminal_columns();
             apply_edit_action(other, state, cols, guard.terminal_rows());
         }
     }
@@ -703,7 +686,6 @@ pub(super) fn is_ctrl_c(event: &Event) -> bool {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::input::autocomplete::{AutocompletePopup, SlashCandidate, SourceTag};
@@ -713,7 +695,7 @@ mod tests {
     use crate::tools::VerbosityState;
     use norn::agent::registry::AgentRegistry;
 
-    fn fresh_state() -> AppState {
+    fn fresh_state() -> Result<AppState, Box<dyn std::error::Error>> {
         let registry = AgentRegistry::shared();
         let guard = AgentRegistry::reserve(
             &registry,
@@ -731,17 +713,16 @@ mod tests {
                 loop_config: None,
             },
             None,
-        )
-        .unwrap();
+        )?;
         let root_id = guard.id();
-        guard.confirm().unwrap();
-        AppState::new(
+        guard.confirm()?;
+        Ok(AppState::new(
             TerminalCaps::baseline(),
             InputHistory::in_memory(),
             registry,
-            root_id,
+            crate::app::state::test_view_source(root_id),
             StatusBar::default(),
-        )
+        ))
     }
 
     fn seed_popup(state: &mut AppState) {
@@ -789,8 +770,9 @@ mod tests {
     }
 
     #[test]
-    fn paste_inserts_multiline_text_and_dismisses_popup_without_turn() {
-        let mut state = fresh_state();
+    fn paste_inserts_multiline_text_and_dismisses_popup_without_turn()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         seed_popup(&mut state);
         let initial_turn_start = state.turn_start;
 
@@ -808,11 +790,13 @@ mod tests {
         assert!(state.autocomplete.is_none());
         assert_eq!(state.fixed_panel.autocomplete_popup_rows(), 0);
         assert_eq!(state.turn_start, initial_turn_start);
+        Ok(())
     }
 
     #[test]
-    fn paste_splices_at_cursor_and_parks_after_inserted_text() {
-        let mut state = fresh_state();
+    fn paste_splices_at_cursor_and_parks_after_inserted_text()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         for ch in "hello world".chars() {
             state.input_editor.insert_char(ch);
         }
@@ -828,11 +812,13 @@ mod tests {
         );
         assert_eq!(state.input_editor.text(), "helloPASTED\nLINE2 world");
         assert_eq!(state.input_editor.cursor_position(), (1, 5));
+        Ok(())
     }
 
     #[test]
-    fn paste_then_delete_shrinks_fixed_panel_to_visual_height() {
-        let mut state = fresh_state();
+    fn paste_then_delete_shrinks_fixed_panel_to_visual_height()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         let cols = 80;
         let terminal_rows = 24;
 
@@ -850,21 +836,24 @@ mod tests {
         assert_eq!(state.input_editor.text(), "line1\nline2");
         assert_eq!(shrunk_rows, state.input_editor.visual_height(cols));
         assert_eq!(state.fixed_panel.total_height(), 3 + shrunk_rows);
+        Ok(())
     }
 
     #[test]
-    fn handle_action_toggle_verbosity_flips_state() {
-        let mut state = fresh_state();
+    fn handle_action_toggle_verbosity_flips_state() -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         assert_eq!(state.verbosity, VerbosityState::Expanded);
         state.verbosity = state.verbosity.toggle();
         assert_eq!(state.verbosity, VerbosityState::Collapsed);
         state.verbosity = state.verbosity.toggle();
         assert_eq!(state.verbosity, VerbosityState::Expanded);
+        Ok(())
     }
 
     #[test]
-    fn handle_action_toggle_thinking_flips_display_toggles() {
-        let mut state = fresh_state();
+    fn handle_action_toggle_thinking_flips_display_toggles()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
         assert!(state.display_toggles.thinking_visible);
         assert!(!state.display_toggles.secondary_fields_visible);
         state.display_toggles.toggle();
@@ -873,6 +862,7 @@ mod tests {
         state.display_toggles.toggle();
         assert!(state.display_toggles.thinking_visible);
         assert!(state.display_toggles.secondary_fields_visible);
+        Ok(())
     }
 
     /// D7 exit seam: the app returning — by any path — cancels the ROOT

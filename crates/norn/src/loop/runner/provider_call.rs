@@ -16,6 +16,7 @@ use crate::r#loop::response_publication::{
     append_response_publication, notify_response_publication,
 };
 use crate::r#loop::retry::RetryOutcome;
+use crate::provider::agent_event::{ObservationError, ResponsePublicationOwner};
 use crate::provider::events::StopReason;
 use crate::provider::request::{AssistantToolCall, Message, MessageRole, ProviderRequest};
 use crate::session::events::{
@@ -52,8 +53,25 @@ impl StepMachine<'_> {
         // (reqwest is cancel-safe). When `cancel` is `None` the call falls
         // through to a direct await with no select overhead (R3
         // acceptance).
+        let response_index = self.iterations.checked_sub(1).ok_or_else(|| {
+            SessionError::from(ObservationError::CounterExhausted {
+                counter: "response iteration",
+                agent: self
+                    .event_tx
+                    .map(crate::provider::AgentEventSender::agent_id),
+            })
+        })?;
+        let observed = self
+            .event_tx
+            .map(|sender| sender.observe_response(u64::from(response_index)))
+            .transpose()
+            .map_err(SessionError::from)?;
+        let (sender, publication) = match observed {
+            Some((sender, publication)) => (Some(sender), publication),
+            None => (None, None),
+        };
         let sinks = ProviderCallSinks {
-            event_tx: self.event_tx,
+            event_tx: sender.as_ref(),
             // Mirror in-flight deltas into the shared timeout state so a
             // hard cut (step timeout dropping this future, or the cancel
             // arm below winning the select) leaves the partial content
@@ -116,7 +134,7 @@ impl StepMachine<'_> {
             hooks.run_post_llm(&summary).await;
         }
 
-        self.persist_assistant_turn(&response).await?;
+        self.persist_assistant_turn(&response, publication).await?;
         self.monitor_iteration(&response).await?;
 
         Ok(StepFlow::Next(StepState::Dispatch(Box::new(response))))
@@ -127,6 +145,7 @@ impl StepMachine<'_> {
     async fn persist_assistant_turn(
         &mut self,
         response: &AssembledResponse,
+        publication_owner: Option<ResponsePublicationOwner>,
     ) -> Result<(), NornError> {
         // Usage-floor anchor: the provider's reported spend for this call
         // (input + output) is a truthful lower bound for the next request,
@@ -243,6 +262,7 @@ impl StepMachine<'_> {
             publication.push(link_event);
         }
 
+        let assistant_event_id = assistant_base.id.clone();
         publication.push(SessionEvent::AssistantMessage {
             response_items: response.response_items.clone(),
             base: assistant_base,
@@ -282,7 +302,11 @@ impl StepMachine<'_> {
 
         // No supported in-process observer may insert provider input inside
         // this group. Hooks see each event only after all rows are present.
-        append_response_publication(self.store, &publication)?;
+        let observation = publication_owner
+            .map(ResponsePublicationOwner::into_publication)
+            .transpose()
+            .map_err(SessionError::from)?;
+        append_response_publication(self.store, &publication, &assistant_event_id, observation)?;
 
         // The turn is durable: only now may the Gap 7 capture disarm.
         // Clearing at assembly time (inside `call_provider`) would open a

@@ -21,18 +21,14 @@
 //! TUI slash catalog are merged at the top of the list.
 
 use std::collections::HashSet;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use termina::Terminal as _;
 use termina::event::{KeyCode, KeyEvent, Modifiers};
 
-use crate::TuiError;
 use crate::input::autocomplete::{
     AutocompletePopup, AutocompleteTrigger, SlashCandidate, SourceTag, TriggerKind, detect_trigger,
     walk_entries,
 };
-use crate::terminal::setup::TerminalGuard;
 
 use super::render::sync_input_area;
 use super::slash_catalog::tui_builtin_commands;
@@ -117,35 +113,6 @@ fn accept(state: &mut AppState, cols: u16, terminal_rows: u16) {
     }
     state.fixed_panel.set_autocomplete_popup(0);
     sync_editor_input_area(state, cols, terminal_rows);
-}
-
-/// Paint the autocomplete popup over the fixed panel's popup
-/// placeholder rows.
-///
-/// Called after the fixed-panel redraw, which has cleared the popup
-/// row range as part of its frame draw. When `state.autocomplete` is
-/// `None` this is a no-op — the panel's placeholder rows already show
-/// nothing. The popup write is cursor-addressed within fixed-panel
-/// territory only (CO8); no scroll-region row is touched (CO7).
-///
-/// # Errors
-///
-/// Returns [`TuiError::Io`] when the popup render or the terminal
-/// flush fails.
-pub fn render_popup(state: &AppState, guard: &mut TerminalGuard) -> Result<(), TuiError> {
-    if state.fixed_panel.autocomplete_popup_rows() == 0 {
-        return Ok(());
-    }
-    let Some(popup) = state.autocomplete.as_ref() else {
-        return Ok(());
-    };
-    let rows = guard.terminal_rows();
-    let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
-    let top = state.fixed_panel.autocomplete_popup_top(rows);
-    let caps = state.terminal_caps.clone();
-    popup.render(top, cols, guard.terminal_mut(), &caps)?;
-    guard.terminal_mut().flush()?;
-    Ok(())
 }
 
 /// Bring the popup state in line with the current editor contents.
@@ -357,8 +324,9 @@ fn read_skill_description(path: &Path) -> Option<String> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
     use std::fs;
     use std::sync::Arc;
 
@@ -371,7 +339,7 @@ mod tests {
     use crate::render::fixed_panel::StatusBar;
     use crate::terminal::caps::TerminalCaps;
 
-    fn fresh_state() -> AppState {
+    fn fresh_state() -> TestResult<AppState> {
         let registry: Arc<RwLock<AgentRegistry>> = AgentRegistry::shared();
         let guard = AgentRegistry::reserve(
             &registry,
@@ -389,17 +357,16 @@ mod tests {
                 loop_config: None,
             },
             None,
-        )
-        .unwrap();
+        )?;
         let root_id = guard.id();
-        guard.confirm().unwrap();
-        AppState::new(
+        guard.confirm()?;
+        Ok(AppState::new(
             TerminalCaps::baseline(),
             InputHistory::in_memory(),
             registry,
-            root_id,
+            crate::app::state::test_view_source(root_id),
             StatusBar::default(),
-        )
+        ))
     }
 
     fn type_into(state: &mut AppState, text: &str) {
@@ -434,9 +401,9 @@ mod tests {
     }
 
     #[test]
-    fn refresh_creates_slash_popup_after_slash_typed() {
-        let mut state = fresh_state();
-        let tmp = tempfile::tempdir().unwrap();
+    fn refresh_creates_slash_popup_after_slash_typed() -> TestResult {
+        let mut state = fresh_state()?;
+        let tmp = tempfile::tempdir()?;
         type_into(&mut state, "/");
         refresh_autocomplete(&mut state, tmp.path());
         assert!(
@@ -444,29 +411,41 @@ mod tests {
             "popup must be created for `/` trigger",
         );
         assert!(state.fixed_panel.autocomplete_popup_rows() > 0);
+        Ok(())
     }
 
     #[test]
-    fn refresh_narrows_existing_slash_popup_as_user_types() {
-        let mut state = fresh_state();
-        let tmp = tempfile::tempdir().unwrap();
+    fn refresh_narrows_existing_slash_popup_as_user_types() -> TestResult {
+        let mut state = fresh_state()?;
+        let tmp = tempfile::tempdir()?;
         type_into(&mut state, "/");
         refresh_autocomplete(&mut state, tmp.path());
-        let initial_count = state.autocomplete.as_ref().unwrap().candidates.len();
+        let initial_count = state
+            .autocomplete
+            .as_ref()
+            .ok_or("autocomplete popup is missing")?
+            .candidates
+            .len();
         type_into(&mut state, "he");
         refresh_autocomplete(&mut state, tmp.path());
-        let narrowed = state.autocomplete.as_ref().unwrap().candidates.len();
+        let narrowed = state
+            .autocomplete
+            .as_ref()
+            .ok_or("autocomplete popup is missing")?
+            .candidates
+            .len();
         assert!(
             narrowed <= initial_count,
             "narrowing must not grow the list: {initial_count} → {narrowed}",
         );
         assert!(narrowed >= 1, "`help` must survive `/he` narrowing");
+        Ok(())
     }
 
     #[test]
-    fn refresh_dismisses_popup_when_trigger_disappears() {
-        let mut state = fresh_state();
-        let tmp = tempfile::tempdir().unwrap();
+    fn refresh_dismisses_popup_when_trigger_disappears() -> TestResult {
+        let mut state = fresh_state()?;
+        let tmp = tempfile::tempdir()?;
         type_into(&mut state, "/he");
         refresh_autocomplete(&mut state, tmp.path());
         assert!(state.autocomplete.is_some());
@@ -477,12 +456,13 @@ mod tests {
         refresh_autocomplete(&mut state, tmp.path());
         assert!(state.autocomplete.is_none());
         assert_eq!(state.fixed_panel.autocomplete_popup_rows(), 0);
+        Ok(())
     }
 
     #[test]
-    fn refresh_dismisses_popup_when_narrowing_eliminates_all_candidates() {
-        let mut state = fresh_state();
-        let tmp = tempfile::tempdir().unwrap();
+    fn refresh_dismisses_popup_when_narrowing_eliminates_all_candidates() -> TestResult {
+        let mut state = fresh_state()?;
+        let tmp = tempfile::tempdir()?;
         type_into(&mut state, "/");
         refresh_autocomplete(&mut state, tmp.path());
         assert!(state.autocomplete.is_some());
@@ -492,74 +472,85 @@ mod tests {
             state.autocomplete.is_none(),
             "no slash command starts with `zzzzz`",
         );
+        Ok(())
     }
 
     #[test]
-    fn refresh_creates_file_popup_for_at_trigger() {
-        let tmp = tempfile::tempdir().unwrap();
-        fs::create_dir_all(tmp.path().join("src")).unwrap();
-        fs::write(tmp.path().join("src/main.rs"), "x").unwrap();
-        let mut state = fresh_state();
+    fn refresh_creates_file_popup_for_at_trigger() -> TestResult {
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir_all(tmp.path().join("src"))?;
+        fs::write(tmp.path().join("src/main.rs"), "x")?;
+        let mut state = fresh_state()?;
         type_into(&mut state, "@main");
         refresh_autocomplete(&mut state, tmp.path());
         assert!(
             state.autocomplete.is_some(),
             "file popup must be created for @main",
         );
-        let popup = state.autocomplete.as_ref().unwrap();
+        let popup = state
+            .autocomplete
+            .as_ref()
+            .ok_or("autocomplete popup is missing")?;
         assert!(
             !popup.candidates.is_empty(),
             "@main must match at least one file in the temp tree",
         );
+        Ok(())
     }
 
     #[test]
-    fn refresh_rebuilds_when_trigger_kind_changes() {
-        let tmp = tempfile::tempdir().unwrap();
+    fn refresh_rebuilds_when_trigger_kind_changes() -> TestResult {
+        let tmp = tempfile::tempdir()?;
         // Seed at least one file so the @ snapshot is non-empty (an
         // empty snapshot yields a closed popup, which would dismiss
         // rather than rebuild — defeating the purpose of this test).
-        fs::write(tmp.path().join("seed.txt"), "x").unwrap();
-        let mut state = fresh_state();
+        fs::write(tmp.path().join("seed.txt"), "x")?;
+        let mut state = fresh_state()?;
         type_into(&mut state, "/");
         refresh_autocomplete(&mut state, tmp.path());
-        let slash_byte = state.autocomplete.as_ref().unwrap().trigger_start_byte();
+        let slash_byte = state
+            .autocomplete
+            .as_ref()
+            .ok_or("autocomplete popup is missing")?
+            .trigger_start_byte();
         assert_eq!(slash_byte, 0);
         state.input_editor.clear();
         type_into(&mut state, "@");
         refresh_autocomplete(&mut state, tmp.path());
         assert!(state.autocomplete.is_some(), "@ trigger seeds file popup");
+        Ok(())
     }
 
     #[test]
-    fn dismiss_clears_popup_and_panel_height() {
-        let mut state = fresh_state();
-        let tmp = tempfile::tempdir().unwrap();
+    fn dismiss_clears_popup_and_panel_height() -> TestResult {
+        let mut state = fresh_state()?;
+        let tmp = tempfile::tempdir()?;
         type_into(&mut state, "/");
         refresh_autocomplete(&mut state, tmp.path());
         assert!(state.autocomplete.is_some());
         dismiss(&mut state);
         assert!(state.autocomplete.is_none());
         assert_eq!(state.fixed_panel.autocomplete_popup_rows(), 0);
+        Ok(())
     }
 
     #[test]
-    fn refresh_after_initial_empty_input_is_noop() {
-        let mut state = fresh_state();
-        let tmp = tempfile::tempdir().unwrap();
+    fn refresh_after_initial_empty_input_is_noop() -> TestResult {
+        let mut state = fresh_state()?;
+        let tmp = tempfile::tempdir()?;
         refresh_autocomplete(&mut state, tmp.path());
         assert!(state.autocomplete.is_none());
+        Ok(())
     }
 
     #[test]
-    fn discover_skills_picks_up_md_files_with_descriptions() {
-        let tmp = tempfile::tempdir().unwrap();
+    fn discover_skills_picks_up_md_files_with_descriptions() -> TestResult {
+        let tmp = tempfile::tempdir()?;
         let skill_path = tmp.path().join("my-skill.md");
         fs::write(
             &skill_path,
             "---\nname: my-skill\ndescription: Do a thing\n---\n\nbody\n",
-        )
-        .unwrap();
+        )?;
         let mut snapshot = Vec::new();
         let mut seen = HashSet::new();
         discover_skills(tmp.path(), &mut snapshot, &mut seen);
@@ -567,12 +558,13 @@ mod tests {
         assert_eq!(snapshot[0].name, "my-skill");
         assert_eq!(snapshot[0].description, "Do a thing");
         assert_eq!(snapshot[0].source_tag, SourceTag::Profile);
+        Ok(())
     }
 
     #[test]
-    fn discover_skills_skips_already_seen_names() {
-        let tmp = tempfile::tempdir().unwrap();
-        fs::write(tmp.path().join("help.md"), "---\ndescription: dup\n---\n").unwrap();
+    fn discover_skills_skips_already_seen_names() -> TestResult {
+        let tmp = tempfile::tempdir()?;
+        fs::write(tmp.path().join("help.md"), "---\ndescription: dup\n---\n")?;
         let mut snapshot = Vec::new();
         let mut seen: HashSet<String> = ["help".to_owned()].into_iter().collect();
         discover_skills(tmp.path(), &mut snapshot, &mut seen);
@@ -580,34 +572,38 @@ mod tests {
             snapshot.is_empty(),
             "shadowed name must not appear in snapshot: {snapshot:?}",
         );
+        Ok(())
     }
 
     #[test]
-    fn discover_skills_ignores_non_md_files() {
-        let tmp = tempfile::tempdir().unwrap();
-        fs::write(tmp.path().join("notes.txt"), "ignored").unwrap();
+    fn discover_skills_ignores_non_md_files() -> TestResult {
+        let tmp = tempfile::tempdir()?;
+        fs::write(tmp.path().join("notes.txt"), "ignored")?;
         let mut snapshot = Vec::new();
         let mut seen = HashSet::new();
         discover_skills(tmp.path(), &mut snapshot, &mut seen);
         assert!(snapshot.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn read_skill_description_returns_none_for_file_without_frontmatter() {
-        let tmp = tempfile::tempdir().unwrap();
+    fn read_skill_description_returns_none_for_file_without_frontmatter() -> TestResult {
+        let tmp = tempfile::tempdir()?;
         let path = tmp.path().join("plain.md");
-        fs::write(&path, "no frontmatter here\n").unwrap();
+        fs::write(&path, "no frontmatter here\n")?;
         assert!(read_skill_description(&path).is_none());
+        Ok(())
     }
 
     #[test]
-    fn read_skill_description_strips_quotes_around_value() {
-        let tmp = tempfile::tempdir().unwrap();
+    fn read_skill_description_strips_quotes_around_value() -> TestResult {
+        let tmp = tempfile::tempdir()?;
         let path = tmp.path().join("quoted.md");
-        fs::write(&path, "---\ndescription: \"hello world\"\n---\n").unwrap();
+        fs::write(&path, "---\ndescription: \"hello world\"\n---\n")?;
         assert_eq!(
             read_skill_description(&path).as_deref(),
             Some("hello world"),
         );
+        Ok(())
     }
 }

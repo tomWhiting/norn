@@ -11,3 +11,7 @@
 - [ ] **C6** — Reading, selection/copy, search/export and existing controls
 - [ ] **C7** — Real PTY checkpoint and exact-commit evidence
 - [ ] **C8** — R4.layout — independent pure geometry foundation
+- [ ] **C9** — Exact producer-owned single-assignment publication observations
+- [ ] **C10** — Indexed accepted-record and canonical human/assistant reconciliation
+- [ ] **C11** — Source-fenced TUI receipt consumption and compact completion
+- [ ] **C12** — Actual runtime and canonical PTY publication regression proof

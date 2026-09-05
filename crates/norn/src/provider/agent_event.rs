@@ -53,6 +53,16 @@ use crate::agent::output::AgentStopReason;
 use crate::r#loop::inbound::MessageKind;
 use crate::session::events::EventId;
 
+mod observation;
+mod observation_owner;
+#[cfg(test)]
+mod observation_tests;
+pub use observation::{
+    AttemptObservation, ExecutionObservation, ObservationError, ObservationScope,
+    ObservedAgentEvent, PublicationEnd, PublicationResolution, ResponseObservation,
+};
+pub(crate) use observation_owner::{PublicationOwner, ResponsePublicationOwner};
+
 /// `event_type` of the [`SessionEvent::Custom`](crate::session::events::SessionEvent::Custom)
 /// appended to the parent's store when a child launches. The event's
 /// `data` is a serialized [`SubagentLifecycle::Started`].
@@ -428,6 +438,8 @@ pub struct AgentCompaction {
 /// inter-agent message event, or a typed context-compaction event.
 #[derive(Clone, Debug)]
 pub enum AgentEventKind {
+    /// Native runtime event bound to its opaque execution or provider attempt owner.
+    Observed(ObservedAgentEvent),
     /// A raw provider stream event from the tagged agent's own loop.
     Provider(ProviderEvent),
     /// A typed subagent lifecycle event. The wrapping [`AgentEvent`] is
@@ -481,6 +493,7 @@ pub struct AgentEventSender {
     tx: broadcast::Sender<AgentEvent>,
     agent_id: Uuid,
     agent_role: Arc<str>,
+    observation: Option<ObservationScope>,
 }
 
 impl AgentEventSender {
@@ -499,11 +512,10 @@ impl AgentEventSender {
                 sender: self.agent_id,
             });
         }
-        match self.tx.send(AgentEvent {
-            agent_id: self.agent_id,
-            agent_role: Arc::clone(&self.agent_role),
-            event: AgentEventKind::McpChannel(event),
-        }) {
+        let event = self
+            .tagged(AgentEventKind::McpChannel(event))
+            .map_err(|error| McpChannelObservationError::Observation(Box::new(error)))?;
+        match self.tx.send(event) {
             Ok(_) => Ok(()),
             Err(error) => Err(McpChannelObservationError::NoObservers {
                 recipient: error.0.agent_id,
@@ -518,6 +530,7 @@ impl AgentEventSender {
             tx,
             agent_id,
             agent_role: Arc::from(agent_role),
+            observation: None,
         }
     }
 
@@ -526,11 +539,7 @@ impl AgentEventSender {
     /// The `agent_role` clone is a reference-count bump (`Arc<str>`),
     /// not a heap allocation.
     pub fn send(&self, event: ProviderEvent) {
-        let _ = self.tx.send(AgentEvent {
-            agent_id: self.agent_id,
-            agent_role: Arc::clone(&self.agent_role),
-            event: AgentEventKind::Provider(event),
-        });
+        self.emit(AgentEventKind::Provider(event));
     }
 
     /// Tag and broadcast a typed [`SubagentLifecycle`] event.
@@ -539,11 +548,7 @@ impl AgentEventSender {
     /// the wrapping [`AgentEvent::agent_id`] matches the lifecycle
     /// event's `child_id`.
     pub fn send_subagent(&self, event: SubagentLifecycle) {
-        let _ = self.tx.send(AgentEvent {
-            agent_id: self.agent_id,
-            agent_role: Arc::clone(&self.agent_role),
-            event: AgentEventKind::Subagent(event),
-        });
+        self.emit(AgentEventKind::Subagent(event));
     }
 
     /// Tag and broadcast a typed [`AgentMessageLifecycle`] event.
@@ -552,20 +557,12 @@ impl AgentEventSender {
     /// [`AgentMessageLifecycle::Sent`] and the *recipient's* for
     /// [`AgentMessageLifecycle::Delivered`].
     pub fn send_message(&self, event: AgentMessageLifecycle) {
-        let _ = self.tx.send(AgentEvent {
-            agent_id: self.agent_id,
-            agent_role: Arc::clone(&self.agent_role),
-            event: AgentEventKind::Message(event),
-        });
+        self.emit(AgentEventKind::Message(event));
     }
 
     /// Tag and broadcast live request-usage telemetry.
     pub fn send_usage_estimate(&self, estimate: AgentUsageEstimate) {
-        let _ = self.tx.send(AgentEvent {
-            agent_id: self.agent_id,
-            agent_role: Arc::clone(&self.agent_role),
-            event: AgentEventKind::UsageEstimate(estimate),
-        });
+        self.emit(AgentEventKind::UsageEstimate(estimate));
     }
 
     /// Tag and broadcast a stream-retry marker. Emitted by the loop's
@@ -573,11 +570,7 @@ impl AgentEventSender {
     /// so observers can discard the failed attempt's partial deltas and
     /// surface the pending wait before the replay streams in.
     pub fn send_stream_retry(&self, retry: AgentStreamRetry) {
-        let _ = self.tx.send(AgentEvent {
-            agent_id: self.agent_id,
-            agent_role: Arc::clone(&self.agent_role),
-            event: AgentEventKind::StreamRetry(retry),
-        });
+        self.emit(AgentEventKind::StreamRetry(retry));
     }
 
     /// Tag and broadcast a completed context-compaction event. Emitted by
@@ -585,11 +578,7 @@ impl AgentEventSender {
     /// rewritten the conversation, so observers can surface the history
     /// rewrite and account for the summarization spend.
     pub fn send_compaction(&self, compaction: AgentCompaction) {
-        let _ = self.tx.send(AgentEvent {
-            agent_id: self.agent_id,
-            agent_role: Arc::clone(&self.agent_role),
-            event: AgentEventKind::Compaction(compaction),
-        });
+        self.emit(AgentEventKind::Compaction(compaction));
     }
 
     /// Create a child sender sharing the same broadcast channel but
@@ -600,6 +589,32 @@ impl AgentEventSender {
             tx: self.tx.clone(),
             agent_id,
             agent_role: Arc::from(agent_role),
+            observation: None,
+        }
+    }
+
+    fn tagged(&self, event: AgentEventKind) -> Result<AgentEvent, ObservationError> {
+        let event = match &self.observation {
+            Some(scope) => AgentEventKind::Observed(ObservedAgentEvent::new(scope.clone(), event)?),
+            None => event,
+        };
+        Ok(AgentEvent {
+            agent_id: self.agent_id,
+            agent_role: Arc::clone(&self.agent_role),
+            event,
+        })
+    }
+
+    fn emit(&self, event: AgentEventKind) {
+        match self.tagged(event) {
+            Ok(event) => {
+                if self.tx.send(event).is_err() {
+                    tracing::debug!(agent_id = %self.agent_id, "agent event has no live receiver");
+                }
+            }
+            Err(error) => {
+                tracing::error!(agent_id = %self.agent_id, error = %error, "agent observation was refused");
+            }
         }
     }
 
@@ -621,11 +636,12 @@ impl AgentEventSender {
 pub struct SharedAgentEventChannel(pub broadcast::Sender<AgentEvent>);
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use crate::provider::events::StopReason;
     use crate::provider::usage::Usage;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     fn descriptor() -> SubagentDescriptor {
         SubagentDescriptor {
@@ -637,23 +653,24 @@ mod tests {
     }
 
     #[test]
-    fn sender_tags_events_with_agent_identity() {
+    fn sender_tags_events_with_agent_identity() -> TestResult {
         let (tx, mut rx) = broadcast::channel::<AgentEvent>(16);
         let sender = AgentEventSender::new(tx, Uuid::nil(), "root".to_string());
         sender.send(ProviderEvent::TextDelta {
             text: "hello".to_string(),
         });
-        let received = rx.try_recv().unwrap();
+        let received = rx.try_recv()?;
         assert_eq!(received.agent_id, Uuid::nil());
         assert_eq!(&*received.agent_role, "root");
         assert!(matches!(
             received.event,
             AgentEventKind::Provider(ProviderEvent::TextDelta { text }) if text == "hello"
         ));
+        Ok(())
     }
 
     #[test]
-    fn for_child_shares_channel_with_different_identity() {
+    fn for_child_shares_channel_with_different_identity() -> TestResult {
         let (tx, mut rx) = broadcast::channel::<AgentEvent>(16);
         let parent = AgentEventSender::new(tx, Uuid::nil(), "root".to_string());
         let child_id = Uuid::from_u128(42);
@@ -666,13 +683,14 @@ mod tests {
             text: "from child".to_string(),
         });
 
-        let first = rx.try_recv().unwrap();
+        let first = rx.try_recv()?;
         assert_eq!(first.agent_id, Uuid::nil());
         assert_eq!(&*first.agent_role, "root");
 
-        let second = rx.try_recv().unwrap();
+        let second = rx.try_recv()?;
         assert_eq!(second.agent_id, child_id);
         assert_eq!(&*second.agent_role, "fork/haiku");
+        Ok(())
     }
 
     #[test]
@@ -688,14 +706,14 @@ mod tests {
     }
 
     #[test]
-    fn send_usage_estimate_tags_agent_identity() {
+    fn send_usage_estimate_tags_agent_identity() -> TestResult {
         let (tx, mut rx) = broadcast::channel::<AgentEvent>(16);
         let sender = AgentEventSender::new(tx, Uuid::nil(), "root".to_string());
         sender.send_usage_estimate(AgentUsageEstimate {
             input_tokens: 12_345,
         });
 
-        let received = rx.try_recv().unwrap();
+        let received = rx.try_recv()?;
         assert_eq!(received.agent_id, Uuid::nil());
         assert_eq!(&*received.agent_role, "root");
         assert!(matches!(
@@ -704,13 +722,14 @@ mod tests {
                 input_tokens: 12_345
             })
         ));
+        Ok(())
     }
 
     /// The enriched marker carries the attempt index, the (possibly
     /// unbounded) budget, the actual sampled wait, and a taxonomy class
     /// label — the full D8 payload, tagged with the emitting agent.
     #[test]
-    fn send_stream_retry_carries_the_enriched_payload() {
+    fn send_stream_retry_carries_the_enriched_payload() -> TestResult {
         let (tx, mut rx) = broadcast::channel::<AgentEvent>(16);
         let agent_id = Uuid::from_u128(5);
         let sender = AgentEventSender::new(tx, agent_id, "root".to_string());
@@ -721,7 +740,7 @@ mod tests {
             error_class: "server_error".to_string(),
         });
 
-        let received = rx.try_recv().unwrap();
+        let received = rx.try_recv()?;
         assert_eq!(received.agent_id, agent_id);
         match received.event {
             AgentEventKind::StreamRetry(retry) => {
@@ -730,12 +749,13 @@ mod tests {
                 assert_eq!(retry.delay_ms, 8_000);
                 assert_eq!(retry.error_class, "server_error");
             }
-            other => panic!("expected a stream-retry marker, got {other:?}"),
+            other => return Err(format!("expected a stream-retry marker, got {other:?}").into()),
         }
+        Ok(())
     }
 
     #[test]
-    fn send_subagent_tags_with_child_identity() {
+    fn send_subagent_tags_with_child_identity() -> TestResult {
         let (tx, mut rx) = broadcast::channel::<AgentEvent>(16);
         let parent_id = Uuid::from_u128(1);
         let child_id = Uuid::from_u128(2);
@@ -749,7 +769,7 @@ mod tests {
             started_at: Utc::now(),
         });
 
-        let received = rx.try_recv().unwrap();
+        let received = rx.try_recv()?;
         assert_eq!(received.agent_id, child_id);
         assert_eq!(&*received.agent_role, "spawn/haiku");
         match received.event {
@@ -763,27 +783,27 @@ mod tests {
             | AgentEventKind::McpChannel(_)
             | AgentEventKind::UsageEstimate(_)
             | AgentEventKind::StreamRetry(_)
-            | AgentEventKind::Compaction(_) => {
-                panic!("expected subagent lifecycle event")
+            | AgentEventKind::Compaction(_)
+            | AgentEventKind::Observed(_) => {
+                return Err("expected subagent lifecycle event".into());
             }
         }
+        Ok(())
     }
 
     /// The serialized form is the stable contract embedders (meridian)
     /// match on — `snake_case` `phase` / `kind` tags, full identity on
     /// every event.
     #[test]
-    fn started_serde_shape_is_stable() {
-        let started_at = DateTime::parse_from_rfc3339("2026-06-12T10:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
+    fn started_serde_shape_is_stable() -> TestResult {
+        let started_at = DateTime::parse_from_rfc3339("2026-06-12T10:00:00Z")?.with_timezone(&Utc);
         let event = SubagentLifecycle::Started {
             parent_id: Uuid::from_u128(1),
             child_id: Uuid::from_u128(2),
             descriptor: descriptor(),
             started_at,
         };
-        let value = serde_json::to_value(&event).unwrap();
+        let value = serde_json::to_value(&event)?;
         assert_eq!(
             value,
             serde_json::json!({
@@ -799,19 +819,17 @@ mod tests {
                 "started_at": "2026-06-12T10:00:00Z",
             }),
         );
-        let parsed: SubagentLifecycle = serde_json::from_value(value).unwrap();
+        let parsed: SubagentLifecycle = serde_json::from_value(value)?;
         assert_eq!(parsed.child_id(), Uuid::from_u128(2));
         assert_eq!(parsed.session_event_type(), SUBAGENT_STARTED_EVENT_TYPE);
+        Ok(())
     }
 
     #[test]
-    fn completed_serde_shape_is_stable() {
-        let started_at = DateTime::parse_from_rfc3339("2026-06-12T10:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
-        let completed_at = DateTime::parse_from_rfc3339("2026-06-12T10:00:05Z")
-            .unwrap()
-            .with_timezone(&Utc);
+    fn completed_serde_shape_is_stable() -> TestResult {
+        let started_at = DateTime::parse_from_rfc3339("2026-06-12T10:00:00Z")?.with_timezone(&Utc);
+        let completed_at =
+            DateTime::parse_from_rfc3339("2026-06-12T10:00:05Z")?.with_timezone(&Utc);
         let event = SubagentLifecycle::Completed {
             parent_id: Uuid::from_u128(1),
             child_id: Uuid::from_u128(2),
@@ -837,7 +855,7 @@ mod tests {
             error: Some("fork reached its max-iterations cap".to_owned()),
             stop: Some(AgentStopReason::MaxIterationsReached),
         };
-        let value = serde_json::to_value(&event).unwrap();
+        let value = serde_json::to_value(&event)?;
         assert_eq!(value["phase"], "completed");
         assert_eq!(value["descriptor"]["kind"], "fork");
         assert_eq!(value["usage"]["input_tokens"], 10);
@@ -848,7 +866,7 @@ mod tests {
         assert_eq!(value["stop"]["reason"], "max_iterations_reached");
         assert_eq!(value["completed_at"], "2026-06-12T10:00:05Z");
 
-        let parsed: SubagentLifecycle = serde_json::from_value(value).unwrap();
+        let parsed: SubagentLifecycle = serde_json::from_value(value)?;
         assert_eq!(parsed.session_event_type(), SUBAGENT_COMPLETED_EVENT_TYPE);
         match parsed {
             SubagentLifecycle::Completed {
@@ -863,8 +881,9 @@ mod tests {
                 assert_eq!(usage.input_tokens, 10);
                 assert_eq!(subtree_usage.input_tokens, 17);
             }
-            SubagentLifecycle::Started { .. } => panic!("expected completed phase"),
+            SubagentLifecycle::Started { .. } => return Err("expected completed phase".into()),
         }
+        Ok(())
     }
 
     /// DECISION R4 (W3.6): `subtree_usage` is a **required** field on
@@ -874,7 +893,7 @@ mod tests {
     /// MERIDIAN-HANDOFF §8.2; consumers update their match alongside
     /// the pin bump.
     #[test]
-    fn completed_without_subtree_usage_is_rejected() {
+    fn completed_without_subtree_usage_is_rejected() -> TestResult {
         let legacy = serde_json::json!({
             "phase": "completed",
             "parent_id": "00000000-0000-0000-0000-000000000001",
@@ -899,21 +918,22 @@ mod tests {
             "stop": null,
         });
         let result: Result<SubagentLifecycle, _> = serde_json::from_value(legacy);
-        let err = result.expect_err("pre-W3.6 completed events must be rejected, not zero-filled");
+        let Err(err) = result else {
+            return Err("pre-W3.6 completed events must be rejected, not zero-filled".into());
+        };
         assert!(
             err.to_string().contains("subtree_usage"),
             "the error must name the missing field: {err}",
         );
+        Ok(())
     }
 
     /// The serialized message-Sent shape is the stable contract audit
     /// consumers match on — `snake_case` `phase` tag, full identity and
     /// attribution, verbatim content, RFC 3339 timestamp.
     #[test]
-    fn message_sent_serde_shape_is_stable() {
-        let sent_at = DateTime::parse_from_rfc3339("2026-06-12T10:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
+    fn message_sent_serde_shape_is_stable() -> TestResult {
+        let sent_at = DateTime::parse_from_rfc3339("2026-06-12T10:00:00Z")?.with_timezone(&Utc);
         let event = AgentMessageLifecycle::Sent {
             message_id: Uuid::from_u128(9),
             from_id: Uuid::from_u128(1),
@@ -925,7 +945,7 @@ mod tests {
             content: "status: <done> & \"verified\"".to_owned(),
             sent_at,
         };
-        let value = serde_json::to_value(&event).unwrap();
+        let value = serde_json::to_value(&event)?;
         assert_eq!(
             value,
             serde_json::json!({
@@ -941,16 +961,16 @@ mod tests {
                 "sent_at": "2026-06-12T10:00:00Z",
             }),
         );
-        let parsed: AgentMessageLifecycle = serde_json::from_value(value).unwrap();
+        let parsed: AgentMessageLifecycle = serde_json::from_value(value)?;
         assert_eq!(parsed.message_id(), Uuid::from_u128(9));
         assert_eq!(parsed.session_event_type(), AGENT_MESSAGE_SENT_EVENT_TYPE);
+        Ok(())
     }
 
     #[test]
-    fn message_delivered_serde_shape_is_stable() {
-        let delivered_at = DateTime::parse_from_rfc3339("2026-06-12T10:00:01Z")
-            .unwrap()
-            .with_timezone(&Utc);
+    fn message_delivered_serde_shape_is_stable() -> TestResult {
+        let delivered_at =
+            DateTime::parse_from_rfc3339("2026-06-12T10:00:01Z")?.with_timezone(&Utc);
         let event = AgentMessageLifecycle::Delivered {
             message_id: Uuid::from_u128(9),
             from_id: Uuid::from_u128(1),
@@ -959,7 +979,7 @@ mod tests {
             seq: Some(42),
             delivered_at,
         };
-        let value = serde_json::to_value(&event).unwrap();
+        let value = serde_json::to_value(&event)?;
         assert_eq!(
             value,
             serde_json::json!({
@@ -972,20 +992,20 @@ mod tests {
                 "delivered_at": "2026-06-12T10:00:01Z",
             }),
         );
-        let parsed: AgentMessageLifecycle = serde_json::from_value(value).unwrap();
+        let parsed: AgentMessageLifecycle = serde_json::from_value(value)?;
         assert_eq!(
             parsed.session_event_type(),
             AGENT_MESSAGE_DELIVERED_EVENT_TYPE,
         );
+        Ok(())
     }
 
     #[test]
-    fn message_delivered_unsequenced_serde_shape() {
+    fn message_delivered_unsequenced_serde_shape() -> TestResult {
         // An unsequenced injection (cron/watch/process/embedder) carries
         // `seq: null` and the harness sender label; `from_id` is nil.
-        let delivered_at = DateTime::parse_from_rfc3339("2026-06-12T10:00:02Z")
-            .unwrap()
-            .with_timezone(&Utc);
+        let delivered_at =
+            DateTime::parse_from_rfc3339("2026-06-12T10:00:02Z")?.with_timezone(&Utc);
         let event = AgentMessageLifecycle::Delivered {
             message_id: Uuid::from_u128(11),
             from_id: Uuid::nil(),
@@ -994,7 +1014,7 @@ mod tests {
             seq: None,
             delivered_at,
         };
-        let value = serde_json::to_value(&event).unwrap();
+        let value = serde_json::to_value(&event)?;
         assert_eq!(
             value,
             serde_json::json!({
@@ -1007,15 +1027,16 @@ mod tests {
                 "delivered_at": "2026-06-12T10:00:02Z",
             }),
         );
-        let parsed: AgentMessageLifecycle = serde_json::from_value(value).unwrap();
+        let parsed: AgentMessageLifecycle = serde_json::from_value(value)?;
         assert_eq!(
             parsed.session_event_type(),
             AGENT_MESSAGE_DELIVERED_EVENT_TYPE,
         );
+        Ok(())
     }
 
     #[test]
-    fn send_message_tags_with_sender_identity() {
+    fn send_message_tags_with_sender_identity() -> TestResult {
         let (tx, mut rx) = broadcast::channel::<AgentEvent>(16);
         let sender_id = Uuid::from_u128(7);
         let sender = AgentEventSender::new(tx, sender_id, "/parent/worker".to_owned());
@@ -1027,13 +1048,14 @@ mod tests {
             seq: Some(1),
             delivered_at: Utc::now(),
         });
-        let received = rx.try_recv().unwrap();
+        let received = rx.try_recv()?;
         assert_eq!(received.agent_id, sender_id);
         match received.event {
             AgentEventKind::Message(lifecycle) => {
                 assert_eq!(lifecycle.message_id(), Uuid::from_u128(9));
             }
-            other => panic!("expected message event, got {other:?}"),
+            other => return Err(format!("expected message event, got {other:?}").into()),
         }
+        Ok(())
     }
 }

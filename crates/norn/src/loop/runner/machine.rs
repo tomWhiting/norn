@@ -287,7 +287,16 @@ impl StepMachine<'_> {
                 children_usage: self.loop_context.children_usage.snapshot(),
             }));
         }
-        self.iterations += 1;
+        self.iterations = self.iterations.checked_add(1).ok_or_else(|| {
+            crate::error::SessionError::from(
+                crate::provider::agent_event::ObservationError::CounterExhausted {
+                    counter: "response iteration",
+                    agent: self
+                        .event_tx
+                        .map(crate::provider::AgentEventSender::agent_id),
+                },
+            )
+        })?;
         self.timeout_state.lock().iterations = self.iterations as usize;
 
         // Child/fork completions can arrive while the parent is executing

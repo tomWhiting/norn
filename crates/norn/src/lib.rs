@@ -17,6 +17,7 @@ pub mod rules;
 pub mod runtime_init;
 pub mod schedule;
 pub mod session;
+pub mod session_view;
 
 pub mod skill;
 pub mod system_prompt;

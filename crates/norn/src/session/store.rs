@@ -1,12 +1,15 @@
 //! Append-only event storage with optional write-through persistence.
 
 mod append_batch;
+mod history_page;
+#[cfg(test)]
+mod history_page_tests;
 mod idempotent_append;
 #[cfg(test)]
 mod test_support;
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use parking_lot::{Mutex, RwLock};
 
@@ -19,6 +22,9 @@ use crate::session::response_audio::ResponseAudioStore;
 use crate::session::spool::SpoolWriter;
 
 pub use super::jsonl_sink::{DurabilityPolicy, JsonlSink};
+pub use history_page::{
+    BodyPage, BodyRead, HistoryAnchor, HistoryDirection, HistoryPage, HistoryRead, HistoryReadError,
+};
 
 /// Append-only, in-memory event store.
 ///
@@ -37,6 +43,8 @@ pub struct EventStore {
     spool: Option<SpoolWriter>,
     response_audio: Option<ResponseAudioStore>,
     provider_affinity: ProviderAffinity,
+    view_generation: uuid::Uuid,
+    view_binding: OnceLock<history_page::BoundViewSource>,
 }
 
 impl std::fmt::Debug for EventStore {
@@ -46,6 +54,8 @@ impl std::fmt::Debug for EventStore {
             .field("has_sink", &self.sink.is_some())
             .field("has_spool", &self.spool.is_some())
             .field("has_response_audio", &self.response_audio.is_some())
+            .field("view_generation", &self.view_generation)
+            .field("has_view_binding", &self.view_binding.get().is_some())
             .field(
                 "provider_state_identity_present",
                 &self.provider_affinity.identity().is_some(),
@@ -162,6 +172,8 @@ impl EventStore {
             spool: None,
             response_audio: None,
             provider_affinity: ProviderAffinity::sinkless(),
+            view_generation: uuid::Uuid::new_v4(),
+            view_binding: OnceLock::new(),
         }
     }
 
@@ -176,6 +188,8 @@ impl EventStore {
             spool: None,
             response_audio: None,
             provider_affinity: ProviderAffinity::sinkless(),
+            view_generation: uuid::Uuid::new_v4(),
+            view_binding: OnceLock::new(),
         }
     }
 
@@ -195,6 +209,8 @@ impl EventStore {
             spool: None,
             response_audio: None,
             provider_affinity: ProviderAffinity::sinkless(),
+            view_generation: uuid::Uuid::new_v4(),
+            view_binding: OnceLock::new(),
         }
     }
 

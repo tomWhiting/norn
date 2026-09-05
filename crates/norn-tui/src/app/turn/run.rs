@@ -14,29 +14,25 @@ use norn::agent_loop::runner::{
 };
 
 use crate::TuiError;
-use crate::render::MarkdownRenderer;
 use crate::render::streaming_indicator::StreamingIndicator;
 use crate::terminal::setup::TerminalGuard;
 
 use crate::app::child_results::{recv_child_result, render_child_result_batch};
-use crate::app::dispatch::{finalise_turn, write_error_line};
+use crate::app::dispatch::{channel_wake_pause_reason, finalise_turn, write_error_line};
 use crate::app::event_loop::{
     ChildResultState, RENDER_TICK, RuntimeRefs, is_ctrl_c, turn_cancel_token,
 };
-use crate::app::helpers::{checkpoint_session, flush_pending};
-use crate::app::render::{
-    redraw_panel, redraw_streaming_tick, render_input, with_scroll_region_cursor,
-    write_cancelled_line, write_user_message,
-};
+use crate::app::helpers::checkpoint_session;
+use crate::app::render::{load_visible, redraw_all, redraw_streaming_tick, write_user_message};
 use crate::app::state::AppState;
-use crate::app::streaming::finish_thinking_block;
 
 use super::mid::{
     handle_active_input_delivery, handle_mid_turn_agent_event, handle_mid_turn_event,
 };
 
 enum TurnSeed {
-    UserPrompt(String),
+    Operator(crate::app::transcript::publication::SubmittedInput),
+    ChildResult(String),
     AgentMessages(Vec<ChannelMessage>),
     McpChannelWake,
 }
@@ -51,7 +47,7 @@ pub(crate) async fn run_turn_and_pending(
     state: &mut AppState,
     runtime: &mut RuntimeRefs,
     guard: &mut TerminalGuard,
-    user_prompt: &str,
+    input: crate::app::transcript::publication::SubmittedInput,
     term_rx: &mut mpsc::UnboundedReceiver<std::io::Result<Event>>,
     agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
     child_results: &mut ChildResultState,
@@ -60,7 +56,7 @@ pub(crate) async fn run_turn_and_pending(
         state,
         runtime,
         guard,
-        TurnSeed::UserPrompt(user_prompt.to_string()),
+        TurnSeed::Operator(input),
         term_rx,
         agent_event_rx,
         child_results,
@@ -167,15 +163,12 @@ pub(crate) async fn run_ready_mcp_channels(
     )
     .await?;
     if !operator_followup && let Some(reason) = pause_reason {
-        with_scroll_region_cursor(guard, |guard| {
-            write_error_line(
-                state,
-                guard,
-                &format!(
-                    "Automatic channel wake paused: {reason}. Send an ordinary message to resume; retained input stays in the inbox."
-                ),
-            )
-        })?;
+        write_error_line(
+            state,
+            &format!(
+                "Automatic channel wake paused: {reason}. Send an ordinary message to resume; retained input stays in the inbox."
+            ),
+        )?;
         return Ok(false);
     }
     Ok(true)
@@ -194,7 +187,7 @@ pub(crate) async fn run_pending_child_prompts(
             state,
             runtime,
             guard,
-            TurnSeed::UserPrompt(prompt),
+            TurnSeed::ChildResult(prompt),
             term_rx,
             agent_event_rx,
             child_results,
@@ -229,12 +222,12 @@ async fn run_followup_prompts(
         .or_else(|| state.in_flight_input.pop_queued_followup());
     while let Some(prompt) = next {
         ran_operator_turn = true;
-        write_user_message(&prompt, state, guard)?;
+        let input = write_user_message(prompt, state)?;
         let outcome = run_turn(
             state,
             runtime,
             guard,
-            TurnSeed::UserPrompt(prompt),
+            TurnSeed::Operator(input),
             term_rx,
             agent_event_rx,
             child_results,
@@ -263,8 +256,19 @@ async fn run_turn(
     child_results: &mut ChildResultState,
 ) -> Result<TurnOutcome, TuiError> {
     reset_turn_state(state);
+    let local_input = match &seed {
+        TurnSeed::Operator(input) => Some(input.local.clone()),
+        _ => None,
+    };
+    let event_sender = state.transcript.observe_execution(
+        &runtime.root_event_sender,
+        &runtime.store,
+        &runtime.model_selection,
+        local_input,
+    )?;
+    let observation = state.transcript.observation();
+    state.turn_start = Some(Instant::now());
     state.in_flight_input.set_running(true);
-    let mut renderer: Option<MarkdownRenderer> = None;
 
     let model = runtime.model.clone();
     let agent_config = runtime.agent_config.clone();
@@ -286,13 +290,18 @@ async fn run_turn(
     let (active_input_tx, active_input_rx, mut active_delivery_rx) = active_input_channel();
     let mut active_delivery_closed = false;
     let mut terminal_closed = false;
+    let mut events_closed = false;
 
     runtime.loop_context.active_input_rx = Some(active_input_rx);
 
     {
         let step_future = async {
             match &mut seed {
-                TurnSeed::UserPrompt(prompt) => {
+                TurnSeed::Operator(crate::app::transcript::publication::SubmittedInput {
+                    text: prompt,
+                    ..
+                })
+                | TurnSeed::ChildResult(prompt) => {
                     run_agent_step(AgentStepRequest {
                         provider: runtime.provider.as_ref(),
                         // `&Arc<dyn ToolExecutor>` (not `.as_ref()`) so the
@@ -307,7 +316,7 @@ async fn run_turn(
                         output_schema: None,
                         model: &model,
                         config: &agent_config,
-                        event_tx: Some(&runtime.root_event_sender),
+                        event_tx: Some(&event_sender),
                         inbound: runtime.root_inbound.as_mut(),
                         loop_context: &mut runtime.loop_context,
                         cancel: Some(cancel.clone()),
@@ -329,7 +338,7 @@ async fn run_turn(
                         output_schema: None,
                         model: &model,
                         config: &agent_config,
-                        event_tx: Some(&runtime.root_event_sender),
+                        event_tx: Some(&event_sender),
                         initial_messages,
                         inbound: runtime.root_inbound.as_mut(),
                         loop_context: &mut runtime.loop_context,
@@ -346,7 +355,7 @@ async fn run_turn(
                         output_schema: None,
                         model: &model,
                         config: &agent_config,
-                        event_tx: Some(&runtime.root_event_sender),
+                        event_tx: Some(&event_sender),
                         initial_messages: Vec::new(),
                         inbound: runtime.root_inbound.as_mut(),
                         loop_context: &mut runtime.loop_context,
@@ -365,15 +374,15 @@ async fn run_turn(
                 }
                 delivery = active_delivery_rx.recv(), if !active_delivery_closed => {
                     if let Some(delivery) = delivery {
-                        handle_active_input_delivery(&delivery, state, guard, &mut renderer)?;
-                        redraw_panel(state, guard)?;
-                        render_input(state, guard)?;
+                        handle_active_input_delivery(&delivery, state, &runtime.store)?;
+                        redraw_all(state, guard)?;
                     } else {
                         active_delivery_closed = true;
                     }
                 }
                 msg = term_rx.recv(), if !terminal_closed => match msg {
                     Some(Ok(event)) => {
+                        state.screen.terminal_event(term_rx.len());
                         if is_ctrl_c(&event) {
                             cancel_requested = true;
                             cancel.cancel();
@@ -386,6 +395,7 @@ async fn run_turn(
                                 &cancel,
                                 &mut cancel_requested,
                             )?;
+                            load_visible(state, &runtime.store)?;
                         }
                     }
                     Some(Err(err)) => return Err(TuiError::Io(err)),
@@ -398,35 +408,76 @@ async fn run_turn(
                 Some(child_result) = recv_child_result(&mut child_results.rx) => {
                     render_child_result_batch(
                         state,
-                        guard,
                         &mut child_results.rx,
                         &mut child_results.pending_prompts,
                         child_result,
                     )?;
-                    redraw_panel(state, guard)?;
-                    render_input(state, guard)?;
+                    redraw_all(state, guard)?;
                 },
-                event = agent_event_rx.recv() => match event {
+                event = agent_event_rx.recv(), if !events_closed => match event {
                     Ok(agent_ev) => {
-                        handle_mid_turn_agent_event(state, guard, &mut renderer, agent_ev)?;
+                        handle_mid_turn_agent_event(state, agent_ev)?;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
+                        state.transcript.projection.mark_lagged(n)?;
                         tracing::warn!(missed = n, "agent event receiver lagged — {n} events dropped");
                     }
-                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Closed) => {
+                        events_closed = true;
+                        crate::app::notices::notice(state, "Live event source closed during execution", None)?;
+                    },
                 },
+                () = async { match &observation { Some(owner) => owner.changed().await, None => std::future::pending().await } } => {
+                    state.transcript.drain_publications()?;
+                    state.screen.allow_body_load = true;
+                    redraw_all(state, guard)?;
+                }
+                Some(result) = state.transcript.input_tasks.join_next() => {
+                    state.transcript.finish_input(result)?;
+                    state.screen.allow_body_load = true;
+                }
+                Some(result) = state.export_tasks.join_next() => {
+                    crate::app::view_actions::reading::finish_export(state, result)?;
+                }
+                Some(result) = state.screen.changes.jobs.join_next() => {
+                    crate::app::render::changes::finish(state, result)?;
+                }
+                Some(result) = state.transcript.history_tasks.join_next() => {
+                    crate::app::view_actions::reading::finish_history(state, result)?;
+                }
+                Some(result) = state.transcript.body_tasks.join_next() => {
+                    state.transcript.finish_body(result)?;
+                    state.screen.allow_body_load = true;
+                    state.screen.dirty = true;
+                }
                 _ = tick.tick() => {
-                    redraw_streaming_tick(state, guard, renderer.as_ref(), Instant::now())?;
+                    redraw_streaming_tick(state, guard, Instant::now())?;
+                    load_visible(state, &runtime.store)?;
+                    redraw_all(state, guard)?;
                 }
             }
         }
     }
 
-    while let Ok(agent_ev) = agent_event_rx.try_recv() {
-        handle_mid_turn_agent_event(state, guard, &mut renderer, agent_ev)?;
+    loop {
+        match agent_event_rx.try_recv() {
+            Ok(agent_ev) => handle_mid_turn_agent_event(state, agent_ev)?,
+            Err(broadcast::error::TryRecvError::Lagged(missed)) => {
+                state.transcript.projection.mark_lagged(missed)?;
+            }
+            Err(broadcast::error::TryRecvError::Empty) => break,
+            Err(broadcast::error::TryRecvError::Closed) => {
+                crate::app::notices::notice(state, "Live event source closed", None)?;
+                break;
+            }
+        }
     }
     while let Some(delivery) = active_delivery_rx.try_recv() {
-        handle_active_input_delivery(&delivery, state, guard, &mut renderer)?;
+        handle_active_input_delivery(&delivery, state, &runtime.store)?;
+    }
+    state.transcript.drain_publications()?;
+    while let Some(result) = state.transcript.input_tasks.join_next().await {
+        state.transcript.finish_input(result)?;
     }
     let interrupt_prompt = state.in_flight_input.take_interrupt_prompt();
     if interrupt_prompt.is_none() && !cancel_requested {
@@ -443,60 +494,50 @@ async fn run_turn(
     // synchronous scroll-region closure below. A failure message is
     // carried into the closure and written in the error style there.
     let checkpoint_failure = checkpoint_session(&runtime.store).await;
+    loop {
+        let page = crate::app::transcript::read_history(
+            std::sync::Arc::clone(&runtime.store),
+            state.transcript.newer_history()?,
+        )
+        .await?;
+        if !state.transcript.accept_history(&page)? {
+            return Err(norn::session_view::ViewError::AttemptMismatch.into());
+        }
+        if !state.transcript.has_newer {
+            break;
+        }
+    }
+    let interrupted = cancel_requested
+        || !matches!(
+            &step_result,
+            Some(Ok(
+                AgentStepResult::Completed { .. } | AgentStepResult::Refused { .. }
+            ))
+        );
+    state.screen.allow_body_load = true;
     let channel_wake_pause = matches!(seed, TurnSeed::McpChannelWake)
         .then(|| channel_wake_pause_reason(step_result.as_ref(), cancel_requested))
         .flatten();
-    with_scroll_region_cursor(guard, |guard| {
-        finish_thinking_block(state, guard, &mut renderer)?;
-        flush_pending(state, guard, &mut renderer)?;
-        finalise_turn(state, guard, step_result, &mut renderer)?;
-        if cancel_requested {
-            write_cancelled_line(guard)?;
-            state.streaming_indicator = StreamingIndicator::Idle;
-            state.complete_at = None;
-            state.sync_indicator_into_panel();
-        }
-        if let Some(message) = &checkpoint_failure {
-            write_error_line(state, guard, message)?;
-        }
-        Ok(())
-    })?;
-    redraw_panel(state, guard)?;
+    finalise_turn(state, step_result)?;
+    state.transcript.projection.end_execution(interrupted)?;
+    if cancel_requested {
+        state.streaming_indicator = StreamingIndicator::Idle;
+        state.complete_at = None;
+        state.sync_indicator_into_panel();
+    }
+    if let Some(message) = &checkpoint_failure {
+        write_error_line(state, message)?;
+    }
+    redraw_all(state, guard)?;
+    load_visible(state, &runtime.store)?;
+    redraw_all(state, guard)?;
     Ok(TurnOutcome {
         interrupt_prompt,
         channel_wake_pause,
     })
 }
 
-fn channel_wake_pause_reason(
-    result: Option<&Result<AgentStepResult, norn::error::NornError>>,
-    cancelled: bool,
-) -> Option<String> {
-    if cancelled {
-        return Some("turn cancelled".to_owned());
-    }
-    let reason = match result {
-        Some(Ok(AgentStepResult::Completed { .. } | AgentStepResult::Refused { .. })) => {
-            return None;
-        }
-        Some(Ok(AgentStepResult::Cancelled { .. })) => "turn cancelled",
-        Some(Ok(AgentStepResult::MaxIterationsReached { .. })) => "iteration limit reached",
-        Some(Ok(AgentStepResult::TimedOut { .. })) => "turn deadline elapsed",
-        Some(Ok(AgentStepResult::Truncated { .. })) => "model output stopped early",
-        Some(Ok(AgentStepResult::SchemaUnreachable { .. })) => "output contract was not satisfied",
-        Some(Err(error)) => return Some(error.to_string()),
-        None => "agent event stream closed before the turn returned",
-    };
-    Some(reason.to_owned())
-}
-
 fn reset_turn_state(state: &mut AppState) {
-    state.pending_tools.clear();
-    state.text_streamed_this_turn = false;
-    state.last_was_tool_result = false;
-    state.dim_wrapped_lines = 0;
-    state.thinking_buffer.clear();
-    state.styled_mid_line = false;
     state.turn_start = None;
     state.complete_at = None;
     state.streaming_indicator = StreamingIndicator::Idle;

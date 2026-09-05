@@ -15,7 +15,7 @@ use crate::r#loop::response_audio_capture::{
 };
 use crate::r#loop::retry::RetryOutcome;
 use crate::r#loop::schema::validate_against_schema;
-use crate::provider::agent_event::{AgentEventSender, AgentStreamRetry};
+use crate::provider::agent_event::{AgentEventSender, AgentStreamRetry, ObservationError};
 use crate::provider::events::{ProviderEvent, StopReason};
 use crate::provider::request::ProviderRequest;
 use crate::provider::traits::Provider;
@@ -290,6 +290,53 @@ pub(super) async fn call_provider(
     attempt: u32,
     audio_slot: Option<&AttemptArtifactSlot>,
 ) -> Result<AssembledResponse, NornError> {
+    let observed = sinks
+        .event_tx
+        .map(|sender| sender.observe_attempt(attempt))
+        .transpose()
+        .map_err(SessionError::from)?;
+    let (sender, owner) = match observed {
+        Some((sender, owner)) => (Some(sender), owner),
+        None => (None, None),
+    };
+    let observed_sinks = ProviderCallSinks {
+        event_tx: sender.as_ref(),
+        partial_capture: sinks.partial_capture,
+        audio_store: sinks.audio_store,
+    };
+    let result = stream_provider_attempt(
+        provider,
+        request,
+        turn_context,
+        &observed_sinks,
+        attempt,
+        audio_slot,
+    )
+    .await;
+    match result {
+        Ok(response) => {
+            if let Some(owner) = owner {
+                owner.assembled().map_err(SessionError::from)?;
+            }
+            Ok(response)
+        }
+        Err(error) => {
+            if let Some(owner) = owner {
+                owner.failed().map_err(SessionError::from)?;
+            }
+            Err(error)
+        }
+    }
+}
+
+async fn stream_provider_attempt(
+    provider: &dyn Provider,
+    request: ProviderRequest,
+    turn_context: ProviderTurnContext,
+    sinks: &ProviderCallSinks<'_>,
+    attempt: u32,
+    audio_slot: Option<&AttemptArtifactSlot>,
+) -> Result<AssembledResponse, NornError> {
     let ProviderCallSinks {
         event_tx,
         partial_capture,
@@ -427,13 +474,24 @@ pub(super) async fn call_provider_with_retry(
             let req = request.clone();
             let turn_context = turn_context.clone();
             let attempt = attempts
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                .saturating_add(1);
+                .fetch_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |value| value.checked_add(1),
+                )
+                .map(|previous| previous + 1);
             async move {
+                let attempt = attempt.map_err(|count| {
+                    tracing::error!(attempts = count, "provider attempt identity exhausted");
+                    SessionError::from(ObservationError::CounterExhausted {
+                        counter: "provider attempt",
+                        agent: event_tx.map(AgentEventSender::agent_id),
+                    })
+                })?;
                 // The previous attempt is now definitively abandoned: drop
                 // its unsealed sidecar before opening this attempt's.
                 discard_abandoned_attempt_artifact(audio_slot, audio_store, partial_capture);
-                call_provider(
+                let result = call_provider(
                     provider,
                     req,
                     turn_context,
@@ -441,7 +499,15 @@ pub(super) async fn call_provider_with_retry(
                     attempt,
                     Some(audio_slot),
                 )
-                .await
+                .await;
+                if attempt == u32::MAX && result.is_err() {
+                    return Err(SessionError::from(ObservationError::CounterExhausted {
+                        counter: "provider attempt",
+                        agent: event_tx.map(AgentEventSender::agent_id),
+                    })
+                    .into());
+                }
+                result
             }
         },
     )
@@ -449,13 +515,14 @@ pub(super) async fn call_provider_with_retry(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use crate::r#loop::assembly::AssembledToolCall;
     use crate::provider::openai::sse::{map_sse_event, parse_sse_bytes};
     use crate::provider::request::ToolCallKind;
     use crate::provider::usage::Usage;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     fn schema_call_response(arguments: &str) -> AssembledResponse {
         AssembledResponse {
@@ -525,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn envelope_fields_are_stripped_before_schema_validation() {
+    fn envelope_fields_are_stripped_before_schema_validation() -> TestResult {
         // Regression: the model attaches `tool_use_description` (the
         // envelope-wrapped definition marks it required) — an
         // `additionalProperties: false` user schema must not reject it,
@@ -540,15 +607,19 @@ mod tests {
             ResponseClass::SchemaValid { output } => {
                 assert_eq!(output, serde_json::json!({"answer": "42"}));
             }
-            other => panic!(
-                "expected SchemaValid, got {:?}",
-                std::mem::discriminant(&other)
-            ),
+            other => {
+                return Err(format!(
+                    "expected SchemaValid, got {:?}",
+                    std::mem::discriminant(&other)
+                )
+                .into());
+            }
         }
+        Ok(())
     }
 
     #[test]
-    fn genuine_violations_still_fail_with_clean_output_in_feedback() {
+    fn genuine_violations_still_fail_with_clean_output_in_feedback() -> TestResult {
         // Stripping the envelope must not mask real violations, and the
         // feedback output the model sees is the clean args — never the
         // envelope keys it was told to send.
@@ -564,26 +635,29 @@ mod tests {
                     "envelope fields must not appear as violations: {errors:?}",
                 );
             }
-            other => panic!(
-                "expected SchemaInvalid, got {:?}",
-                std::mem::discriminant(&other)
-            ),
+            other => {
+                return Err(format!(
+                    "expected SchemaInvalid, got {:?}",
+                    std::mem::discriminant(&other)
+                )
+                .into());
+            }
         }
+        Ok(())
     }
 
     /// Maps a raw `OpenAI` Responses SSE transcript through the real
     /// provider parser into the loop's event stream, asserting no event
     /// surfaces as an error.
-    fn provider_events(raw: &str) -> Vec<ProviderEvent> {
+    fn provider_events(raw: &str) -> Result<Vec<ProviderEvent>, ProviderError> {
         parse_sse_bytes(raw)
             .iter()
             .filter_map(map_sse_event)
-            .map(|r| r.expect("truncation frames must not map to errors"))
             .collect()
     }
 
     #[test]
-    fn openai_incomplete_max_tokens_classifies_as_truncated() {
+    fn openai_incomplete_max_tokens_classifies_as_truncated() -> TestResult {
         // BLOCKER regression seam test: an OpenAI-shaped stream cut by
         // `response.incomplete` (max_output_tokens) must flow through
         // assembly into `ResponseClass::Truncated { MaxTokens }` — the
@@ -599,8 +673,8 @@ mod tests {
                    \"incomplete_details\":{\"reason\":\"max_output_tokens\"},\
                    \"usage\":{\"input_tokens\":21,\"output_tokens\":34}}}\n\n";
 
-        let events = provider_events(raw);
-        let response = assemble_response(&events).expect("Done event must terminate assembly");
+        let events = provider_events(raw)?;
+        let response = assemble_response(&events).ok_or("Done event must terminate assembly")?;
         assert_eq!(response.text, "cut off", "partial text must be preserved");
         assert_eq!(response.stop_reason, StopReason::MaxTokens);
         assert_eq!(response.usage.input_tokens, 21);
@@ -610,15 +684,19 @@ mod tests {
             ResponseClass::Truncated { kind } => {
                 assert_eq!(kind, TruncationKind::MaxTokens);
             }
-            other => panic!(
-                "expected Truncated(MaxTokens), got {:?}",
-                std::mem::discriminant(&other)
-            ),
+            other => {
+                return Err(format!(
+                    "expected Truncated(MaxTokens), got {:?}",
+                    std::mem::discriminant(&other)
+                )
+                .into());
+            }
         }
+        Ok(())
     }
 
     #[test]
-    fn openai_incomplete_content_filter_classifies_as_truncated() {
+    fn openai_incomplete_content_filter_classifies_as_truncated() -> TestResult {
         let raw = "event: response.output_text.delta\n\
                    data: {\"delta\":\"partial\"}\n\n\
                    event: response.incomplete\n\
@@ -626,8 +704,8 @@ mod tests {
                    \"incomplete_details\":{\"reason\":\"content_filter\"},\
                    \"usage\":{\"input_tokens\":2,\"output_tokens\":3}}}\n\n";
 
-        let events = provider_events(raw);
-        let response = assemble_response(&events).expect("Done event must terminate assembly");
+        let events = provider_events(raw)?;
+        let response = assemble_response(&events).ok_or("Done event must terminate assembly")?;
         assert_eq!(response.text, "partial");
         assert_eq!(response.stop_reason, StopReason::ContentFilter);
 
@@ -635,11 +713,15 @@ mod tests {
             ResponseClass::Truncated { kind } => {
                 assert_eq!(kind, TruncationKind::ContentFilter);
             }
-            other => panic!(
-                "expected Truncated(ContentFilter), got {:?}",
-                std::mem::discriminant(&other)
-            ),
+            other => {
+                return Err(format!(
+                    "expected Truncated(ContentFilter), got {:?}",
+                    std::mem::discriminant(&other)
+                )
+                .into());
+            }
         }
+        Ok(())
     }
 
     // -- In-band provider Error events and stream-retry markers -----------
@@ -671,14 +753,26 @@ mod tests {
 
         /// Scripted attempts not yet consumed — proof that a stopped loop
         /// really stopped instead of quietly making one more call.
-        fn remaining_attempts(&self) -> usize {
-            self.attempts.lock().expect("scripted provider lock").len()
+        fn remaining_attempts(&self) -> Result<usize, ProviderError> {
+            self.attempts
+                .lock()
+                .map(|attempts| attempts.len())
+                .map_err(|error| ProviderError::StreamError {
+                    reason: format!("scripted provider lock poisoned: {error}"),
+                    transient: None,
+                })
         }
     }
 
     impl Provider for ScriptedResultProvider {
         fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
-            let mut attempts = self.attempts.lock().expect("scripted provider lock");
+            let mut attempts =
+                self.attempts
+                    .lock()
+                    .map_err(|error| ProviderError::StreamError {
+                        reason: format!("scripted provider lock poisoned: {error}"),
+                        transient: None,
+                    })?;
             if attempts.is_empty() {
                 return Err(ProviderError::StreamError {
                     reason: "scripted provider exhausted".to_owned(),
@@ -723,7 +817,7 @@ mod tests {
     /// call with that event's typed [`ProviderError`], not the generic
     /// "stream ended without a Done event".
     #[tokio::test]
-    async fn call_provider_fails_fast_with_typed_error_from_error_event() {
+    async fn call_provider_fails_fast_with_typed_error_from_error_event() -> TestResult {
         let provider = MockProvider::new(vec![vec![
             ProviderEvent::TextDelta {
                 text: "partial".to_owned(),
@@ -733,7 +827,7 @@ mod tests {
             },
         ]]);
 
-        let err = call_provider(
+        let Err(err) = call_provider(
             &provider,
             empty_request(),
             ProviderTurnContext::default(),
@@ -746,17 +840,24 @@ mod tests {
             None,
         )
         .await
-        .expect_err("in-band Error event must fail the call");
+        else {
+            return Err("in-band Error event must fail the call".into());
+        };
         match err {
             NornError::Provider(ProviderError::QuotaExceeded) => {}
-            other => panic!("expected the typed in-band provider error, got {other:?}"),
+            other => {
+                return Err(
+                    format!("expected the typed in-band provider error, got {other:?}").into(),
+                );
+            }
         }
+        Ok(())
     }
 
-    fn completed(outcome: RetryOutcome) -> AssembledResponse {
+    fn completed(outcome: RetryOutcome) -> Result<AssembledResponse, Box<dyn std::error::Error>> {
         match outcome {
-            RetryOutcome::Completed(response) => *response,
-            other => panic!("expected a completed provider call, got {other:?}"),
+            RetryOutcome::Completed(response) => Ok(*response),
+            other => Err(format!("expected a completed provider call, got {other:?}").into()),
         }
     }
 
@@ -785,8 +886,7 @@ mod tests {
     /// partial output — and the marker must describe the wait that is
     /// about to happen, not merely the attempt index.
     #[tokio::test(start_paused = true)]
-    async fn retry_broadcasts_enriched_stream_retry_marker_before_replay() -> Result<(), NornError>
-    {
+    async fn retry_broadcasts_enriched_stream_retry_marker_before_replay() -> TestResult {
         let provider = ScriptedResultProvider::new(vec![
             vec![
                 Ok(ProviderEvent::TextDelta {
@@ -825,7 +925,7 @@ mod tests {
                 None,
             )
             .await,
-        );
+        )?;
         assert_eq!(response.text, "full answer");
 
         let received = drain(&mut rx);
@@ -850,7 +950,11 @@ mod tests {
                 );
                 assert_eq!(retry.error_class, "connection_reset");
             }
-            other => panic!("the retry marker must precede the replay, got {other:?}"),
+            other => {
+                return Err(
+                    format!("the retry marker must precede the replay, got {other:?}").into(),
+                );
+            }
         }
         assert!(
             matches!(
@@ -921,7 +1025,7 @@ mod tests {
 
     /// A first-attempt success must broadcast no retry marker.
     #[tokio::test]
-    async fn successful_first_attempt_emits_no_retry_marker() -> Result<(), NornError> {
+    async fn successful_first_attempt_emits_no_retry_marker() -> TestResult {
         let provider = ScriptedResultProvider::new(vec![vec![
             Ok(ProviderEvent::TextDelta {
                 text: "clean".to_owned(),
@@ -946,7 +1050,7 @@ mod tests {
                 None,
             )
             .await,
-        );
+        )?;
         assert_eq!(response.text, "clean");
         assert!(
             retry_markers(&drain(&mut rx)).is_empty(),
@@ -959,7 +1063,7 @@ mod tests {
     /// surfaces as `Cancelled` — never a provider failure, and never a
     /// further attempt against the provider.
     #[tokio::test(start_paused = true)]
-    async fn cancel_during_the_retry_wait_yields_a_cancelled_outcome() {
+    async fn cancel_during_the_retry_wait_yields_a_cancelled_outcome() -> TestResult {
         let failure = || {
             vec![Err(ProviderError::StreamError {
                 reason: "HTTP 503: bad day".to_owned(),
@@ -998,9 +1102,10 @@ mod tests {
         assert!(matches!(outcome, RetryOutcome::Cancelled));
         assert_eq!(started.elapsed(), std::time::Duration::from_secs(3));
         assert_eq!(
-            provider.remaining_attempts(),
+            provider.remaining_attempts()?,
             1,
             "the second scripted attempt must never be consumed",
         );
+        Ok(())
     }
 }

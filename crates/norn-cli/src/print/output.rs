@@ -373,7 +373,17 @@ pub(crate) fn agent_event_to_value(
     agent_event: &norn::provider::AgentEvent,
     partial: bool,
 ) -> Option<Value> {
-    match &agent_event.event {
+    agent_event_kind_to_value(&agent_event.event, partial)
+}
+
+fn agent_event_kind_to_value(
+    event: &norn::provider::AgentEventKind,
+    partial: bool,
+) -> Option<Value> {
+    match event {
+        norn::provider::AgentEventKind::Observed(observed) => {
+            agent_event_kind_to_value(observed.event(), partial)
+        }
         norn::provider::AgentEventKind::Provider(event) => {
             if !partial && is_delta_event(event) {
                 return None;
@@ -492,9 +502,10 @@ pub fn drain_diagnostics(collector: &Arc<DiagnosticCollector>) -> Vec<NornDiagno
 mod raw_stream_event_tests;
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
     use norn::integration::DiagnosticSeverity;
     use norn::provider::events::{ProviderEvent, StopReason};
     use serde_json::json;
@@ -516,7 +527,7 @@ mod tests {
     /// The stream-json wire shape for a bounded policy: a flat object
     /// carrying the full D8 payload.
     #[test]
-    fn stream_retry_maps_to_the_flat_enriched_wire_shape() {
+    fn stream_retry_maps_to_the_flat_enriched_wire_shape() -> TestResult {
         let value = agent_event_to_value(
             &stream_retry_event(norn::provider::AgentStreamRetry {
                 attempt: 3,
@@ -526,7 +537,7 @@ mod tests {
             }),
             true,
         )
-        .expect("stream_retry must have a wire representation");
+        .ok_or("stream_retry must have a wire representation")?;
         assert_eq!(
             value,
             json!({
@@ -537,6 +548,7 @@ mod tests {
                 "error_class": "server_error",
             }),
         );
+        Ok(())
     }
 
     /// Reviewer ruling (2026-07-25): an unbounded policy renders
@@ -544,7 +556,7 @@ mod tests {
     /// omitted key. Asserted on the serialized text, not just the `Value`,
     /// because that is what a consumer parses.
     #[test]
-    fn unbounded_stream_retry_serializes_max_attempts_as_null() {
+    fn unbounded_stream_retry_serializes_max_attempts_as_null() -> TestResult {
         let value = agent_event_to_value(
             &stream_retry_event(norn::provider::AgentStreamRetry {
                 attempt: 2,
@@ -554,17 +566,18 @@ mod tests {
             }),
             true,
         )
-        .expect("stream_retry must have a wire representation");
+        .ok_or("stream_retry must have a wire representation")?;
         assert_eq!(value["max_attempts"], json!(null));
         assert_eq!(
             value.to_string(),
             r#"{"type":"stream_retry","attempt":2,"max_attempts":null,"delay_ms":1000,"error_class":"rate_limited"}"#,
         );
-        let object = value.as_object().expect("wire shape is an object");
+        let object = value.as_object().ok_or("wire shape is an object")?;
         assert!(
             object.contains_key("max_attempts"),
             "the key is always present, even when unbounded",
         );
+        Ok(())
     }
 
     /// The marker is progress, not output: it must survive the
@@ -593,31 +606,33 @@ mod tests {
     }
 
     #[test]
-    fn render_text_writes_string_output_without_quotes() {
+    fn render_text_writes_string_output_without_quotes() -> TestResult {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let output = json!("hello there");
-        render_text(&mut stdout, &mut stderr, Some(&output), &[], false).unwrap();
-        let text = String::from_utf8(stdout).unwrap();
+        render_text(&mut stdout, &mut stderr, Some(&output), &[], false)?;
+        let text = String::from_utf8(stdout)?;
         assert_eq!(text, "hello there\n");
         assert!(stderr.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn render_text_pretty_prints_structured_output() {
+    fn render_text_pretty_prints_structured_output() -> TestResult {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let output = json!({"name": "n", "items": [1, 2]});
-        render_text(&mut stdout, &mut stderr, Some(&output), &[], false).unwrap();
-        let text = String::from_utf8(stdout).unwrap();
+        render_text(&mut stdout, &mut stderr, Some(&output), &[], false)?;
+        let text = String::from_utf8(stdout)?;
         assert!(text.contains("\"name\""));
         assert!(text.contains("\"items\""));
         // Must be multi-line — pretty-printed JSON.
         assert!(text.lines().count() > 1);
+        Ok(())
     }
 
     #[test]
-    fn render_text_diagnostics_appear_on_stderr() {
+    fn render_text_diagnostics_appear_on_stderr() -> TestResult {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let output = json!("ok");
@@ -627,17 +642,17 @@ mod tests {
             Some(&output),
             &[diag_warning()],
             false,
-        )
-        .unwrap();
-        let err_text = String::from_utf8(stderr).unwrap();
+        )?;
+        let err_text = String::from_utf8(stderr)?;
         assert!(err_text.contains("warning"));
         assert!(err_text.contains("schema-violation"));
         assert!(err_text.contains("missing required field"));
         assert!(err_text.contains("suggestion: add"));
+        Ok(())
     }
 
     #[test]
-    fn render_text_quiet_suppresses_stderr() {
+    fn render_text_quiet_suppresses_stderr() -> TestResult {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let output = json!("ok");
@@ -647,21 +662,22 @@ mod tests {
             Some(&output),
             &[diag_warning()],
             true,
-        )
-        .unwrap();
+        )?;
         assert!(stderr.is_empty(), "stderr must be empty with quiet=true");
+        Ok(())
     }
 
     #[test]
-    fn render_text_omits_output_when_none() {
+    fn render_text_omits_output_when_none() -> TestResult {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
-        render_text(&mut stdout, &mut stderr, None, &[], false).unwrap();
+        render_text(&mut stdout, &mut stderr, None, &[], false)?;
         assert!(stdout.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn json_envelope_contains_all_required_fields() {
+    fn json_envelope_contains_all_required_fields() -> TestResult {
         let usage = Usage {
             input_tokens: 42,
             output_tokens: 17,
@@ -679,10 +695,12 @@ mod tests {
             diagnostics: &[],
         };
         let mut stdout = Vec::new();
-        render_json(&mut stdout, &envelope).unwrap();
-        let line = String::from_utf8(stdout).unwrap();
-        let parsed: Value = serde_json::from_str(line.trim_end()).unwrap();
-        let object = parsed.as_object().unwrap();
+        render_json(&mut stdout, &envelope)?;
+        let line = String::from_utf8(stdout)?;
+        let parsed: Value = serde_json::from_str(line.trim_end())?;
+        let object = parsed
+            .as_object()
+            .ok_or("JSON envelope must be an object")?;
         assert!(object.contains_key("output"));
         assert!(object.contains_key("usage"));
         assert!(object.contains_key("model"));
@@ -695,10 +713,11 @@ mod tests {
         assert_eq!(object["usage"]["input_tokens"].as_u64(), Some(42));
         assert_eq!(object["usage"]["output_tokens"].as_u64(), Some(17));
         assert_eq!(object["session_id"].as_str(), Some("abc"));
+        Ok(())
     }
 
     #[test]
-    fn json_envelope_no_session_serialises_session_id_as_null() {
+    fn json_envelope_no_session_serialises_session_id_as_null() -> TestResult {
         let usage = Usage::default();
         let envelope = JsonEnvelope {
             envelope_version: ENVELOPE_VERSION,
@@ -711,10 +730,10 @@ mod tests {
             diagnostics: &[],
         };
         let mut stdout = Vec::new();
-        render_json(&mut stdout, &envelope).unwrap();
-        let parsed: Value =
-            serde_json::from_str(String::from_utf8(stdout).unwrap().trim_end()).unwrap();
+        render_json(&mut stdout, &envelope)?;
+        let parsed: Value = serde_json::from_str(String::from_utf8(stdout)?.trim_end())?;
         assert!(parsed["session_id"].is_null());
+        Ok(())
     }
 
     /// A non-completion stop rides the envelope as the TYPED `stop` object
@@ -722,7 +741,7 @@ mod tests {
     /// machine-stable contract a subprocess consumer branches on. Pre-fix,
     /// the envelope carried only a lossy `result` string label.
     #[test]
-    fn json_envelope_carries_typed_stop_with_partial_for_non_completion() {
+    fn json_envelope_carries_typed_stop_with_partial_for_non_completion() -> TestResult {
         let usage = Usage {
             input_tokens: 9,
             output_tokens: 5,
@@ -748,9 +767,8 @@ mod tests {
             diagnostics: &[],
         };
         let mut stdout = Vec::new();
-        render_json(&mut stdout, &envelope).unwrap();
-        let parsed: Value =
-            serde_json::from_str(String::from_utf8(stdout).unwrap().trim_end()).unwrap();
+        render_json(&mut stdout, &envelope)?;
+        let parsed: Value = serde_json::from_str(String::from_utf8(stdout)?.trim_end())?;
         assert_eq!(parsed["stop"]["reason"].as_str(), Some("timed_out"));
         assert_eq!(parsed["stop"]["elapsed_ms"].as_u64(), Some(2500));
         assert_eq!(parsed["stop"]["iterations"].as_u64(), Some(3));
@@ -760,10 +778,11 @@ mod tests {
             parsed["stop"].get("retryable").is_none(),
             "retryability is the caller's judgment — never encoded"
         );
+        Ok(())
     }
 
     #[test]
-    fn emit_stream_completed_appends_diagnostic_then_completed() {
+    fn emit_stream_completed_appends_diagnostic_then_completed() -> TestResult {
         let mut stdout = Vec::new();
         let usage = Usage {
             input_tokens: 3,
@@ -777,24 +796,24 @@ mod tests {
             &usage,
             &StopInfo::Completed,
             &[diag_warning()],
-        )
-        .unwrap();
-        let text = String::from_utf8(stdout).unwrap();
+        )?;
+        let text = String::from_utf8(stdout)?;
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 2, "expected diagnostic + completed lines");
-        let first: Value = serde_json::from_str(lines[0]).unwrap();
+        let first: Value = serde_json::from_str(lines[0])?;
         assert_eq!(first["type"].as_str(), Some("diagnostic"));
-        let second: Value = serde_json::from_str(lines[1]).unwrap();
+        let second: Value = serde_json::from_str(lines[1])?;
         assert_eq!(second["type"].as_str(), Some("completed"));
         assert_eq!(second["envelope_version"].as_u64(), Some(1));
         assert_eq!(second["stop"]["reason"].as_str(), Some("completed"));
+        Ok(())
     }
 
     /// The stream-json `completed` line carries the SAME typed stop
     /// contract as the JSON envelope — applied consistently across both
     /// output surfaces.
     #[test]
-    fn emit_stream_completed_carries_typed_stop_for_truncation() {
+    fn emit_stream_completed_carries_typed_stop_for_truncation() -> TestResult {
         let mut stdout = Vec::new();
         let result = AgentStepResult::Truncated {
             kind: norn::agent_loop::config::TruncationKind::ContentFilter,
@@ -805,9 +824,9 @@ mod tests {
         };
         let stop = StopInfo::from_result(&result);
         let (output, usage) = extract_output_and_usage(&result);
-        emit_stream_completed(&mut stdout, output.as_ref(), &usage, &stop, &[]).unwrap();
-        let text = String::from_utf8(stdout).unwrap();
-        let parsed: Value = serde_json::from_str(text.trim_end()).unwrap();
+        emit_stream_completed(&mut stdout, output.as_ref(), &usage, &stop, &[])?;
+        let text = String::from_utf8(stdout)?;
+        let parsed: Value = serde_json::from_str(text.trim_end())?;
         assert_eq!(parsed["stop"]["reason"].as_str(), Some("truncated"));
         assert_eq!(
             parsed["stop"]["truncation"].as_str(),
@@ -815,28 +834,33 @@ mod tests {
         );
         assert_eq!(parsed["stop"]["iterations"].as_u64(), Some(2));
         assert_eq!(parsed["output"].as_str(), Some("cut"));
+        Ok(())
     }
 
     #[test]
-    fn provider_event_text_delta_serialises_correctly() {
+    fn provider_event_text_delta_serialises_correctly() -> TestResult {
         let event = ProviderEvent::TextDelta {
             text: "hello".to_owned(),
         };
-        let line = provider_event_to_ndjson(&event).unwrap();
-        let parsed: Value = serde_json::from_str(&line).unwrap();
+        let line = provider_event_to_ndjson(&event)
+            .ok_or("provider event must have a wire representation")?;
+        let parsed: Value = serde_json::from_str(&line)?;
         assert_eq!(parsed["type"].as_str(), Some("text_delta"));
         assert_eq!(parsed["text"].as_str(), Some("hello"));
+        Ok(())
     }
 
     #[test]
-    fn provider_event_thinking_delta_serialises_correctly() {
+    fn provider_event_thinking_delta_serialises_correctly() -> TestResult {
         let event = ProviderEvent::ThinkingDelta {
             text: "let me think".to_owned(),
         };
-        let line = provider_event_to_ndjson(&event).unwrap();
-        let parsed: Value = serde_json::from_str(&line).unwrap();
+        let line = provider_event_to_ndjson(&event)
+            .ok_or("provider event must have a wire representation")?;
+        let parsed: Value = serde_json::from_str(&line)?;
         assert_eq!(parsed["type"].as_str(), Some("thinking_delta"));
         assert_eq!(parsed["text"].as_str(), Some("let me think"));
+        Ok(())
     }
 
     #[test]
@@ -857,7 +881,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_event_tool_call_delta_includes_item_id_name_arguments() {
+    fn provider_event_tool_call_delta_includes_item_id_name_arguments() -> TestResult {
         let event = ProviderEvent::ToolCallDelta {
             item_id: "fc_1".to_owned(),
             call_id: Some("call_1".to_owned()),
@@ -865,17 +889,19 @@ mod tests {
             arguments_delta: "{\"path\":\"".to_owned(),
             kind: norn::provider::request::ToolCallKind::Function,
         };
-        let line = provider_event_to_ndjson(&event).unwrap();
-        let parsed: Value = serde_json::from_str(&line).unwrap();
+        let line = provider_event_to_ndjson(&event)
+            .ok_or("provider event must have a wire representation")?;
+        let parsed: Value = serde_json::from_str(&line)?;
         assert_eq!(parsed["type"].as_str(), Some("tool_call_delta"));
         assert_eq!(parsed["item_id"].as_str(), Some("fc_1"));
         // C7: the correlation id an embedder needs to match live tool input.
         assert_eq!(parsed["call_id"].as_str(), Some("call_1"));
         assert_eq!(parsed["name"].as_str(), Some("read"));
+        Ok(())
     }
 
     #[test]
-    fn usage_estimate_event_serialises_for_stream_json() {
+    fn usage_estimate_event_serialises_for_stream_json() -> TestResult {
         let event = norn::provider::AgentEvent {
             agent_id: uuid::Uuid::nil(),
             agent_role: Arc::from("root"),
@@ -885,25 +911,27 @@ mod tests {
                 },
             ),
         };
-        let line = agent_event_to_ndjson(&event, false).unwrap();
-        let parsed: Value = serde_json::from_str(&line).unwrap();
+        let line = agent_event_to_ndjson(&event, false)
+            .ok_or("usage event must have a wire representation")?;
+        let parsed: Value = serde_json::from_str(&line)?;
         assert_eq!(parsed["type"].as_str(), Some("usage_estimate"));
         assert_eq!(parsed["input_tokens"].as_u64(), Some(12_345));
+        Ok(())
     }
 
     /// Every [`AgentStepResult`] variant maps onto its typed stop with the
     /// stable `snake_case` `reason` tag and the variant's detail fields.
     #[test]
-    fn stop_info_maps_each_variant_with_detail() {
-        fn stop_json(result: &AgentStepResult) -> Value {
-            serde_json::to_value(StopInfo::from_result(result)).unwrap()
+    fn stop_info_maps_each_variant_with_detail() -> TestResult {
+        fn stop_json(result: &AgentStepResult) -> Result<Value, serde_json::Error> {
+            serde_json::to_value(StopInfo::from_result(result))
         }
 
         let completed = stop_json(&AgentStepResult::Completed {
             output: json!(null),
             usage: Usage::default(),
             children_usage: Usage::default(),
-        });
+        })?;
         assert_eq!(completed, json!({"reason": "completed"}));
 
         let schema = stop_json(&AgentStepResult::SchemaUnreachable {
@@ -912,7 +940,7 @@ mod tests {
             attempts: 4,
             usage: Usage::default(),
             children_usage: Usage::default(),
-        });
+        })?;
         assert_eq!(schema["reason"], json!("schema_unreachable"));
         assert_eq!(schema["attempts"], json!(4));
         assert_eq!(schema["validation_errors"], json!(["missing field `name`"]));
@@ -920,7 +948,7 @@ mod tests {
         let max_iter = stop_json(&AgentStepResult::MaxIterationsReached {
             usage: Usage::default(),
             children_usage: Usage::default(),
-        });
+        })?;
         assert_eq!(max_iter, json!({"reason": "max_iterations"}));
 
         let timed_out = stop_json(&AgentStepResult::TimedOut {
@@ -929,7 +957,7 @@ mod tests {
             partial_output: None,
             usage: Usage::default(),
             children_usage: Usage::default(),
-        });
+        })?;
         assert_eq!(timed_out["reason"], json!("timed_out"));
         assert_eq!(timed_out["elapsed_ms"], json!(2000));
         assert_eq!(timed_out["iterations"], json!(7));
@@ -937,7 +965,7 @@ mod tests {
         let cancelled = stop_json(&AgentStepResult::Cancelled {
             usage: Usage::default(),
             children_usage: Usage::default(),
-        });
+        })?;
         assert_eq!(cancelled, json!({"reason": "cancelled"}));
 
         let truncated = stop_json(&AgentStepResult::Truncated {
@@ -946,10 +974,11 @@ mod tests {
             iterations: 1,
             usage: Usage::default(),
             children_usage: Usage::default(),
-        });
+        })?;
         assert_eq!(truncated["reason"], json!("truncated"));
         assert_eq!(truncated["truncation"], json!("max_tokens"));
         assert_eq!(truncated["iterations"], json!(1));
+        Ok(())
     }
 
     #[test]
@@ -980,12 +1009,12 @@ mod tests {
     /// (owner ruling R1: adding a reason is additive, the envelope
     /// version stays 1).
     #[test]
-    fn stop_info_error_serialises_reason_message_and_class() {
+    fn stop_info_error_serialises_reason_message_and_class() -> TestResult {
         let stop = StopInfo::Error {
             message: "agent error: connection refused".to_owned(),
             class: "agent".to_owned(),
         };
-        let value = serde_json::to_value(&stop).unwrap();
+        let value = serde_json::to_value(&stop)?;
         assert_eq!(
             value,
             json!({
@@ -994,12 +1023,13 @@ mod tests {
                 "class": "agent",
             })
         );
+        Ok(())
     }
 
     /// An error envelope for a pre-assembly failure carries `model: null`
     /// — the only stop reason where the model can be unresolved.
     #[test]
-    fn json_envelope_error_stop_with_unresolved_model_serialises_null() {
+    fn json_envelope_error_stop_with_unresolved_model_serialises_null() -> TestResult {
         let usage = Usage::default();
         let stop = StopInfo::Error {
             message: "auth error: missing key".to_owned(),
@@ -1016,14 +1046,14 @@ mod tests {
             diagnostics: &[],
         };
         let mut stdout = Vec::new();
-        render_json(&mut stdout, &envelope).unwrap();
-        let parsed: Value =
-            serde_json::from_str(String::from_utf8(stdout).unwrap().trim_end()).unwrap();
+        render_json(&mut stdout, &envelope)?;
+        let parsed: Value = serde_json::from_str(String::from_utf8(stdout)?.trim_end())?;
         assert_eq!(parsed["stop"]["reason"], json!("error"));
         assert_eq!(parsed["stop"]["class"], json!("auth"));
         assert!(parsed["model"].is_null());
         assert!(parsed["output"].is_null());
         assert!(parsed["session_id"].is_null());
+        Ok(())
     }
 
     /// `TimedOut` and `Truncated` carry real usage and partial output on

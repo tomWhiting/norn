@@ -166,11 +166,14 @@ pub(super) fn recover_audio_bundle(
     transaction_id: &str,
     destination: &SessionIndexEntry,
     manifest: &AudioBundleJournal,
+    spool_inheritance: bool,
 ) -> Result<bool, SessionPersistError> {
     let stage = audio_stage_path(transaction_id);
     let final_path = PathBuf::from(&destination.id);
-    let stage_exists = inspect_bundle_if_present(root, &stage, destination, manifest)?;
-    let final_exists = inspect_bundle_if_present(root, &final_path, destination, manifest)?;
+    let stage_exists =
+        inspect_bundle_if_present(root, &stage, destination, manifest, spool_inheritance)?;
+    let final_exists =
+        inspect_bundle_if_present(root, &final_path, destination, manifest, spool_inheritance)?;
     if !final_exists {
         if !stage_exists {
             return Err(conflict(
@@ -180,7 +183,8 @@ pub(super) fn recover_audio_bundle(
         }
         root.publish_new_dir(&stage, &final_path)?;
         root.sync_dir(Path::new(""))?;
-        if !inspect_bundle_if_present(root, &final_path, destination, manifest)? {
+        if !inspect_bundle_if_present(root, &final_path, destination, manifest, spool_inheritance)?
+        {
             return Err(conflict(
                 &destination.id,
                 "published response-audio bundle disappeared after publication",
@@ -225,6 +229,7 @@ fn inspect_bundle_if_present(
     base: &Path,
     destination: &SessionIndexEntry,
     manifest: &AudioBundleJournal,
+    spool_inheritance: bool,
 ) -> Result<bool, SessionPersistError> {
     let Some(kind) = top_level_entry(root, base)? else {
         return Ok(false);
@@ -235,12 +240,11 @@ fn inspect_bundle_if_present(
             "the response-audio bundle path is not a directory",
         ));
     }
-    exact_directory(
-        root,
-        base,
-        [(OsStr::new(ARTIFACTS_DIRECTORY), PrivateEntryKind::Directory)],
-        &destination.id,
-    )?;
+    let mut expected_root = vec![(OsStr::new(ARTIFACTS_DIRECTORY), PrivateEntryKind::Directory)];
+    if spool_inheritance && root.regular_file_exists(&base.join("spool-inheritance.json"))? {
+        expected_root.push((OsStr::new("spool-inheritance.json"), PrivateEntryKind::File));
+    }
+    exact_directory(root, base, expected_root, &destination.id)?;
     let artifacts = base.join(ARTIFACTS_DIRECTORY);
     exact_directory(
         root,
@@ -271,10 +275,10 @@ fn inspect_bundle_if_present(
     Ok(true)
 }
 
-fn exact_directory<const N: usize>(
+fn exact_directory<'a>(
     root: &PrivateRoot,
     path: &Path,
-    expected: [(&OsStr, PrivateEntryKind); N],
+    expected: impl IntoIterator<Item = (&'a OsStr, PrivateEntryKind)>,
     destination_id: &str,
 ) -> Result<(), SessionPersistError> {
     let expected = expected.into_iter().collect::<BTreeMap<_, _>>();

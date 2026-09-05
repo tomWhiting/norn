@@ -15,37 +15,31 @@
 use std::time::{Duration, Instant};
 
 use norn::agent_loop::config::AgentStepResult;
-use norn::error::{NornError, ProviderError};
+use norn::error::NornError;
 use norn::provider::agent_event::{
     AgentEvent, AgentEventKind, AgentMessageLifecycle, AgentStreamRetry, SubagentKind,
     SubagentLifecycle,
 };
 use norn::provider::events::ProviderEvent;
+#[cfg(test)]
 use norn::provider::usage::Usage;
 
 use crate::TuiError;
 use crate::agents::activity_log::ActivityLogEntry;
 use crate::agents::status_line::AgentActivity;
-use crate::render::MarkdownRenderer;
 use crate::render::retry_status::retry_status_label;
-use crate::render::scroll_region::write_to_scroll;
+#[cfg(test)]
 use crate::render::streaming_indicator::StreamingIndicator;
-use crate::terminal::setup::TerminalGuard;
 
 use super::helpers::{
-    extract_argument_summary, extract_tool_use_description, flush_markdown, flush_pending,
-    flush_terminal, format_usage_summary,
+    extract_argument_summary, extract_tool_use_description, format_usage_summary,
 };
 use super::state::AppState;
-use super::streaming::{finish_thinking_block, handle_text_delta, handle_thinking_delta};
-use super::tool_calls::{
-    accumulate_tool_call_delta, handle_tool_call_complete, handle_tool_result,
-};
 
 mod finalization;
 
 pub use finalization::extract_usage;
-pub(super) use finalization::write_error_line;
+pub(super) use finalization::{channel_wake_pause_reason, write_error_line};
 
 /// Dispatch a tagged [`AgentEvent`] by routing on payload kind and
 /// agent identity.
@@ -56,17 +50,48 @@ pub(super) use finalization::write_error_line;
 /// their streaming text and tool output stay out of the main scroll
 /// region. Typed [`SubagentLifecycle`] events (always child-tagged)
 /// drive the status panel's activity column directly.
-pub fn handle_agent_event(
-    state: &mut AppState,
-    guard: &mut TerminalGuard,
-    renderer: &mut Option<MarkdownRenderer>,
-    agent_event: AgentEvent,
-) -> Result<(), TuiError> {
+pub fn handle_agent_event(state: &mut AppState, agent_event: AgentEvent) -> Result<(), TuiError> {
     let root_id = state.tab_state.root_id();
-    match agent_event.event {
+    if agent_event.agent_id == root_id {
+        if !state.transcript.observe_event(&agent_event)? {
+            super::notices::notice(
+                state,
+                "Late event from a retired execution was not admitted",
+                None,
+            )?;
+            return Ok(());
+        }
+        let reduction = state.transcript.apply_live(&agent_event)?;
+        state.transcript.note_completion(&agent_event, &reduction);
+        if reduction.metadata_only
+            && matches!(&agent_event.event,
+            AgentEventKind::Observed(observed) if matches!(observed.scope(), norn::provider::agent_event::ObservationScope::Attempt(_)))
+        {
+            state.screen.allow_body_load = true;
+            return Ok(());
+        }
+    } else {
+        super::notices::child_event(state, &agent_event)?;
+    }
+    state.screen.allow_body_load = true;
+    let event = match agent_event.event {
+        AgentEventKind::Observed(observed) => {
+            let (_, native) = observed.into_parts();
+            native
+        }
+        native => native,
+    };
+    match event {
+        AgentEventKind::Observed(_) => {
+            super::notices::error(
+                state,
+                "Invalid nested observation",
+                "A producer envelope contained another observation envelope",
+            )?;
+        }
         AgentEventKind::Provider(event) => {
             if agent_event.agent_id == root_id {
-                return handle_provider_event(state, guard, renderer, event);
+                return handle_provider_event(state, event);
             }
             handle_child_event(state, agent_event.agent_id, &agent_event.agent_role, event);
         }
@@ -94,18 +119,6 @@ pub fn handle_agent_event(
                 description: Some(channel_display_text(&delivery.content, true)),
                 at: Instant::now(),
             });
-            if agent_event.agent_id == root_id {
-                finish_thinking_block(state, guard, renderer)?;
-                flush_markdown(state, guard, renderer)?;
-                let channel_text = format!(
-                    "\n[external channel: {}]\n{}\n\n",
-                    channel_display_text(&delivery.source, false),
-                    channel_display_text(&delivery.content, true),
-                );
-                write_to_scroll(&channel_text, guard.terminal_mut())?;
-                guard.note_scroll_newlines(&channel_text)?;
-                flush_terminal(guard)?;
-            }
         }
         AgentEventKind::UsageEstimate(estimate) => {
             if agent_event.agent_id == root_id {
@@ -145,15 +158,12 @@ pub fn handle_agent_event(
 
 /// Keep external control bytes visible as text instead of terminal instructions.
 fn channel_display_text(text: &str, multiline: bool) -> String {
-    let mut displayed = String::new();
-    for character in text.chars() {
-        if character.is_control() && !(multiline && matches!(character, '\n' | '\t')) {
-            displayed.push_str(&character.escape_default().to_string());
-        } else {
-            displayed.push(character);
-        }
+    let safe = norn::session_view::DisplayText::new(text);
+    if multiline {
+        safe.as_str().to_owned()
+    } else {
+        safe.as_str().replace('\n', "\\n").replace('\t', "\\t")
     }
-    displayed
 }
 
 /// Surface one provider-retry wait (retry-forever DESIGN D8).
@@ -403,90 +413,66 @@ fn handle_child_event(
     }
 }
 
-/// Dispatch a single [`ProviderEvent`] to its handler.
-pub fn handle_provider_event(
-    state: &mut AppState,
-    guard: &mut TerminalGuard,
-    renderer: &mut Option<MarkdownRenderer>,
-    event: ProviderEvent,
-) -> Result<(), TuiError> {
+/// Update live status from typed root data already accepted by the semantic reducer.
+pub fn handle_provider_event(state: &mut AppState, event: ProviderEvent) -> Result<(), TuiError> {
     state.note_event_received(Instant::now());
     match event {
-        ProviderEvent::TextDelta { text } => handle_text_delta(state, guard, renderer, &text),
-        ProviderEvent::RefusalDelta { refusal, .. } => {
-            handle_text_delta(state, guard, renderer, &refusal)
+        ProviderEvent::TextDelta { text } | ProviderEvent::ThinkingDelta { text } => {
+            state.est_output_bytes = state.est_output_bytes.saturating_add(text.len());
+            state.current_tool_use = None;
         }
-        ProviderEvent::ThinkingDelta { text } => {
-            handle_thinking_delta(state, &text);
-            Ok(())
+        ProviderEvent::RefusalDelta { refusal, .. } => {
+            state.est_output_bytes = state.est_output_bytes.saturating_add(refusal.len());
+            state.current_tool_use = None;
         }
         ProviderEvent::ToolCallDelta {
-            item_id,
-            call_id: _,
             name,
             arguments_delta,
-            kind: _,
+            ..
         } => {
-            accumulate_tool_call_delta(state, item_id, name, &arguments_delta);
-            Ok(())
+            state.est_output_bytes = state.est_output_bytes.saturating_add(arguments_delta.len());
+            if let Some(name) = name {
+                state.current_tool_use = Some(crate::render::ToolUseInFlight {
+                    tool_name: name,
+                    description: None,
+                });
+            }
         }
         ProviderEvent::ToolCallComplete {
-            call_id,
-            name,
-            arguments,
-            kind: _,
+            name, arguments, ..
         } => {
-            let root_id = state.tab_state.root_id();
-            let description = extract_tool_use_description(&arguments)
-                .or_else(|| extract_argument_summary(&arguments));
-            let activity = tool_activity_label(&name, description.as_deref());
-            state
-                .agent_panel
-                .set_activity(root_id, AgentActivity::Running(activity));
-            state.activity_log.push(ActivityLogEntry {
-                agent_role: "root".to_string(),
-                tool_name: name.clone(),
+            let description = extract_tool_use_description(&arguments);
+            state.agent_panel.set_activity(
+                state.tab_state.root_id(),
+                AgentActivity::Running(tool_activity_label(&name, description.as_deref())),
+            );
+            state.current_tool_use = Some(crate::render::ToolUseInFlight {
+                tool_name: name,
                 description,
-                at: Instant::now(),
             });
-            handle_tool_call_complete(state, call_id, &name, &arguments);
-            Ok(())
         }
-        ProviderEvent::ToolResult {
-            tool_call_id,
-            tool_name,
-            output,
-            duration_ms,
-        } => {
-            let root_id = state.tab_state.root_id();
-            state
-                .agent_panel
-                .set_terminal_activity_if_quiet(root_id, AgentActivity::Result(tool_name.clone()));
-            handle_tool_result(
-                state,
-                guard,
-                renderer,
-                &tool_call_id,
-                &tool_name,
-                &output,
-                duration_ms,
-            )
+        ProviderEvent::ToolResult { tool_name, .. } => {
+            state.agent_panel.set_terminal_activity_if_quiet(
+                state.tab_state.root_id(),
+                AgentActivity::Result(tool_name),
+            );
+            state.current_tool_use = None;
         }
         ProviderEvent::Done { usage, .. } => {
             let root_id = state.tab_state.root_id();
             state.agent_panel.mark_idle(root_id);
             state.record_root_provider_usage(root_id, usage.input_tokens, usage.output_tokens);
-            handle_done(state, guard, &usage, renderer)
+            let elapsed = state
+                .turn_start
+                .map_or(Duration::ZERO, |start| start.elapsed());
+            state.mark_complete(format_usage_summary(&usage, elapsed), Instant::now());
         }
-        ProviderEvent::Error { error } => {
-            let root_id = state.tab_state.root_id();
-            state
-                .agent_panel
-                .set_activity(root_id, AgentActivity::Result("error".to_string()));
-            handle_error(state, guard, &error, renderer)
+        ProviderEvent::Error { .. } => {
+            state.agent_panel.set_activity(
+                state.tab_state.root_id(),
+                AgentActivity::Result("error".to_owned()),
+            );
         }
-        // Structured reasoning items exist for provider-side replay; the
-        // display text already arrived via the ThinkingDelta stream.
         ProviderEvent::TextComplete { .. }
         | ProviderEvent::ThinkingComplete { .. }
         | ProviderEvent::RefusalComplete { .. }
@@ -494,92 +480,77 @@ pub fn handle_provider_event(
         | ProviderEvent::ResponseItemDone { .. }
         | ProviderEvent::ResponseStreamEvent { .. }
         | ProviderEvent::ResponseAudioFrame { .. }
-        | ProviderEvent::Compaction { .. } => Ok(()),
+        | ProviderEvent::Compaction { .. } => {}
     }
-}
-
-/// Handle [`ProviderEvent::Done`].
-///
-/// Flushes trailing markdown but does NOT flush pending tool calls. The
-/// Done event fires when the provider stream ends — tool results arrive
-/// later on the broadcast channel. Flushing pending tools here would
-/// render them with null output ("0 results"), then the real `ToolResult`
-/// would render again, causing duplication. Pending tools are flushed by
-/// their matching `ToolResult` events, or by [`flush_pending`] on error /
-/// turn finalization if no result arrives.
-pub fn handle_done(
-    state: &mut AppState,
-    guard: &mut TerminalGuard,
-    usage: &Usage,
-    renderer: &mut Option<MarkdownRenderer>,
-) -> Result<(), TuiError> {
-    finish_thinking_block(state, guard, renderer)?;
-    flush_markdown(state, guard, renderer)?;
-    if state.text_streamed_this_turn {
-        write_to_scroll("\n", guard.terminal_mut())?;
-        guard.note_scroll_newlines("\n")?;
-        flush_terminal(guard)?;
-    }
-    let elapsed = state
-        .turn_start
-        .map_or(Duration::ZERO, |start| start.elapsed());
-    let summary = format_usage_summary(usage, elapsed);
-    state.mark_complete(summary, Instant::now());
     state.sync_indicator_into_panel();
     Ok(())
 }
 
-/// Handle [`ProviderEvent::Error`].
-pub fn handle_error(
-    state: &mut AppState,
-    guard: &mut TerminalGuard,
-    error: &ProviderError,
-    renderer: &mut Option<MarkdownRenderer>,
-) -> Result<(), TuiError> {
-    finish_thinking_block(state, guard, renderer)?;
-    flush_pending(state, guard, renderer)?;
-    write_error_line(state, guard, &error.to_string())
-}
-
-/// Convert the agent-step result into either a usage indicator or an
-/// error line in the scroll region.
+/// Retain the actual terminal outcome; every incomplete outcome remains distinct.
 pub fn finalise_turn(
     state: &mut AppState,
-    guard: &mut TerminalGuard,
-    step_result: Option<Result<AgentStepResult, NornError>>,
-    renderer: &mut Option<MarkdownRenderer>,
+    result: Option<Result<AgentStepResult, NornError>>,
 ) -> Result<(), TuiError> {
-    let Some(result) = step_result else {
+    let Some(result) = result else {
+        state.transcript.complete_publication(
+            "Turn interrupted",
+            state.turn_start.map(|start| start.elapsed()),
+            None,
+            false,
+        )?;
+        super::notices::error(
+            state,
+            "Turn interrupted",
+            "The agent step did not return an outcome",
+        )?;
         return Ok(());
     };
-    finish_thinking_block(state, guard, renderer)?;
     match result {
-        Ok(step) => set_complete_from_step(state, &step),
-        Err(err) => {
-            flush_pending(state, guard, renderer)?;
-            write_error_line(state, guard, &err.to_string())?;
+        Ok(step) => {
+            let usage = extract_usage(&step);
+            state.reconcile_root_turn_usage(usage.input_tokens, usage.output_tokens);
+            let elapsed = state.turn_start.map(|start| start.elapsed());
+            let summary = elapsed.map_or_else(
+                || {
+                    format!(
+                        "[{} in / {} out; elapsed unavailable]",
+                        usage.input_tokens, usage.output_tokens
+                    )
+                },
+                |elapsed| format_usage_summary(&usage, elapsed),
+            );
+            let label = match &step {
+                AgentStepResult::Completed { .. } => "Turn completed",
+                AgentStepResult::Refused { .. } => "Request refused",
+                AgentStepResult::SchemaUnreachable { .. } => "Output contract not satisfied",
+                AgentStepResult::MaxIterationsReached { .. } => "Iteration limit reached",
+                AgentStepResult::Cancelled { .. } => "Turn cancelled",
+                AgentStepResult::TimedOut { .. } => "Turn deadline elapsed",
+                AgentStepResult::Truncated { .. } => "Model output stopped early",
+            };
+            state.transcript.complete_publication(
+                &format!("{label} {summary}"),
+                elapsed,
+                Some(&usage),
+                matches!(step, AgentStepResult::Completed { .. }),
+            )?;
+            state.mark_complete(summary, Instant::now());
+        }
+        Err(error) => {
+            state.transcript.complete_publication(
+                "Turn failed",
+                state.turn_start.map(|start| start.elapsed()),
+                None,
+                false,
+            )?;
+            write_error_line(state, &error.to_string())?;
         }
     }
     state.sync_indicator_into_panel();
     Ok(())
 }
 
-fn set_complete_from_step(state: &mut AppState, step: &AgentStepResult) {
-    if !matches!(state.streaming_indicator, StreamingIndicator::Idle) {
-        return;
-    }
-    let usage = extract_usage(step);
-    let root_id = state.tab_state.root_id();
-    state.record_root_provider_usage(root_id, usage.input_tokens, usage.output_tokens);
-    let elapsed = state
-        .turn_start
-        .map_or(Duration::ZERO, |start| start.elapsed());
-    let summary = format_usage_summary(&usage, elapsed);
-    state.mark_complete(summary, Instant::now());
-}
-
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use std::sync::Arc;
 
@@ -602,7 +573,7 @@ mod tests {
         );
         assert_eq!(
             channel_display_text("first\nsecond\tcolumn\r\u{1b}]52;c;data\u{7}", true),
-            "first\nsecond\tcolumn\\r\\u{1b}]52;c;data\\u{7}",
+            "first\nsecond\tcolumn\\u{d}\\u{1b}]52;c;data\\u{7}",
         );
     }
 
@@ -697,7 +668,8 @@ mod tests {
     // rendering pass — which is the only externally observable proof
     // that activity/tokens stuck — is identical regardless of caller.
 
-    fn state_with_one_child() -> (AppState, uuid::Uuid, uuid::Uuid) {
+    fn state_with_one_child()
+    -> Result<(AppState, uuid::Uuid, uuid::Uuid), Box<dyn std::error::Error>> {
         let registry: Arc<RwLock<AgentRegistry>> = AgentRegistry::shared();
         let root_guard = AgentRegistry::reserve(
             &registry,
@@ -715,10 +687,9 @@ mod tests {
                 loop_config: None,
             },
             None,
-        )
-        .unwrap();
+        )?;
         let root_id = root_guard.id();
-        root_guard.confirm().unwrap();
+        root_guard.confirm()?;
 
         let child_guard = AgentRegistry::reserve(
             &registry,
@@ -736,41 +707,38 @@ mod tests {
                 loop_config: None,
             },
             None,
-        )
-        .unwrap();
+        )?;
         let child_id = child_guard.id();
-        child_guard.confirm().unwrap();
+        child_guard.confirm()?;
 
         let state = AppState::new(
             TerminalCaps::baseline(),
             InputHistory::in_memory(),
             registry,
-            root_id,
+            crate::app::state::test_view_source(root_id),
             StatusBar::default(),
         );
-        (state, root_id, child_id)
+        Ok((state, root_id, child_id))
     }
 
-    fn render_agent_panel(state: &mut AppState) -> String {
+    fn render_agent_panel(state: &mut AppState) -> Result<String, Box<dyn std::error::Error>> {
         let mut buf: Vec<u8> = Vec::new();
         let caps = TerminalCaps::baseline();
-        state
-            .agent_panel
-            .render(
-                0,
-                &mut buf,
-                &caps,
-                std::time::Instant::now(),
-                chrono::Utc::now(),
-                120,
-            )
-            .unwrap();
-        String::from_utf8(buf).unwrap()
+        state.agent_panel.render(
+            0,
+            &mut buf,
+            &caps,
+            std::time::Instant::now(),
+            chrono::Utc::now(),
+            120,
+        )?;
+        Ok(String::from_utf8(buf)?)
     }
 
     #[test]
-    fn tool_call_complete_running_activity_surfaces_in_render() {
-        let (mut state, root_id, _child_id) = state_with_one_child();
+    fn tool_call_complete_running_activity_surfaces_in_render()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut state, root_id, _) = state_with_one_child()?;
         // Mirror the dispatch hook for ProviderEvent::ToolCallComplete.
         state
             .agent_panel
@@ -778,27 +746,25 @@ mod tests {
 
         let mut buf: Vec<u8> = Vec::new();
         let caps = TerminalCaps::baseline();
-        state
-            .agent_panel
-            .render(
-                0,
-                &mut buf,
-                &caps,
-                std::time::Instant::now(),
-                chrono::Utc::now(),
-                120,
-            )
-            .unwrap();
-        let out = String::from_utf8(buf).unwrap();
+        state.agent_panel.render(
+            0,
+            &mut buf,
+            &caps,
+            std::time::Instant::now(),
+            chrono::Utc::now(),
+            120,
+        )?;
+        let out = String::from_utf8(buf)?;
         assert!(
             out.contains("bash"),
             "Running tool name must surface on root row: {out:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn tool_result_sets_result_activity_on_root() {
-        let (mut state, root_id, _child_id) = state_with_one_child();
+    fn tool_result_sets_result_activity_on_root() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut state, root_id, _) = state_with_one_child()?;
         // Mirror the dispatch hook for ProviderEvent::ToolResult.
         state
             .agent_panel
@@ -806,45 +772,40 @@ mod tests {
 
         let mut buf: Vec<u8> = Vec::new();
         let caps = TerminalCaps::baseline();
-        state
-            .agent_panel
-            .render(
-                0,
-                &mut buf,
-                &caps,
-                std::time::Instant::now(),
-                chrono::Utc::now(),
-                120,
-            )
-            .unwrap();
-        let out = String::from_utf8(buf).unwrap();
+        state.agent_panel.render(
+            0,
+            &mut buf,
+            &caps,
+            std::time::Instant::now(),
+            chrono::Utc::now(),
+            120,
+        )?;
+        let out = String::from_utf8(buf)?;
         assert!(
             out.contains("read"),
             "Result tool name must surface on root row: {out:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn done_event_sets_idle_and_token_counts() {
-        let (mut state, root_id, _child_id) = state_with_one_child();
+    fn done_event_sets_idle_and_token_counts() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut state, root_id, _) = state_with_one_child()?;
         // Mirror the dispatch hook for ProviderEvent::Done.
         state.agent_panel.mark_idle(root_id);
         state.record_root_provider_usage(root_id, 5_000, 2_000);
 
         let mut buf: Vec<u8> = Vec::new();
         let caps = TerminalCaps::baseline();
-        state
-            .agent_panel
-            .render(
-                0,
-                &mut buf,
-                &caps,
-                std::time::Instant::now(),
-                chrono::Utc::now(),
-                120,
-            )
-            .unwrap();
-        let out = String::from_utf8(buf).unwrap();
+        state.agent_panel.render(
+            0,
+            &mut buf,
+            &caps,
+            std::time::Instant::now(),
+            chrono::Utc::now(),
+            120,
+        )?;
+        let out = String::from_utf8(buf)?;
         assert!(
             out.contains('◌'),
             "Idle activity on Active root must render the dotted-circle swap: {out:?}"
@@ -856,6 +817,7 @@ mod tests {
         let status = state.fixed_panel.status_bar();
         assert_eq!(status.input_tokens, 5_000);
         assert_eq!(status.output_tokens, 2_000);
+        Ok(())
     }
 
     // ---------------- Inter-agent message events (W3.7) ----------------
@@ -920,8 +882,9 @@ mod tests {
     /// Message events still record a backing activity entry for diagnostics;
     /// normal rendering surfaces the live state on the agent row.
     #[test]
-    fn message_event_pushes_activity_log_entry_via_helper() {
-        let (mut state, _root_id, _child_id) = state_with_one_child();
+    fn message_event_pushes_activity_log_entry_via_helper() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (mut state, _, _) = state_with_one_child()?;
         let lifecycle = AgentMessageLifecycle::Sent {
             message_id: uuid::Uuid::from_u128(9),
             from_id: uuid::Uuid::from_u128(1),
@@ -939,21 +902,27 @@ mod tests {
             std::time::Instant::now(),
         ));
         assert_eq!(state.activity_log.len(), 1);
-        let entry = state.activity_log.entries().front().unwrap();
+        let entry = state
+            .activity_log
+            .entries()
+            .front()
+            .ok_or("expected activity entry")?;
         assert_eq!(entry.tool_name, "msg:update → /root/other");
         assert_eq!(entry.description.as_deref(), Some("fyi"));
+        Ok(())
     }
 
     // ---------------- Activity log wire-up (Task 2 interim) ----------------
 
     #[test]
-    fn tool_call_complete_pushes_activity_log_entry_with_description() {
+    fn tool_call_complete_pushes_activity_log_entry_with_description()
+    -> Result<(), Box<dyn std::error::Error>> {
         // Mirror the dispatch hook in handle_provider_event for
         // ProviderEvent::ToolCallComplete: the activity log receives a
         // new entry with the tool name and the extracted envelope
         // description, agent_role hardcoded to "root" for the interim
         // wire.
-        let (mut state, _root_id, _child_id) = state_with_one_child();
+        let (mut state, _, _) = state_with_one_child()?;
         let args = serde_json::json!({
             "tool_use_description": "listing docs folder",
             "command": "ls docs/"
@@ -968,18 +937,24 @@ mod tests {
         });
 
         assert_eq!(state.activity_log.len(), 1);
-        let entry = state.activity_log.entries().front().unwrap();
+        let entry = state
+            .activity_log
+            .entries()
+            .front()
+            .ok_or("expected activity entry")?;
         assert_eq!(entry.agent_role, "root");
         assert_eq!(entry.tool_name, "bash");
         assert_eq!(entry.description.as_deref(), Some("listing docs folder"));
+        Ok(())
     }
 
     #[test]
-    fn tool_call_complete_with_empty_description_pushes_none() {
+    fn tool_call_complete_with_empty_description_pushes_none()
+    -> Result<(), Box<dyn std::error::Error>> {
         // Some("") from the envelope is normalised to None by
         // extract_tool_use_description — the activity log keeps the
         // same policy as the streaming indicator.
-        let (mut state, _root_id, _child_id) = state_with_one_child();
+        let (mut state, _, _) = state_with_one_child()?;
         let args = serde_json::json!({
             "tool_use_description": "   ",
             "command": "ls"
@@ -993,13 +968,19 @@ mod tests {
             at: std::time::Instant::now(),
         });
 
-        let entry = state.activity_log.entries().front().unwrap();
+        let entry = state
+            .activity_log
+            .entries()
+            .front()
+            .ok_or("expected activity entry")?;
         assert!(entry.description.is_none());
+        Ok(())
     }
 
     #[test]
-    fn child_tool_call_description_surfaces_on_agent_row() {
-        let (mut state, _root_id, child_id) = state_with_one_child();
+    fn child_tool_call_description_surfaces_on_agent_row() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (mut state, _, child_id) = state_with_one_child()?;
         handle_child_event(
             &mut state,
             child_id,
@@ -1015,16 +996,18 @@ mod tests {
             },
         );
 
-        let out = render_agent_panel(&mut state);
+        let out = render_agent_panel(&mut state)?;
         assert!(
             out.contains("signal_agent: wake the idle worker"),
             "tool intent should live on the agent row: {out:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn child_tool_activity_survives_text_done_and_successful_completion() {
-        let (mut state, root_id, child_id) = state_with_one_child();
+    fn child_tool_activity_survives_text_done_and_successful_completion()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut state, root_id, child_id) = state_with_one_child()?;
         handle_child_event(
             &mut state,
             child_id,
@@ -1054,7 +1037,7 @@ mod tests {
             },
         ] {
             handle_child_event(&mut state, child_id, "spawn/haiku", event);
-            let out = render_agent_panel(&mut state);
+            let out = render_agent_panel(&mut state)?;
             assert!(
                 out.contains("lsp: inspect definitions"),
                 "transient child event must not overwrite tool activity: {out:?}"
@@ -1082,16 +1065,18 @@ mod tests {
                 stop: None,
             },
         );
-        let out = render_agent_panel(&mut state);
+        let out = render_agent_panel(&mut state)?;
         assert!(
             out.contains("lsp: inspect definitions"),
             "successful completion must not overwrite last tool activity: {out:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn child_text_and_thinking_update_status_without_activity_spam() {
-        let (mut state, _root_id, child_id) = state_with_one_child();
+    fn child_text_and_thinking_update_status_without_activity_spam()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut state, _, child_id) = state_with_one_child()?;
 
         handle_child_event(
             &mut state,
@@ -1101,7 +1086,7 @@ mod tests {
                 text: "hello".to_string(),
             },
         );
-        let out = render_agent_panel(&mut state);
+        let out = render_agent_panel(&mut state)?;
         assert!(out.contains("writing"), "got: {out:?}");
         assert_eq!(state.activity_log.len(), 0);
 
@@ -1113,14 +1098,16 @@ mod tests {
                 text: "considering".to_string(),
             },
         );
-        let out = render_agent_panel(&mut state);
+        let out = render_agent_panel(&mut state)?;
         assert!(out.contains("thinking"), "got: {out:?}");
         assert_eq!(state.activity_log.len(), 0);
+        Ok(())
     }
 
     #[test]
-    fn child_refusal_delta_renders_writing_status_without_activity_spam() {
-        let (mut state, _root_id, child_id) = state_with_one_child();
+    fn child_refusal_delta_renders_writing_status_without_activity_spam()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut state, _, child_id) = state_with_one_child()?;
 
         handle_child_event(
             &mut state,
@@ -1134,14 +1121,15 @@ mod tests {
             },
         );
 
-        let output = render_agent_panel(&mut state);
+        let output = render_agent_panel(&mut state)?;
         assert!(output.contains("writing"), "got: {output:?}");
         assert_eq!(state.activity_log.len(), 0);
+        Ok(())
     }
 
     #[test]
-    fn child_tool_delta_and_error_surface_live() {
-        let (mut state, _root_id, child_id) = state_with_one_child();
+    fn child_tool_delta_and_error_surface_live() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut state, _, child_id) = state_with_one_child()?;
 
         handle_child_event(
             &mut state,
@@ -1155,7 +1143,7 @@ mod tests {
                 kind: norn::provider::request::ToolCallKind::Function,
             },
         );
-        let out = render_agent_panel(&mut state);
+        let out = render_agent_panel(&mut state)?;
         assert!(out.contains("bash"), "got: {out:?}");
 
         handle_child_event(
@@ -1168,11 +1156,22 @@ mod tests {
                 },
             },
         );
-        let out = render_agent_panel(&mut state);
+        let out = render_agent_panel(&mut state)?;
         assert!(out.contains("error"), "got: {out:?}");
-        let entry = state.activity_log.entries().back().unwrap();
+        let entry = state
+            .activity_log
+            .entries()
+            .back()
+            .ok_or("expected activity entry")?;
         assert_eq!(entry.tool_name, "error");
-        assert!(entry.description.as_deref().unwrap().contains("network"));
+        assert!(
+            entry
+                .description
+                .as_deref()
+                .ok_or("expected activity description")?
+                .contains("network")
+        );
+        Ok(())
     }
 
     // ---------------- Retry visibility (C6 / DESIGN D8) ----------------
@@ -1195,8 +1194,9 @@ mod tests {
     /// the wait is legible in a single-agent session (no panel rows) and
     /// in a subtree alike.
     #[test]
-    fn root_retry_surfaces_on_the_status_row_and_the_agent_row() {
-        let (mut state, root_id, _child_id) = state_with_one_child();
+    fn root_retry_surfaces_on_the_status_row_and_the_agent_row()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut state, root_id, _) = state_with_one_child()?;
         let now = Instant::now();
 
         handle_stream_retry(
@@ -1217,23 +1217,28 @@ mod tests {
             "the root's status row must carry the wait: {:?}",
             state.streaming_indicator
         );
-        let out = render_agent_panel(&mut state);
+        let out = render_agent_panel(&mut state)?;
         assert!(
             out.contains("retrying in 8s (attempt 3 of 5, server_error)"),
             "the root row must carry the wait too: {out:?}"
         );
-        let entry = state.activity_log.entries().back().unwrap();
+        let entry = state
+            .activity_log
+            .entries()
+            .back()
+            .ok_or("expected activity entry")?;
         assert_eq!(
             entry.tool_name,
             "retrying in 8s (attempt 3 of 5, server_error)"
         );
+        Ok(())
     }
 
     /// A child's retry belongs to the child's row: it must NOT hijack the
     /// root's status row, which is reporting the root's own turn.
     #[test]
-    fn child_retry_stays_on_the_child_row() {
-        let (mut state, _root_id, child_id) = state_with_one_child();
+    fn child_retry_stays_on_the_child_row() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut state, _, child_id) = state_with_one_child()?;
         let now = Instant::now();
         state.note_event_received(now);
 
@@ -1253,18 +1258,20 @@ mod tests {
             "a child's retry must not take over the root status row: {:?}",
             state.streaming_indicator
         );
-        let out = render_agent_panel(&mut state);
+        let out = render_agent_panel(&mut state)?;
         assert!(
             out.contains("retrying in 1s (attempt 2, unbounded, rate_limited)"),
             "got: {out:?}"
         );
+        Ok(())
     }
 
     /// The retry label clears when the replayed attempt starts streaming
     /// — no stale "retrying in 8s" left on the row.
     #[test]
-    fn the_replayed_attempts_first_delta_clears_the_retry_label() {
-        let (mut state, _root_id, child_id) = state_with_one_child();
+    fn the_replayed_attempts_first_delta_clears_the_retry_label()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut state, _, child_id) = state_with_one_child()?;
         handle_stream_retry(
             &mut state,
             child_id,
@@ -1272,7 +1279,7 @@ mod tests {
             &retry(2, None, 8_000, "timeout"),
             Instant::now(),
         );
-        assert!(render_agent_panel(&mut state).contains("retrying in 8s"));
+        assert!(render_agent_panel(&mut state)?.contains("retrying in 8s"));
 
         handle_child_event(
             &mut state,
@@ -1283,20 +1290,21 @@ mod tests {
             },
         );
 
-        let out = render_agent_panel(&mut state);
+        let out = render_agent_panel(&mut state)?;
         assert!(
             !out.contains("retrying"),
             "the wait is over; the row must stop announcing it: {out:?}"
         );
         assert!(out.contains("writing"), "got: {out:?}");
+        Ok(())
     }
 
     /// The label carries the taxonomy class verbatim and nothing else —
     /// provider free text never reaches this surface (it has no route
     /// here: the event itself only carries the class).
     #[test]
-    fn the_retry_label_carries_only_the_taxonomy_class() {
-        let (mut state, root_id, _child_id) = state_with_one_child();
+    fn the_retry_label_carries_only_the_taxonomy_class() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut state, root_id, _) = state_with_one_child()?;
         handle_stream_retry(
             &mut state,
             root_id,
@@ -1304,18 +1312,24 @@ mod tests {
             &retry(2, None, 1_000, "connection_reset"),
             Instant::now(),
         );
-        let entry = state.activity_log.entries().back().unwrap();
+        let entry = state
+            .activity_log
+            .entries()
+            .back()
+            .ok_or("expected activity entry")?;
         assert!(
             entry.tool_name.ends_with(", connection_reset)"),
             "got: {}",
             entry.tool_name
         );
         assert!(entry.description.is_none());
+        Ok(())
     }
 
     #[test]
-    fn subagent_lifecycle_pushes_activity_with_descriptor_context() {
-        let (mut state, root_id, child_id) = state_with_one_child();
+    fn subagent_lifecycle_pushes_activity_with_descriptor_context()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut state, root_id, child_id) = state_with_one_child()?;
         let descriptor = norn::provider::agent_event::SubagentDescriptor {
             kind: norn::provider::agent_event::SubagentKind::Spawn,
             role: "smoke-child".to_string(),
@@ -1332,7 +1346,11 @@ mod tests {
                 started_at: chrono::Utc::now(),
             },
         );
-        let started = state.activity_log.entries().back().unwrap();
+        let started = state
+            .activity_log
+            .entries()
+            .back()
+            .ok_or("expected activity entry")?;
         assert_eq!(started.agent_role, "smoke-child");
         assert_eq!(started.tool_name, "spawn started");
         assert_eq!(started.description.as_deref(), Some("gpt-5.5"));
@@ -1352,13 +1370,18 @@ mod tests {
                 stop: None,
             },
         );
-        let completed = state.activity_log.entries().back().unwrap();
+        let completed = state
+            .activity_log
+            .entries()
+            .back()
+            .ok_or("expected activity entry")?;
         assert_eq!(completed.tool_name, "spawn failed");
         assert_eq!(
             completed.description.as_deref(),
             Some("cancelled by parent")
         );
-        let out = render_agent_panel(&mut state);
+        let out = render_agent_panel(&mut state)?;
         assert!(out.contains("failed"), "got: {out:?}");
+        Ok(())
     }
 }

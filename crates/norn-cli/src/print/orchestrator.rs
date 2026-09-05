@@ -247,14 +247,14 @@ pub(super) async fn orchestrate(
     let result = match sink_error.or(install_error) {
         Some(err) => Err(err),
         None => {
-            orchestrate_run(
+            Box::pin(orchestrate_run(
                 cli,
                 assembly,
                 prompt,
                 output_schema,
                 driven_run,
                 stream_sink.as_ref(),
-            )
+            ))
             .await
         }
     };
@@ -710,9 +710,10 @@ fn collect_new_events(store: &EventStore, since: usize) -> Vec<SessionEvent> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     use crate::commands::slash::SlashState;
     use crate::commands::slash::state::SlashStateSeed;
@@ -753,8 +754,8 @@ mod tests {
     /// driver resuming by the reported id must land on the post-clear
     /// timeline, never the retired session's full history.
     #[test]
-    fn clear_report_carries_the_rotated_session_id() -> Result<(), norn::error::ConfigError> {
-        let tmp = tempfile::tempdir().unwrap();
+    fn clear_report_carries_the_rotated_session_id() -> TestResult {
+        let tmp = tempfile::tempdir()?;
         let opened = SessionManager::new(tmp.path())
             .create(
                 CreateSessionOptions {
@@ -764,25 +765,26 @@ mod tests {
                 },
                 norn::session::DurabilityPolicy::Flush,
             )
-            .expect("create session");
+            .map_err(|error| std::io::Error::other(format!("create session: {error}")))?;
         let old_id = opened.entry.id;
         let state = slash_state_for(tmp.path(), Some(old_id.clone()), false)?;
         state
             .clear_requested
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
-        let report = apply_clear_and_report(&state).expect("rotation succeeds");
+        let report = apply_clear_and_report(&state)
+            .map_err(|error| std::io::Error::other(format!("rotation succeeds: {error}")))?;
 
         let new_id = report
             .envelope_session_id
-            .expect("a persisted invocation keeps a session id");
+            .ok_or("a persisted invocation keeps a session id")?;
         assert_ne!(new_id, old_id, "the envelope must name the NEW session");
         assert_eq!(
             state.current_session_id().as_deref(),
             Some(new_id.as_str()),
             "the envelope id is the live cell",
         );
-        let line = report.operator_line.expect("a clear is reported");
+        let line = report.operator_line.ok_or("a clear is reported")?;
         assert!(
             line.contains(&new_id),
             "the stderr line must name the rotated id: {line}",
@@ -793,12 +795,12 @@ mod tests {
     /// No pending `/clear`: nothing is printed and the envelope keeps the
     /// original session id.
     #[test]
-    fn clear_report_without_pending_clear_keeps_the_original_id()
-    -> Result<(), norn::error::ConfigError> {
-        let tmp = tempfile::tempdir().unwrap();
+    fn clear_report_without_pending_clear_keeps_the_original_id() -> TestResult {
+        let tmp = tempfile::tempdir()?;
         let state = slash_state_for(tmp.path(), Some("original-id".to_owned()), false)?;
 
-        let report = apply_clear_and_report(&state).expect("no-op succeeds");
+        let report = apply_clear_and_report(&state)
+            .map_err(|error| std::io::Error::other(format!("no-op succeeds: {error}")))?;
 
         assert!(report.operator_line.is_none());
         assert_eq!(report.envelope_session_id.as_deref(), Some("original-id"));
@@ -809,15 +811,15 @@ mod tests {
     /// operator still gets the confirmation, and the envelope keeps
     /// reporting no session.
     #[test]
-    fn clear_report_no_session_confirms_without_a_session_id()
-    -> Result<(), norn::error::ConfigError> {
-        let tmp = tempfile::tempdir().unwrap();
+    fn clear_report_no_session_confirms_without_a_session_id() -> TestResult {
+        let tmp = tempfile::tempdir()?;
         let state = slash_state_for(tmp.path(), None, true)?;
         state
             .clear_requested
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
-        let report = apply_clear_and_report(&state).expect("in-memory clear succeeds");
+        let report = apply_clear_and_report(&state)
+            .map_err(|error| std::io::Error::other(format!("in-memory clear succeeds: {error}")))?;
 
         assert_eq!(
             report.operator_line.as_deref(),
@@ -830,15 +832,17 @@ mod tests {
     /// A failed rotation surfaces typed and reports NOTHING — the
     /// "Conversation cleared." line can never precede a failed rotation.
     #[test]
-    fn clear_report_failure_prints_nothing() -> Result<(), norn::error::ConfigError> {
-        let tmp = tempfile::tempdir().unwrap();
+    fn clear_report_failure_prints_nothing() -> TestResult {
+        let tmp = tempfile::tempdir()?;
         // A session id absent from the (empty) index: resolution fails.
         let state = slash_state_for(tmp.path(), Some("missing-session".to_owned()), false)?;
         state
             .clear_requested
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
-        let err = apply_clear_and_report(&state).expect_err("rotation must fail");
+        let Err(err) = apply_clear_and_report(&state) else {
+            return Err("rotation must fail".into());
+        };
         assert!(matches!(err, SessionPersistError::NotFound { .. }));
         assert_eq!(
             state.current_session_id().as_deref(),
@@ -877,44 +881,53 @@ mod tests {
     }
 
     #[test]
-    fn parse_output_schema_returns_none_for_none_input() {
-        let result = parse_output_schema(None).unwrap();
+    fn parse_output_schema_returns_none_for_none_input() -> TestResult {
+        let result = parse_output_schema(None)?;
         assert!(result.is_none());
+        Ok(())
     }
 
     #[test]
-    fn parse_output_schema_inline_json_parses() {
-        let result = parse_output_schema(Some(r#"{"type":"object"}"#))
-            .unwrap()
-            .unwrap();
+    fn parse_output_schema_inline_json_parses() -> TestResult {
+        let result = parse_output_schema(Some(r#"{"type":"object"}"#))?
+            .ok_or("provided schema must produce a value")?;
         assert_eq!(result, serde_json::json!({"type": "object"}));
+        Ok(())
     }
 
     #[test]
-    fn parse_output_schema_invalid_inline_json_is_argument_error() {
-        let err = parse_output_schema(Some("{invalid")).unwrap_err();
+    fn parse_output_schema_invalid_inline_json_is_argument_error() -> TestResult {
+        let Err(err) = parse_output_schema(Some("{invalid")) else {
+            return Err("invalid inline schema must fail".into());
+        };
         match err {
             PrintError::Argument(_) => {}
-            other => panic!("expected Argument, got {other:?}"),
+            other => return Err(format!("expected Argument, got {other:?}").into()),
         }
         assert_eq!(err.exit_code(), ExitCode::ArgumentError);
+        Ok(())
     }
 
     #[test]
-    fn parse_output_schema_file_path_reads_and_parses() {
-        let dir = tempfile::tempdir().unwrap();
+    fn parse_output_schema_file_path_reads_and_parses() -> TestResult {
+        let dir = tempfile::tempdir()?;
         let path = dir.path().join("schema.json");
-        std::fs::write(&path, r#"{"type":"string"}"#).unwrap();
-        let result = parse_output_schema(Some(path.to_str().unwrap()))
-            .unwrap()
-            .unwrap();
+        std::fs::write(&path, r#"{"type":"string"}"#)?;
+        let result = parse_output_schema(Some(
+            path.to_str().ok_or("fixture schema path is not UTF-8")?,
+        ))?
+        .ok_or("provided schema must produce a value")?;
         assert_eq!(result, serde_json::json!({"type": "string"}));
+        Ok(())
     }
 
     #[test]
-    fn parse_output_schema_missing_file_is_argument_error() {
-        let err = parse_output_schema(Some("/no/such/file.json")).unwrap_err();
+    fn parse_output_schema_missing_file_is_argument_error() -> TestResult {
+        let Err(err) = parse_output_schema(Some("/no/such/file.json")) else {
+            return Err("missing schema file must fail".into());
+        };
         assert!(matches!(err, PrintError::Argument(_)));
+        Ok(())
     }
 
     #[test]

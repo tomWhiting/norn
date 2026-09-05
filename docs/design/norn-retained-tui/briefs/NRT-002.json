@@ -1,0 +1,839 @@
+{
+  "id": "NRT-002",
+  "cluster": "norn-retained-tui",
+  "status": "local_preview_installed_release_verification_pending",
+  "title": "Exact publication binding for retained assistant and human input",
+  "baseline": "5b6f45839f41d786694a16c6dc04c92bb7dc4902",
+  "branch": "codex/norn-retained-tui",
+  "worktree": "/private/tmp/norn-retained-tui",
+  "depends_on": [
+    "NCS-001"
+  ],
+  "blocked_by": [],
+  "checklist": [
+    "C9",
+    "C10",
+    "C11",
+    "C12"
+  ],
+  "stories": [
+    "S4"
+  ],
+  "purpose": "Replace live assistant and admitted human input rows with their exact accepted records, without text, provider-response-ID, time, order, or history-window association guesses.",
+  "task": "Implement the approved OnceLock/Notify producer-ticket repair with exact store/projection/TUI bindings under four exclusive source owners. Preserve every draft acceptance clause. NRT-001 R3/R5/R7 completion depends on this repair; no programme rows are added or renumbered.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Common observation owner and exact producer publication",
+      "owner": "norn_models",
+      "depends_on": [],
+      "spec": "WHEN an execution produces an actual request/retry or appends opening/assistant content, THE SYSTEM SHALL bind opaque observations to the actual source, attempt and accepted EventId without changing execution policy.",
+      "files": {
+        "modify": [
+          "crates/norn/src/provider/agent_event.rs",
+          "crates/norn/src/loop/classify.rs",
+          "crates/norn/src/loop/runner/provider_call.rs",
+          "crates/norn/src/loop/runner/setup.rs",
+          "crates/norn/src/loop/helpers.rs",
+          "crates/norn/src/loop/response_publication.rs",
+          "crates/norn/src/loop/runner/machine.rs",
+          "crates/norn/src/error/subsystems.rs",
+          "crates/norn/src/loop/delivery_inputs.rs",
+          "crates/norn/src/tests/integration.rs",
+          "crates/norn/src/loop/runner/tests.rs",
+          "crates/norn-cli/src/print/output.rs",
+          "crates/norn-cli/src/print/output/provider_events.rs",
+          "crates/norn/src/provider/channel_event.rs",
+          "crates/norn/src/loop/runner/tests/streaming_nudge.rs",
+          "crates/norn-cli/src/print/orchestrator.rs"
+        ],
+        "create": [
+          "crates/norn/src/provider/agent_event/observation.rs",
+          "crates/norn/src/provider/agent_event/observation_owner.rs",
+          "crates/norn/src/provider/agent_event/observation_tests.rs",
+          "crates/norn/src/loop/runner/tests/publication_binding.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "One common owner owns observation schema, sender derivation, caller/setup wiring, shared append helpers, delivery_inputs caller, typed SessionError propagation and all producer regression fixtures. Use private OnceLock resolution cells and one coalescing execution Notify. Complete successful receipts synchronously in the actual append-owning closure before cancellable hooks or outer continuations; cloned tickets cannot publish. Validate source/sender identity; child senders drop parent scope.",
+        "One AgentEventKind::Observed(ObservedAgentEvent) carries a private ObservationScope (Execution, Response or Attempt) and the boxed original AgentEventKind, without cloning its body. Nested wrapping is refused. Every scope shares the opaque execution-owner identity. Provider envelopes carry exact attempt tickets; auxiliary tool-result/compaction/message envelopes carry execution provenance so an old turn cannot acquire a new turn identity.",
+        "machine.rs owns a checked actual iteration increment; provider_call derives its zero-based response scope from that real value. classify owns checked positive retry identity and refuses maximum-counter failure before retry.rs can emit a reused next-attempt notice. retry.rs is excluded: no saturating or wrapping identity is permitted.",
+        "Add only transparent boxed ObservationError to SessionError in error/subsystems.rs, preserving typed failures through NornError::Session rather than string-erasing them as StorageError.",
+        "There is no queue of receipts. Each opening admission has one outcome cell; each actual provider attempt has one outcome cell; each response owner retains at most one winning attempt.",
+        "Outcome cells are single-assignment immutable receipts. A producer guard owns the only resolution right. Cloned tickets are read handles, not additional publishers.",
+        "The already bounded broadcast holds live-envelope ticket Arcs. Failed attempts are not accumulated in a producer ledger. The frontend retains tickets only for attempts it actually displayed and removes resolved tickets after processing.",
+        "An entirely missed attempt produces no provisional row. Its ordinary committed HistoryRecord is sufficient and receives no invented live alias.",
+        "One execution Notify stores a coalesced wake, not one message per publication. It never blocks the producer. Consumers also inspect ticket resolution on initial envelope admission, so a notification that preceded ticket delivery cannot lose the receipt.",
+        "The pending ticket set is tied to currently owned live/provisional work, not elapsed time or total historical events. It must be drained on notification, turn completion and source replacement. Closed scopes reject late admission.",
+        "Compact HistoryRecord data contains metadata and approved lazy body references only. It is moved into one cell once. Original provider bodies remain in the store; no per-frame or per-delta copies are introduced.",
+        "At each producer request boundary, create a response owner with the actual response index. Each retry creates an attempt ticket before streaming and sends that ticket on every live provider envelope. Do not depend on a separate start notification being received.",
+        "A failed streaming attempt resolves NotAccepted before retry waiting; cancellation drops its producer guard and resolves NotAccepted. The resolution notifies the frontend so a lost retry broadcast cannot leave a failed provisional copy active.",
+        "On successful assembly, transfer the winning ticket to the response publication owner; success at this stage is not acceptance and resolves no Accepted cell.",
+        "Move the publication-resolution guard into the same owner closure that performs append or append_batch. On successful append, mint the exact indexed compact record, fill Accepted and notify synchronously before returning or awaiting hooks. On a failed append fill NotAccepted. Never move a successful receipt back to the outer future for later publication.",
+        "If append later moves to spawn_blocking, the owning closure retains the resolution guard: dropping the outer future cannot prematurely resolve NotAccepted while that worker can still commit. The worker reports the final actual outcome.",
+        "A post-append view-projection failure is AcceptedButUnavailable with the exact EventId and safe error category; it is neither a false successful display association nor a false claim that storage rolled back.",
+        "Generic MockProvider TextDelta + Done(None) yields one exact Accepted assistant receipt after actual append.",
+        "Canonical response items and a multi-response tool loop produce distinct exact response/attempt/event bindings.",
+        "A failed retry resolves its ticket NotAccepted; only the actual winning attempt obtains the published record.",
+        "No Accepted receipt after pre-append validation or sink failure.",
+        "Cancellation before append resolves NotAccepted; cancellation while a hook waits preserves the already Accepted receipt.",
+        "Use a controlled append owner fixture to prove the resolution occurs in the owner closure: stopping the outside waiter cannot mark NotAccepted before the owner reports success.",
+        "Opening input receipt names the precise accepted UserMessage; child-result and external-wake paths never claim an operator opening input.",
+        "Human steer acknowledgement carries its exact accepted EventId and survives cancellation while hooks await.",
+        "Repeated identical text in separate turns remains two distinct accepted inputs and responses.",
+        "R1 owns all caller/setup/shared append changes, active-input acknowledgement inside the real append closure, CLI exhaustive observed-envelope sinks and the single producer regression file. R2 does not edit those files.",
+        "R1 and R2 may author independently after their opaque observation/index/input seam is fixed and acknowledged. No concurrent shared-file edits; final integration and proof still require the completed seam.",
+        "Add a transparent boxed ObservationError variant in provider/channel_event.rs so checked scoped-envelope failures retain their actual typed source. Never relabel an observation/source failure as NoObservers or another delivery outcome; no payload duplication, new event route or observer authority.",
+        "crates/norn/src/loop/runner/tests/streaming_nudge.rs: The actual core-check02 exhaustive-match failures authorize only an explicit AgentEventKind::Observed arm in the named existing test fixture. Preserve the current unscoped event route, unexpected-event refusal and every original semantic assertion. Do not add a wildcard, todo, ignore, lint bypass or new source/behavior access. Apply only after the active source owner thaws the current compile.",
+        "Core test-only cleanup within current modified source walls: review_child_context exclusively owns loop/commands.rs, session/branch.rs and session/spool.rs under crates/norn/src. norn_models retains loop/classify.rs and provider/agent_event.rs. Remove the five inherited allow attributes and resolve their underlying test unwrap/expect uses, preserving every semantic assertion and production bytes for this cleanup. Propagate Result failures; no skips, weaker assertions, wildcard bypasses or unrelated unchanged-module changes. Common-owner Clippy style repairs are a separately identified existing task, not permission to change production through this test-cleanup partition. The 52-file pre-thaw core AST snapshot remains historical evidence. Source ownership must be acknowledged before parallel cleanup; no concurrent writes to a shared file. The whole-workspace Clippy01 run has ended and root explicitly released the document freeze. These are existing paths only and all NRT acceptance and final verification requirements remain.",
+        "The existing modified-core test cleanup includes inherited panic/panic!, expect_err and unwrap_err as well as unwrap and expect. Replace these with contextful fallible Result diagnostics while preserving every original semantic assertion and production bytes for the cleanup. No new skips, weaker assertions, or replacement bypasses.",
+        "norn_models additionally performs test-only cleanup in its already-owned NRT-002 R1 crates/norn/src/tests/integration.rs: the inspected inherited test code has six unwrap, sixteen expect and two panic uses. Do not remove or edit the allow attribute in unchanged tests/mod.rs, and do not expand into unrelated test modules. This is an existing-path cleanup; all owner coordination and final verification requirements remain.",
+        "Box::pin the sole inner orchestrate_run(...).await at the existing shared wrapper in crates/norn-cli/src/print/orchestrator.rs (inspection anchor line250). Preserve that wrapper's existing signal ownership, output sink, typed error envelope, cancellation and drop behavior. This is only an allocation boundary for the inner future to address the three observed >16KiB outer-future Clippy failures; it spawns no task and changes no protocol, configuration or runtime policy. driven.rs and additional speculative call sites are outside this amendment. Verify the composed call sites before claiming the diagnostic is resolved.",
+        "After root released the actual-App source freeze, norn_models exclusively owns test-only cleanup in crates/norn-cli/src/print/orchestrator.rs and crates/norn-cli/src/print/output.rs, both already in NRT-002 R1. Remove their two inherited allow attributes and underlying 22/41 test unwrap, expect, panic, expect_err and unwrap_err operations. Preserve every existing test attribute, assertion predicate, expected-refusal case, lifetime guard and contextful failure diagnostic. Preserve the complete production prefixes byte-for-byte against the final core/CLI audit; no source behavior change, replacement suppression, skip, wildcard or unrelated unchanged-module cleanup is authorized."
+      ],
+      "checklist": [
+        "C9"
+      ],
+      "stories": [
+        "S4"
+      ],
+      "acceptance_greps": [
+        "rg -n \"OnceLock|Notify|Observation\" crates/norn/src/provider/agent_event/observation.rs crates/norn/src/provider/agent_event/observation_owner.rs",
+        "rg -n \"publication|accepted|cancel|retry\" crates/norn/src/loop/runner/tests/publication_binding.rs"
+      ],
+      "design_refs": [
+        "D-NRT-002",
+        "publication_binding",
+        "D-CLI-TEST-CLEANUP"
+      ]
+    },
+    {
+      "id": "R2",
+      "title": "Indexed store, exact reconciliation and human input receipt",
+      "owner": "channels_compatibility",
+      "depends_on": [
+        "R1"
+      ],
+      "spec": "WHEN a producer supplies an exact accepted EventId or ticket, THE SYSTEM SHALL read only its indexed compact record and reconcile only the proven source/item/attempt, retaining one canonical human body and late-event fences.",
+      "files": {
+        "modify": [
+          "crates/norn/src/session/store/history_page.rs",
+          "crates/norn/src/session/store/history_page_tests.rs",
+          "crates/norn/src/session_view/projection.rs",
+          "crates/norn/src/session_view/live.rs",
+          "crates/norn/src/session_view/local.rs",
+          "crates/norn/src/session_view/error.rs",
+          "crates/norn/src/session_view/mod.rs",
+          "crates/norn/src/loop/active_input.rs",
+          "crates/norn/src/session/spool/range.rs",
+          "crates/norn/src/session_view/projection_tests.rs",
+          "crates/norn/src/session_view/index.rs",
+          "crates/norn/src/session_view/contract.rs",
+          "crates/norn/src/session_view/committed.rs",
+          "crates/norn/src/session_view/contract_tests.rs"
+        ],
+        "create": [
+          "crates/norn/src/session_view/publication.rs",
+          "crates/norn/src/session_view/publication_tests.rs",
+          "crates/norn/src/session_view/chronology.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "The second owner alone owns indexed store history lookup, projection input/assistant reconciliation and retired-attempt fences, plus the ActiveInputDelivery leaf type. The common owner retains delivery_inputs/setup/shared append helpers and the single producer regression file. Fix the observation/index/input seam with both owners before parallel authoring; coordinate any schema change before dependent edits.",
+        "Exact indexed read returns the same compact identity as the corresponding page.",
+        "Wrong source generation, absent EventId, index/ordinal conflict and changed managed writer are typed refusals.",
+        "Only the selected raw event is cloned under lock; projection happens after releasing it.",
+        "SessionProjection::reconcile_input_record(local: &ItemId, record: &HistoryRecord) -> Result<(), ViewError>. Validate same source, existing Local Input, exact committed UserContent target, and conflict/idempotence rules; retain one canonical committed body and alias the old local item. Never infer local identity from text.",
+        "Consumer invokes existing reconcile_history_record only with an Accepted record from the matching opaque attempt ticket, after source/execution checks. Shared projection records an exact retired-attempt fence so later buffered envelopes cannot recreate the live copy.",
+        "For human steers, preserve the existing ActiveInputDelivery transport, add the actual accepted EventId, and emit its acknowledgement inside the same actual append-owner closure before hooks. The TUI obtains the owner-minted exact record off the input/paint path and calls the same input reconciliation API. Do not create a second steer route.",
+        "A scoped live event names its actual source, execution, response and retry; the reducer never assigns it to a counter inferred from another received event.",
+        "Broadcast lag marks the affected current live attempt incomplete. Further unproven deltas must not be concatenated across the missing interval. A later actual attempt starts under its own explicit producer key.",
+        "The ticket cell survives missing publication/retry notifications whenever any provisional fragment was displayed. On the Notify wake, reconcile Accepted or retire NotAccepted using that exact ticket.",
+        "Publication before buffered live delivery: inspect ticket first, accept its record, set the retired fence, and do not apply stale deltas. Publication after live delivery: replace only that ticket's provisional rows.",
+        "History before receipt and receipt before history both call idempotent apply_history_record through exact reconciliation; neither requires a FIFO or event-window guess.",
+        "Generic text without canonical response-item identities is retired, but does not gain a fabricated body-offset alias. Canonical item/part and exact tool call identity aliases retain existing R1 validation. Old body revisions stay explicitly stale and locally pinned copy bytes remain governed by existing copy rules.",
+        "Source replacement rejects old generation tickets even if session names, event contents or execution UUIDs look similar. A late old execution cannot acquire the new execution's accepted-model stamp.",
+        "ActiveInputDelivery adds the actual accepted EventId while preserving its existing transport. Common owner retains delivery_inputs/setup/helpers and all producer regression fixtures.",
+        "R2 early authoring is permitted after the shared seam is fixed, while R1 remaining work continues. R1 remains the R2 integration/validation/completion prerequisite.",
+        "Validate the managed current registered spool owner before acquiring the store lock and off the paint/input path, using the existing registered-entry guard in session/spool/range.rs. Cached store ID/generation alone cannot prove that a deleted/recreated session still owns the registered writer. Reuse existing authority; no new capability, filesystem work under the store lock or whole-history/body read.",
+        "LiveReduction exposes completion_item: Option<ItemId> from the actual Done reduction; the core retains its compact Done label without adding a duplicate local metadata body. The TUI retains typed Done stop_reason, response_id and Usage under the exact active-execution identity, then moves those facts into the one final completion-details body. It uses exact returned routine notice IDs for compact presentation, never order/text/label guesses, and does not duplicate retained metadata or transcript caches. Every original fact remains inspectable; stale source/execution fences and existing source walls remain unchanged.",
+        "crates/norn/src/session_view/projection_tests.rs: The actual core-check02 exhaustive-match failures authorize only an explicit AgentEventKind::Observed arm in the named existing test fixture. Preserve the current unscoped event route, unexpected-event refusal and every original semantic assertion. Do not add a wildcard, todo, ignore, lint bypass or new source/behavior access. Apply only after the active source owner thaws the current compile.",
+        "Chronology repair: channels_compatibility owns exactly session_view/index.rs, projection.rs, live.rs, publication.rs, projection_tests.rs and publication_tests.rs under the existing core responsibility. Core source remains frozen until root releases the running core library test; documentation registration alone is not source thaw. No new file, store/provider API or tool authority is authorized.",
+        "Index live/local presentation by the observed source-bound event gap, not wall-clock time or an invented sequence. Advance a monotonic cursor-ordinal boundary for every validated HistoryRecord, including zero-display metadata. Loading older history never rewinds that boundary or moves new local output ahead of already observed canonical events.",
+        "Associate the exact Done-created ItemId with its completed AttemptKey. When the exact accepted HistoryRecord reconciles, relocate that attempt’s retained Done within the matching completion bucket and update every existing index membership consistently. Preserve all ItemIds, source/body references and actual order evidence. A ticket with no provisional fragment still places its exact retained completion by the real record cursor. Receipt-before-history and history-before-receipt reconciliation are idempotent.",
+        "Bound completion relocation work to the matching attempt bucket with index updates O(bucket_size * log(indexed_rows)); no global completion scan, transcript clone, new identity map without ownership, arbitrary cap, polling or provider-ID/text matching. Preserve existing bounded tool lookup and indexed pinned traversal behavior.",
+        "Regression proof includes an earlier local error/final completion followed by a later canonical human prompt and assistant answer, both ordinary and pinned Later traversal; later older/tail pages; zero-row metadata boundary advance; Done receipt/history in both orders and with skipped fragments; stable exact IDs/body refs; and operation-count bounds for a matching completion bucket. Reading remains pinned until the operator explicitly returns to live. The TUI final summary continues after drain; do not add speculative completion IDs or weaken current source fences.",
+        "Keep the registered chronology repair within the 500 production-line policy by creating private session_view/chronology.rs. It owns only Order/Position, the observed source event-gap boundary/local counter and exact AttemptKey-to-Done-ItemId membership. The already-walled session_view/mod.rs adds only mod chronology;. ItemIndex remains the sole ViewItem owner and updates every existing row/tool/attempt index when rekeying. No public API, I/O, body clone, secondary transcript, new authority or acceptance reduction. channels_compatibility owns this split and the original chronology regressions.",
+        "channels_compatibility owns exactly session_view/contract.rs, committed.rs, live.rs, contract_tests.rs, projection_tests.rs and publication_tests.rs. Introduce typed ViewItemKind::Metadata for retained explicit-details-only records, limited to ProviderEpochBoundary, the exact known provider.state.provenance discriminator, UsageEstimate and provider Done. Default input label becomes plain Input without asserting human origin. Preserve all records, ItemIds, provenance, usage, body capabilities and source fences; errors/refusals, unknown/unavailable content and external attribution remain visible. Unknown categories are not silently hidden. Routine Done still contributes its complete facts to the one normal completion detail presentation.",
+        "The ordinary TUI view hides only the typed Metadata category and exposes it through explicit detail inspection; do not remove it from the semantic projection or persisted history, or use arbitrary text/label matching. norn_tui owns app/render/transcript.rs presentation integration; root coordinates any shared visibility wiring with that owner rather than writing the same file concurrently. Existing data preservation, publication binding, completion grouping, pinned reading and typed error requirements remain."
+      ],
+      "checklist": [
+        "C10"
+      ],
+      "stories": [
+        "S4"
+      ],
+      "acceptance_greps": [
+        "rg -n \"history_record|event_id|generation\" crates/norn/src/session/store/history_page.rs",
+        "rg -n \"reconcile_input_record|retired|canonical\" crates/norn/src/session_view/publication.rs"
+      ],
+      "design_refs": [
+        "D-NRT-002",
+        "publication_binding",
+        "D-PUBLICATION-CHRONOLOGY",
+        "D-CHRONOLOGY-SPLIT-TEST-ROOT",
+        "D-USER-PREVIEW-PRESENTATION"
+      ]
+    },
+    {
+      "id": "R3",
+      "title": "TUI receipt consumption and compact completion",
+      "owner": "norn_tui",
+      "depends_on": [
+        "R1",
+        "R2"
+      ],
+      "spec": "WHEN scoped envelopes, receipt wakes or ordinary history arrive in any order, THE SYSTEM SHALL consume exact publication proof and replace only matching provisional/input rows while preserving source/execution fences.",
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/app/transcript.rs",
+          "crates/norn-tui/src/app/transcript_tests.rs",
+          "crates/norn-tui/src/app/notices.rs",
+          "crates/norn-tui/src/app/render.rs",
+          "crates/norn-tui/src/app/event_loop.rs",
+          "crates/norn-tui/src/app/turn/run.rs",
+          "crates/norn-tui/src/app/turn/mid.rs",
+          "crates/norn-tui/src/app/dispatch.rs",
+          "crates/norn-tui/src/app/dispatch/finalization.rs",
+          "crates/norn-tui/src/app/render/transcript.rs",
+          "crates/norn-tui/src/app/state.rs"
+        ],
+        "create": [
+          "crates/norn-tui/src/app/transcript/publication.rs",
+          "crates/norn-tui/src/app/transcript/publication_tests.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "New app/transcript/publication.rs owns the admitted execution handle, observed unresolved attempt tickets, resolution processing and late-event fences. New publication_tests.rs tests the real runtime receipt path. Transcript remains the integration owner; no second retained history-record cache is needed.",
+        "Before running a turn, retain begin_execution's exact UUID/model snapshot and create the store-validated execution sender/observation handle. Associate the exact submitted Local ItemId with the human opening admission in this same frontend owner.",
+        "On turn completion, process all currently resolved known tickets and the opening receipt before final history display. Ordinary history and ticket records are idempotent in either order. Then close admission to that execution and preserve exact retired-key fences for late buffered envelopes.",
+        "One AgentEventKind::Observed(ObservedAgentEvent) carries a private ObservationScope (Execution, Response or Attempt) and the boxed original AgentEventKind, without cloning its body. Nested wrapping is refused. Every scope shares the opaque execution-owner identity. Provider envelopes carry exact attempt tickets; auxiliary tool-result/compaction/message envelopes carry execution provenance so an old turn cannot acquire a new turn identity.",
+        "History-first and receipt-first each retain one assistant row set and one canonical human body.",
+        "A receipt seen before queued live deltas fences those deltas from recreating the provisional copy.",
+        "Broadcast lag with a retained ticket still reconciles from its cell; no receipt queue is required.",
+        "Losing every live event for an attempt leaves ordinary committed history without an invented alias.",
+        "Retry/cancel/stale-source/old-execution envelopes cannot rebind another attempt or model snapshot.",
+        "Generic fragment retirement does not invent canonical body-offset aliases; real item/part aliases continue to validate.",
+        "Notify coalescing and publication-before-notification-registration cannot lose an observable resolution.",
+        "Many failed retries retain no producer receipt ledger and impose no frontend backpressure; actual retained ticket ownership is asserted.",
+        "For one exact admitted execution, normal End and TurnCompleted facts share one compact completed-execution presentation row. Selection or expansion exposes every original completion fact, source, model, usage, timing and availability field. Errors, cancellation and coverage gaps remain explicit. Never drop metadata, invent success or associate records by text, time or proximity. Implement presentation only through existing TUI file walls.",
+        "Transcript::accept_history borrows &HistoryPage. Do not restore an owned-page clone or retain a second HistoryRecord cache. Inspect known ticket resolutions on initial admission, Notify wake and turn completion, including publication before notification registration.",
+        "One TUI owner coordinates event_loop.rs and turn/run.rs/turn/mid.rs with active R6 work. Preserve ordinary input, cancellation and provider controls. Normal completion presentation uses existing NRT-001 TUI render/finalization/notices paths only.",
+        "LiveReduction exposes completion_item: Option<ItemId> from the actual Done reduction; the core retains its compact Done label without adding a duplicate local metadata body. The TUI retains typed Done stop_reason, response_id and Usage under the exact active-execution identity, then moves those facts into the one final completion-details body. It uses exact returned routine notice IDs for compact presentation, never order/text/label guesses, and does not duplicate retained metadata or transcript caches. Every original fact remains inspectable; stale source/execution fences and existing source walls remain unchanged.",
+        "At finalise_turn, reconcile the actual root turn's final input/output usage against the already-accounted live_root_usage for that same turn. Add only that turn's missing deltas to the cumulative ledger and publish the actual current counters. The final result is authoritative. Reset/associate per-turn live accounting with exact root execution identity: a second turn with numerically equal usage must count again, not be mistaken for a duplicate. A duplicate Done fence has no UI usage side effect. Preserve all existing usage/model/budget controls and assertions; this is exact-turn reconciliation, not a new feature or a cross-turn numeric high-water mark."
+      ],
+      "checklist": [
+        "C11"
+      ],
+      "stories": [
+        "S4",
+        "S2"
+      ],
+      "acceptance_greps": [
+        "rg -n \"ExecutionObservation|resolution|notification|publication\" crates/norn-tui/src/app/transcript/publication.rs",
+        "rg -n \"accept_history\" crates/norn-tui/src/app/transcript.rs"
+      ],
+      "design_refs": [
+        "D-NRT-002",
+        "publication_binding"
+      ]
+    },
+    {
+      "id": "R4",
+      "title": "Actual producer and canonical PTY regression proof",
+      "owner": "channels_fixture owns canonical source; parent owns execution",
+      "depends_on": [
+        "R1",
+        "R2",
+        "R3"
+      ],
+      "spec": "WHEN the integrated repair is ready, THE SYSTEM SHALL verify actual append/runtime and run_app behavior against preserved prior artifacts without replacing fixtures to hide missing bindings.",
+      "files": {
+        "modify": [
+          "crates/norn-tui/tests/pty_smoke.rs",
+          "crates/norn-tui/tests/model_selection.rs",
+          "crates/norn-tui/tests/mcp_channels.rs",
+          "crates/norn-tui/tests/support/mcp_channels_tui.rs",
+          "crates/norn/src/integration/mcp_channel_startup_tests.rs"
+        ],
+        "create": [
+          "crates/norn-tui/tests/support/retained_screen.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "Version a new external PTY oracle attempt; preserve attempt01 and its report unchanged.",
+        "For actual run_app with existing MockProvider, assert exactly one rendered prompt body and one final assistant body after commit and lazy body loading, not merely substring presence.",
+        "Repeat the current geometry/resize/paging/restoration checks against the newly compiled exact source. No real provider request is needed.",
+        "R1 alone authors observation_tests.rs and runner/tests/publication_binding.rs. R2/R3 own their own regression files. This verification row assesses those proofs without another owner editing them.",
+        "channels_fixture alone edits the four canonical test paths, preserving model/budget/channel/cancel semantic assertions. Adapt terminal geometry and owned-frame evidence without weaker substring-only oracles. New retained_workspace modules stay in NRT-001 R7 for a separate future owner.",
+        "Fixture authoring may begin after source thaw. Actual repair validation requires completed R1-R3 and integrated R6 behavior; full NRT-001 R7 validation/completion still requires R6 and repaired publication binding. Authoring dispatch is not final row completion.",
+        "The new PTY attempt asserts exactly one prompt body, one accepted assistant body and one compact normal completion presentation, with metadata available in details and errors/gaps explicit. Preserve attempt01; no credentials or real provider request required.",
+        "Complete strict fmt/all-target Clippy and declared exact-commit205 battery plus required rigorous review on composed checkpoint. Earlier local PTY or library results are not repaired-candidate acceptance.",
+        "Use tests/support/retained_screen.rs as one shared existing-vte terminal observer for the canonical PTY suites, owned only by channels_fixture. Preserve real visible geometry, alternate-screen/resize/mode and exact-occurrence assertions plus real termios restoration; do not replace semantic assertions with weaker substring checks. No new dependency, clipboard acknowledgement, provider certification or broader terminal-matrix claim is introduced.",
+        "Within the existing canonical pty_smoke.rs wall, channels_fixture owns the child-result reporting repair: do not discard tx.send(result).await. The supervised fixture must retain and surface send failure, including the undelivered child outcome, and inspect the spawned task outcome; merely joining an ignored Result is insufficient. Preserve the existing actual-App assertions, deadline/termination behavior and the original application failure as evidence. This is fixture error supervision, not permission to weaken failed scenarios or alter production code.",
+        "Root owns a test-only correction in integration/mcp_channel_startup_tests.rs: the control helper canonicalizes the actual temporary directory with directory.canonicalize()? before McpConfigState::from_layers. macOS /var is a symlink to /private/var; the production no-follow-all-ancestors policy expects a canonical actual root. Preserve both existing tests, every assertion and error propagation. No production security/path policy, timeout, fallback or skipped case changes. The isolated built fixture reproduces the same NotDirectory error; do not attribute this failure to test interference."
+      ],
+      "checklist": [
+        "C12"
+      ],
+      "stories": [
+        "S4",
+        "S3"
+      ],
+      "acceptance_greps": [
+        "rg -n \"publication|prompt|assistant|completed|resize|restore\" crates/norn-tui/tests/pty_smoke.rs"
+      ],
+      "design_refs": [
+        "D-NRT-002",
+        "publication_binding",
+        "D-CLI-TEST-CLEANUP",
+        "D-CHRONOLOGY-SPLIT-TEST-ROOT"
+      ]
+    }
+  ],
+  "boundaries": [
+    "Pairing the next committed assistant with the latest observed Done or any current history tail.",
+    "Using optional provider response_id, display text, call names, timestamps, or identical bytes as local commit provenance.",
+    "A new unbounded mpsc receipt queue merely because ActiveInputDelivery currently has one.",
+    "An arbitrary new capacity, frontend-dependent permit wait, polling loop, or drop-oldest receipt policy.",
+    "A receipt emitted only after returning from a cancellable append offload or observer hook.",
+    "Changing the MockProvider fixture to hide the missing integration.",
+    "There is no queue of receipts. Each opening admission has one outcome cell; each actual provider attempt has one outcome cell; each response owner retains at most one winning attempt.",
+    "Outcome cells are single-assignment immutable receipts. A producer guard owns the only resolution right. Cloned tickets are read handles, not additional publishers.",
+    "The already bounded broadcast holds live-envelope ticket Arcs. Failed attempts are not accumulated in a producer ledger. The frontend retains tickets only for attempts it actually displayed and removes resolved tickets after processing.",
+    "An entirely missed attempt produces no provisional row. Its ordinary committed HistoryRecord is sufficient and receives no invented live alias.",
+    "One execution Notify stores a coalesced wake, not one message per publication. It never blocks the producer. Consumers also inspect ticket resolution on initial envelope admission, so a notification that preceded ticket delivery cannot lose the receipt.",
+    "The pending ticket set is tied to currently owned live/provisional work, not elapsed time or total historical events. It must be drained on notification, turn completion and source replacement. Closed scopes reject late admission.",
+    "Compact HistoryRecord data contains metadata and approved lazy body references only. It is moved into one cell once. Original provider bodies remain in the store; no per-frame or per-delta copies are introduced.",
+    "No provider wire/request schema change, universal AgentStepRequest field, stored event serialization, response commitment format, new queue/cap, frontend permit wait, polling or producer backpressure. No dependencies added.",
+    "Only observation, actual append acceptance publication and checked identity-counter refusal are in scope. Preserve execution/retry/backoff/active-input admission policies. error/subsystems.rs is the approved typed-error addition; retry.rs is outside the wall.",
+    "Current-frame map identity remains distinct from logical placeholder navigation anchors. Generic fragments gain no invented canonical offset alias; stale bodies remain explicit.",
+    "Exclusive source ownership includes overlapping NRT-001 work: hand off or pause before another owner touches a shared path. No additional retained_workspace fixture ownership is granted here."
+  ],
+  "verification": [
+    "Exact indexed read returns the same compact identity as the corresponding page.",
+    "Wrong source generation, absent EventId, index/ordinal conflict and changed managed writer are typed refusals.",
+    "Only the selected raw event is cloned under lock; projection happens after releasing it.",
+    "Generic MockProvider TextDelta + Done(None) yields one exact Accepted assistant receipt after actual append.",
+    "Canonical response items and a multi-response tool loop produce distinct exact response/attempt/event bindings.",
+    "A failed retry resolves its ticket NotAccepted; only the actual winning attempt obtains the published record.",
+    "No Accepted receipt after pre-append validation or sink failure.",
+    "Cancellation before append resolves NotAccepted; cancellation while a hook waits preserves the already Accepted receipt.",
+    "Use a controlled append owner fixture to prove the resolution occurs in the owner closure: stopping the outside waiter cannot mark NotAccepted before the owner reports success.",
+    "Opening input receipt names the precise accepted UserMessage; child-result and external-wake paths never claim an operator opening input.",
+    "Human steer acknowledgement carries its exact accepted EventId and survives cancellation while hooks await.",
+    "Repeated identical text in separate turns remains two distinct accepted inputs and responses.",
+    "History-first and receipt-first each retain one assistant row set and one canonical human body.",
+    "A receipt seen before queued live deltas fences those deltas from recreating the provisional copy.",
+    "Broadcast lag with a retained ticket still reconciles from its cell; no receipt queue is required.",
+    "Losing every live event for an attempt leaves ordinary committed history without an invented alias.",
+    "Retry/cancel/stale-source/old-execution envelopes cannot rebind another attempt or model snapshot.",
+    "Generic fragment retirement does not invent canonical body-offset aliases; real item/part aliases continue to validate.",
+    "Notify coalescing and publication-before-notification-registration cannot lose an observable resolution.",
+    "Many failed retries retain no producer receipt ledger and impose no frontend backpressure; actual retained ticket ownership is asserted.",
+    "Version a new external PTY oracle attempt; preserve attempt01 and its report unchanged.",
+    "For actual run_app with existing MockProvider, assert exactly one rendered prompt body and one final assistant body after commit and lazy body loading, not merely substring presence.",
+    "Repeat the current geometry/resize/paging/restoration checks against the newly compiled exact source. No real provider request is needed.",
+    "All NRT-001 acceptance.json and verification requirements remain. No source review/local diagnostic/old preview can substitute for exact-candidate205 receipt or required review."
+  ],
+  "design_source": "../design.json#publication_binding",
+  "draft_provenance": {
+    "path": "/private/tmp/nrt-001-proof/publication-binding/assistant-publication-draft.json",
+    "sha256": "50c19ba30364a504db5593c2c0d49554f6008bb399cf25533a1a16b19ed35a3f",
+    "approved_melbourne": "2026-09-06T01:09:56.305304+10:00"
+  },
+  "concurrency": {
+    "common_owner": "norn_models",
+    "second_owner": "channels_compatibility",
+    "tui_owner": "norn_tui",
+    "canonical_fixture_owner": "channels_fixture",
+    "parallel_authoring": "R1/R2 after fixed common seam; R7 canonical fixtures after thaw. R3 consumes completed R1/R2; final validation remains integrated.",
+    "forbidden": "Concurrent writes to any shared path; independent producer-fixture authors; early acceptance from early authoring.",
+    "core_test_cleanup_partitions": [
+      {
+        "at_melbourne": "2026-09-06T01:46:13.056851+10:00",
+        "authority": "Root approved existing-path core test cleanup after Clippy01 completion",
+        "test_only_owner": "review_child_context",
+        "test_only_paths": [
+          "crates/norn/src/loop/commands.rs",
+          "crates/norn/src/session/branch.rs",
+          "crates/norn/src/session/spool.rs"
+        ],
+        "common_owner": "norn_models",
+        "common_owner_paths": [
+          "crates/norn/src/loop/classify.rs",
+          "crates/norn/src/provider/agent_event.rs",
+          "crates/norn/src/tests/integration.rs"
+        ],
+        "new_source_paths": [],
+        "production_bytes_preserved_for_cleanup": true,
+        "scope": "Core test-only cleanup within current modified source walls: review_child_context exclusively owns loop/commands.rs, session/branch.rs and session/spool.rs under crates/norn/src. norn_models retains loop/classify.rs and provider/agent_event.rs. Remove the five inherited allow attributes and resolve their underlying test unwrap/expect uses, preserving every semantic assertion and production bytes for this cleanup. Propagate Result failures; no skips, weaker assertions, wildcard bypasses or unrelated unchanged-module changes. Common-owner Clippy style repairs are a separately identified existing task, not permission to change production through this test-cleanup partition. The existing modified-core test cleanup includes inherited panic/panic!, expect_err and unwrap_err as well as unwrap and expect. Replace these with contextful fallible Result diagnostics while preserving every original semantic assertion and production bytes for the cleanup. No new skips, weaker assertions, or replacement bypasses.",
+        "covered_test_operations": [
+          "unwrap",
+          "expect",
+          "unwrap_err",
+          "expect_err",
+          "panic"
+        ],
+        "unchanged_parent_module_excluded": "crates/norn/src/tests/mod.rs"
+      }
+    ],
+    "cli_test_cleanup_partitions": [
+      {
+        "at_melbourne": "2026-09-06T08:47:58.446688+10:00",
+        "authority": "Root released actual-App freeze; TUI test handoff acknowledged by root",
+        "source_wall_changed": false,
+        "new_source_paths": [],
+        "audit": {
+          "path": "/private/tmp/nrt-001-proof/core-cli-source-policy-final-01/REVIEW.json",
+          "sha256": "c9624277190064be439daa3c37383db145d214de61b02b8388199992a8d620b3",
+          "verdict": "changes_requested"
+        },
+        "parts": [
+          {
+            "file": "crates/norn-cli/src/commands/slash/registry.rs",
+            "brief_and_row": [
+              {
+                "brief": "NRT-001",
+                "recorded_owner": null,
+                "row": "R6"
+              }
+            ],
+            "owner": "review_child_context",
+            "requires_current_owner_handoff": "norn_tui explicit handoff",
+            "source_sha256": "41ec9b8327427f22abc287c54982e9914f960263976e05452ae2e871d8d4c544",
+            "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+            "operation_counts": {
+              "expect": 2,
+              "panic": 3,
+              "unwrap": 8
+            },
+            "total_operations": 13,
+            "preserve_production_prefix": {
+              "cfg_test_line": 442,
+              "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+              "production_prefix_bytes": 16666,
+              "production_prefix_sha256": "0cb91e595d8009b07fe9d2ce5a0acc3131b6fdc57f7e65eb134054fb3c379bd9"
+            }
+          },
+          {
+            "file": "crates/norn-cli/src/print/orchestrator.rs",
+            "brief_and_row": [
+              {
+                "brief": "NRT-002",
+                "recorded_owner": "norn_models",
+                "row": "R1"
+              }
+            ],
+            "owner": "norn_models",
+            "requires_current_owner_handoff": false,
+            "source_sha256": "0fe4a0185e3234ddb3c337f0751b7e861be585a1c8c9528b32517764de35e287",
+            "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+            "operation_counts": {
+              "expect": 6,
+              "expect_err": 1,
+              "panic": 1,
+              "unwrap": 12,
+              "unwrap_err": 2
+            },
+            "total_operations": 22,
+            "preserve_production_prefix": {
+              "cfg_test_line": 712,
+              "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+              "production_prefix_bytes": 32797,
+              "production_prefix_sha256": "2ef9464fff54b996d2c13c607aabd42d5579a522c34bc34834897b119213f848"
+            }
+          },
+          {
+            "file": "crates/norn-cli/src/print/output.rs",
+            "brief_and_row": [
+              {
+                "brief": "NRT-002",
+                "recorded_owner": "norn_models",
+                "row": "R1"
+              }
+            ],
+            "owner": "norn_models",
+            "requires_current_owner_handoff": false,
+            "source_sha256": "4bea124e6594d92d062c9f6caa820b7106bf1d89b779bc0ee8cebcd2a89d83c0",
+            "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+            "operation_counts": {
+              "expect": 3,
+              "unwrap": 38
+            },
+            "total_operations": 41,
+            "preserve_production_prefix": {
+              "cfg_test_line": 504,
+              "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+              "production_prefix_bytes": 20171,
+              "production_prefix_sha256": "abd4e938ae0578db924fb35516c6895ab1e4d131eaab8f2fb79dd5a6139e5caf"
+            }
+          },
+          {
+            "file": "crates/norn-cli/src/tui/driver.rs",
+            "brief_and_row": [
+              {
+                "brief": "NRT-001",
+                "recorded_owner": null,
+                "row": "R3"
+              }
+            ],
+            "owner": "review_child_context",
+            "requires_current_owner_handoff": "norn_tui explicit handoff",
+            "source_sha256": "a78544ec3ad4188cea9c087079972f32b8922fe2f9682f27b29ecabd76221312",
+            "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+            "operation_counts": {
+              "expect": 1
+            },
+            "total_operations": 1,
+            "preserve_production_prefix": {
+              "cfg_test_line": 342,
+              "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+              "production_prefix_bytes": 13628,
+              "production_prefix_sha256": "b3c3a573f4b0ad46753e84b5de1ab3b1c2fd92a1c153e41b1ef1e7fdf99384f0"
+            }
+          }
+        ],
+        "source_owner_handoff_acknowledged": true,
+        "scope": "Existing-wall test-only cleanup; all production-prefix hashes and semantic assertions preserved. Canonical pty_smoke result-send supervision retains original failures.",
+        "unapproved": "syntax.rs production strategy and PTY05 instrumentation are not authorized by this registration."
+      }
+    ]
+  },
+  "registered_melbourne": "2026-09-06T01:09:56.305304+10:00",
+  "registration_file_wall": [
+    "docs/design/norn-retained-tui/design.json",
+    "docs/design/norn-retained-tui/DESIGN.md",
+    "docs/design/norn-retained-tui/checklist.json",
+    "docs/design/norn-retained-tui/CHECKLIST.md",
+    "docs/design/norn-retained-tui/stories.json",
+    "docs/design/norn-retained-tui/USER-STORIES.md",
+    "docs/design/norn-retained-tui/briefs/NRT-001.json",
+    "docs/design/norn-retained-tui/briefs/NRT-001.md",
+    "docs/design/norn-retained-tui/briefs/NRT-002.json",
+    "docs/design/norn-retained-tui/briefs/NRT-002.md"
+  ],
+  "wall_amendments": [
+    {
+      "at_melbourne": "2026-09-06T01:11:39.340329+10:00",
+      "authority": "Root approved canonical shared fixture observer",
+      "row": "R4",
+      "create_additions": [
+        "crates/norn-tui/tests/support/retained_screen.rs"
+      ],
+      "scope": "Use tests/support/retained_screen.rs as one shared existing-vte terminal observer for the canonical PTY suites, owned only by channels_fixture. Preserve real visible geometry, alternate-screen/resize/mode and exact-occurrence assertions plus real termios restoration; do not replace semantic assertions with weaker substring checks. No new dependency, clipboard acknowledgement, provider certification or broader terminal-matrix claim is introduced."
+    },
+    {
+      "at_melbourne": "2026-09-06T01:14:34.150797+10:00",
+      "authority": "Root approved exact additional source path before owner edit",
+      "row": "R2",
+      "modify_additions": [
+        "crates/norn/src/session/spool/range.rs"
+      ],
+      "scope": "Validate the managed current registered spool owner before acquiring the store lock and off the paint/input path, using the existing registered-entry guard in session/spool/range.rs. Cached store ID/generation alone cannot prove that a deleted/recreated session still owns the registered writer. Reuse existing authority; no new capability, filesystem work under the store lock or whole-history/body read."
+    },
+    {
+      "at_melbourne": "2026-09-06T01:14:34.150797+10:00",
+      "authority": "Root approved exact additional source path before owner edit",
+      "row": "R1",
+      "modify_additions": [
+        "crates/norn/src/provider/channel_event.rs"
+      ],
+      "scope": "Add a transparent boxed ObservationError variant in provider/channel_event.rs so checked scoped-envelope failures retain their actual typed source. Never relabel an observation/source failure as NoObservers or another delivery outcome; no payload duplication, new event route or observer authority."
+    },
+    {
+      "at_melbourne": "2026-09-06T01:35:09.400882+10:00",
+      "authority": "Root approved exact actual core-check02 fixture repairs",
+      "row": "R1",
+      "modify_additions": [
+        "crates/norn/src/loop/runner/tests/streaming_nudge.rs"
+      ],
+      "scope": "The actual core-check02 exhaustive-match failures authorize only an explicit AgentEventKind::Observed arm in the named existing test fixture. Preserve the current unscoped event route, unexpected-event refusal and every original semantic assertion. Do not add a wildcard, todo, ignore, lint bypass or new source/behavior access. Apply only after the active source owner thaws the current compile."
+    },
+    {
+      "at_melbourne": "2026-09-06T01:35:09.400882+10:00",
+      "authority": "Root approved exact actual core-check02 fixture repairs",
+      "row": "R2",
+      "modify_additions": [
+        "crates/norn/src/session_view/projection_tests.rs"
+      ],
+      "scope": "The actual core-check02 exhaustive-match failures authorize only an explicit AgentEventKind::Observed arm in the named existing test fixture. Preserve the current unscoped event route, unexpected-event refusal and every original semantic assertion. Do not add a wildcard, todo, ignore, lint bypass or new source/behavior access. Apply only after the active source owner thaws the current compile."
+    },
+    {
+      "at_melbourne": "2026-09-06T01:37:54.218958+10:00",
+      "authority": "Root approved existing state path explicitly under NRT002 R3",
+      "row": "R3",
+      "modify_additions": [
+        "crates/norn-tui/src/app/state.rs"
+      ],
+      "scope": "At finalise_turn, reconcile the actual root turn's final input/output usage against the already-accounted live_root_usage for that same turn. Add only that turn's missing deltas to the cumulative ledger and publish the actual current counters. The final result is authoritative. Reset/associate per-turn live accounting with exact root execution identity: a second turn with numerically equal usage must count again, not be mistaken for a duplicate. A duplicate Done fence has no UI usage side effect. Preserve all existing usage/model/budget controls and assertions; this is exact-turn reconciliation, not a new feature or a cross-turn numeric high-water mark.",
+      "existing_callsite": "crates/norn-tui/src/app/dispatch.rs"
+    },
+    {
+      "at_melbourne": "2026-09-06T01:46:13.056851+10:00",
+      "authority": "Root assigned exact current modified core files",
+      "source_wall_changed": false,
+      "scope": "Core test-only cleanup within current modified source walls: review_child_context exclusively owns loop/commands.rs, session/branch.rs and session/spool.rs under crates/norn/src. norn_models retains loop/classify.rs and provider/agent_event.rs. Remove the five inherited allow attributes and resolve their underlying test unwrap/expect uses, preserving every semantic assertion and production bytes for this cleanup. Propagate Result failures; no skips, weaker assertions, wildcard bypasses or unrelated unchanged-module changes. Common-owner Clippy style repairs are a separately identified existing task, not permission to change production through this test-cleanup partition.\n\nThe 52-file pre-thaw core AST snapshot remains historical evidence. Source ownership must be acknowledged before parallel cleanup; no concurrent writes to a shared file. The whole-workspace Clippy01 run has ended and root explicitly released the document freeze. These are existing paths only and all NRT acceptance and final verification requirements remain."
+    },
+    {
+      "at_melbourne": "2026-09-06T01:48:54.206859+10:00",
+      "authority": "Root clarified inherited core test cleanup within existing walls",
+      "source_wall_changed": false,
+      "scope": "The existing modified-core test cleanup includes inherited panic/panic!, expect_err and unwrap_err as well as unwrap and expect. Replace these with contextful fallible Result diagnostics while preserving every original semantic assertion and production bytes for the cleanup. No new skips, weaker assertions, or replacement bypasses. norn_models additionally performs test-only cleanup in its already-owned NRT-002 R1 crates/norn/src/tests/integration.rs: the inspected inherited test code has six unwrap, sixteen expect and two panic uses. Do not remove or edit the allow attribute in unchanged tests/mod.rs, and do not expand into unrelated test modules. This is an existing-path cleanup; all owner coordination and final verification requirements remain."
+    },
+    {
+      "at_melbourne": "2026-09-06T02:06:24.633058+10:00",
+      "authority": "Root approved common-owner confirmed minimal shared future-size boundary after Clippy03",
+      "row": "R1",
+      "modify_additions": [
+        "crates/norn-cli/src/print/orchestrator.rs"
+      ],
+      "scope": "Box::pin the sole inner orchestrate_run(...).await at the existing shared wrapper in crates/norn-cli/src/print/orchestrator.rs (inspection anchor line250). Preserve that wrapper's existing signal ownership, output sink, typed error envelope, cancellation and drop behavior. This is only an allocation boundary for the inner future to address the three observed >16KiB outer-future Clippy failures; it spawns no task and changes no protocol, configuration or runtime policy. driven.rs and additional speculative call sites are outside this amendment. Verify the composed call sites before claiming the diagnostic is resolved.",
+      "excluded": [
+        "crates/norn-cli/src/print/driven.rs",
+        "other speculative boxing sites"
+      ]
+    },
+    {
+      "at_melbourne": "2026-09-06T08:47:58.446688+10:00",
+      "authority": "Root released actual-App freeze; TUI test handoff acknowledged by root",
+      "source_wall_changed": false,
+      "new_source_paths": [],
+      "audit": {
+        "path": "/private/tmp/nrt-001-proof/core-cli-source-policy-final-01/REVIEW.json",
+        "sha256": "c9624277190064be439daa3c37383db145d214de61b02b8388199992a8d620b3",
+        "verdict": "changes_requested"
+      },
+      "parts": [
+        {
+          "file": "crates/norn-cli/src/commands/slash/registry.rs",
+          "brief_and_row": [
+            {
+              "brief": "NRT-001",
+              "recorded_owner": null,
+              "row": "R6"
+            }
+          ],
+          "owner": "review_child_context",
+          "requires_current_owner_handoff": "norn_tui explicit handoff",
+          "source_sha256": "41ec9b8327427f22abc287c54982e9914f960263976e05452ae2e871d8d4c544",
+          "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+          "operation_counts": {
+            "expect": 2,
+            "panic": 3,
+            "unwrap": 8
+          },
+          "total_operations": 13,
+          "preserve_production_prefix": {
+            "cfg_test_line": 442,
+            "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+            "production_prefix_bytes": 16666,
+            "production_prefix_sha256": "0cb91e595d8009b07fe9d2ce5a0acc3131b6fdc57f7e65eb134054fb3c379bd9"
+          }
+        },
+        {
+          "file": "crates/norn-cli/src/print/orchestrator.rs",
+          "brief_and_row": [
+            {
+              "brief": "NRT-002",
+              "recorded_owner": "norn_models",
+              "row": "R1"
+            }
+          ],
+          "owner": "norn_models",
+          "requires_current_owner_handoff": false,
+          "source_sha256": "0fe4a0185e3234ddb3c337f0751b7e861be585a1c8c9528b32517764de35e287",
+          "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+          "operation_counts": {
+            "expect": 6,
+            "expect_err": 1,
+            "panic": 1,
+            "unwrap": 12,
+            "unwrap_err": 2
+          },
+          "total_operations": 22,
+          "preserve_production_prefix": {
+            "cfg_test_line": 712,
+            "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+            "production_prefix_bytes": 32797,
+            "production_prefix_sha256": "2ef9464fff54b996d2c13c607aabd42d5579a522c34bc34834897b119213f848"
+          }
+        },
+        {
+          "file": "crates/norn-cli/src/print/output.rs",
+          "brief_and_row": [
+            {
+              "brief": "NRT-002",
+              "recorded_owner": "norn_models",
+              "row": "R1"
+            }
+          ],
+          "owner": "norn_models",
+          "requires_current_owner_handoff": false,
+          "source_sha256": "4bea124e6594d92d062c9f6caa820b7106bf1d89b779bc0ee8cebcd2a89d83c0",
+          "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+          "operation_counts": {
+            "expect": 3,
+            "unwrap": 38
+          },
+          "total_operations": 41,
+          "preserve_production_prefix": {
+            "cfg_test_line": 504,
+            "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+            "production_prefix_bytes": 20171,
+            "production_prefix_sha256": "abd4e938ae0578db924fb35516c6895ab1e4d131eaab8f2fb79dd5a6139e5caf"
+          }
+        },
+        {
+          "file": "crates/norn-cli/src/tui/driver.rs",
+          "brief_and_row": [
+            {
+              "brief": "NRT-001",
+              "recorded_owner": null,
+              "row": "R3"
+            }
+          ],
+          "owner": "review_child_context",
+          "requires_current_owner_handoff": "norn_tui explicit handoff",
+          "source_sha256": "a78544ec3ad4188cea9c087079972f32b8922fe2f9682f27b29ecabd76221312",
+          "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+          "operation_counts": {
+            "expect": 1
+          },
+          "total_operations": 1,
+          "preserve_production_prefix": {
+            "cfg_test_line": 342,
+            "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+            "production_prefix_bytes": 13628,
+            "production_prefix_sha256": "b3c3a573f4b0ad46753e84b5de1ab3b1c2fd92a1c153e41b1ef1e7fdf99384f0"
+          }
+        }
+      ],
+      "source_owner_handoff_acknowledged": true,
+      "scope": "Existing-wall test-only cleanup; all production-prefix hashes and semantic assertions preserved. Canonical pty_smoke result-send supervision retains original failures.",
+      "unapproved": "syntax.rs production strategy and PTY05 instrumentation are not authorized by this registration."
+    },
+    {
+      "at_melbourne": "2026-09-06T08:49:25.117670+10:00",
+      "authority": "Root approved exact six-path R2 repair after read-only owner diagnosis",
+      "row": "R2",
+      "owner": "channels_compatibility",
+      "modify_paths": [
+        "crates/norn/src/session_view/index.rs",
+        "crates/norn/src/session_view/projection.rs",
+        "crates/norn/src/session_view/live.rs",
+        "crates/norn/src/session_view/publication.rs",
+        "crates/norn/src/session_view/projection_tests.rs",
+        "crates/norn/src/session_view/publication_tests.rs"
+      ],
+      "new_modify_membership": [
+        "crates/norn/src/session_view/index.rs"
+      ],
+      "create_additions": [],
+      "source_thaw": "Pending explicit root release of core library test; registration does not release core source",
+      "scope": "Chronology repair: channels_compatibility owns exactly session_view/index.rs, projection.rs, live.rs, publication.rs, projection_tests.rs and publication_tests.rs under the existing core responsibility. Core source remains frozen until root releases the running core library test; documentation registration alone is not source thaw. No new file, store/provider API or tool authority is authorized.\n\nIndex live/local presentation by the observed source-bound event gap, not wall-clock time or an invented sequence. Advance a monotonic cursor-ordinal boundary for every validated HistoryRecord, including zero-display metadata. Loading older history never rewinds that boundary or moves new local output ahead of already observed canonical events.\n\nAssociate the exact Done-created ItemId with its completed AttemptKey. When the exact accepted HistoryRecord reconciles, relocate that attempt’s retained Done within the matching completion bucket and update every existing index membership consistently. Preserve all ItemIds, source/body references and actual order evidence. A ticket with no provisional fragment still places its exact retained completion by the real record cursor. Receipt-before-history and history-before-receipt reconciliation are idempotent.\n\nBound completion relocation work to the matching attempt bucket with index updates O(bucket_size * log(indexed_rows)); no global completion scan, transcript clone, new identity map without ownership, arbitrary cap, polling or provider-ID/text matching. Preserve existing bounded tool lookup and indexed pinned traversal behavior.\n\nRegression proof includes an earlier local error/final completion followed by a later canonical human prompt and assistant answer, both ordinary and pinned Later traversal; later older/tail pages; zero-row metadata boundary advance; Done receipt/history in both orders and with skipped fragments; stable exact IDs/body refs; and operation-count bounds for a matching completion bucket. Reading remains pinned until the operator explicitly returns to live. The TUI final summary continues after drain; do not add speculative completion IDs or weaken current source fences."
+    },
+    {
+      "at_melbourne": "2026-09-06T08:51:47.955967+10:00",
+      "authority": "Root approved owner-requested LOC split and reproduced canonical-root fixture repair before edits",
+      "R2": {
+        "owner": "channels_compatibility",
+        "create": [
+          "crates/norn/src/session_view/chronology.rs"
+        ],
+        "existing_modify": [
+          "crates/norn/src/session_view/mod.rs"
+        ],
+        "scope": "Keep the registered chronology repair within the 500 production-line policy by creating private session_view/chronology.rs. It owns only Order/Position, the observed source event-gap boundary/local counter and exact AttemptKey-to-Done-ItemId membership. The already-walled session_view/mod.rs adds only mod chronology;. ItemIndex remains the sole ViewItem owner and updates every existing row/tool/attempt index when rekeying. No public API, I/O, body clone, secondary transcript, new authority or acceptance reduction. channels_compatibility owns this split and the original chronology regressions."
+      },
+      "R4": {
+        "owner": "root",
+        "modify": [
+          "crates/norn/src/integration/mcp_channel_startup_tests.rs"
+        ],
+        "test_only": true,
+        "scope": "Root owns a test-only correction in integration/mcp_channel_startup_tests.rs: the control helper canonicalizes the actual temporary directory with directory.canonicalize()? before McpConfigState::from_layers. macOS /var is a symlink to /private/var; the production no-follow-all-ancestors policy expects a canonical actual root. Preserve both existing tests, every assertion and error propagation. No production security/path policy, timeout, fallback or skipped case changes. The isolated built fixture reproduces the same NotDirectory error; do not attribute this failure to test interference."
+      }
+    },
+    {
+      "at_melbourne": "2026-09-06T09:20:44.335830+10:00",
+      "authority": "Direct urgent user correction relayed by root",
+      "row": "R2",
+      "owner": "channels_compatibility",
+      "modify_paths": [
+        "crates/norn/src/session_view/contract.rs",
+        "crates/norn/src/session_view/committed.rs",
+        "crates/norn/src/session_view/live.rs",
+        "crates/norn/src/session_view/contract_tests.rs",
+        "crates/norn/src/session_view/projection_tests.rs",
+        "crates/norn/src/session_view/publication_tests.rs"
+      ],
+      "new_source_files": [],
+      "scope": "channels_compatibility owns exactly session_view/contract.rs, committed.rs, live.rs, contract_tests.rs, projection_tests.rs and publication_tests.rs. Introduce typed ViewItemKind::Metadata for retained explicit-details-only records, limited to ProviderEpochBoundary, the exact known provider.state.provenance discriminator, UsageEstimate and provider Done. Default input label becomes plain Input without asserting human origin. Preserve all records, ItemIds, provenance, usage, body capabilities and source fences; errors/refusals, unknown/unavailable content and external attribution remain visible. Unknown categories are not silently hidden. Routine Done still contributes its complete facts to the one normal completion detail presentation.\n\nThe ordinary TUI view hides only the typed Metadata category and exposes it through explicit detail inspection; do not remove it from the semantic projection or persisted history, or use arbitrary text/label matching. norn_tui owns app/render/transcript.rs presentation integration; root coordinates any shared visibility wiring with that owner rather than writing the same file concurrently. Existing data preservation, publication binding, completion grouping, pinned reading and typed error requirements remain.",
+      "deadline_requested_melbourne": "2026-09-06T09:46:00+10:00",
+      "no_scope_expansion": "Persistence, attach, editor integration and unrelated feature/documentation expansion paused; root owns version/build/install."
+    }
+  ],
+  "api_amendments": [
+    {
+      "at_melbourne": "2026-09-06T01:16:29.839203+10:00",
+      "authority": "Root approved exact completion identity API within existing walls",
+      "rows": [
+        "R2",
+        "R3"
+      ],
+      "source_wall_changed": false,
+      "contract": "LiveReduction exposes completion_item: Option<ItemId> from the actual Done reduction. Retain the Done stop_reason, response_id and Usage as typed local details on that exact completion item. The TUI consumes this explicit reduction result when presenting the registered compact execution completion; it must not guess the item by row order, text or label. This clarifies existing metadata-preserving completion behavior within the already-approved R2 and TUI source walls: no duplicate transcript cache, fabricated completion, new capability or source-path addition."
+    },
+    {
+      "at_melbourne": "2026-09-06T01:22:24.530237+10:00",
+      "authority": "Core/TUI owners converged on representation preserving root-approved exact-ID and typed-facts contract",
+      "rows": [
+        "R2",
+        "R3"
+      ],
+      "source_wall_changed": false,
+      "contract": "LiveReduction exposes completion_item: Option<ItemId> from the actual Done reduction; the core retains its compact Done label without adding a duplicate local metadata body. The TUI retains typed Done stop_reason, response_id and Usage under the exact active-execution identity, then moves those facts into the one final completion-details body. It uses exact returned routine notice IDs for compact presentation, never order/text/label guesses, and does not duplicate retained metadata or transcript caches. Every original fact remains inspectable; stale source/execution fences and existing source walls remain unchanged.",
+      "supersedes_representation_only": "LiveReduction exposes completion_item: Option<ItemId> from the actual Done reduction. Retain the Done stop_reason, response_id and Usage as typed local details on that exact completion item. The TUI consumes this explicit reduction result when presenting the registered compact execution completion; it must not guess the item by row order, text or label. This clarifies existing metadata-preserving completion behavior within the already-approved R2 and TUI source walls: no duplicate transcript cache, fabricated completion, new capability or source-path addition."
+    }
+  ],
+  "local_preview_checkpoint": {
+    "recorded_melbourne": "2026-09-06T09:51:07.844963+10:00",
+    "version": "norn 0.1.0-preview.1",
+    "installed_melbourne": "2026-09-06T09:48:51.879860+10:00",
+    "binary_sha256": "75f855762e8faaf31570cddb7e2a4ca4b61e4aef5856caddd8a4540541857697",
+    "receipt_path": "/Users/tom/.local/state/norn/install-backups/20260906-094851-restored-preview/receipt.json",
+    "receipt_sha256": "acd6c20415e33c276d9e59ad3ee51a8768c41e35fa91b7ba8bc951ab3b626bb1",
+    "checks": "Strict workspace Clippy05, fmt06, release build and selected unit/PTY/MCP/model/workspace tests pass on captured source. Documentation status update follows those checks.",
+    "test_counts": {
+      "unit": 795,
+      "MCP": 4,
+      "model_suite": 6,
+      "canonical_PTY_suite": 23,
+      "workspace_suite": 3
+    },
+    "status": "local_preview_installed;exact_venue_and_review_pending",
+    "remaining": [
+      "205 exact-commit battery and review",
+      "Iridium composer",
+      "live attach/detach",
+      "restart-persisted view preferences"
+    ],
+    "main_landing_or_public_release": false,
+    "late_after_requested_deadline": true
+  }
+}

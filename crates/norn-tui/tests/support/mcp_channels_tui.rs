@@ -102,6 +102,7 @@ pub async fn run(case: &str, address: &str) -> Result<(), TestError> {
     ));
     let (sender, agent_event_rx) = tokio::sync::broadcast::channel(16);
     let result = Box::pin(norn_tui::run_app(TuiInputs {
+        session_binding: Arc::new(norn::session::SessionBinding::ephemeral_root()),
         model_selection: norn::model_selection::ModelRuntime::new(
             provider.model_catalog_backend(),
             MODEL,
@@ -246,9 +247,20 @@ fn report(
             }
         })
         .collect();
+    let assistant_events: Vec<Value> = store
+        .events()
+        .into_iter()
+        .filter_map(|event| {
+            if let SessionEvent::AssistantMessage { base, content, .. } = event {
+                Some(json!({"id": base.id.as_str(), "content": content}))
+            } else {
+                None
+            }
+        })
+        .collect();
     Ok(
         json!({"action": "report", "requests": requests, "user_events": user_events,
-        "status": host.status()}),
+        "assistant_events": assistant_events, "status": host.status()}),
     )
 }
 

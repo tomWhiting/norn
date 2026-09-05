@@ -11,7 +11,7 @@ use crate::provider::request::{Message, MessageRole, ToolCallCaller};
 use crate::session::events::{EventBase, EventId, SessionEvent};
 use crate::session::store::EventStore;
 
-use super::helpers::append_and_notify;
+use super::helpers::{append_and_notify, append_and_notify_with_acceptance};
 
 /// Drain human active-turn input and persist it as ordinary user messages.
 ///
@@ -43,28 +43,30 @@ async fn inject_active_inputs(
     let mut event_ids = Vec::with_capacity(inputs.len());
     for input in inputs {
         let content = input.content().to_string();
-        let event_id = append_and_notify(
+        let event_id = append_and_notify_with_acceptance(
             store,
             SessionEvent::UserMessage {
                 base: EventBase::new(store.last_event_id()),
                 content: content.clone(),
             },
             hooks,
+            |event_id| {
+                messages.push(Message {
+                    response_items: Vec::new(),
+                    role: MessageRole::User,
+                    content: Some(content),
+                    thinking: String::new(),
+                    reasoning: Vec::new(),
+                    tool_calls: Vec::new(),
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_call_kind: None,
+                    tool_call_caller: ToolCallCaller::Absent,
+                });
+                input.mark_delivered(event_id);
+            },
         )
         .await?;
-        messages.push(Message {
-            response_items: Vec::new(),
-            role: MessageRole::User,
-            content: Some(content),
-            thinking: String::new(),
-            reasoning: Vec::new(),
-            tool_calls: Vec::new(),
-            tool_call_id: None,
-            tool_name: None,
-            tool_call_kind: None,
-            tool_call_caller: ToolCallCaller::Absent,
-        });
-        input.mark_delivered();
         event_ids.push(event_id);
     }
     Ok(event_ids)

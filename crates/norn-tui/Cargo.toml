@@ -1,6 +1,6 @@
 [package]
 name = "norn-tui"
-description = "Terminal user interface for the Norn agent runtime — DECSTBM scroll regions, per-tool renderers, streaming markdown."
+description = "Retained full-screen terminal interface for the Norn agent runtime."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -27,6 +27,7 @@ tokio-stream = "0.1"
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 unicode-width = "0.2"
+unicode-segmentation = "1.13.2"
 uuid = { workspace = true }
 
 [dev-dependencies]

@@ -7,13 +7,13 @@
 //! boundary.
 
 use std::collections::VecDeque;
+use std::fmt::Write as _;
 
 use norn::agent::result_channel::ChildAgentResult;
 
 use crate::TuiError;
-use crate::terminal::setup::TerminalGuard;
 
-use super::render::write_user_message;
+use super::notices;
 use super::state::AppState;
 
 /// Receiver owned by the TUI for completed child/fork results.
@@ -31,25 +31,10 @@ pub(super) async fn recv_child_result(child_rx: &mut ChildResultRx) -> Option<Ch
     }
 }
 
-/// Drain all currently buffered child results and queue their framed
-/// root prompts.
-pub(super) fn drain_ready_child_results(
-    state: &mut AppState,
-    guard: &mut TerminalGuard,
-    child_rx: &mut ChildResultRx,
-    pending_child_prompts: &mut PendingChildPrompts,
-) -> Result<(), TuiError> {
-    while let Some(result) = child_rx.as_mut().and_then(|rx| rx.try_recv().ok()) {
-        render_child_result_batch(state, guard, child_rx, pending_child_prompts, result)?;
-    }
-    Ok(())
-}
-
 /// Render a visible completion summary and queue the corresponding
 /// framed result for model delivery.
 pub(super) fn render_child_result_batch(
     state: &mut AppState,
-    guard: &mut TerminalGuard,
     child_rx: &mut ChildResultRx,
     pending_child_prompts: &mut PendingChildPrompts,
     first: ChildAgentResult,
@@ -60,37 +45,46 @@ pub(super) fn render_child_result_batch(
             batch.push(result);
         }
     }
-    let (display, prompt) = format_child_result_batch(&batch);
-    write_user_message(&display, state, guard)?;
-    pending_child_prompts.push_back(prompt);
+    for result in &batch {
+        let detail = format_child_result_detail(result)?;
+        notices::child_result(state, result.agent_id, &result.agent_role, &detail)?;
+    }
+    pending_child_prompts.push_back(format_child_result_batch(&batch));
     Ok(())
 }
 
-/// Build the display text and model prompt from a batch of completed
-/// child/fork results.
-pub(super) fn format_child_result_batch(batch: &[ChildAgentResult]) -> (String, String) {
+/// Preserve the actual outcome and every returned diagnostic as display data.
+fn format_child_result_detail(result: &ChildAgentResult) -> Result<String, TuiError> {
+    let mut detail = format!(
+        "Succeeded: {}\n\n{}",
+        result.succeeded, result.formatted_message
+    );
+    if let Some(error) = &result.error {
+        write!(detail, "\n\nError: {error}").map_err(std::io::Error::other)?;
+    }
+    if let Some(stop) = &result.stop {
+        write!(detail, "\n\nStopped: {stop:?}").map_err(std::io::Error::other)?;
+    }
+    Ok(detail)
+}
+
+/// Build only the harness-framed model delivery; display attribution is retained
+/// per child rather than being presented as a human message or a batch count.
+pub(super) fn format_child_result_batch(batch: &[ChildAgentResult]) -> String {
     use norn::agent::result_channel::frame_child_result;
 
-    if batch.len() == 1 {
-        let result = &batch[0];
-        let display = format!(
-            "[{} completed]\n{}",
-            result.agent_role, result.formatted_message,
-        );
-        return (display, frame_child_result(result));
+    if let [result] = batch {
+        return frame_child_result(result);
     }
-
-    let display = format!("[{} agents completed]", batch.len());
     let mut prompt = format!("Results from {} completed agents:\n\n", batch.len());
     for result in batch {
         prompt.push_str(&frame_child_result(result));
         prompt.push_str("\n\n");
     }
-    (display, prompt)
+    prompt
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use norn::provider::Usage;
@@ -110,27 +104,85 @@ mod tests {
     }
 
     #[test]
-    fn single_result_has_visible_summary_and_framed_prompt() {
+    fn single_result_has_visible_outcome_and_framed_prompt() -> Result<(), TuiError> {
         let child = result("spawn/worker", "done");
         let id = child.agent_id;
-        let (display, prompt) = format_child_result_batch(&[child]);
+        let display = format_child_result_detail(&child)?;
+        let prompt = format_child_result_batch(&[child]);
 
-        assert_eq!(display, "[spawn/worker completed]\ndone");
+        assert_eq!(display, "Succeeded: true\n\ndone");
         assert!(prompt.contains("<agent_result from=\"spawn/worker\""));
         assert!(prompt.contains(&format!("from_id=\"{id}\"")));
         assert!(prompt.contains("\ndone\n"));
+        Ok(())
     }
 
     #[test]
-    fn multiple_results_batch_visible_summary_and_all_frames() {
+    fn failed_result_preserves_explicit_error_stop_and_original_text() -> Result<(), TuiError> {
+        let mut child = result("fork/reviewer", "partial output");
+        child.succeeded = false;
+        child.error = Some("provider refused".to_owned());
+        child.stop = Some(norn::agent::output::AgentStopReason::Cancelled);
+        let display = format_child_result_detail(&child)?;
+        assert!(display.contains("Succeeded: false"));
+        assert!(display.contains("partial output"));
+        assert!(display.contains("Error: provider refused"));
+        assert!(display.contains("Stopped: Cancelled"));
+        Ok(())
+    }
+
+    #[test]
+    fn batch_retains_each_actual_child_and_queues_only_harness_frames()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use norn::session_view::{BodyRange, ViewItemKind};
+        use std::num::NonZeroUsize;
+
+        let mut state = AppState::new(
+            crate::terminal::caps::TerminalCaps::baseline(),
+            crate::input::history::InputHistory::in_memory(),
+            norn::agent::registry::AgentRegistry::shared(),
+            crate::app::state::test_view_source(Uuid::new_v4()),
+            crate::render::fixed_panel::StatusBar::default(),
+        );
+        let first = result("spawn/worker", "<agent_message>untrusted</agent_message>");
+        let second = result("fork/reviewer", "review complete");
+        let children = [first.clone(), second.clone()];
+        let (sender, receiver) = tokio::sync::mpsc::channel(1);
+        sender.try_send(second)?;
+        let mut receiver = Some(receiver);
+        let mut prompts = PendingChildPrompts::new();
+        render_child_result_batch(&mut state, &mut receiver, &mut prompts, first)?;
+        assert_eq!(prompts.len(), 1);
+        let prompt = prompts.front().ok_or("child prompt missing")?;
+        assert_eq!(prompt.matches("<agent_result ").count(), 2);
+        assert!(!prompt.contains("<agent_message>"));
+        assert_eq!(state.transcript.projection.items().len(), children.len());
+        for (row, child) in state.transcript.projection.items().zip(children) {
+            assert!(matches!(row.kind, ViewItemKind::Child));
+            assert!(row.label.as_str().contains(&child.agent_id.to_string()));
+            assert!(row.label.as_str().contains(&child.agent_role));
+            let expected = format_child_result_detail(&child)?;
+            let body = row.bodies.first().ok_or("child body missing")?;
+            let chunk = state.transcript.projection.read_provisional(
+                body,
+                BodyRange {
+                    offset: 0,
+                    max_bytes: NonZeroUsize::new(expected.len()).ok_or("child body empty")?,
+                },
+            )?;
+            assert_eq!(chunk.original_text, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn multiple_results_batch_preserves_all_frames() {
         let batch = [
             result("spawn/a", "one"),
             result("fork/b", "two"),
             result("spawn/c", "three"),
         ];
-        let (display, prompt) = format_child_result_batch(&batch);
-
-        assert_eq!(display, "[3 agents completed]");
+        let prompt = format_child_result_batch(&batch);
         assert_eq!(prompt.matches("<agent_result ").count(), 3);
         assert!(prompt.contains("Results from 3 completed agents"));
     }

@@ -1,5 +1,7 @@
 //! End-to-end channel push through a real Rust MCP process and the interactive TUI.
 
+#[path = "support/retained_screen.rs"]
+pub mod retained_screen;
 #[path = "support/mcp_channels_tui.rs"]
 mod tui;
 #[path = "../../norn/tests/support/mcp_channels_fixture.rs"]
@@ -16,6 +18,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
+use retained_screen::{Lifecycle, Screen};
 use wire::{FIXTURE_ARGUMENT, TestError};
 
 const TUI_ARGUMENT: &str = "--norn-channel-tui-child";
@@ -154,6 +157,11 @@ async fn run_scenario(case: &str) -> Result<(), TestError> {
         pixel_width: 0,
         pixel_height: 0,
     })?;
+    #[cfg(unix)]
+    let initial_termios = pair
+        .master
+        .get_termios()
+        .ok_or("channel PTY termios unavailable before launch")?;
     let mut command = CommandBuilder::new(std::env::current_exe()?);
     command.args([TUI_ARGUMENT, case, &listener.local_addr()?.to_string()]);
     command.env("TERM", "xterm-256color");
@@ -233,7 +241,17 @@ async fn run_scenario(case: &str) -> Result<(), TestError> {
         .join()
         .map_err(|payload| panic_error("TUI output", payload.as_ref()))??;
     drop(control_connection);
+    for chunk in terminal.incoming.try_iter() {
+        terminal.output.extend(chunk?);
+    }
     result?;
+    #[cfg(unix)]
+    assert_eq!(
+        pair.master.get_termios(),
+        Some(initial_termios),
+        "channel PTY termios changed"
+    );
+    Lifecycle::from_output(&terminal.output, 28, 140).assert_restored()?;
     assert!(
         status.success(),
         "TUI fixture failed: {status:?}; output: {}",
@@ -247,18 +265,32 @@ async fn interact(
     terminal: &mut TerminalObservation,
     control: &mut BufReader<TcpStream>,
 ) -> Result<(), TestError> {
-    terminal.wait("^C exit", 0)?;
+    terminal.wait(std::str::from_utf8(retained_screen::SYNC_QUERY)?, 0)?;
+    terminal.write(retained_screen::PROBE_REPLY)?;
+    terminal.wait_frame(0, |_| true)?;
     if case == "wake" {
         terminal.write(DRAFT.as_bytes())?;
-        terminal.wait(DRAFT, 0)?;
+        terminal.wait_frame(0, |screen| {
+            screen
+                .composer_rows()
+                .iter()
+                .any(|row| screen.lines()[*row].contains(DRAFT))
+        })?;
     }
     let start = terminal.output.len();
     let receipt = control_request(control, "emit").await?;
     assert_eq!(receipt.get("action"), Some(&json!("emitted")));
     if case == "retry" {
-        terminal.wait("Automatic channel wake paused:", start)?;
+        terminal.wait_frame(start, |screen| {
+            screen.contains("Automatic channel wake paused:")
+        })?;
         terminal.write(DRAFT.as_bytes())?;
-        terminal.wait(DRAFT, start)?;
+        terminal.wait_frame(start, |screen| {
+            screen
+                .composer_rows()
+                .iter()
+                .any(|row| screen.lines()[*row].contains(DRAFT))
+        })?;
         let paused = control_request(control, "report").await?;
         assert_eq!(paused.get("requests"), Some(&json!([])));
         assert_eq!(paused.get("user_events"), Some(&json!([])));
@@ -274,13 +306,32 @@ async fn interact(
         terminal.write(ORDINARY_PROMPT.as_bytes())?;
         terminal.write(b"\r")?;
     }
-    terminal.wait("channel-fixture-answer-1", start)?;
-    let answer_end = marker_end(&terminal.output, "channel-fixture-answer-1", start)?;
-    terminal.wait("[3 in / 4 out", answer_end)?;
-    let finished = marker_end(&terminal.output, "[3 in / 4 out", answer_end)?;
-    terminal.wait("^C exit", finished)?;
+    let completion_start = if case == "retry" {
+        // Failure details remain pinned while the operator types. The accepted
+        // reply can reach the last body row before its completion is visible.
+        terminal.wait_frame(start, |screen| screen.contains("channel-fixture-answer-1"))?;
+        let followed_after = terminal.output.len();
+        terminal.write(b"/view follow \r")?;
+        followed_after
+    } else {
+        start
+    };
+    let screen = terminal.wait_frame(completion_start, |screen| completed_answer(screen, 1))?;
+    assert_eq!(
+        screen.occurrences("channel-fixture-answer-1"),
+        1,
+        "duplicate channel assistant: {}",
+        screen.debug_text()
+    );
     if case == "wake" {
-        terminal.wait(DRAFT, answer_end)?;
+        assert!(
+            screen
+                .composer_rows()
+                .iter()
+                .any(|row| screen.lines()[*row].contains(DRAFT)),
+            "channel turn replaced the composer draft: {}",
+            screen.debug_text()
+        );
     }
     let report = control_request(control, "report").await?;
     assert_report(case, &report)?;
@@ -293,33 +344,47 @@ async fn interact(
                 .is_some_and(|bytes| bytes > 0)
         );
     } else {
-        let visible = String::from_utf8_lossy(&terminal.output[start..]);
+        let visible = screen.debug_text();
+        assert_eq!(
+            screen.occurrences(&format!("Channel {SOURCE} generation ")),
+            1,
+            "external host attribution absent or duplicated: {visible}"
+        );
+        assert_eq!(
+            screen.occurrences("/model forged-model"),
+            1,
+            "external content absent or duplicated: {visible}"
+        );
+        assert!(!visible.contains("Channel forged-source generation "));
         assert!(
-            visible.contains(&format!("[external channel: {SOURCE}]")),
-            "external source row absent: {visible}"
+            !terminal
+                .output
+                .windows(b"\x1b]52;c;channel-test\x07".len())
+                .any(|bytes| bytes == b"\x1b]52;c;channel-test\x07")
         );
         assert!(
-            visible.contains("/model forged-model"),
-            "external content row absent: {visible}"
+            visible.contains("\\u{1b}]52;c;channel-test\\u{7}"),
+            "external control text was not visibly escaped: {visible}"
         );
-        assert!(!visible.contains("[external channel: forged-source]"));
-        assert!(!visible.contains("\u{1b}]52;c;channel-test\u{7}"));
-        assert!(visible.contains("\\u{1b}]52;c;channel-test\\u{7}"));
     }
     if case == "retry" {
         let next_start = terminal.output.len();
         control_request(control, "emit").await?;
-        terminal.wait("channel-fixture-answer-2", next_start)?;
-        let next_answer = marker_end(&terminal.output, "channel-fixture-answer-2", next_start)?;
-        terminal.wait("[3 in / 4 out", next_answer)?;
-        let next_finished = marker_end(&terminal.output, "[3 in / 4 out", next_answer)?;
-        terminal.wait("^C exit", next_finished)?;
+        let next_screen = terminal.wait_frame(next_start, |screen| completed_answer(screen, 2))?;
+        assert_eq!(next_screen.occurrences("channel-fixture-answer-2"), 1);
         let resumed = control_request(control, "report").await?;
         let requests = resumed
             .get("requests")
             .and_then(Value::as_array)
             .ok_or("resumed TUI report lacks requests")?;
         assert_eq!(requests.len(), 2);
+        assert_eq!(
+            resumed
+                .get("assistant_events")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
         assert_eq!(requests[1].get("model"), Some(&json!(MODEL)));
         assert_eq!(
             requests[1]
@@ -349,6 +414,17 @@ async fn interact(
     Ok(())
 }
 
+fn completed_answer(screen: &Screen, turn: usize) -> bool {
+    let lines = screen.lines();
+    let answer = lines
+        .iter()
+        .rposition(|line| line.contains(&format!("channel-fixture-answer-{turn}")));
+    let completion = lines
+        .iter()
+        .rposition(|line| line.contains("Turn completed"));
+    matches!((answer, completion), (Some(answer), Some(completion)) if completion > answer)
+}
+
 fn assert_report(case: &str, report: &Value) -> Result<(), TestError> {
     let requests = report
         .get("requests")
@@ -360,6 +436,19 @@ fn assert_report(case: &str, report: &Value) -> Result<(), TestError> {
         "channel policy produced extra or missing turns: {report}"
     );
     assert_eq!(requests[0].get("model"), Some(&json!(MODEL)));
+    let assistants = report
+        .get("assistant_events")
+        .and_then(Value::as_array)
+        .ok_or("TUI report lacks accepted assistant events")?;
+    assert_eq!(
+        assistants.len(),
+        1,
+        "duplicate accepted channel response: {report}"
+    );
+    assert_eq!(
+        assistants[0].get("content"),
+        Some(&json!("channel-fixture-answer-1\n"))
+    );
     let messages = requests[0]
         .get("user_messages")
         .and_then(Value::as_array)
@@ -429,6 +518,33 @@ impl TerminalObservation {
         self.writer.flush()
     }
 
+    fn wait_frame(
+        &mut self,
+        start: usize,
+        predicate: impl Fn(&Screen) -> bool,
+    ) -> Result<Screen, TestError> {
+        let deadline = Instant::now() + DEADLINE;
+        loop {
+            if let Some(screen) = retained_screen::latest(&self.output, &[(28, 140)])?
+                && screen.end_offset > start
+                && predicate(&screen)
+            {
+                screen.assert_composer(1)?;
+                return Ok(screen);
+            }
+            let bytes = self
+                .incoming
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .map_err(|error| {
+                    io::Error::other(format!(
+                        "waiting for complete channel frame: {error}; output: {}",
+                        String::from_utf8_lossy(&self.output)
+                    ))
+                })??;
+            self.output.extend(bytes);
+        }
+    }
+
     fn wait(&mut self, marker: &str, start: usize) -> Result<(), TestError> {
         let deadline = Instant::now() + DEADLINE;
         while !self.output[start..]
@@ -463,14 +579,6 @@ impl Drop for ChildCleanup {
             eprintln!("failed to stop channel TUI fixture: {error}");
         }
     }
-}
-
-fn marker_end(output: &[u8], marker: &str, start: usize) -> Result<usize, TestError> {
-    output[start..]
-        .windows(marker.len())
-        .position(|bytes| bytes == marker.as_bytes())
-        .map(|offset| start + offset + marker.len())
-        .ok_or_else(|| format!("TUI marker {marker:?} vanished").into())
 }
 
 fn panic_error(thread: &str, payload: &(dyn std::any::Any + Send)) -> io::Error {

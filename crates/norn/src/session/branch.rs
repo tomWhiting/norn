@@ -100,6 +100,11 @@ pub const ROOT_PATH_ADDRESS: &str = "root";
 pub struct MailboxId(Uuid);
 
 impl MailboxId {
+    /// The actual session incarnation supplied by the binding owner.
+    pub(crate) const fn generation(self) -> Uuid {
+        self.0
+    }
+
     const fn from_generation(generation: Uuid) -> Self {
         Self(generation)
     }
@@ -411,8 +416,9 @@ impl SessionBinding {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
     use super::*;
     use crate::session::manager::CreateSessionOptions;
     use crate::session::persistence::index::read_index;
@@ -446,10 +452,10 @@ mod tests {
         binding: Arc<SessionBinding>,
     }
 
-    fn persistent_root() -> Root {
-        let tmp = tempfile::tempdir().unwrap();
+    fn persistent_root() -> TestResult<Root> {
+        let tmp = tempfile::tempdir()?;
         let manager = SessionManager::new(tmp.path());
-        let opened = manager.create(options(), DurabilityPolicy::Flush).unwrap();
+        let opened = manager.create(options(), DurabilityPolicy::Flush)?;
         let root_id = opened.entry.id.clone();
         let brancher = Arc::new(SessionBrancher::new(
             manager.clone(),
@@ -461,14 +467,14 @@ mod tests {
             &opened.entry,
             &[],
         ));
-        Root {
+        Ok(Root {
             _tmp: tmp,
             manager,
             id: root_id,
             entry: opened.entry,
             store: Arc::new(opened.store),
             binding,
-        }
+        })
     }
 
     #[test]
@@ -492,8 +498,8 @@ mod tests {
     }
 
     #[test]
-    fn mailbox_identity_is_stable_only_for_one_persistent_generation() {
-        let root = persistent_root();
+    fn mailbox_identity_is_stable_only_for_one_persistent_generation() -> TestResult {
+        let root = persistent_root()?;
         let same_generation = SessionBinding::persistent_root(
             Arc::new(SessionBrancher::new(
                 root.manager.clone(),
@@ -517,21 +523,21 @@ mod tests {
             &[],
         );
         assert_ne!(root.binding.mailbox_id(), replacement_binding.mailbox_id());
+        Ok(())
     }
 
     #[test]
-    fn ephemeral_roots_and_children_mint_distinct_mailboxes() {
+    fn ephemeral_roots_and_children_mint_distinct_mailboxes() -> TestResult {
         let first = SessionBinding::ephemeral_root();
         let second = SessionBinding::ephemeral_root();
         assert_ne!(first.mailbox_id(), second.mailbox_id());
 
-        let child = first
-            .branch_child(
-                &EventStore::new(),
-                &request("worker", ChildDurability::Ephemeral),
-            )
-            .unwrap();
+        let child = first.branch_child(
+            &EventStore::new(),
+            &request("worker", ChildDurability::Ephemeral),
+        )?;
         assert_ne!(first.mailbox_id(), child.binding.mailbox_id());
+        Ok(())
     }
 
     #[test]
@@ -549,22 +555,24 @@ mod tests {
     /// `parent_id`, and the parent's reservation event — with the
     /// PARENT-FIRST ordering observable in the produced artifacts.
     #[test]
-    fn branch_child_persists_child_with_linkage() {
-        let root = persistent_root();
+    fn branch_child_persists_child_with_linkage() -> TestResult {
+        let root = persistent_root()?;
         let req = request("reviewer", ChildDurability::Persist);
-        let child = root.binding.branch_child(&root.store, &req).unwrap();
+        let child = root.binding.branch_child(&root.store, &req)?;
 
         assert_eq!(
             child.session_id.as_deref(),
             Some(req.child_session_id.as_str())
         );
-        let name = child.path_address.rsplit('/').next().unwrap();
+        let name =
+            child.path_address.rsplit('/').next().ok_or_else(|| {
+                format!("child path {:?} has no final segment", child.path_address)
+            })?;
         assert!(name.starts_with("reviewer-"));
 
         // Parent reservation is durable in the parent's file.
-        let parent_entry = root.manager.resolve(&root.id).unwrap();
-        let parent_read =
-            read_session_events_for_entry(root.manager.data_dir(), &parent_entry).unwrap();
+        let parent_entry = root.manager.resolve(&root.id)?;
+        let parent_read = read_session_events_for_entry(root.manager.data_dir(), &parent_entry)?;
         let reservation = parent_read
             .events
             .iter()
@@ -583,7 +591,7 @@ mod tests {
                 )),
                 _ => None,
             })
-            .expect("the parent's file must carry the ChildBranch reservation");
+            .ok_or("the parent's file must carry the ChildBranch reservation")?;
         assert_eq!(reservation.0.as_deref(), Some(root.id.as_str()));
         assert_eq!(
             reservation.1.as_deref(),
@@ -593,8 +601,16 @@ mod tests {
         assert_eq!(reservation.3, ChildBranchKind::Spawn);
 
         // Index row: rel_path + parent linkage.
-        let rows = read_index(root.manager.data_dir()).unwrap();
-        let row = rows.iter().find(|e| e.id == req.child_session_id).unwrap();
+        let rows = read_index(root.manager.data_dir())?;
+        let row = rows
+            .iter()
+            .find(|e| e.id == req.child_session_id)
+            .ok_or_else(|| {
+                format!(
+                    "child session {} is missing from the index",
+                    req.child_session_id
+                )
+            })?;
         let expected_rel = format!("{}/children/{name}.jsonl", root.id);
         assert_eq!(row.rel_path.as_deref(), Some(expected_rel.as_str()));
         assert_eq!(row.parent_id.as_deref(), Some(root.id.as_str()));
@@ -604,14 +620,11 @@ mod tests {
         // a fresh append lands too.
         let child_path = root.manager.data_dir().join(&expected_rel);
         assert!(child_path.exists(), "child timeline file must exist");
-        child
-            .store
-            .append(SessionEvent::UserMessage {
-                base: EventBase::new(None),
-                content: "child work".to_owned(),
-            })
-            .unwrap();
-        let child_read = read_session_events_for_entry(root.manager.data_dir(), row).unwrap();
+        child.store.append(SessionEvent::UserMessage {
+            base: EventBase::new(None),
+            content: "child work".to_owned(),
+        })?;
+        let child_read = read_session_events_for_entry(root.manager.data_dir(), row)?;
         assert_eq!(child_read.events.len(), 2, "provenance header + append");
         assert!(matches!(
             &child_read.events[0],
@@ -622,9 +635,9 @@ mod tests {
         // And the child resumes through the manager like any session.
         let resumed = root
             .manager
-            .resume(&req.child_session_id, DurabilityPolicy::Flush)
-            .unwrap();
+            .resume(&req.child_session_id, DurabilityPolicy::Flush)?;
         assert_eq!(resumed.replay.replayed_events, 2);
+        Ok(())
     }
 
     /// PARENT-FIRST ordering, observed BETWEEN the steps: after the
@@ -633,7 +646,7 @@ mod tests {
     /// it. This drives the split halves of `branch_child` directly.
     #[test]
     fn reservation_is_on_disk_before_child_file_exists() -> Result<(), Box<dyn std::error::Error>> {
-        let root = persistent_root();
+        let root = persistent_root()?;
         let req = request("worker", ChildDurability::Persist);
 
         // Step 2 in isolation: the reservation append.
@@ -647,13 +660,12 @@ mod tests {
             parent_event_anchor: anchor,
             kind: ChildBranchKind::Spawn,
         };
-        root.store.append(reservation.clone()).unwrap();
+        root.store.append(reservation.clone())?;
 
         // OBSERVE: reservation durable, child absent — the exact crash
         // residue parent-first ordering promises.
-        let parent_entry = root.manager.resolve(&root.id).unwrap();
-        let on_disk =
-            read_session_events_for_entry(root.manager.data_dir(), &parent_entry).unwrap();
+        let parent_entry = root.manager.resolve(&root.id)?;
+        let on_disk = read_session_events_for_entry(root.manager.data_dir(), &parent_entry)?;
         assert!(
             on_disk
                 .events
@@ -671,8 +683,7 @@ mod tests {
             "no child file may exist before materialization",
         );
         assert!(
-            !read_index(root.manager.data_dir())
-                .unwrap()
+            !read_index(root.manager.data_dir())?
                 .iter()
                 .any(|e| e.id == req.child_session_id),
             "no index row may exist before materialization",
@@ -695,8 +706,8 @@ mod tests {
     /// minted slug path is refused typed — never truncated, never
     /// appended to — and the orphan's bytes are untouched.
     #[test]
-    fn mint_collision_with_orphan_file_is_hard_typed_error() {
-        let root = persistent_root();
+    fn mint_collision_with_orphan_file_is_hard_typed_error() -> TestResult {
+        let root = persistent_root()?;
         let req = request("worker", ChildDurability::Persist);
         let path_address = "root/worker-feedbeef".to_owned();
         let rel_path = format!(
@@ -705,8 +716,12 @@ mod tests {
             child_path_slug(&path_address)
         );
         let orphan_abs = root.manager.data_dir().join(&rel_path);
-        std::fs::create_dir_all(orphan_abs.parent().unwrap()).unwrap();
-        std::fs::write(&orphan_abs, b"{\"foreign\":true}\n").unwrap();
+        std::fs::create_dir_all(
+            orphan_abs
+                .parent()
+                .ok_or_else(|| format!("orphan path {} has no parent", orphan_abs.display()))?,
+        )?;
+        std::fs::write(&orphan_abs, b"{\"foreign\":true}\n")?;
 
         let reservation = SessionEvent::ChildBranch {
             base: EventBase::new(None),
@@ -722,33 +737,35 @@ mod tests {
             DurabilityPolicy::Flush,
         ));
         let err = materialize_child(&brancher, &root.entry, &path_address, &req, &reservation)
-            .expect_err("an occupied slug path must refuse hard");
+            .err()
+            .ok_or("an occupied slug path must refuse hard")?;
         assert!(
             matches!(&err, SessionPersistError::ChildPathOccupied { rel_path: r } if *r == rel_path),
             "expected ChildPathOccupied, got {err:?}",
         );
         assert_eq!(
-            std::fs::read(&orphan_abs).unwrap(),
+            std::fs::read(&orphan_abs)?,
             b"{\"foreign\":true}\n",
             "the orphan must be byte-identical — never truncated or appended to",
         );
         // F2: the refusal happens BEFORE the index insert, so no row can
         // be left pointing at the foreign file (a later resume of such a
         // row would replay another agent's history).
-        let rows = read_index(root.manager.data_dir()).unwrap();
+        let rows = read_index(root.manager.data_dir())?;
         assert!(
             !rows
                 .iter()
                 .any(|e| e.id == req.child_session_id || e.rel_path.as_deref() == Some(&*rel_path)),
             "a refused mint must leave no index row: {rows:?}",
         );
+        Ok(())
     }
 
     /// Mint-collision on the index row: a foreign row claiming the same
     /// `rel_path` refuses the insert typed.
     #[test]
-    fn mint_collision_with_orphan_index_row_is_hard_typed_error() {
-        let root = persistent_root();
+    fn mint_collision_with_orphan_index_row_is_hard_typed_error() -> TestResult {
+        let root = persistent_root()?;
         let req = request("worker", ChildDurability::Persist);
         let path_address = "root/worker-0badcafe".to_owned();
         let rel_path = format!(
@@ -777,7 +794,7 @@ mod tests {
             origin: crate::session::persistence::SessionRecordOrigin::Native,
             provider_state_identity: None,
         };
-        insert_child_index_entry(root.manager.data_dir(), &foreign, None).unwrap();
+        insert_child_index_entry(root.manager.data_dir(), &foreign, None)?;
 
         let reservation = SessionEvent::ChildBranch {
             base: EventBase::new(None),
@@ -793,25 +810,29 @@ mod tests {
             DurabilityPolicy::Flush,
         ));
         let err = materialize_child(&brancher, &root.entry, &path_address, &req, &reservation)
-            .expect_err("a claimed rel_path must refuse hard");
+            .err()
+            .ok_or("a claimed rel_path must refuse hard")?;
         assert!(
             matches!(err, SessionPersistError::ChildPathOccupied { .. }),
             "expected ChildPathOccupied",
         );
         // And a same-ID duplicate refuses as IdExists.
         foreign.rel_path = Some(format!("{}/children/other.jsonl", root.id));
-        let dup = insert_child_index_entry(root.manager.data_dir(), &foreign, None).unwrap_err();
+        let dup = insert_child_index_entry(root.manager.data_dir(), &foreign, None)
+            .err()
+            .ok_or("duplicate child index entry must be refused")?;
         assert!(matches!(dup, SessionPersistError::IdExists { .. }));
+        Ok(())
     }
 
     /// Ephemeral child under a persistent parent: no file, no index row,
     /// but the name reservation IS durably on the parent's timeline with
     /// the honest `child_session_id: None` (the INVARIANT of review §6).
     #[test]
-    fn ephemeral_child_reserves_name_durably_with_honest_none() {
-        let root = persistent_root();
+    fn ephemeral_child_reserves_name_durably_with_honest_none() -> TestResult {
+        let root = persistent_root()?;
         let req = request("scout", ChildDurability::Ephemeral);
-        let child = root.binding.branch_child(&root.store, &req).unwrap();
+        let child = root.binding.branch_child(&root.store, &req)?;
         assert!(child.session_id.is_none());
         assert!(!child.binding.is_persistent());
         assert_eq!(
@@ -820,9 +841,8 @@ mod tests {
             "ephemeral propagates down",
         );
 
-        let parent_entry = root.manager.resolve(&root.id).unwrap();
-        let on_disk =
-            read_session_events_for_entry(root.manager.data_dir(), &parent_entry).unwrap();
+        let parent_entry = root.manager.resolve(&root.id)?;
+        let on_disk = read_session_events_for_entry(root.manager.data_dir(), &parent_entry)?;
         let reservation = on_disk
             .events
             .iter()
@@ -834,7 +854,7 @@ mod tests {
                 } => Some((child_session_id.clone(), path_address.clone())),
                 _ => None,
             })
-            .expect("ephemeral children still reserve durably");
+            .ok_or("ephemeral children still reserve durably")?;
         assert_eq!(
             reservation.0, None,
             "session: None is the honest ephemeral record",
@@ -842,7 +862,7 @@ mod tests {
         assert_eq!(reservation.1, child.path_address);
 
         // No index row, no file.
-        assert_eq!(read_index(root.manager.data_dir()).unwrap().len(), 1);
+        assert_eq!(read_index(root.manager.data_dir())?.len(), 1);
         assert!(
             !root
                 .manager
@@ -851,17 +871,19 @@ mod tests {
                 .join("children")
                 .exists(),
         );
+        Ok(())
     }
 
     /// Persist requested under an ephemeral parent is the TYPED
     /// refusal — never a missing-directory I/O failure.
     #[test]
-    fn persist_under_ephemeral_parent_is_typed_error() {
+    fn persist_under_ephemeral_parent_is_typed_error() -> TestResult {
         let binding = SessionBinding::ephemeral_root();
         let store = EventStore::new();
         let err = binding
             .branch_child(&store, &request("worker", ChildDurability::Persist))
-            .expect_err("persist under an ephemeral parent must refuse typed");
+            .err()
+            .ok_or("persist under an ephemeral parent must refuse typed")?;
         assert!(
             matches!(&err, SessionPersistError::EphemeralParent { parent_path } if parent_path == ROOT_PATH_ADDRESS),
             "expected EphemeralParent, got {err:?}",
@@ -871,9 +893,7 @@ mod tests {
             "the refusal must precede any reservation append",
         );
         // The honest ephemeral request still works and records session: None.
-        let child = binding
-            .branch_child(&store, &request("worker", ChildDurability::Ephemeral))
-            .unwrap();
+        let child = binding.branch_child(&store, &request("worker", ChildDurability::Ephemeral))?;
         assert!(child.session_id.is_none());
         assert!(matches!(
             &store.events()[0],
@@ -883,6 +903,7 @@ mod tests {
                 ..
             }
         ));
+        Ok(())
     }
 
     #[test]
@@ -937,23 +958,24 @@ mod tests {
     /// refuses reuse, and inherited (fork-seeded) reservations are NOT
     /// counted as the child's own.
     #[test]
-    fn ever_used_set_rederives_after_restart_and_filters_inherited() {
-        let root = persistent_root();
+    fn ever_used_set_rederives_after_restart_and_filters_inherited() -> TestResult {
+        let root = persistent_root()?;
         let child = root
             .binding
-            .branch_child(&root.store, &request("worker", ChildDurability::Persist))
-            .unwrap();
-        let minted_name = child.path_address.rsplit('/').next().unwrap().to_owned();
+            .branch_child(&root.store, &request("worker", ChildDurability::Persist))?;
+        let minted_name = child
+            .path_address
+            .rsplit('/')
+            .next()
+            .ok_or_else(|| format!("child path {:?} has no final segment", child.path_address))?
+            .to_owned();
         drop(child);
         drop(root.binding);
 
         // "Restart": resume the root from disk and rebuild the binding
         // from the replayed history.
         drop(root.store);
-        let resumed = root
-            .manager
-            .resume(&root.id, DurabilityPolicy::Flush)
-            .unwrap();
+        let resumed = root.manager.resume(&root.id, DurabilityPolicy::Flush)?;
         let brancher = Arc::new(SessionBrancher::new(
             root.manager.clone(),
             root.id,
@@ -984,26 +1006,26 @@ mod tests {
             other.ever_used_names().is_empty(),
             "inherited reservations must not over-reserve a child's namespace",
         );
+        Ok(())
     }
 
     /// A resumed CHILD session recovers its own path address from its
     /// provenance header, so grandchild addresses keep nesting correctly
     /// across restart.
     #[test]
-    fn resumed_child_recovers_its_path_address() {
-        let root = persistent_root();
+    fn resumed_child_recovers_its_path_address() -> TestResult {
+        let root = persistent_root()?;
         let child = root
             .binding
-            .branch_child(&root.store, &request("worker", ChildDurability::Persist))
-            .unwrap();
-        let child_id = child.session_id.clone().unwrap();
+            .branch_child(&root.store, &request("worker", ChildDurability::Persist))?;
+        let child_id = child
+            .session_id
+            .clone()
+            .ok_or("persistent child must carry its session id")?;
         let child_path = child.path_address.clone();
         drop(child);
 
-        let resumed = root
-            .manager
-            .resume(&child_id, DurabilityPolicy::Flush)
-            .unwrap();
+        let resumed = root.manager.resume(&child_id, DurabilityPolicy::Flush)?;
         let brancher = Arc::new(SessionBrancher::new(
             root.manager.clone(),
             root.id,
@@ -1012,6 +1034,7 @@ mod tests {
         let rebuilt =
             SessionBinding::persistent_root(brancher, &resumed.entry, &resumed.store.events());
         assert_eq!(rebuilt.path_address(), child_path);
+        Ok(())
     }
 
     /// KILL-WINDOW SIMULATION (reservation present, child absent): the
@@ -1019,27 +1042,22 @@ mod tests {
     /// leaves behind. Resume tolerates the dangling reference, the
     /// burned name stays reserved, and new mints proceed normally.
     #[test]
-    fn crash_between_reservation_and_child_file_is_tolerated_dangling() {
-        let root = persistent_root();
+    fn crash_between_reservation_and_child_file_is_tolerated_dangling() -> TestResult {
+        let root = persistent_root()?;
         let ghost_name = "worker-deadbeef";
-        root.store
-            .append(SessionEvent::ChildBranch {
-                base: EventBase::new(root.store.last_event_id()),
-                parent_session_id: Some(root.id.clone()),
-                child_session_id: Some(Uuid::new_v4().to_string()),
-                path_address: format!("root/{ghost_name}"),
-                parent_event_anchor: root.store.last_event_id(),
-                kind: ChildBranchKind::Fork,
-            })
-            .unwrap();
+        root.store.append(SessionEvent::ChildBranch {
+            base: EventBase::new(root.store.last_event_id()),
+            parent_session_id: Some(root.id.clone()),
+            child_session_id: Some(Uuid::new_v4().to_string()),
+            path_address: format!("root/{ghost_name}"),
+            parent_event_anchor: root.store.last_event_id(),
+            kind: ChildBranchKind::Fork,
+        })?;
         drop(root.store);
         drop(root.binding);
 
         // Resume: the dangling reference must not break replay.
-        let resumed = root
-            .manager
-            .resume(&root.id, DurabilityPolicy::Flush)
-            .unwrap();
+        let resumed = root.manager.resume(&root.id, DurabilityPolicy::Flush)?;
 
         // The burned name is reserved; a fresh mint works and picks a
         // different name.
@@ -1052,33 +1070,38 @@ mod tests {
             SessionBinding::persistent_root(brancher, &resumed.entry, &resumed.store.events());
         assert!(binding.ever_used_names().contains(ghost_name));
         let store = Arc::new(resumed.store);
-        let fresh = binding
-            .branch_child(&store, &request("worker", ChildDurability::Persist))
-            .unwrap();
+        let fresh = binding.branch_child(&store, &request("worker", ChildDurability::Persist))?;
         assert_ne!(
             fresh.path_address,
             format!("root/{ghost_name}"),
             "the dangling name must never be re-minted",
         );
+        Ok(())
     }
 
     /// Depth recursion: a grandchild minted through the child's binding
     /// lands in the SAME root-keyed children/ dir under the full-path
     /// slug, and its reservation goes to the CHILD's timeline.
     #[test]
-    fn grandchild_mints_under_full_path_slug() {
-        let root = persistent_root();
+    fn grandchild_mints_under_full_path_slug() -> TestResult {
+        let root = persistent_root()?;
         let child = root
             .binding
-            .branch_child(&root.store, &request("fork", ChildDurability::Persist))
-            .unwrap();
+            .branch_child(&root.store, &request("fork", ChildDurability::Persist))?;
         let grandchild = child
             .binding
-            .branch_child(&child.store, &request("spawn", ChildDurability::Persist))
-            .unwrap();
+            .branch_child(&child.store, &request("spawn", ChildDurability::Persist))?;
 
-        let child_name = child.path_address.rsplit('/').next().unwrap();
-        let grand_name = grandchild.path_address.rsplit('/').next().unwrap();
+        let child_name =
+            child.path_address.rsplit('/').next().ok_or_else(|| {
+                format!("child path {:?} has no final segment", child.path_address)
+            })?;
+        let grand_name = grandchild.path_address.rsplit('/').next().ok_or_else(|| {
+            format!(
+                "child path {:?} has no final segment",
+                grandchild.path_address
+            )
+        })?;
         let expected_rel = format!("{}/children/{child_name}--{grand_name}.jsonl", root.id);
         assert!(
             root.manager.data_dir().join(&expected_rel).exists(),
@@ -1086,12 +1109,13 @@ mod tests {
         );
 
         // The grandchild's reservation lives on the CHILD's timeline.
-        let child_entry = root
-            .manager
-            .resolve(child.session_id.as_deref().unwrap())
-            .unwrap();
-        let child_read =
-            read_session_events_for_entry(root.manager.data_dir(), &child_entry).unwrap();
+        let child_entry = root.manager.resolve(
+            child
+                .session_id
+                .as_deref()
+                .ok_or("persistent child must carry its session id")?,
+        )?;
+        let child_read = read_session_events_for_entry(root.manager.data_dir(), &child_entry)?;
         assert!(
             child_read.events.iter().any(|e| matches!(
                 e,
@@ -1100,5 +1124,6 @@ mod tests {
             )),
             "the grandchild reservation must be durable on the child's timeline",
         );
+        Ok(())
     }
 }

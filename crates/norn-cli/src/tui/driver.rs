@@ -285,10 +285,16 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     // owned executor handles used by concurrent tool batches.
     let executor: Arc<dyn norn::agent_loop::config::ToolExecutor> =
         Arc::clone(&parts.tool_runtime) as Arc<dyn norn::agent_loop::config::ToolExecutor>;
+    let session_binding = executor
+        .shared_context()
+        .and_then(|context| context.get_extension::<norn::tools::agent::AgentToolInfra>())
+        .map(|infra| Arc::clone(&infra.session))
+        .ok_or_else(|| format!("TUI root {} has no assembled session binding", parts.id))?;
     let tui_inputs = TuiInputs {
         provider: Arc::clone(&parts.provider),
         executor,
         store: Arc::clone(&parts.event_store),
+        session_binding,
         registry,
         agent_config: parts.config.clone(),
         model: parts.model.clone(),
@@ -334,7 +340,6 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use norn::agent::AgentBuilder;
     use norn::provider::mock::MockProvider;
@@ -362,7 +367,8 @@ mod tests {
     /// exact chain `drive` builds; the mock provider stands in for the
     /// concrete backend `build_provider` would return.
     #[tokio::test]
-    async fn tui_parts_carry_root_inbound_and_event_channel() {
+    async fn tui_parts_carry_root_inbound_and_event_channel()
+    -> Result<(), Box<dyn std::error::Error>> {
         let envelope = cli_coordination_envelope(crate::runtime::DEFAULT_DELEGATION_DEPTH);
         let agent = AgentBuilder::new(mock_provider())
             .model("test-model")
@@ -377,7 +383,9 @@ mod tests {
             .register_root("/root".to_string(), "lead".to_string())
             .terminal_reclamation(false)
             .build()
-            .expect("build succeeds");
+            .map_err(|error| {
+                format!("TUI coordination fixture could not build the root agent: {error}")
+            })?;
         let parts = agent.into_parts();
         assert!(
             parts.inbound.is_some(),
@@ -395,5 +403,6 @@ mod tests {
             parts.loop_context.child_result_rx.is_some(),
             "the child-result receiver must be wired for spawn/fork completion",
         );
+        Ok(())
     }
 }

@@ -1,12 +1,28 @@
 //! Pure retained-screen geometry; terminal I/O and transcript state belong to their owners.
 
-use std::fmt;
-use std::num::NonZeroU16;
+use std::num::{NonZeroU16, TryFromIntError};
 
 /// Declared minimum content columns on either side of an open split.
 pub const DEFAULT_MIN_PANE_COLUMNS: u16 = 40;
 /// Declared maximum visible composer rows, preserving the existing editor policy.
 pub const DEFAULT_MAX_COMPOSER_ROWS: u16 = 12;
+/// Rows occupied by the original mode rule, metadata rule and key hints.
+pub const COMPOSER_CHROME_ROWS: u16 = 3;
+
+/// Input rectangle inside the original visual composer framing.
+#[must_use]
+pub const fn composer_input_area(panel: Rect) -> Rect {
+    if panel.height > COMPOSER_CHROME_ROWS {
+        Rect {
+            row: panel.row + 1,
+            height: panel.height - COMPOSER_CHROME_ROWS,
+            ..panel
+        }
+    } else {
+        panel
+    }
+}
+
 /// Columns occupied by the divider between upper panes.
 pub const DIVIDER_COLUMNS: u16 = 1;
 
@@ -112,7 +128,7 @@ pub struct LayoutRequest {
     pub active_upper_pane: UpperPane,
 }
 
-/// Upper content geometry; no global header or footer consumes a row.
+/// Upper content geometry above the original framed composer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UpperLayout {
     /// One pane takes all available upper columns.
@@ -147,28 +163,20 @@ pub enum Layout {
     Ready {
         /// Upper pane rectangles.
         upper: UpperLayout,
-        /// Full-width input rectangle, reaching the last terminal row.
+        /// Full-width composer panel including its restored visual framing.
         composer: Rect,
     },
 }
 
 /// A calculated split width could not be represented as terminal coordinates.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error(
+    "calculated conversation width {calculated_width} exceeds terminal coordinate range: {source}"
+)]
 pub struct LayoutError {
     calculated_width: u32,
+    source: TryFromIntError,
 }
-
-impl fmt::Display for LayoutError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "calculated conversation width {} exceeds terminal coordinate range",
-            self.calculated_width
-        )
-    }
-}
-
-impl std::error::Error for LayoutError {}
 
 impl Layout {
     /// Calculate bounded pane rectangles, preserving the requested split and focus.
@@ -189,8 +197,13 @@ impl Layout {
                 },
             });
         }
-        let composer_cap = policy.max_composer_rows.min(request.rows / 2);
-        let composer_rows = request.requested_composer_rows.clamp(1, composer_cap);
+        let chrome = if request.rows >= 6 {
+            COMPOSER_CHROME_ROWS
+        } else {
+            0
+        };
+        let composer_cap = policy.max_composer_rows.min((request.rows - chrome) / 2);
+        let composer_rows = request.requested_composer_rows.clamp(1, composer_cap) + chrome;
         let upper_rows = request.rows - composer_rows;
         let composer = Rect {
             column: 0,
@@ -230,8 +243,9 @@ fn split_upper(
     let denominator = u32::from(request.split.conversation) + u32::from(request.split.changes);
     // Conversation receives an indivisible surplus column, including the default equal split.
     let preferred = numerator.div_ceil(denominator);
-    let preferred = u16::try_from(preferred).map_err(|_| LayoutError {
+    let preferred = u16::try_from(preferred).map_err(|source| LayoutError {
         calculated_width: preferred,
+        source,
     })?;
     let left = preferred.clamp(policy.min_pane_columns, available - policy.min_pane_columns);
     Ok(UpperLayout::Split {

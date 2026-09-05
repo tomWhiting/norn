@@ -15,7 +15,7 @@ use crate::r#loop::delivery::{
 };
 use crate::r#loop::dev_context::ManagedDevMessage;
 use crate::r#loop::helpers::{
-    append_and_notify, build_initial_messages, installed_inline_char_limit,
+    append_and_notify_observed, build_initial_messages, installed_inline_char_limit,
 };
 use crate::r#loop::inbound::{ChannelMessage, InboundChannel};
 use crate::r#loop::iteration::IterationMonitorState;
@@ -61,6 +61,11 @@ impl<'a> StepMachine<'a> {
         let output_schema = request.output_schema;
         let config = request.config;
         let event_tx = request.event_tx;
+        let mut opening_observation = event_tx
+            .map(|sender| sender.claim_execution(store, user_prompt.is_some()))
+            .transpose()
+            .map_err(SessionError::from)?
+            .flatten();
         let loop_context = request.loop_context;
         let provider_state_identity = provider.state_identity();
         let provider_capabilities = provider.capabilities();
@@ -247,13 +252,14 @@ impl<'a> StepMachine<'a> {
         let mut new_input_len = initial_messages.new_input_len;
 
         let prompt_event_id = if let Some(prompt) = user_prompt {
-            append_and_notify(
+            append_and_notify_observed(
                 store,
                 SessionEvent::UserMessage {
                     base: EventBase::new(store.last_event_id()),
                     content: prompt.to_string(),
                 },
                 loop_context.hooks.as_deref(),
+                opening_observation.take(),
             )
             .await?
         } else {

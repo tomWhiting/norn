@@ -172,8 +172,8 @@
       "paths": [
         "crates/norn-cli/src/tui/driver.rs"
       ],
-      "obligation": "Existing pre-construction validation remains in the launch owner. No TUI provider/MCP is built for an invalid resolved channel mode; registration adds no runtime change.",
-      "owner_row": "R7 acceptance; existing launch implementation outside NRT mutation wall"
+      "obligation": "Preserve existing pre-construction resolved channel-mode validation. R3 additionally threads the assembled owner SessionBinding into TuiInputs; missing infra errors explicitly. No TUI provider/MCP is built for an invalid resolved channel mode.",
+      "owner_row": "R3 actual binding wiring only; R7 launch-order acceptance"
     }
   ],
   "review_note": "Unknown typed enum variants require a new exhaustive disposition. Unknown Custom payloads are not automatically safe display bodies. This inventory distinguishes current semantic content from observability-only data.",

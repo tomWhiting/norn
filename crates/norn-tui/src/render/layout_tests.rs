@@ -27,8 +27,8 @@ fn narrow_threshold_and_odd_surplus() -> Result<(), LayoutError> {
             composer: Rect {
                 column: 0,
                 width: 80,
-                row: 17,
-                height: 3
+                row: 14,
+                height: 6
             },
         }
     ));
@@ -42,26 +42,26 @@ fn narrow_threshold_and_odd_surplus() -> Result<(), LayoutError> {
                         column: 0,
                         row: 0,
                         width: left,
-                        height: 17
+                        height: 14
                     },
                     divider: Rect {
                         column: left,
                         row: 0,
                         width: 1,
-                        height: 17
+                        height: 14
                     },
                     changes: Rect {
                         column: left + 1,
                         row: 0,
                         width: right,
-                        height: 17
+                        height: 14
                     },
                 },
                 composer: Rect {
                     column: 0,
-                    row: 17,
+                    row: 14,
                     width,
-                    height: 3
+                    height: 6
                 },
             }
         );
@@ -136,8 +136,8 @@ fn closed_changes_never_hides_conversation() -> Result<(), LayoutError> {
 }
 
 #[test]
-fn composer_is_full_width_and_capped_without_footer() -> Result<(), LayoutError> {
-    for (rows, requested, expected) in [(20, 0, 1), (20, u16::MAX, 10), (80, 40, 12)] {
+fn composer_keeps_original_chrome_and_full_width_input() -> Result<(), LayoutError> {
+    for (rows, requested, expected) in [(20, 0, 4), (20, u16::MAX, 11), (80, 40, 15)] {
         let mut input = request(120, rows);
         input.requested_composer_rows = requested;
         let layout = Layout::calculate(input, LayoutPolicy::default())?;
@@ -165,7 +165,7 @@ fn custom_policy_and_preference_survive_shrink_and_widen() -> Result<(), Box<dyn
                 changes: Rect { width: 25, .. },
                 ..
             },
-            composer: Rect { height: 4, .. },
+            composer: Rect { height: 7, .. },
         }
     ));
     for width in [21, 20, 1, 0, 21, 50, 101] {

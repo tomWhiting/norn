@@ -191,8 +191,8 @@ pub(crate) fn append_off_executor(
 /// Append a session event and (if hooks are registered) fire all
 /// session-event hooks.
 ///
-/// The append itself goes through [`append_off_executor`] so sink I/O
-/// never stalls unrelated tasks on the executor thread.
+/// The append itself goes through [`append_with_observer`] so its acceptance
+/// observation stays inside the owner that performs sink I/O.
 ///
 /// Returns the new event ID. Hook failures cannot be surfaced because
 /// `SessionEventHook::on_event` returns no result; hooks observing the
@@ -202,11 +202,79 @@ pub(super) async fn append_and_notify(
     event: SessionEvent,
     hooks: Option<&HookRegistry>,
 ) -> Result<EventId, SessionError> {
-    let id = append_off_executor(store, event.clone())?;
-    if let Some(reg) = hooks {
-        reg.run_on_event(&event).await;
+    append_and_notify_observed(store, event, hooks, None).await
+}
+
+/// Append and resolve a publication ticket in the append owner, before hooks await.
+pub(super) async fn append_and_notify_observed(
+    store: &EventStore,
+    event: SessionEvent,
+    hooks: Option<&HookRegistry>,
+    owner: Option<crate::provider::agent_event::PublicationOwner>,
+) -> Result<EventId, SessionError> {
+    let id = append_with_observer(store, event.clone(), move |result| match owner {
+        Some(owner) => owner
+            .appended(store, result.as_ref())
+            .map_err(SessionError::from),
+        None => Ok(()),
+    })?;
+    if let Some(registry) = hooks {
+        registry.run_on_event(&event).await;
     }
     Ok(id)
+}
+
+/// Run an input acknowledgement inside the successful append owner before hooks await.
+pub(crate) async fn append_and_notify_with_acceptance<F>(
+    store: &EventStore,
+    event: SessionEvent,
+    hooks: Option<&HookRegistry>,
+    on_accepted: F,
+) -> Result<EventId, SessionError>
+where
+    F: FnOnce(&EventId),
+{
+    let id = append_with_observer(store, event.clone(), move |result| {
+        if let Ok(event_id) = result {
+            on_accepted(event_id);
+        }
+        Ok(())
+    })?;
+    if let Some(registry) = hooks {
+        registry.run_on_event(&event).await;
+    }
+    Ok(id)
+}
+
+/// Transfer the observer into the same synchronous owner that may accept the event.
+pub(crate) fn append_with_observer<F>(
+    store: &EventStore,
+    event: SessionEvent,
+    observer: F,
+) -> Result<EventId, SessionError>
+where
+    F: FnOnce(&Result<EventId, SessionError>) -> Result<(), SessionError>,
+{
+    let append = move || {
+        let result = store.append(event);
+        match (observer(&result), result) {
+            (Ok(()), result) => result,
+            (Err(observation), Ok(event_id)) => {
+                tracing::error!(event_id = %event_id, error = %observation, "accepted event observation failed");
+                Err(observation)
+            }
+            (Err(observation), Err(append)) => {
+                tracing::error!(error = %observation, "failed append observation also failed");
+                Err(append)
+            }
+        }
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(append)
+        }
+        _ => append(),
+    }
 }
 
 /// Append an "accepted" tool result for the schema tool call so the

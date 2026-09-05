@@ -1,8 +1,7 @@
 //! Terminal user interface for the Norn agent runtime.
 //!
-//! Renders streaming agent output in native terminal scrollback using
-//! DECSTBM scroll regions, with a dynamic fixed panel for input, agent
-//! status, and streaming indicators.
+//! Retains semantic conversation history and paints an owned full-screen
+//! workspace above a full-width composer.
 
 mod error;
 

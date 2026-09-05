@@ -182,7 +182,6 @@ impl ToolRenderer for EditRenderer {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use serde_json::json;
 
@@ -246,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn edit_success_body_has_diff() {
+    fn edit_success_body_has_diff() -> Result<(), Box<dyn std::error::Error>> {
         let body = EditRenderer
             .body(
                 &json!({
@@ -262,14 +261,16 @@ mod tests {
                 }),
                 &caps(),
             )
-            .unwrap();
+            .ok_or("missing committed edit body")?;
         assert!(!body.contains("Containing symbols:"));
         assert!(body.lines().any(|l| l.contains("-fn a")));
         assert!(body.lines().any(|l| l.contains("+fn b")));
+        Ok(())
     }
 
     #[test]
-    fn edit_committed_body_has_hunk_header_when_symbol_present() {
+    fn edit_committed_body_has_hunk_header_when_symbol_present()
+    -> Result<(), Box<dyn std::error::Error>> {
         let args = json!({
             "path": "src/a.rs",
             "old_string": "fn old_name() {}\n",
@@ -281,8 +282,10 @@ mod tests {
             "check_overrides": [],
             "blast_radius": { "containing_symbols": ["fn target_function"] },
         });
-        let blocks = EditRenderer.body_blocks(&args, &result, &caps()).unwrap();
-        let rendered = render_blocks(&blocks, &SyntaxHighlighter::new(), &caps());
+        let blocks = EditRenderer
+            .body_blocks(&args, &result, &caps())
+            .ok_or("missing committed edit blocks with symbol")?;
+        let rendered = render_blocks(&blocks, &SyntaxHighlighter::new(), &caps())?;
         let hunk_index = rendered
             .find("\x1b[2m@@ fn target_function @@\x1b[22m")
             .unwrap_or(usize::MAX);
@@ -297,10 +300,12 @@ mod tests {
             hunk_index < removed_index,
             "hunk header must precede diff: {rendered:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn edit_committed_body_no_hunk_header_when_symbols_absent() {
+    fn edit_committed_body_no_hunk_header_when_symbols_absent()
+    -> Result<(), Box<dyn std::error::Error>> {
         let args = json!({
             "path": "src/a.rs",
             "old_string": "fn a() {}\n",
@@ -319,14 +324,17 @@ mod tests {
                 "blast_radius": { "containing_symbols": [] },
             }),
         ] {
-            let blocks = EditRenderer.body_blocks(&args, &result, &caps()).unwrap();
-            let rendered = render_blocks(&blocks, &SyntaxHighlighter::new(), &caps());
+            let blocks = EditRenderer
+                .body_blocks(&args, &result, &caps())
+                .ok_or("missing committed edit blocks without symbol")?;
+            let rendered = render_blocks(&blocks, &SyntaxHighlighter::new(), &caps())?;
             assert!(!rendered.contains("@@"));
         }
+        Ok(())
     }
 
     #[test]
-    fn edit_blocked_header_and_body() {
+    fn edit_blocked_header_and_body() -> Result<(), Box<dyn std::error::Error>> {
         let result = json!({
             "path": "src/a.rs",
             "kind": "edit_blocked_by_ast",
@@ -350,7 +358,7 @@ mod tests {
                 &result,
                 &caps(),
             )
-            .unwrap();
+            .ok_or("missing blocked edit body")?;
         assert!(body.contains("missing }"));
         assert!(body.contains("syntax-missing"));
         // The diff must NOT appear — no `+`/`-` line-prefix sequences.
@@ -358,10 +366,11 @@ mod tests {
             !body.contains("\n+") && !body.contains("\n-"),
             "blocked body must not contain a diff: {body:?}",
         );
+        Ok(())
     }
 
     #[test]
-    fn edit_override_header_and_body() {
+    fn edit_override_header_and_body() -> Result<(), Box<dyn std::error::Error>> {
         let result = json!({
             "path": "src/a.rs",
             "kind": "edit_committed",
@@ -386,8 +395,10 @@ mod tests {
 
         let args =
             json!({ "path": "src/a.rs", "old_string": "fn a() {}\n", "new_string": "fn b() {}\n" });
-        let blocks = EditRenderer.body_blocks(&args, &result, &caps()).unwrap();
-        let rendered_blocks = render_blocks(&blocks, &SyntaxHighlighter::new(), &caps());
+        let blocks = EditRenderer
+            .body_blocks(&args, &result, &caps())
+            .ok_or("missing override edit blocks")?;
+        let rendered_blocks = render_blocks(&blocks, &SyntaxHighlighter::new(), &caps())?;
         assert!(rendered_blocks.contains("\x1b[2m@@ fn b @@\x1b[22m"));
 
         let body = EditRenderer
@@ -396,11 +407,12 @@ mod tests {
                 &result,
                 &caps(),
             )
-            .unwrap();
+            .ok_or("missing override edit body")?;
         // Body carries BOTH the diff and the diagnostic.
         assert!(body.lines().any(|l| l.contains("+fn b")));
         assert!(body.lines().any(|l| l.contains("-fn a")));
         assert!(body.contains("missing }"));
+        Ok(())
     }
 
     #[test]

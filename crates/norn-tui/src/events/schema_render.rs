@@ -21,9 +21,9 @@
 //!   toggle is set.
 //!
 //! The module is pure: every function is stateless, takes its inputs by
-//! reference, and returns a `String`. No I/O, no event-loop wiring (that
+//! reference, and returns styled text or a typed rendering error. No I/O, no event-loop wiring (that
 //! is NT-011), no scroll-region writes (the caller invokes
-//! [`crate::render::scroll_region::write_to_scroll`] on the returned
+//! the retained frame adapter on the returned
 //! string).
 //!
 //! All function signatures take a [`TerminalCaps`] so that styling
@@ -40,6 +40,7 @@ use norn::session::events::{ProviderEpochBoundaryReason, SessionEvent};
 
 use crate::render::markdown::MarkdownRenderer;
 use crate::render::style::colour_for;
+use crate::render::syntax::SyntaxError;
 use crate::render::thinking::render_thinking as render_thinking_block;
 use crate::terminal::caps::TerminalCaps;
 use crate::tools::renderer::renderer_for;
@@ -64,25 +65,27 @@ const PRIMARY_KEY_PRIORITY: &[&str] = &["text", "content", "written", "response"
 /// Dispatches to the appropriate renderer based on the variant. The
 /// match is exhaustive — adding a variant to [`SessionEvent`] forces a
 /// compile error here so no event type ever renders as silent nothing.
-#[must_use]
+///
+/// # Errors
+/// Propagates syntax failures while leaving the borrowed event and its original body intact.
 pub fn render_event(
     event: &SessionEvent,
     caps: &TerminalCaps,
     toggles: DisplayToggles,
     terminal_width: u16,
-) -> String {
-    match event {
+) -> Result<String, SyntaxError> {
+    Ok(match event {
         SessionEvent::UserMessage { content, .. } => render_user_message(content, caps),
         SessionEvent::AssistantMessage {
             content, thinking, ..
-        } => render_assistant_message(content, thinking, caps, toggles, terminal_width),
+        } => render_assistant_message(content, thinking, caps, toggles, terminal_width)?,
         SessionEvent::SpokenResponse { content, .. } => render_structured(
             content,
             None,
             caps,
             toggles.secondary_fields_visible,
             terminal_width,
-        ),
+        )?,
         SessionEvent::ToolResult {
             tool_name,
             output,
@@ -146,7 +149,7 @@ pub fn render_event(
                 caps,
                 toggles.secondary_fields_visible,
                 terminal_width,
-            ));
+            )?);
             out
         }
         SessionEvent::RuleInjection {
@@ -170,7 +173,7 @@ pub fn render_event(
             };
             render_dim_status_line(&format!("context mark: {kind} → {target_event_id}"))
         }
-    }
+    })
 }
 
 /// Render a user message with a coloured `> ` prefix on the first line.
@@ -234,14 +237,16 @@ pub fn render_thinking(
 /// rendering delegates to [`render_structured`] (the labeled-section
 /// pattern). Otherwise `content` is run through the streaming
 /// [`MarkdownRenderer`] for one-shot rendering.
-#[must_use]
+///
+/// # Errors
+/// Propagates syntax failures without replacing or modifying the supplied body.
 pub fn render_assistant_message(
     content: &str,
     thinking: &str,
     caps: &TerminalCaps,
     toggles: DisplayToggles,
     terminal_width: u16,
-) -> String {
+) -> Result<String, SyntaxError> {
     let mut out = render_thinking(thinking, caps, toggles, terminal_width);
     if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(content)
         && map.len() > 1
@@ -253,20 +258,20 @@ pub fn render_assistant_message(
             caps,
             toggles.secondary_fields_visible,
             terminal_width,
-        ));
-        return out;
+        )?);
+        return Ok(out);
     }
     if !content.is_empty() {
         let mut renderer = MarkdownRenderer::new(caps.clone(), terminal_width);
-        let feed_out = renderer.feed(content);
-        let tail = renderer.finalize();
+        let feed_out = renderer.feed(content)?;
+        let tail = renderer.finalize()?;
         let mut md_out = format!("{}{}", feed_out.styled, tail.styled);
         if !md_out.is_empty() && !md_out.ends_with('\n') {
             md_out.push('\n');
         }
         out.push_str(&md_out);
     }
-    out
+    Ok(out)
 }
 
 /// Render a tool call: header line, then optional body.
@@ -319,24 +324,26 @@ pub fn render_tool_call(
 /// The function is defensive: a schema missing `properties`, or with
 /// keys absent from `value`, is silently tolerated — validation is the
 /// runtime's job, not the renderer's.
-#[must_use]
+///
+/// # Errors
+/// Propagates syntax errors from displayed string fields; the supplied value remains intact.
 pub fn render_structured(
     value: &Value,
     schema: Option<&Value>,
     caps: &TerminalCaps,
     secondary_visible: bool,
     terminal_width: u16,
-) -> String {
+) -> Result<String, SyntaxError> {
     let Value::Object(map) = value else {
         let mut pretty = serde_json::to_string_pretty(value).unwrap_or_default();
         if !pretty.ends_with('\n') {
             pretty.push('\n');
         }
-        return pretty;
+        return Ok(pretty);
     };
 
     if map.is_empty() {
-        return String::new();
+        return Ok(String::new());
     }
 
     let key_order = resolve_key_order(map, schema);
@@ -344,14 +351,14 @@ pub fn render_structured(
     let mut out = String::new();
 
     if let Some(primary) = map.get(&primary_key) {
-        out.push_str(&render_field_value(primary, caps, terminal_width));
+        out.push_str(&render_field_value(primary, caps, terminal_width)?);
         if !out.ends_with('\n') {
             out.push('\n');
         }
     }
 
     if !secondary_visible {
-        return out;
+        return Ok(out);
     }
 
     for key in &key_order {
@@ -363,12 +370,12 @@ pub fn render_structured(
         };
         out.push_str(&secondary_separator(key));
         out.push('\n');
-        out.push_str(&render_field_value(secondary, caps, terminal_width));
+        out.push_str(&render_field_value(secondary, caps, terminal_width)?);
         if !out.ends_with('\n') {
             out.push('\n');
         }
     }
-    out
+    Ok(out)
 }
 
 /// Build the ordered key list for a structured value.
@@ -415,12 +422,16 @@ fn pick_primary_key_ordered(map: &Map<String, Value>, key_order: &[String]) -> S
 
 /// Render a single field value: strings through the markdown pipeline,
 /// other JSON values pretty-printed.
-fn render_field_value(value: &Value, caps: &TerminalCaps, terminal_width: u16) -> String {
-    match value {
+fn render_field_value(
+    value: &Value,
+    caps: &TerminalCaps,
+    terminal_width: u16,
+) -> Result<String, SyntaxError> {
+    Ok(match value {
         Value::String(s) => {
             let mut renderer = MarkdownRenderer::new(caps.clone(), terminal_width);
-            let feed_out = renderer.feed(s);
-            let tail = renderer.finalize();
+            let feed_out = renderer.feed(s)?;
+            let tail = renderer.finalize()?;
             let mut out = format!("{}{}", feed_out.styled, tail.styled);
             if !out.is_empty() && !out.ends_with('\n') {
                 out.push('\n');
@@ -428,7 +439,7 @@ fn render_field_value(value: &Value, caps: &TerminalCaps, terminal_width: u16) -
             out
         }
         other => serde_json::to_string_pretty(other).unwrap_or_default(),
-    }
+    })
 }
 
 /// Format a labeled-section separator: `─── {name} ───`.
@@ -459,7 +470,6 @@ fn schema_property_order(schema: Option<&Value>) -> Option<Vec<String>> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use chrono::Utc;
@@ -622,49 +632,57 @@ mod tests {
     // ---------------- render_assistant_message (R1, R4) ----------------
 
     #[test]
-    fn assistant_message_renders_markdown() {
-        let out = render_assistant_message("**bold**", "", &caps(), DisplayToggles::default(), 80);
+    fn assistant_message_renders_markdown() -> Result<(), Box<dyn std::error::Error>> {
+        let out = render_assistant_message("**bold**", "", &caps(), DisplayToggles::default(), 80)?;
         assert!(out.contains("\x1b[1m"), "expected bold SGR: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn assistant_message_includes_thinking_when_visible() {
+    fn assistant_message_includes_thinking_when_visible() -> Result<(), Box<dyn std::error::Error>>
+    {
         let toggles = DisplayToggles::default();
-        let out = render_assistant_message("answer", "deliberating", &caps(), toggles, 80);
+        let out = render_assistant_message("answer", "deliberating", &caps(), toggles, 80)?;
         assert!(out.contains("thinking: deliberating"), "got: {out:?}");
         assert!(out.contains("answer"), "got: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn assistant_message_omits_thinking_when_hidden() {
+    fn assistant_message_omits_thinking_when_hidden() -> Result<(), Box<dyn std::error::Error>> {
         let toggles = DisplayToggles {
             thinking_visible: false,
             secondary_fields_visible: false,
         };
-        let out = render_assistant_message("answer", "deliberating", &caps(), toggles, 80);
+        let out = render_assistant_message("answer", "deliberating", &caps(), toggles, 80)?;
         assert!(!out.contains("deliberating"), "got: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn structured_assistant_message_renders_primary_only_by_default() {
+    fn structured_assistant_message_renders_primary_only_by_default()
+    -> Result<(), Box<dyn std::error::Error>> {
         let json = r#"{"text": "primary value", "extra": "secondary value"}"#;
-        let out = render_assistant_message(json, "", &caps(), DisplayToggles::default(), 80);
+        let out = render_assistant_message(json, "", &caps(), DisplayToggles::default(), 80)?;
         assert!(out.contains("primary value"), "got: {out:?}");
         assert!(!out.contains("secondary value"), "got: {out:?}");
         assert!(!out.contains("───"), "got: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn structured_assistant_message_renders_secondary_when_visible() {
+    fn structured_assistant_message_renders_secondary_when_visible()
+    -> Result<(), Box<dyn std::error::Error>> {
         let toggles = DisplayToggles {
             thinking_visible: true,
             secondary_fields_visible: true,
         };
         let json = r#"{"text": "primary value", "extra": "secondary value"}"#;
-        let out = render_assistant_message(json, "", &caps(), toggles, 80);
+        let out = render_assistant_message(json, "", &caps(), toggles, 80)?;
         assert!(out.contains("primary value"), "got: {out:?}");
         assert!(out.contains("─── extra ───"), "got: {out:?}");
         assert!(out.contains("secondary value"), "got: {out:?}");
+        Ok(())
     }
 
     // ---------------- render_tool_call (R1) ----------------
@@ -691,7 +709,7 @@ mod tests {
     // ---------------- render_structured (R6) ----------------
 
     #[test]
-    fn structured_primary_and_secondary_with_schema() {
+    fn structured_primary_and_secondary_with_schema() -> Result<(), Box<dyn std::error::Error>> {
         let value = json!({"summary": "short", "detail": "long form"});
         let schema = json!({
             "type": "object",
@@ -700,14 +718,16 @@ mod tests {
                 "detail": {"type": "string"},
             }
         });
-        let out = render_structured(&value, Some(&schema), &caps(), true, 80);
+        let out = render_structured(&value, Some(&schema), &caps(), true, 80)?;
         assert!(out.contains("short"), "got: {out:?}");
         assert!(out.contains("─── detail ───"), "got: {out:?}");
         assert!(out.contains("long form"), "got: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn structured_secondary_hidden_omits_secondary_fields() {
+    fn structured_secondary_hidden_omits_secondary_fields() -> Result<(), Box<dyn std::error::Error>>
+    {
         let value = json!({"summary": "short", "detail": "long form"});
         let schema = json!({
             "type": "object",
@@ -716,56 +736,64 @@ mod tests {
                 "detail": {"type": "string"},
             }
         });
-        let out = render_structured(&value, Some(&schema), &caps(), false, 80);
+        let out = render_structured(&value, Some(&schema), &caps(), false, 80)?;
         assert!(out.contains("short"), "got: {out:?}");
         assert!(!out.contains("long form"), "got: {out:?}");
         assert!(!out.contains("─── detail ───"), "got: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn structured_picks_priority_key_when_present() {
+    fn structured_picks_priority_key_when_present() -> Result<(), Box<dyn std::error::Error>> {
         let value = json!({"extra": "secondary", "text": "primary"});
-        let out = render_structured(&value, None, &caps(), false, 80);
+        let out = render_structured(&value, None, &caps(), false, 80)?;
         assert!(out.contains("primary"), "got: {out:?}");
         assert!(!out.contains("secondary"), "got: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn structured_non_object_renders_pretty_json() {
+    fn structured_non_object_renders_pretty_json() -> Result<(), Box<dyn std::error::Error>> {
         let value = json!(42);
-        let out = render_structured(&value, None, &caps(), false, 80);
+        let out = render_structured(&value, None, &caps(), false, 80)?;
         assert!(out.contains("42"), "got: {out:?}");
         assert!(out.ends_with('\n'), "got: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn structured_empty_object_renders_empty() {
+    fn structured_empty_object_renders_empty() -> Result<(), Box<dyn std::error::Error>> {
         let value = json!({});
-        let out = render_structured(&value, None, &caps(), true, 80);
+        let out = render_structured(&value, None, &caps(), true, 80)?;
         assert!(out.is_empty(), "got: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn structured_picks_first_string_when_no_priority_match() {
+    fn structured_picks_first_string_when_no_priority_match()
+    -> Result<(), Box<dyn std::error::Error>> {
         let value = json!({"alpha": 1, "beta": "the body", "gamma": 2});
-        let out = render_structured(&value, None, &caps(), false, 80);
+        let out = render_structured(&value, None, &caps(), false, 80)?;
         assert!(out.contains("the body"), "got: {out:?}");
+        Ok(())
     }
 
     // ---------------- render_event (R1) ----------------
 
     #[test]
-    fn render_event_dispatches_user_message() {
+    fn render_event_dispatches_user_message() -> Result<(), Box<dyn std::error::Error>> {
         let event = SessionEvent::UserMessage {
             base: base(),
             content: "hi".to_owned(),
         };
-        let out = render_event(&event, &caps(), DisplayToggles::default(), 80);
+        let out = render_event(&event, &caps(), DisplayToggles::default(), 80)?;
         assert!(out.contains("> hi"), "got: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn render_event_dispatches_assistant_message_to_markdown() {
+    fn render_event_dispatches_assistant_message_to_markdown()
+    -> Result<(), Box<dyn std::error::Error>> {
         let event = SessionEvent::AssistantMessage {
             response_items: Vec::new(),
             base: base(),
@@ -777,12 +805,13 @@ mod tests {
             stop_reason: String::new(),
             response_id: None,
         };
-        let out = render_event(&event, &caps(), DisplayToggles::default(), 80);
+        let out = render_event(&event, &caps(), DisplayToggles::default(), 80)?;
         assert!(out.contains("\x1b[1m"), "got: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn render_event_dispatches_tool_result_to_renderer() {
+    fn render_event_dispatches_tool_result_to_renderer() -> Result<(), Box<dyn std::error::Error>> {
         let event = SessionEvent::ToolResult {
             base: base(),
             tool_call_id: "tc_1".to_owned(),
@@ -791,58 +820,65 @@ mod tests {
             spool_ref: None,
             duration_ms: 100,
         };
-        let out = render_event(&event, &caps(), DisplayToggles::default(), 80);
+        let out = render_event(&event, &caps(), DisplayToggles::default(), 80)?;
         assert!(out.contains("0.10s"), "got: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn render_event_dispatches_spoken_response_to_structured() {
+    fn render_event_dispatches_spoken_response_to_structured()
+    -> Result<(), Box<dyn std::error::Error>> {
         let event = SessionEvent::SpokenResponse {
             base: base(),
             content: json!({"text": "spoken", "details": "extra"}),
         };
-        let out = render_event(&event, &caps(), DisplayToggles::default(), 80);
+        let out = render_event(&event, &caps(), DisplayToggles::default(), 80)?;
         assert!(out.contains("spoken"), "got: {out:?}");
         assert!(!out.contains("extra"), "got: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn render_event_dispatches_custom_with_event_type_header() {
+    fn render_event_dispatches_custom_with_event_type_header()
+    -> Result<(), Box<dyn std::error::Error>> {
         let event = SessionEvent::Custom {
             base: base(),
             event_type: "review".to_owned(),
             data: json!({"text": "looks good"}),
         };
-        let out = render_event(&event, &caps(), DisplayToggles::default(), 80);
+        let out = render_event(&event, &caps(), DisplayToggles::default(), 80)?;
         assert!(out.contains("─── review ───"), "got: {out:?}");
         assert!(out.contains("looks good"), "got: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn render_event_dispatches_model_change() {
+    fn render_event_dispatches_model_change() -> Result<(), Box<dyn std::error::Error>> {
         let event = SessionEvent::ModelChange {
             base: base(),
             old_model: "o".to_owned(),
             new_model: "n".to_owned(),
         };
-        let out = render_event(&event, &caps(), DisplayToggles::default(), 80);
+        let out = render_event(&event, &caps(), DisplayToggles::default(), 80)?;
         assert!(out.contains("model: o → n"), "got: {out:?}");
         assert!(out.contains("\x1b[2m"), "expected dim: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn render_event_dispatches_compaction() {
+    fn render_event_dispatches_compaction() -> Result<(), Box<dyn std::error::Error>> {
         let event = SessionEvent::Compaction {
             base: base(),
             summary: "rolled up 5".to_owned(),
             replaced_event_ids: vec![],
         };
-        let out = render_event(&event, &caps(), DisplayToggles::default(), 80);
+        let out = render_event(&event, &caps(), DisplayToggles::default(), 80)?;
         assert!(out.contains("compaction: rolled up 5"), "got: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn render_event_dispatches_child_branch() {
+    fn render_event_dispatches_child_branch() -> Result<(), Box<dyn std::error::Error>> {
         let event = SessionEvent::ChildBranch {
             base: base(),
             parent_session_id: Some("parent_1".to_owned()),
@@ -851,35 +887,39 @@ mod tests {
             parent_event_anchor: Some(EventId::new()),
             kind: norn::session::events::ChildBranchKind::Fork,
         };
-        let out = render_event(&event, &caps(), DisplayToggles::default(), 80);
+        let out = render_event(&event, &caps(), DisplayToggles::default(), 80)?;
         assert!(
             out.contains("branch (fork) → root/fork-1a2b3c4d [sess_abc]"),
             "got: {out:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn render_event_dispatches_label_with_description() {
+    fn render_event_dispatches_label_with_description() -> Result<(), Box<dyn std::error::Error>> {
         let event = SessionEvent::Label {
             base: base(),
             label: "checkpoint".to_owned(),
             description: Some("phase one done".to_owned()),
         };
-        let out = render_event(&event, &caps(), DisplayToggles::default(), 80);
+        let out = render_event(&event, &caps(), DisplayToggles::default(), 80)?;
         assert!(
             out.contains("label: checkpoint — phase one done"),
             "got: {out:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn render_event_dispatches_label_without_description() {
+    fn render_event_dispatches_label_without_description() -> Result<(), Box<dyn std::error::Error>>
+    {
         let event = SessionEvent::Label {
             base: base(),
             label: "checkpoint".to_owned(),
             description: None,
         };
-        let out = render_event(&event, &caps(), DisplayToggles::default(), 80);
+        let out = render_event(&event, &caps(), DisplayToggles::default(), 80)?;
         assert!(out.contains("label: checkpoint"), "got: {out:?}");
+        Ok(())
     }
 }

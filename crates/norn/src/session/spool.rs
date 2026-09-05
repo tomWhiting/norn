@@ -38,6 +38,13 @@
 //! when events are copied between stores under the same data directory
 //! (fork seeding copies parent `ToolResult` events into child stores).
 
+mod inheritance;
+mod range;
+
+pub(crate) use inheritance::{SpoolInheritance, inheritance_path};
+
+pub use range::SpoolRangeError;
+
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -280,8 +287,9 @@ fn is_path_safe_component(component: &str) -> bool {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
     use super::*;
     use crate::session::manager::{CreateSessionOptions, SessionManager};
 
@@ -310,38 +318,38 @@ mod tests {
 
     #[test]
     fn write_then_read_round_trips_verbatim() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir()?;
         let writer = writer(tmp.path(), "sess-1", DurabilityPolicy::Flush)?;
         let event_id = EventId::new();
         let full = Value::String("x".repeat(200_000));
 
-        let spool_ref = writer.write(&event_id, &full).unwrap();
+        let spool_ref = writer.write(&event_id, &full)?;
         assert_eq!(spool_ref, format!("sess-1/spool/{event_id}.bin"));
 
-        let on_disk = std::fs::read(resolve_spool_ref(tmp.path(), &spool_ref).unwrap()).unwrap();
+        let on_disk = std::fs::read(resolve_spool_ref(tmp.path(), &spool_ref)?)?;
         assert_eq!(
             on_disk,
-            serde_json::to_vec(&full).unwrap(),
+            serde_json::to_vec(&full)?,
             "spool bytes must be the verbatim serialized output",
         );
-        assert_eq!(read_spooled_output(tmp.path(), &spool_ref).unwrap(), full);
+        assert_eq!(read_spooled_output(tmp.path(), &spool_ref)?, full);
         Ok(())
     }
 
     #[test]
     fn fsync_policies_also_round_trip() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir()?;
         let writer = writer(tmp.path(), "s2", DurabilityPolicy::FsyncPerEvent)?;
         let event_id = EventId::new();
         let full = serde_json::json!({ "stdout": "data", "exit_code": 0 });
-        let spool_ref = writer.write(&event_id, &full).unwrap();
-        assert_eq!(read_spooled_output(tmp.path(), &spool_ref).unwrap(), full);
+        let spool_ref = writer.write(&event_id, &full)?;
+        assert_eq!(read_spooled_output(tmp.path(), &spool_ref)?, full);
         Ok(())
     }
 
     #[test]
     fn write_failure_is_a_typed_error() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir()?;
         let writer = writer(tmp.path(), "blocked", DurabilityPolicy::Flush)?;
         // Occupy the session directory path with a regular FILE so the
         // spool directory cannot be created underneath it.
@@ -353,7 +361,8 @@ mod tests {
 
         let err = writer
             .write(&EventId::new(), &Value::String("payload".to_owned()))
-            .expect_err("directory creation must fail");
+            .err()
+            .ok_or("directory creation must fail")?;
         assert!(
             matches!(err, SessionPersistError::Io(_)),
             "expected a typed Io error, got {err:?}",
@@ -362,8 +371,8 @@ mod tests {
     }
 
     #[test]
-    fn traversal_and_malformed_refs_are_rejected() {
-        let tmp = tempfile::tempdir().unwrap();
+    fn traversal_and_malformed_refs_are_rejected() -> TestResult {
+        let tmp = tempfile::tempdir()?;
         for bad in [
             "",
             "spool/x.bin",
@@ -380,20 +389,24 @@ mod tests {
             "sess/spool/sub/x.bin",
         ] {
             let err = resolve_spool_ref(tmp.path(), bad)
-                .expect_err(&format!("ref {bad:?} must be rejected"));
+                .err()
+                .ok_or_else(|| format!("ref {bad:?} must be rejected"))?;
             assert!(
                 matches!(err, SessionPersistError::InvalidSpoolRef { .. }),
                 "expected InvalidSpoolRef for {bad:?}, got {err:?}",
             );
         }
+        Ok(())
     }
 
     #[test]
-    fn missing_spool_file_surfaces_io_error() {
-        let tmp = tempfile::tempdir().unwrap();
+    fn missing_spool_file_surfaces_io_error() -> TestResult {
+        let tmp = tempfile::tempdir()?;
         let err = read_spooled_output(tmp.path(), "sess/spool/gone.bin")
-            .expect_err("missing file must error");
+            .err()
+            .ok_or("missing file must error")?;
         assert!(matches!(err, SessionPersistError::Io(_)));
+        Ok(())
     }
 
     #[test]

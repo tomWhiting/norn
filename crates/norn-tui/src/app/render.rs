@@ -1,674 +1,486 @@
-//! Application-level rendering helpers.
-//!
-//! These functions bridge [`AppState`] and [`TerminalGuard`] into
-//! concrete terminal output — painting the fixed panel, the input
-//! editor, user messages, and status lines into the scroll region or
-//! fixed panel as appropriate. They are called from
-//! [`super::event_loop`] but carry no event-loop-specific state.
+//! Retained-screen preparation and frame caching; terminal paint never reads history or bodies.
 
+use std::collections::{HashMap, HashSet};
 use std::io::Write as _;
+use std::num::NonZeroUsize;
+use std::sync::Arc;
 use std::time::Instant;
 
-use chrono::Utc;
-
-use termina::Terminal as _;
+use norn::session_view::{BodyRef, DisplayText, ItemId, ViewSource};
 
 use crate::TuiError;
-use crate::agents::status_line::{AgentStatusRenderContext, height_from_view};
 use crate::input::editor::InputEditor;
-use crate::input::wrap;
-use crate::render::MarkdownRenderer;
-use crate::render::scroll_region::write_to_scroll;
-use crate::render::streaming_indicator::StreamingIndicator;
-use crate::render::text::{terminal_safe_input_text, truncate_to_width};
+use crate::render::frame::{Frame, PaintRow};
+use crate::render::layout::{
+    Layout, LayoutPolicy, LayoutRequest, Rect, SplitPreference, UpperLayout, UpperPane,
+};
+use crate::render::retained_markdown::{RenderedMarkdown, render_plain};
+use crate::render::retained_text::{StyledText, TextLayout, TextRow};
 use crate::terminal::setup::TerminalGuard;
 
-use super::autocomplete::render_popup;
-use super::helpers::{dim_line_count, erase_dim_lines, sync_with_guard};
+use super::focus::{Focus, FocusAvailability, FocusState};
 use super::state::AppState;
+use super::viewport::{AnchorPosition, ViewAnchor, Viewport};
 
-/// Maximum visual rows reserved for input before the editor scrolls internally.
-pub(crate) const INPUT_AREA_MAX_ROWS: u16 = 12;
-/// Minimum conversation rows to preserve above the fixed panel.
-const MIN_SCROLL_REGION_ROWS: u16 = 4;
+pub(in crate::app) mod changes;
+mod composer;
+pub(in crate::app) mod hit;
+pub(in crate::app) mod transcript;
+use composer::{paint_composer, popup};
+use transcript::conversation;
 
-/// Input rows visible for the given terminal height and editor contents.
+/// Existing composer cap, shared with the pure rectangle owner.
+pub(crate) const INPUT_AREA_MAX_ROWS: u16 = crate::render::layout::DEFAULT_MAX_COMPOSER_ROWS;
+/// Declared terminal tab display width; input bytes stay unchanged.
+const DISPLAY_TAB_WIDTH: usize = 4;
+
+/// Geometry/cache state owned by one frontend, independent from the running agent.
+pub struct ScreenState {
+    pub(super) viewport: Viewport,
+    pub(super) focus: FocusState,
+    pub(super) changes_open: bool,
+    pub(super) split: SplitPreference,
+    pub(super) upper: UpperPane,
+    pub(super) tool_overrides: HashMap<ItemId, bool>,
+    pub(super) selection: Option<super::selection::Selection>,
+    pub(super) selection_item: Option<ItemId>,
+    pub(super) feedback: Option<String>,
+    pub(super) request_copy: bool,
+    pub(super) search: super::view_actions::reading::SearchState,
+    /// Explicit visible body requests to be scheduled by the event owner.
+    pub demands: Vec<(ItemId, BodyRef)>,
+    /// Most recently rendered logical rows for keyboard/mouse hit testing.
+    pub(super) visible: Vec<ViewAnchor>,
+    pub(super) hit_rows: Vec<hit::HitRow>,
+    pub(super) dragging_selection: bool,
+    pub(super) dragging_divider: bool,
+    pub(super) layout: Layout,
+    pub(super) pane_switch: Option<Rect>,
+    pub(super) navigation: Option<ScrollRequest>,
+    pub(super) changes_row: usize,
+    pub(in crate::app) changes: changes::ChangesState,
+    pub(super) request_older: bool,
+    pub(super) request_more: bool,
+    /// A semantic update permits new visible-body demand; resize alone does not.
+    pub allow_body_load: bool,
+    displayed: HashMap<BodyRef, DisplayCache>,
+    highlighter: crate::render::syntax::SyntaxHighlighter,
+    last_frame: Vec<u8>,
+    /// Input/navigation/body completion marks the next ready frame dirty.
+    pub dirty: bool,
+    last_revision: Option<u64>,
+    last_indicator: Option<String>,
+    ready_batch_remaining: usize,
+}
+
+/// An explicit logical-row movement, consumed before the next visible window is painted.
+pub(super) struct ScrollRequest {
+    pub backwards: bool,
+    pub rows: usize,
+}
+
+/// One approved original revision, parsed once and laid out once per current width.
+struct DisplayCache {
+    original_len: usize,
+    secondary_fields: bool,
+    text: Arc<RenderedMarkdown>,
+    columns: u16,
+    rows: Arc<[TextRow]>,
+}
+
+impl ScreenState {
+    /// Bind frontend navigation to the actual session/store identity.
+    pub fn new(source: ViewSource) -> Self {
+        Self {
+            viewport: Viewport::new(source, true),
+            focus: FocusState::new(),
+            changes_open: false,
+            split: SplitPreference::default(),
+            upper: UpperPane::Conversation,
+            tool_overrides: HashMap::new(),
+            selection: None,
+            selection_item: None,
+            feedback: None,
+            request_copy: false,
+            search: super::view_actions::reading::SearchState::new(),
+            demands: Vec::new(),
+            visible: Vec::new(),
+            hit_rows: Vec::new(),
+            dragging_selection: false,
+            dragging_divider: false,
+            layout: Layout::NoPaint,
+            pane_switch: None,
+            navigation: None,
+            changes_row: 0,
+            changes: changes::ChangesState::new(),
+            request_older: false,
+            request_more: false,
+            allow_body_load: true,
+            displayed: HashMap::new(),
+            highlighter: crate::render::syntax::SyntaxHighlighter::new(),
+            last_frame: Vec::new(),
+            dirty: true,
+            last_revision: None,
+            last_indicator: None,
+            ready_batch_remaining: 0,
+        }
+    }
+
+    /// Capture a finite frontier of already-ready terminal events. Later arrivals
+    /// cannot extend this batch or postpone its completed frame indefinitely.
+    pub(in crate::app) fn terminal_event(&mut self, already_queued: usize) {
+        if self.ready_batch_remaining == 0 {
+            self.ready_batch_remaining = already_queued;
+        } else {
+            self.ready_batch_remaining -= 1;
+        }
+    }
+
+    /// Retire source-bound caches and anchors while preserving frontend preferences.
+    pub fn replace_source(&mut self, source: &ViewSource) {
+        if self.viewport.replace_source(source.clone()) {
+            self.viewport.follow_tail();
+            self.tool_overrides.clear();
+            self.selection = None;
+            self.selection_item = None;
+            self.feedback = None;
+            self.request_copy = false;
+            self.search = super::view_actions::reading::SearchState::new();
+            self.demands.clear();
+            self.visible.clear();
+            self.hit_rows.clear();
+            self.dragging_selection = false;
+            self.dragging_divider = false;
+            self.displayed.clear();
+            self.last_frame.clear();
+            self.navigation = None;
+            self.changes_row = 0;
+            self.changes.clear();
+            self.request_older = false;
+            self.request_more = false;
+        }
+        self.allow_body_load = true;
+        self.dirty = true;
+    }
+
+    /// Visible focus regions are derived only from the last calculated rectangles.
+    pub(super) fn availability(&self) -> FocusAvailability {
+        let mut availability = FocusAvailability {
+            composer: false,
+            conversation: false,
+            changes: false,
+            divider: false,
+        };
+        if let Layout::Ready { upper, .. } = self.layout {
+            availability.composer = true;
+            match upper {
+                UpperLayout::Split { .. } => {
+                    availability.conversation = true;
+                    availability.changes = true;
+                    availability.divider = true;
+                }
+                UpperLayout::Single { pane, .. } => match pane {
+                    UpperPane::Conversation => availability.conversation = true,
+                    UpperPane::Changes => availability.changes = true,
+                },
+            }
+        }
+        availability
+    }
+}
+
+/// Legacy editor wrapping is used only for its editing viewport, never to clip paint.
 #[must_use]
 pub(crate) fn capped_input_height(editor: &InputEditor, cols: u16, terminal_rows: u16) -> u16 {
-    let cap = (terminal_rows / 2).clamp(1, INPUT_AREA_MAX_ROWS);
-    editor.visual_height(cols).min(cap).max(1)
+    let chrome = if terminal_rows >= 6 {
+        crate::render::layout::COMPOSER_CHROME_ROWS
+    } else {
+        0
+    };
+    editor
+        .visual_height(cols)
+        .min(((terminal_rows - chrome) / 2).clamp(1, INPUT_AREA_MAX_ROWS))
+        .max(1)
 }
 
-/// Sync the fixed panel's input height and editor viewport to visual wrapping.
+/// Keep editor navigation's internal viewport in step with its requested size.
 pub(crate) fn sync_input_area(editor: &mut InputEditor, cols: u16, terminal_rows: u16) -> u16 {
-    let input_height = capped_input_height(editor, cols, terminal_rows);
-    editor.scroll_to_cursor(cols, input_height);
-    input_height
+    let height = capped_input_height(editor, cols, terminal_rows);
+    editor.scroll_to_cursor(cols, height);
+    height
 }
 
-/// Write a user message to the scroll region with the rendered prefix.
-///
-/// Restores the cursor into the scroll region (DECRC) first, since the
-/// cursor is typically in the input area when this is called. A blank
-/// line is prepended to visually separate the new turn from previous
-/// output — on the first message this produces a top margin, on
-/// subsequent messages it creates turn separation.
-pub fn write_user_message(
-    text: &str,
+/// Retain a locally admitted human input; the committed record remains independently identified.
+pub(crate) fn write_user_message(
+    text: String,
     state: &mut AppState,
-    guard: &mut TerminalGuard,
-) -> Result<(), TuiError> {
-    // Restore the scroll-region cursor via the guard's clamping helper.
-    // If a redraw between turns grew the panel, the saved row may now
-    // sit in the panel area; the clamp pulls the cursor back into the
-    // scroll region before we paint the user message.
-    guard.restore_scroll_cursor_clamped()?;
-    write_to_scroll("\n", guard.terminal_mut())?;
-    guard.note_scroll_newlines("\n")?;
-    let rendered = crate::events::schema_render::render_user_message(text, &state.terminal_caps);
-    write_to_scroll(&rendered, guard.terminal_mut())?;
-    guard.note_scroll_newlines(&rendered)?;
-    guard.save_scroll_cursor()?;
-    guard.terminal_mut().flush()?;
-    Ok(())
+) -> Result<super::transcript::publication::SubmittedInput, TuiError> {
+    let local = super::notices::input(state, "You · submitted", &text)?;
+    state.screen.allow_body_load = true;
+    Ok(super::transcript::publication::SubmittedInput { text, local })
 }
 
-/// Write a dim `[cancelled]` indicator into the scroll region.
-///
-/// The trailing newline keeps the indicator on its own scroll-region
-/// row so the user can scan back through previous turns and spot
-/// cancellations at a glance.
-pub fn write_cancelled_line(guard: &mut TerminalGuard) -> Result<(), TuiError> {
-    let line = "\x1b[2m[cancelled]\x1b[22m\n";
-    write_to_scroll(line, guard.terminal_mut())?;
-    guard.note_scroll_newlines(line)?;
-    guard.terminal_mut().flush()?;
-    Ok(())
-}
-
-/// Run a top-level scroll-region write operation at the saved transcript cursor.
-///
-/// The fixed panel and input renderer park the hardware cursor inside the
-/// controlled bottom rows. Any subsequent transcript/scrollback operation must
-/// first restore the saved scroll-region cursor, perform all append-only writes,
-/// and then save the new cursor before another panel redraw moves it again.
-///
-/// Lower-level helpers such as [`write_to_scroll`] intentionally do not restore
-/// the cursor themselves: many operations perform several scroll writes in one
-/// logical batch, and restoring before each individual write would rewind the
-/// cursor and corrupt ordering. Use this wrapper at operation boundaries (slash
-/// dispatch, finalization, cancellation, etc.).
-pub(super) fn with_scroll_region_cursor<T, F>(
-    guard: &mut TerminalGuard,
-    body: F,
-) -> Result<T, TuiError>
-where
-    F: FnOnce(&mut TerminalGuard) -> Result<T, TuiError>,
-{
-    guard.restore_scroll_cursor_clamped()?;
-    let result = body(guard);
-    let save_result = guard.save_scroll_cursor();
-    reconcile_scroll_cursor(result, save_result)
-}
-
-/// [`with_scroll_region_cursor`] for async bodies — required by
-/// operations that await inside the scroll-region write (e.g. slash
-/// dispatch, whose `/new` rotation checkpoints the outgoing session
-/// store off-executor). Identical cursor discipline: restore before the
-/// body, save after, body errors win over save errors.
-pub(super) async fn with_scroll_region_cursor_async<T, F>(
-    guard: &mut TerminalGuard,
-    body: F,
-) -> Result<T, TuiError>
-where
-    F: AsyncFnOnce(&mut TerminalGuard) -> Result<T, TuiError>,
-{
-    guard.restore_scroll_cursor_clamped()?;
-    let result = body(guard).await;
-    let save_result = guard.save_scroll_cursor();
-    reconcile_scroll_cursor(result, save_result)
-}
-
-/// Combine a scroll-region body result with the trailing
-/// `save_scroll_cursor` result: the body's error takes precedence (the
-/// save failure is warn-logged so it is never silently swallowed), and a
-/// save failure alone still fails the operation.
-fn reconcile_scroll_cursor<T>(
-    result: Result<T, TuiError>,
-    save_result: std::io::Result<()>,
-) -> Result<T, TuiError> {
-    match (result, save_result) {
-        (Ok(value), Ok(())) => Ok(value),
-        (Ok(_), Err(err)) => Err(TuiError::from(err)),
-        (Err(body_err), Ok(())) => Err(body_err),
-        (Err(body_err), Err(save_err)) => {
-            tracing::warn!(
-                error = %save_err,
-                "failed to save scroll cursor after scroll-region write failure",
-            );
-            Err(body_err)
-        }
+/// Prepare cached data into a coherent full-screen frame, then publish it once.
+pub fn redraw_all(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(), TuiError> {
+    if state.screen.ready_batch_remaining > 0 {
+        return Ok(());
     }
-}
-
-/// Render the input editor into the fixed panel's input area.
-///
-/// Visual rows from [`wrap::layout`] are written with absolute cursor
-/// positioning inside the fixed panel. Rows outside the editor viewport
-/// are skipped, and the terminal cursor is parked at the visual cursor
-/// position relative to the visible window.
-pub fn render_input(state: &AppState, guard: &mut TerminalGuard) -> Result<(), TuiError> {
-    let rows = guard.terminal_rows();
-    let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
+    super::view_actions::flush_copy(state, guard)?;
+    let revision = state.transcript.projection.revision();
+    let indicator = state
+        .streaming_indicator
+        .repaint_key(guard.terminal_columns());
+    if !state.screen.dirty
+        && state.screen.last_revision == Some(revision)
+        && state.screen.last_indicator == indicator
+    {
+        return Ok(());
+    }
+    let frame = prepare(state, guard.terminal_columns(), guard.terminal_rows())?;
+    let output = frame.encode(&state.terminal_caps)?;
+    state.screen.dirty = false;
+    state.screen.last_revision = Some(revision);
+    state.screen.last_indicator = indicator;
+    if output == state.screen.last_frame {
+        return Ok(());
+    }
     let caps = state.terminal_caps.clone();
-    sync_with_guard(&caps, guard, |guard| {
-        render_input_frame(state, rows, cols, guard.terminal_mut())?;
+    super::helpers::sync_with_guard(&caps, guard, |guard| {
+        guard.terminal_mut().write_all(&output)?;
+        guard.terminal_mut().flush()?;
         Ok(())
     })?;
-    guard.terminal_mut().flush()?;
+    state.screen.last_frame = output;
     Ok(())
 }
 
-/// Move the hardware cursor back to the input editor without repainting it.
-///
-/// Streaming output writes through the scroll region and then restores
-/// the scroll cursor for the next append. When the user has typed during
-/// an active turn we still want the visible terminal cursor to sit in the
-/// composer, but repainting the whole controlled panel for every streamed
-/// chunk causes visible flicker. This helper emits only the final cursor
-/// position.
-pub fn park_input_cursor(state: &AppState, guard: &mut TerminalGuard) -> Result<(), TuiError> {
-    let rows = guard.terminal_rows();
-    let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
-    if let Some((row, col)) = input_cursor_position(state, rows, cols) {
-        write!(guard.terminal_mut(), "\x1b[{row};{col}H")?;
-        guard.terminal_mut().flush()?;
-    }
-    Ok(())
-}
-
-fn render_input_frame<W: std::io::Write>(
-    state: &AppState,
-    rows: u16,
-    cols: u16,
-    writer: &mut W,
-) -> std::io::Result<()> {
-    let input_height = capped_input_height(&state.input_editor, cols, rows);
-    let input_top = state.fixed_panel.input_area_top(rows);
-    let viewport_top = state.input_editor.viewport_top();
-    let viewport_bottom = viewport_top.saturating_add(input_height);
-
-    let lines = state.input_editor.lines();
-    let (cursor_row, cursor_col) = state.input_editor.cursor_position();
-    let layout = wrap::layout(lines, cursor_row, cursor_col, cols);
-
-    for (visual_idx, row) in layout.rows.iter().enumerate() {
-        let visual_row = u16::try_from(visual_idx).unwrap_or(u16::MAX);
-        if visual_row < viewport_top || visual_row >= viewport_bottom {
-            continue;
-        }
-        let panel_row = visual_row.saturating_sub(viewport_top);
-        let row_1b = input_top.saturating_add(panel_row).saturating_add(1);
-        let text = lines
-            .get(row.logical_row)
-            .map_or("", |line| char_slice(line, row.char_start, row.char_end));
-        let safe_text = terminal_safe_input_text(text);
-        let clipped = truncate_to_width(safe_text.as_ref(), cols);
-        write!(writer, "\x1b[{row_1b};1H\x1b[2K{clipped}")?;
-    }
-
-    if let Some((row, col)) = input_cursor_position(state, rows, cols) {
-        write!(writer, "\x1b[{row};{col}H")?;
-    }
-
-    Ok(())
-}
-
-fn input_cursor_position(state: &AppState, rows: u16, cols: u16) -> Option<(u16, u16)> {
-    let input_height = capped_input_height(&state.input_editor, cols, rows);
-    let input_top = state.fixed_panel.input_area_top(rows);
-    let viewport_top = state.input_editor.viewport_top();
-    let viewport_bottom = viewport_top.saturating_add(input_height);
-
-    let lines = state.input_editor.lines();
-    let (cursor_row, cursor_col) = state.input_editor.cursor_position();
-    let layout = wrap::layout(lines, cursor_row, cursor_col, cols);
-    let cursor_visual_row = u16::try_from(layout.cursor.visual_row).unwrap_or(u16::MAX);
-    if cursor_visual_row < viewport_top || cursor_visual_row >= viewport_bottom {
-        return None;
-    }
-
-    let cursor_panel_row = cursor_visual_row.saturating_sub(viewport_top);
-    let row = input_top.saturating_add(cursor_panel_row).saturating_add(1);
-    let col = layout
-        .cursor
-        .display_col
-        .min(cols.saturating_sub(1))
-        .saturating_add(1);
-    Some((row, col))
-}
-
-fn char_slice(line: &str, char_start: usize, char_end: usize) -> &str {
-    let byte_start = line
-        .char_indices()
-        .nth(char_start)
-        .map_or(line.len(), |(idx, _)| idx);
-    let byte_end = line
-        .char_indices()
-        .nth(char_end)
-        .map_or(line.len(), |(idx, _)| idx);
-    line.get(byte_start..byte_end).unwrap_or("")
-}
-
-/// Reissue DECSTBM (when needed) and redraw the fixed panel.
-///
-/// Does NOT touch DECSC/DECRC — the scroll-region cursor is tracked
-/// separately via explicit DECSC at points where the cursor is known
-/// to be inside the scroll region.
-///
-/// When the panel shrinks (`height_dirty()` is set and the new height
-/// is smaller than the old), the rows that are about to transition
-/// from panel space back into the scroll region still contain old
-/// panel paint. They are cleared *before* DECSTBM is reissued, while
-/// they still belong to the panel: this keeps the erase strictly
-/// within fixed-panel territory (CO8).
-///
-/// When the panel grows, the rows that are about to transition the
-/// other way — from scroll-region space into panel space — hold live
-/// conversation content. Before DECSTBM is reissued the OLD scroll
-/// region is scrolled up by `claim = new_height − old_height` rows so
-/// that content moves into the terminal's native scrollback (where
-/// the user can still see it by scrolling back) instead of being
-/// overwritten by the panel paint that follows. The scroll-up uses
-/// the standard VT100 bottom-margin trick — `\n` while the cursor
-/// sits on the scroll region's bottom row scrolls every row one
-/// position up and drops the topmost row into native scrollback. The
-/// grow path calls [`TerminalGuard::note_panel_grew`] so that the
-/// event-loop bracket's `restore_scroll_cursor_clamped` knows the
-/// content was already preserved and repositions without a redundant
-/// `\r\n` (which would otherwise create a blank line in the output).
-pub fn redraw_panel(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(), TuiError> {
-    tracing::debug!("redraw_panel paint");
-    state.sync_indicator_into_panel();
-
-    let now = Instant::now();
-    let now_utc = Utc::now();
-    // Snapshot the agent panel ONCE per redraw and feed the same
-    // snapshot into both the height calculation and render call.
-    // `AgentStatusPanel::snapshot` mutates the hold map via
-    // `reclaim_expired_holds`; a second internal call at an expiry
-    // boundary would silently shrink the view relative to the height
-    // the fixed panel was sized to. The backing activity log is still
-    // snapshotted to reclaim expired entries, but it is not rendered as
-    // a separate fixed-panel surface.
-    let (view, entries) = state.agent_panel.snapshot(now);
-    let mut agent_rows = height_from_view(&view);
-    state.fixed_panel.set_agent_lines(agent_rows);
-
-    let rows = guard.terminal_rows();
-    drop(state.activity_log.snapshot(now));
-    state
-        .fixed_panel
-        .set_input_mode_label(state.in_flight_input.mode().label());
-    state.fixed_panel.set_active_input_status(0);
-    // The activity log remains an internal/backing trail, but the
-    // controlled region renders one live multi-agent surface: the agent
-    // tree. Tool/message goals are folded into per-agent activity rows
-    // by dispatch.
-    state.fixed_panel.set_activity_lines(0);
-    let mut activity_rows = 0;
-    enforce_scroll_region_floor(state, rows, &mut agent_rows, &mut activity_rows);
-
-    if state.fixed_panel.height_dirty() {
-        let old_height = guard.panel_height();
-        let new_height = state.fixed_panel.total_height();
-        if old_height > new_height {
-            let clear_top = rows.saturating_sub(old_height);
-            let clear_bottom = rows.saturating_sub(new_height);
-            let writer = guard.terminal_mut();
-            for row in clear_top..clear_bottom {
-                let row_1b = row.saturating_add(1);
-                write!(writer, "\x1b[{row_1b};1H\x1b[2K")?;
-            }
-        } else if new_height > old_height {
-            // Grow path: when the scroll cursor is close to the rows
-            // about to be claimed by the panel, scroll the OLD scroll
-            // region up by `claim` rows so bottom content lands in
-            // native scrollback instead of being painted over. When
-            // there are enough blank rows below the tracked scroll
-            // cursor, no protective scroll is needed; scrolling then
-            // would incorrectly push recent top content into scrollback.
-            let claim = new_height - old_height;
-            if guard.scroll_rows_below_cursor() <= claim {
-                let old_scroll_bottom_1b = rows.saturating_sub(old_height);
-                if old_scroll_bottom_1b > 0 {
-                    let writer = guard.terminal_mut();
-                    write!(writer, "\x1b[{old_scroll_bottom_1b};1H")?;
-                    for _ in 0..claim {
-                        writer.write_all(b"\n")?;
-                    }
-                    guard.note_panel_grew(claim);
-                }
-            }
-        }
-        guard.reissue_scroll_region(new_height)?;
-    }
-    let caps = state.terminal_caps.clone();
-    let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
-    let agent_top = state.fixed_panel.agent_rows_top(rows);
-    state
-        .fixed_panel
-        .render(guard.terminal_mut(), &caps, rows, cols)?;
-    if agent_rows > 0 {
-        state.agent_panel.render_view(
-            &view,
-            &entries,
-            agent_top,
-            guard.terminal_mut(),
-            &caps,
-            AgentStatusRenderContext {
-                now_utc,
-                terminal_cols: cols,
-            },
-        )?;
-    }
-    guard.terminal_mut().flush()?;
-    Ok(())
-}
-
-fn enforce_scroll_region_floor(
-    state: &mut AppState,
-    terminal_rows: u16,
-    agent_rows: &mut u16,
-    activity_rows: &mut u16,
-) {
-    if has_scroll_floor(state, terminal_rows) {
-        return;
-    }
-    if *activity_rows > 0 {
-        state.fixed_panel.set_activity_lines(0);
-        *activity_rows = 0;
-        if has_scroll_floor(state, terminal_rows) {
-            return;
-        }
-    }
-    if state.fixed_panel.active_input_status_rows() > 0 {
-        state.fixed_panel.set_active_input_status(0);
-        if has_scroll_floor(state, terminal_rows) {
-            return;
-        }
-    }
-    if state.fixed_panel.autocomplete_popup_rows() > 0 {
-        state.fixed_panel.set_autocomplete_popup(0);
-        state.autocomplete = None;
-        if has_scroll_floor(state, terminal_rows) {
-            return;
-        }
-    }
-    if *agent_rows > 0 {
-        state.fixed_panel.set_agent_lines(0);
-        *agent_rows = 0;
-        if has_scroll_floor(state, terminal_rows) {
-            return;
-        }
-    }
-    if !matches!(state.streaming_indicator, StreamingIndicator::Idle) {
-        state
-            .fixed_panel
-            .set_streaming_indicator(StreamingIndicator::Idle);
-    }
-}
-
-fn has_scroll_floor(state: &AppState, terminal_rows: u16) -> bool {
-    terminal_rows.saturating_sub(state.fixed_panel.total_height()) >= MIN_SCROLL_REGION_ROWS
-}
-
-/// Redraw the panel, then the popup, then the input — the canonical
-/// post-mutation paint sequence used after every input action and
-/// popup lifecycle change.
-pub fn redraw_all(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(), TuiError> {
-    redraw_panel(state, guard)?;
-    render_popup(state, guard)?;
-    render_input(state, guard)?;
-    Ok(())
-}
-
-/// Drive a single mid-turn streaming-tick paint.
-///
-/// The tick always refreshes internal elapsed/completion state, but it
-/// only writes to the terminal when the fixed panel's visible indicator
-/// text changed at the current width. This keeps the controlled bottom
-/// region stable between whole-second/token/tool transitions instead of
-/// clearing and repainting it on every 8ms timer wake.
-///
-/// When a repaint is needed, the save→redraw→restore→repaint sequence
-/// is wrapped in [`sync_with_guard`] so capable terminals see the entire
-/// frame land atomically via DCS 2026, and baseline terminals still get
-/// the cursor hide/show fallback.
-///
-/// `now` is injected to keep the function free of implicit clock
-/// access — the caller passes `Instant::now()` from the tokio tick
-/// arm so tests can drive `state.tick` deterministically.
+/// A status timer changes retained state; an unchanged frame writes nothing.
 pub fn redraw_streaming_tick(
     state: &mut AppState,
     guard: &mut TerminalGuard,
-    renderer: Option<&MarkdownRenderer>,
     now: Instant,
 ) -> Result<(), TuiError> {
-    let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
-    if !state.tick_indicator_repaint_needed(now, cols) {
-        return Ok(());
-    }
-    state.sync_indicator_into_panel();
-    let dim_was_active = renderer.is_some_and(MarkdownRenderer::is_dim_active);
-    guard.restore_scroll_cursor_clamped()?;
-    // Always erase dim before the save/restore cycle.
-    // restore_scroll_cursor_clamped may emit \r\n when the panel grew,
-    // which scrolls the current line into permanent scrollback — any
-    // dim text on it becomes a ghost. Erasing first prevents this.
-    // Repaint after restore so the dim preview returns within the same
-    // flush (no visible gap at 120fps).
-    if dim_was_active {
-        erase_dim_lines(state.dim_wrapped_lines, guard)?;
-    }
-    let caps = state.terminal_caps.clone();
-    sync_with_guard(&caps, guard, |guard| {
-        guard.save_scroll_cursor()?;
-        redraw_panel(state, guard)?;
-        render_popup(state, guard)?;
-        guard.restore_scroll_cursor_clamped()?;
-        if dim_was_active {
-            repaint_dim(state, guard, renderer)?;
-        }
-        guard.save_scroll_cursor()?;
-        let rows = guard.terminal_rows();
-        render_input_frame(state, rows, cols, guard.terminal_mut())?;
-        Ok(())
-    })?;
-    guard.terminal_mut().flush()?;
-    Ok(())
+    state.tick(now);
+    redraw_all(state, guard)
 }
 
-/// Repaint the renderer's current dim preview into the scroll region
-/// after a panel redraw — used by [`redraw_streaming_tick`] when dim
-/// was active before the redraw. Three cases all converge on resetting
-/// `state.dim_wrapped_lines`: no renderer / empty preview / insufficient
-/// remaining scroll-region rows. Only the happy path writes the dim
-/// payload and stores the new line count.
-fn repaint_dim(
-    state: &mut AppState,
-    guard: &mut TerminalGuard,
-    renderer: Option<&MarkdownRenderer>,
-) -> Result<(), TuiError> {
-    let Some(r) = renderer else {
-        state.dim_wrapped_lines = 0;
-        return Ok(());
+fn prepare(state: &mut AppState, columns: u16, rows: u16) -> Result<Frame, TuiError> {
+    let prefix = 0;
+    let original = state.input_editor.text();
+    let cursor = original
+        .char_indices()
+        .nth(state.input_editor.cursor_char_index())
+        .map_or(original.len(), |(offset, _)| offset);
+    // The prefix is a separate rectangle: a leading combining mark cannot join its space.
+    let draft = safe_text(&format!("{original} "))?;
+    let draft_rows = layout_rows(&draft.styled, columns.saturating_sub(prefix))?;
+    let layout = Layout::calculate(
+        LayoutRequest {
+            columns,
+            rows,
+            requested_composer_rows: u16::try_from(draft_rows.len()).unwrap_or(u16::MAX),
+            changes_open: state.screen.changes_open,
+            split: state.screen.split,
+            active_upper_pane: state.screen.upper,
+        },
+        LayoutPolicy::default(),
+    )?;
+    state.screen.layout = layout;
+    state.screen.pane_switch = None;
+    state.screen.visible.clear();
+    state.screen.hit_rows.clear();
+    state.screen.demands.clear();
+    let mut frame = Frame {
+        layout,
+        rows: Vec::new(),
+        cursor: None,
     };
-    let dim = r.current_dim_preview();
-    if dim.is_empty() {
-        state.dim_wrapped_lines = 0;
-        return Ok(());
+    match layout {
+        Layout::NoPaint => {}
+        Layout::ResizeRequired { area } => {
+            push_text(&mut frame, "Resize to continue", area, false, false)?;
+        }
+        Layout::Ready { upper, composer } => {
+            match upper {
+                UpperLayout::Single { pane, area } => {
+                    let area = if state.screen.changes_open && area.height > 1 {
+                        let switch = Rect { height: 1, ..area };
+                        state.screen.pane_switch = Some(switch);
+                        push_text(
+                            &mut frame,
+                            match pane {
+                                UpperPane::Conversation => "Conversation  [F2 · Changes]",
+                                UpperPane::Changes => "Changes  [F2 · Conversation]",
+                            },
+                            switch,
+                            false,
+                            false,
+                        )?;
+                        Rect {
+                            row: area.row + 1,
+                            height: area.height - 1,
+                            ..area
+                        }
+                    } else {
+                        area
+                    };
+                    match pane {
+                        UpperPane::Conversation => conversation(state, &mut frame, area)?,
+                        UpperPane::Changes => changes::paint(state, &mut frame, area)?,
+                    }
+                }
+                UpperLayout::Split {
+                    conversation: left,
+                    changes: right,
+                    ..
+                } => {
+                    conversation(state, &mut frame, left)?;
+                    changes::paint(state, &mut frame, right)?;
+                }
+            }
+            composer::paint_chrome(state, &mut frame, composer)?;
+            let input_area = crate::render::layout::composer_input_area(composer);
+            paint_composer(
+                state,
+                &mut frame,
+                input_area,
+                prefix,
+                &draft,
+                &draft_rows,
+                cursor,
+            )?;
+            popup(state, &mut frame, composer)?;
+        }
     }
-    let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
-    let lines = dim_line_count(&dim, cols);
-    let avail = guard.scroll_rows_below_cursor();
-    if lines > avail {
-        state.dim_wrapped_lines = 0;
-        return Ok(());
+    Ok(frame)
+}
+
+fn push_text(
+    frame: &mut Frame,
+    text: &str,
+    area: Rect,
+    selected: bool,
+    composer: bool,
+) -> Result<(), TuiError> {
+    let text = safe_text(text)?;
+    for (index, geometry) in layout_rows(&text.styled, area.width)?
+        .into_iter()
+        .take(usize::from(area.height))
+        .enumerate()
+    {
+        frame.rows.push(PaintRow {
+            area,
+            row: u16::try_from(index).map_err(|source| TuiError::FrameCoordinate {
+                value: index,
+                source,
+            })?,
+            text: Arc::clone(&text),
+            geometry,
+            selected,
+            selection: Vec::new(),
+            composer,
+        });
     }
-    let writer = guard.terminal_mut();
-    write!(writer, "\x1b[2m")?;
-    write_to_scroll(&dim, writer)?;
-    write!(writer, "\x1b[22m")?;
-    state.dim_wrapped_lines = lines;
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
+fn safe_text(text: &str) -> Result<Arc<RenderedMarkdown>, TuiError> {
+    Ok(Arc::new(render_plain(text)?))
+}
 
-    use parking_lot::RwLock;
+fn layout_rows(text: &StyledText, columns: u16) -> Result<Vec<TextRow>, TuiError> {
+    Ok(
+        match text.layout(
+            usize::from(columns),
+            NonZeroUsize::new(DISPLAY_TAB_WIDTH).ok_or(TuiError::InvalidViewDemand {
+                name: "display tab width",
+                value: DISPLAY_TAB_WIDTH,
+            })?,
+        )? {
+            TextLayout::NoPaint => Vec::new(),
+            TextLayout::Rows(rows) => rows,
+        },
+    )
+}
 
-    use norn::agent::registry::AgentRegistry;
-
-    use super::*;
-    use crate::input::autocomplete::{AutocompletePopup, SlashCandidate, SourceTag};
-    use crate::input::history::InputHistory;
-    use crate::render::fixed_panel::StatusBar;
-    use crate::render::streaming_indicator::StreamingIndicator;
-    use crate::terminal::caps::TerminalCaps;
-
-    fn fresh_state() -> Result<AppState, Box<dyn std::error::Error>> {
-        let registry: Arc<RwLock<AgentRegistry>> = AgentRegistry::shared();
-        let guard = AgentRegistry::reserve(
-            &registry,
-            "/root-render".to_string(),
-            "lead".to_string(),
-            "claude".to_string(),
-            None,
-            norn::agent::child_policy::ChildPolicy {
-                messaging: norn::agent::child_policy::MessagingScope::SiblingsAndParent,
-                delegation: norn::agent::child_policy::DelegationBudget {
-                    remaining_depth: 5,
-                    max_concurrent_children: 32,
-                },
-                inbound_capacity: 32,
-                loop_config: None,
-            },
-            None,
-        )?;
-        let root_id = guard.id();
-        guard.confirm()?;
-        Ok(AppState::new(
-            TerminalCaps::baseline(),
-            InputHistory::in_memory(),
-            registry,
-            root_id,
-            StatusBar::default(),
-        ))
+pub(super) fn interaction(error: impl std::error::Error + Send + Sync + 'static) -> TuiError {
+    TuiError::ViewInteraction {
+        source: Box::new(error),
     }
+}
 
-    fn type_text(editor: &mut InputEditor, text: &str) {
-        for ch in text.chars() {
-            if ch == '\n' {
-                editor.insert_newline();
-            } else {
-                editor.insert_char(ch);
-            }
+/// Schedule only previously identified visible demands, never called by frame encoding.
+pub(super) fn load_visible(
+    state: &mut AppState,
+    store: &Arc<norn::session::EventStore>,
+) -> Result<(), TuiError> {
+    // A deferred frame still describes the previous selection/geometry. Keep
+    // every demand and permission pending until this finite input batch paints.
+    if state.screen.ready_batch_remaining > 0 {
+        return Ok(());
+    }
+    if std::mem::take(&mut state.screen.request_older) {
+        state.transcript.load_older(store)?;
+    }
+    if std::mem::take(&mut state.screen.request_more)
+        && let Some(item) = state
+            .screen
+            .viewport
+            .selected()
+            .and_then(|id| state.transcript.projection.item(id))
+    {
+        let id = item.id.clone();
+        let bodies = item.bodies.clone();
+        for body in bodies {
+            state.transcript.load_body(store, &id, &body, true)?;
         }
     }
-
-    fn seed_popup(state: &mut AppState, rows: u16) {
-        let candidates = vec![SlashCandidate {
-            name: "help".to_owned(),
-            source_tag: SourceTag::Builtin,
-            description: "Show help".to_owned(),
-        }];
-        state.autocomplete = Some(AutocompletePopup::new_slash(candidates, "", 0));
-        state.fixed_panel.set_autocomplete_popup(rows);
+    if !state.screen.allow_body_load {
+        return Ok(());
     }
-
-    #[test]
-    fn row_budget_drops_optional_surfaces_before_scroll_floor()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let mut state = fresh_state()?;
-        let mut agent_rows = 3;
-        let mut activity_rows = 2;
-        state.fixed_panel.set_agent_lines(agent_rows);
-        state.fixed_panel.set_activity_lines(activity_rows);
-        seed_popup(&mut state, 5);
-
-        enforce_scroll_region_floor(&mut state, 12, &mut agent_rows, &mut activity_rows);
-
-        assert_eq!(activity_rows, 0);
-        assert_eq!(state.fixed_panel.autocomplete_popup_rows(), 0);
-        assert!(state.autocomplete.is_none());
-        assert!(12u16.saturating_sub(state.fixed_panel.total_height()) >= MIN_SCROLL_REGION_ROWS);
-        Ok(())
-    }
-
-    #[test]
-    fn row_budget_hides_completion_indicator_when_terminal_is_tiny()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let mut state = fresh_state()?;
-        state.streaming_indicator = StreamingIndicator::Complete {
-            usage_summary: "[1 in / 1 out, 1s]".to_string(),
-        };
-        state.sync_indicator_into_panel();
-        let mut agent_rows = 0;
-        let mut activity_rows = 0;
-
-        enforce_scroll_region_floor(&mut state, 8, &mut agent_rows, &mut activity_rows);
-
-        assert_eq!(state.fixed_panel.total_height(), 4);
-        Ok(())
-    }
-
-    #[test]
-    fn render_paints_visual_rows_and_cursor() -> Result<(), Box<dyn std::error::Error>> {
-        let mut state = fresh_state()?;
-        type_text(&mut state.input_editor, "abcdefghij");
-        let input_rows = sync_input_area(&mut state.input_editor, 5, 24);
-        state.fixed_panel.set_input_area(input_rows);
-        let mut buf = Vec::new();
-        render_input_frame(&state, 24, 5, &mut buf)?;
-        let out = String::from_utf8(buf)?;
-        assert!(out.contains("\x1b[21;1H\x1b[2Kabcde"));
-        assert!(out.contains("\x1b[22;1H\x1b[2Kfghij"));
-        assert!(out.contains("\x1b[22;5H"));
-        Ok(())
-    }
-
-    #[test]
-    fn render_paints_multiline_wrap_rows() -> Result<(), Box<dyn std::error::Error>> {
-        let mut state = fresh_state()?;
-        type_text(&mut state.input_editor, "short\nverylonglineHERE");
-        let input_rows = sync_input_area(&mut state.input_editor, 10, 24);
-        state.fixed_panel.set_input_area(input_rows);
-        let mut buf = Vec::new();
-        render_input_frame(&state, 24, 10, &mut buf)?;
-        let out = String::from_utf8(buf)?;
-        assert!(out.contains("\x1b[20;1H\x1b[2Kshort"));
-        assert!(out.contains("\x1b[21;1H\x1b[2Kverylongli"));
-        assert!(out.contains("\x1b[22;1H\x1b[2KneHERE"));
-        Ok(())
-    }
-
-    #[test]
-    fn render_input_replaces_control_characters() -> Result<(), Box<dyn std::error::Error>> {
-        let mut state = fresh_state()?;
-        type_text(&mut state.input_editor, "a\x1b[31mb\tc");
-        let input_rows = sync_input_area(&mut state.input_editor, 20, 24);
-        state.fixed_panel.set_input_area(input_rows);
-        let mut buf = Vec::new();
-        render_input_frame(&state, 24, 20, &mut buf)?;
-        let out = String::from_utf8(buf)?;
-        assert!(out.contains("a?[31mb?c"), "got: {out:?}");
-        assert!(
-            !out.contains("\x1b[31m"),
-            "raw SGR from input must not reach terminal output: {out:?}",
+    state.screen.allow_body_load = false;
+    let mut demands = std::mem::take(&mut state.screen.demands);
+    if state.screen.changes_open
+        && let Some(item) = state
+            .screen
+            .viewport
+            .selected()
+            .and_then(|id| state.transcript.projection.item(id))
+    {
+        demands.extend(
+            item.bodies
+                .iter()
+                .cloned()
+                .map(|body| (item.id.clone(), body)),
         );
-        Ok(())
     }
+    let mut pinned: HashSet<BodyRef> = demands
+        .iter()
+        .map(|(_, reference)| reference.clone())
+        .collect();
+    if let Some(ViewAnchor {
+        position: AnchorPosition::Body { reference, .. },
+        ..
+    }) = state.screen.viewport.anchor()
+    {
+        pinned.insert(reference.clone());
+    }
+    if let Some(selection) = &state.screen.selection {
+        pinned.insert(selection.reference().clone());
+    }
+    super::view_actions::reading::load_requests(state, store, &mut pinned)?;
+    let had_demands = !demands.is_empty();
+    for (item, reference) in demands {
+        state
+            .transcript
+            .load_body(store, &item, &reference, false)?;
+    }
+    state.screen.dirty |= had_demands;
+    changes::demand(state);
+    state.transcript.retain_bodies(&pinned);
+    state
+        .screen
+        .displayed
+        .retain(|reference, _| pinned.contains(reference));
+    Ok(())
 }

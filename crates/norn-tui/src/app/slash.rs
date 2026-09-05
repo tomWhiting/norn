@@ -10,7 +10,6 @@
 //! the model as user messages (matching REPL behaviour).
 
 use std::fmt::Write as _;
-use std::io::Write as IoWrite;
 use std::sync::Arc;
 
 use norn::session::context_edit::ContextEdits;
@@ -20,8 +19,6 @@ use norn::session::{
 };
 
 use crate::TuiError;
-use crate::render::scroll_region::write_to_scroll;
-use crate::terminal::setup::TerminalGuard;
 
 use super::dispatch::write_error_line;
 use super::event_loop::RuntimeRefs;
@@ -29,6 +26,7 @@ use super::mcp_slash::{handle_mcp, mcp_exit_is_blocked, render_pending_mcp_exit}
 use super::model_selection::{
     handle_model, handle_reasoning_effort, handle_service_tier, set_fast_service_tier,
 };
+use super::notices;
 use super::slash_catalog::{
     SlashClass, TuiBuiltinKind, classify_slash, find_tui_builtin_command, tui_builtin_commands,
 };
@@ -49,17 +47,16 @@ pub(super) enum SlashOutcome {
 /// Try to dispatch `text` as a slash command.
 ///
 /// Returns `Ok(Some(_))` when `text` is a recognised Phase 1 builtin
-/// (in which case the command has already taken effect — scroll-region
-/// writes, state mutations, the lot). Returns `Ok(None)` when the
+/// (in which case its state changes and semantic notices are retained).
+/// Returns `Ok(None)` when the
 /// input is not a slash, is an empty slash, is `/<unknown>`, or is a
 /// profile command — the caller's `Submit` arm then runs its normal
-/// `write_user_message + run_turn` pipeline so the agent loop's
+/// retained-input and `run_turn` pipeline so the agent loop's
 /// `preprocess_input` can intercept profile commands as usual.
 pub(super) async fn try_dispatch_slash(
     text: &str,
     state: &mut AppState,
     runtime: &mut RuntimeRefs,
-    guard: &mut TerminalGuard,
 ) -> Result<Option<SlashOutcome>, TuiError> {
     let SlashClass::Recognised { cmd, arg } = classify_slash(text) else {
         return Ok(None);
@@ -75,43 +72,47 @@ pub(super) async fn try_dispatch_slash(
     };
     match command.kind {
         TuiBuiltinKind::New | TuiBuiltinKind::Clear => {
-            handle_new(state, runtime, guard).await?;
+            handle_new(state, runtime).await?;
             Ok(Some(SlashOutcome::Continue))
         }
         TuiBuiltinKind::Compact => {
-            handle_compact(state, runtime, guard).await?;
+            handle_compact(state, runtime).await?;
             Ok(Some(SlashOutcome::Continue))
         }
         TuiBuiltinKind::Exit | TuiBuiltinKind::Quit => {
             if mcp_exit_is_blocked(runtime.mcp_command.as_ref()) {
-                render_pending_mcp_exit(guard)?;
+                render_pending_mcp_exit(state)?;
                 Ok(Some(SlashOutcome::Continue))
             } else {
                 Ok(Some(SlashOutcome::Exit))
             }
         }
+        TuiBuiltinKind::View => {
+            super::view_actions::command(arg, state)?;
+            Ok(Some(SlashOutcome::Continue))
+        }
         TuiBuiltinKind::Help => {
-            handle_help(guard)?;
+            handle_help(state)?;
             Ok(Some(SlashOutcome::Continue))
         }
         TuiBuiltinKind::Model => {
-            handle_model(state, runtime, guard, arg)?;
+            handle_model(state, runtime, arg)?;
             Ok(Some(SlashOutcome::Continue))
         }
         TuiBuiltinKind::Effort => {
-            handle_reasoning_effort(state, runtime, guard, arg)?;
+            handle_reasoning_effort(state, runtime, arg)?;
             Ok(Some(SlashOutcome::Continue))
         }
         TuiBuiltinKind::ServiceTier => {
-            handle_service_tier(state, runtime, guard, arg)?;
+            handle_service_tier(state, runtime, arg)?;
             Ok(Some(SlashOutcome::Continue))
         }
         TuiBuiltinKind::Fast => {
-            set_fast_service_tier(state, runtime, guard)?;
+            set_fast_service_tier(state, runtime)?;
             Ok(Some(SlashOutcome::Continue))
         }
         TuiBuiltinKind::Tools => {
-            handle_tools(runtime, guard)?;
+            handle_tools(runtime, state)?;
             Ok(Some(SlashOutcome::Continue))
         }
         TuiBuiltinKind::Mcp => {
@@ -119,7 +120,7 @@ pub(super) async fn try_dispatch_slash(
                 arg,
                 runtime.mcp_control.as_ref(),
                 &mut runtime.mcp_command,
-                guard,
+                state,
             )?;
             Ok(Some(SlashOutcome::Continue))
         }
@@ -130,13 +131,9 @@ pub(super) async fn try_dispatch_slash(
     }
 }
 
-/// Write `message` to the scroll region wrapped in dim SGR, terminated
-/// with a newline so subsequent writes start on a fresh row.
-pub(super) fn write_dim_line(message: &str, guard: &mut TerminalGuard) -> Result<(), TuiError> {
-    let line = format!("\x1b[2m{message}\x1b[22m\n");
-    write_to_scroll(&line, guard.terminal_mut())?;
-    guard.note_scroll_newlines(&line)?;
-    guard.terminal_mut().flush()?;
+/// Retain a compact status notice for the single frame owner to paint.
+pub(super) fn write_dim_line(message: &str, state: &mut AppState) -> Result<(), TuiError> {
+    notices::notice(state, message, None)?;
     Ok(())
 }
 
@@ -151,7 +148,7 @@ pub(super) fn write_dim_line(message: &str, guard: &mut TerminalGuard) -> Result
 /// so post-rotation spawn/fork children mint under the NEW session —
 /// never the rotated-out one. Pure store-stack work with no terminal
 /// I/O, so both the success and the failure path are unit-testable
-/// without a [`TerminalGuard`].
+/// without a terminal.
 ///
 /// `index_lock_deadline` bounds the inter-process index-lock wait the
 /// create (and the sink it registers) performs: without it a wedged
@@ -198,8 +195,8 @@ fn create_new_session_store(
 /// When persistence is enabled (`runtime.data_dir` and
 /// `runtime.session_id` are `Some`), the new session is created via
 /// [`create_new_session_store`] — indexed, listable, resumable, and
-/// sink-registered. If that fails, the error is written to the scroll
-/// region in the standard error style and the current session is left
+/// sink-registered. If that fails, a semantic error is retained and the
+/// current session is left
 /// fully intact — no app state has been mutated yet, so no
 /// partially-rotated state is reachable: the TUI never silently
 /// degrades a persistent session to an in-memory one. In ephemeral
@@ -214,16 +211,13 @@ fn create_new_session_store(
 /// and the agent tools' `AgentToolInfra` event store — before swapping
 /// `runtime.store`.
 ///
-/// Terminal scrollback retains the previous conversation — the user
-/// can still scroll up. The model's view is what gets reset.
-async fn handle_new(
-    state: &mut AppState,
-    runtime: &mut RuntimeRefs,
-    guard: &mut TerminalGuard,
-) -> Result<(), TuiError> {
+/// The new view carries the current frontend preferences while resetting
+/// source-bound rows, cursors and body demands. Prior persisted history remains
+/// in its original session store.
+async fn handle_new(state: &mut AppState, runtime: &mut RuntimeRefs) -> Result<(), TuiError> {
     // Phase 1 — all fallible work, touching no app state. A failure
     // here leaves the current session running exactly as it was.
-    let (new_id, new_store, new_binding) = if let (Some(data_dir), Some(_old_id)) =
+    let (new_id, new_store, new_binding) = if let (Some(data_dir), Some(_)) =
         (runtime.data_dir.as_ref(), runtime.session_id.as_ref())
     {
         match create_new_session_store(data_dir, runtime.index_lock_deadline, &runtime.model) {
@@ -234,7 +228,7 @@ async fn handle_new(
                     data_dir.display(),
                 );
                 let message = format!("/new failed: {err} — keeping the current session");
-                return write_error_line(state, guard, &message);
+                return write_error_line(state, &message);
             }
         }
     } else {
@@ -246,6 +240,8 @@ async fn handle_new(
             Arc::new(SessionBinding::ephemeral_root()),
         )
     };
+
+    let new_source = new_store.bind_view_source(&new_binding, state.tab_state.root_id(), None)?;
 
     // Phase 2 — infallible commit: reset the context-edit ledger for
     // the new conversation FIRST (rotation replays the incoming store's
@@ -262,9 +258,17 @@ async fn handle_new(
         &mut runtime.store,
         &mut runtime.loop_context,
         Arc::new(new_store),
-        new_binding,
+        Arc::clone(&new_binding),
     )
     .await;
+    runtime.session_binding = new_binding;
+    let config = state.transcript.config.clone();
+    state.transcript = super::transcript::Transcript::new(new_source);
+    state.transcript.config = config;
+    state
+        .screen
+        .replace_source(state.transcript.projection.source());
+    state.screen.allow_body_load = true;
     if let Some(new_id) = new_id {
         runtime.session_id = Some(new_id.clone());
         runtime.agent_config.cache_key = Some(new_id.clone());
@@ -276,35 +280,17 @@ async fn handle_new(
 
     state.clear_usage_totals();
 
-    {
-        let writer = guard.terminal_mut();
-        write!(writer, "\x1b[2J\x1b[H")?;
-        writer.flush()?;
-    }
-    // The clear+home placed the hardware cursor at (1, 1); resync the
-    // software tracker so the next save_scroll_cursor captures the
-    // correct row.
-    guard.reset_scroll_cursor(1);
-
-    write_dim_line("[new session]", guard)?;
-
-    guard.save_scroll_cursor()?;
-    guard.terminal_mut().flush()?;
-    Ok(())
+    write_dim_line("[new session]", state)
 }
 
 /// `/compact` — supersede older assistant turns by calling libnorn's
 /// [`ContextEdits::auto_compact_keeping_recent_turns`] against the
 /// current event store.
 ///
-/// The TUI keeps its own terminal rendering for the command result, but
+/// The TUI retains its own semantic notice for the command result, but
 /// shares the mechanical compaction estimate with CLI mode through
 /// [`norn::agent_loop::estimate_manual_compaction`].
-async fn handle_compact(
-    state: &AppState,
-    runtime: &mut RuntimeRefs,
-    guard: &mut TerminalGuard,
-) -> Result<(), TuiError> {
+async fn handle_compact(state: &mut AppState, runtime: &mut RuntimeRefs) -> Result<(), TuiError> {
     let keep = runtime.agent_config.auto_compact_keep_recent_turns;
 
     let Some(estimate) = norn::agent_loop::estimate_manual_compaction(
@@ -312,13 +298,13 @@ async fn handle_compact(
         keep,
         runtime.loop_context.token_estimator.as_deref(),
     ) else {
-        return write_dim_line("Nothing to compact.", guard);
+        return write_dim_line("Nothing to compact.", state);
     };
 
     let Some(edits) = runtime.loop_context.context_edits.as_mut() else {
         return write_dim_line(
             "norn: warning: context edits unavailable; cannot compact.",
-            guard,
+            state,
         );
     };
 
@@ -332,34 +318,28 @@ async fn handle_compact(
                 "Compacted older turns, freed ~{} tokens (keeping {keep} most recent).",
                 estimate.token_estimate_freed,
             );
-            write_dim_line(&line, guard)?;
+            write_dim_line(&line, state)?;
             // The compaction appended a Compaction event through the
             // sink; flush the sink's pending index delta now so the
             // session index reflects it even if the TUI aborts before
             // the next turn-boundary checkpoint. Failure is surfaced
             // in the error-line style but never undoes the compaction.
             if let Some(message) = super::helpers::checkpoint_session(&runtime.store).await {
-                write_error_line(state, guard, &message)?;
+                write_error_line(state, &message)?;
             }
             Ok(())
         }
-        Ok(None) => write_dim_line("Nothing to compact.", guard),
+        Ok(None) => write_dim_line("Nothing to compact.", state),
         Err(err) => {
             let line = format!("Compact failed: {err}");
-            write_dim_line(&line, guard)
+            write_error_line(state, &line)
         }
     }
 }
 
-/// `/help` — write a static help block to the scroll region.
-///
-/// The transient-overlay alternative would require cursor-addressed
-/// rendering inside the scroll region, which CO7 forbids ("scroll
-/// region content is immutable once written"). Sandra's call: write
-/// via [`write_to_scroll`] so the block lands in scrollback and the
-/// user can scroll back to find it.
-fn handle_help(guard: &mut TerminalGuard) -> Result<(), TuiError> {
-    let mut block = String::from("\x1b[2mSlash commands:\x1b[22m\n");
+/// `/help` retains the complete command catalog as one demanded body.
+fn handle_help(state: &mut AppState) -> Result<(), TuiError> {
+    let mut block = String::new();
     let commands: Vec<_> = tui_builtin_commands().collect();
     let usage_width = commands
         .iter()
@@ -367,52 +347,39 @@ fn handle_help(guard: &mut TerminalGuard) -> Result<(), TuiError> {
         .max()
         .unwrap_or(0);
     for command in commands {
-        // `write!` into a String via `std::fmt::Write` — clippy rejects
-        // `block.push_str(&format!(...))` because the intermediate
-        // allocation is avoidable.
-        let _ = writeln!(
+        writeln!(
             block,
-            "\x1b[2m  {usage:<width$}  {help}\x1b[22m",
+            "  {usage:<width$}  {help}",
             usage = command.usage,
             width = usage_width,
             help = command.help,
-        );
+        )
+        .map_err(std::io::Error::other)?;
     }
-    write_to_scroll(&block, guard.terminal_mut())?;
-    guard.note_scroll_newlines(&block)?;
-    guard.terminal_mut().flush()?;
+    notices::notice(state, "Slash commands", Some(&block))?;
     Ok(())
 }
 
-/// `/tools` — list every [`ToolDefinition`] currently advertised to
-/// the provider, with its description, as a dim block in the scroll
-/// region.
-///
-/// Reads the live executor generation when available, falling back to the
-/// startup definitions only for static executors.
-fn handle_tools(runtime: &RuntimeRefs, guard: &mut TerminalGuard) -> Result<(), TuiError> {
+/// `/tools` retains the definitions from the live executor generation, or the
+/// actual startup definitions when the executor is static.
+fn handle_tools(runtime: &RuntimeRefs, state: &mut AppState) -> Result<(), TuiError> {
     let live = runtime.executor.execution_snapshot();
     let tools = live.as_ref().map_or(runtime.tools.as_slice(), |snapshot| {
         snapshot.definitions.as_ref()
     });
-    let block = format_tools_block(tools);
-    write_to_scroll(&block, guard.terminal_mut())?;
-    guard.note_scroll_newlines(&block)?;
-    guard.terminal_mut().flush()?;
+    let block = format_tools_block(tools)?;
+    notices::notice(state, "Tools available to the model", Some(&block))?;
     Ok(())
 }
 
-/// Compose the dim-styled tool-list block written by [`handle_tools`].
-///
-/// Lifted out of the handler so tests can assert the rendering shape
-/// without a live [`TerminalGuard`]. Each tool name is padded to a
-/// fixed-width column with the description trailing; the trailing
-/// newline survives the [`write_to_scroll`] CR/LF translation.
-fn format_tools_block(tools: &[norn::provider::request::ToolDefinition]) -> String {
+/// Compose plain tool-list content; display styling belongs to the frame owner.
+fn format_tools_block(
+    tools: &[norn::provider::request::ToolDefinition],
+) -> Result<String, TuiError> {
     if tools.is_empty() {
-        return String::from("\x1b[2mNo tools available.\x1b[22m\n");
+        return Ok(String::from("No tools available.\n"));
     }
-    let mut block = String::from("\x1b[2mTools available to the model:\x1b[22m\n");
+    let mut block = String::new();
     let name_width = tools
         .iter()
         .map(|t| t.name.chars().count())
@@ -421,19 +388,19 @@ fn format_tools_block(tools: &[norn::provider::request::ToolDefinition]) -> Stri
         .max(8);
     for tool in tools {
         let first_line = tool.description.lines().next().unwrap_or("").trim();
-        let _ = writeln!(
+        writeln!(
             block,
-            "\x1b[2m  {name:<width$}  {desc}\x1b[22m",
+            "  {name:<width$}  {desc}",
             name = tool.name,
             width = name_width,
             desc = first_line,
-        );
+        )
+        .map_err(std::io::Error::other)?;
     }
-    block
+    Ok(block)
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -446,21 +413,25 @@ mod tests {
     const TEST_LOCK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 
     #[test]
-    fn create_new_session_store_registers_session_in_index() {
+    fn create_new_session_store_registers_session_in_index()
+    -> Result<(), Box<dyn std::error::Error>> {
         // Regression for the H20 bug: `/new` previously opened a raw
         // JsonlSink, so the rotated session never appeared in the
         // index — unlistable and unresumable. The full stack must
         // index it.
-        let tmp = tempfile::tempdir().unwrap();
-        let (id, _store, _binding) =
-            create_new_session_store(tmp.path(), TEST_LOCK_DEADLINE, "test-model").unwrap();
-        let index = read_index(tmp.path()).unwrap();
+        let tmp = tempfile::tempdir()?;
+        let (id, _, _) = create_new_session_store(tmp.path(), TEST_LOCK_DEADLINE, "test-model")?;
+        let index = read_index(tmp.path())?;
         assert!(
             index.iter().any(|e| e.id == id),
             "session {id} missing from index: {index:?}",
         );
-        let entry = index.iter().find(|e| e.id == id).unwrap();
+        let entry = index
+            .iter()
+            .find(|e| e.id == id)
+            .ok_or("created session missing from index")?;
         assert_eq!(entry.model, "test-model");
+        Ok(())
     }
 
     #[test]
@@ -470,7 +441,7 @@ mod tests {
         // registered sink, and the index entry must track them — the
         // raw-sink path bypassed index maintenance entirely.
         let tmp = tempfile::tempdir()?;
-        let (id, store, _binding) =
+        let (id, store, _) =
             create_new_session_store(tmp.path(), TEST_LOCK_DEADLINE, "test-model")?;
         store.append(SessionEvent::UserMessage {
             base: EventBase::new(None),
@@ -503,40 +474,38 @@ mod tests {
     }
 
     #[test]
-    fn create_new_session_store_session_is_resumable() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (id, store, _binding) =
-            create_new_session_store(tmp.path(), TEST_LOCK_DEADLINE, "test-model").unwrap();
-        store
-            .append(SessionEvent::UserMessage {
-                base: EventBase::new(None),
-                content: "persist me".to_owned(),
-            })
-            .unwrap();
+    fn create_new_session_store_session_is_resumable() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let (id, store, _) =
+            create_new_session_store(tmp.path(), TEST_LOCK_DEADLINE, "test-model")?;
+        store.append(SessionEvent::UserMessage {
+            base: EventBase::new(None),
+            content: "persist me".to_owned(),
+        })?;
         drop(store);
-        let resumed = SessionManager::new(tmp.path())
-            .resume(&id, DurabilityPolicy::Flush)
-            .unwrap();
+        let resumed = SessionManager::new(tmp.path()).resume(&id, DurabilityPolicy::Flush)?;
         assert_eq!(resumed.entry.id, id);
         assert_eq!(
             resumed.replay.replayed_events, 1,
             "resume must replay the appended event"
         );
+        Ok(())
     }
 
     #[test]
-    fn create_new_session_store_propagates_failure() {
+    fn create_new_session_store_propagates_failure() -> Result<(), Box<dyn std::error::Error>> {
         // The failure path must surface an Err — never silently hand
         // back an in-memory store. A regular file in place of the data
         // directory makes every filesystem step fail.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir()?;
         let bogus_dir = tmp.path().join("not-a-dir");
-        std::fs::write(&bogus_dir, b"occupied").unwrap();
+        std::fs::write(&bogus_dir, b"occupied")?;
         let result = create_new_session_store(&bogus_dir, TEST_LOCK_DEADLINE, "test-model");
         assert!(
             result.is_err(),
             "creating a session under a file path must fail loudly",
         );
+        Ok(())
     }
 
     #[test]
@@ -569,6 +538,7 @@ mod tests {
                 ("exit", TuiBuiltinKind::Exit),
                 ("quit", TuiBuiltinKind::Quit),
                 ("help", TuiBuiltinKind::Help),
+                ("view", TuiBuiltinKind::View),
                 ("model", TuiBuiltinKind::Model),
                 ("effort", TuiBuiltinKind::Effort),
                 ("reasoning-effort", TuiBuiltinKind::Effort),
@@ -755,51 +725,50 @@ mod tests {
     }
 
     #[test]
-    fn format_tools_block_empty_returns_no_tools_line() {
-        let block = format_tools_block(&[]);
+    fn format_tools_block_empty_returns_no_tools_line() -> Result<(), TuiError> {
+        let block = format_tools_block(&[])?;
         assert!(
             block.contains("No tools available."),
             "empty-tools sentinel must surface: {block:?}",
         );
-        // Even the empty form must be dim-wrapped — the indicator line
-        // recedes behind the conversation content.
-        assert!(block.contains("\x1b[2m"));
-        assert!(block.contains("\x1b[22m"));
+        assert!(!block.contains('\u{1b}'));
+        Ok(())
     }
 
     #[test]
-    fn format_tools_block_lists_each_tool_name_and_first_description_line() {
+    fn format_tools_block_lists_each_tool_name_and_first_description_line() -> Result<(), TuiError>
+    {
         let tools = vec![
             tool_def("read", "Read file contents from disk"),
             tool_def("bash", "Execute a shell command"),
         ];
-        let block = format_tools_block(&tools);
+        let block = format_tools_block(&tools)?;
         assert!(block.contains("read"));
         assert!(block.contains("bash"));
         assert!(block.contains("Read file contents from disk"));
         assert!(block.contains("Execute a shell command"));
-        assert!(
-            block.starts_with("\x1b[2m"),
-            "block must open with dim SGR: {block:?}",
-        );
+        assert!(!block.contains('\u{1b}'));
+        Ok(())
     }
 
     #[test]
-    fn format_tools_block_uses_first_description_line_for_multiline_descriptions() {
+    fn format_tools_block_uses_first_description_line_for_multiline_descriptions()
+    -> Result<(), TuiError> {
         // Tool descriptions often have multiple lines (long-form
         // guidance for the model). The /tools view is a one-liner per
         // tool — assert only the first line ends up in the block.
         let tools = vec![tool_def("apply_patch", "Apply a patch\nDetails follow…")];
-        let block = format_tools_block(&tools);
+        let block = format_tools_block(&tools)?;
         assert!(block.contains("Apply a patch"));
         assert!(
             !block.contains("Details follow"),
             "second description line must be elided: {block:?}",
         );
+        Ok(())
     }
 
     #[test]
-    fn format_tools_block_pads_names_to_aligned_column() {
+    fn format_tools_block_pads_names_to_aligned_column() -> Result<(), TuiError> {
         // Aligned column makes the descriptions readable when names
         // vary in length. Specifically, every padded name + 2 spaces
         // gap should appear in front of its description, and the
@@ -808,12 +777,13 @@ mod tests {
             tool_def("read", "Read it"),
             tool_def("apply_patch", "Patch it"),
         ];
-        let block = format_tools_block(&tools);
+        let block = format_tools_block(&tools)?;
         // "apply_patch" is 11 chars, so "read       " is padded to 11
         // chars too. Two spaces follow the padded column.
         assert!(
             block.contains("read         Read it"),
             "read must be padded to align with apply_patch: {block:?}",
         );
+        Ok(())
     }
 }

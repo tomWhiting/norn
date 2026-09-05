@@ -255,6 +255,10 @@ pub enum AgentError {
 /// Errors from the session event store and context editing.
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
+    /// Exact local execution observation or publication binding failed.
+    #[error(transparent)]
+    Observation(#[from] Box<crate::provider::agent_event::ObservationError>),
+
     /// Failed to append an event to the store.
     #[error("event append failed: {reason}")]
     EventAppendFailed {

@@ -1,4 +1,4 @@
-//! Validated model policy transitions and their TUI publication; terminal output follows acceptance.
+//! Validated model policy transitions and retained notices after accepted publication.
 
 use norn::agent_loop::config::AgentLoopConfig;
 use norn::agent_loop::loop_context::LoopContext;
@@ -10,7 +10,6 @@ use norn::tool::context::ToolContext;
 
 use crate::TuiError;
 use crate::render::fixed_panel::StatusBar;
-use crate::terminal::setup::TerminalGuard;
 
 use super::dispatch::write_error_line;
 use super::event_loop::RuntimeRefs;
@@ -91,17 +90,17 @@ fn apply_runtime_change(
 pub(super) fn handle_model(
     state: &mut AppState,
     runtime: &mut RuntimeRefs,
-    guard: &mut TerminalGuard,
     arg: &str,
 ) -> Result<(), TuiError> {
     let name = arg.trim();
     if name.is_empty() {
-        return write_dim_line("usage: /model <name>", guard);
+        return write_dim_line("usage: /model <name>", state);
     }
     let cleared = match apply_runtime_change(state, runtime, SelectionChange::Model(name)) {
         Ok(cleared) => cleared,
-        Err(error) => return write_error_line(state, guard, &format!("/model failed: {error}")),
+        Err(error) => return write_error_line(state, &format!("/model failed: {error}")),
     };
+    state.transcript.model_changed()?;
     let mut line = format!("Switched model to {}", runtime.model);
     if let Some(effort) = cleared.effort {
         line.push_str("; cleared unsupported effort '");
@@ -113,13 +112,12 @@ pub(super) fn handle_model(
         line.push_str(tier.as_str());
         line.push('\'');
     }
-    write_dim_line(&line, guard)
+    write_dim_line(&line, state)
 }
 
 pub(super) fn handle_reasoning_effort(
     state: &mut AppState,
     runtime: &mut RuntimeRefs,
-    guard: &mut TerminalGuard,
     arg: &str,
 ) -> Result<(), TuiError> {
     let value = arg.trim();
@@ -129,37 +127,37 @@ pub(super) fn handle_reasoning_effort(
                 .model_selection
                 .effort()
                 .map_or("default", effort_label),
-            guard,
+            state,
         );
     }
     let effort = match parse_effort_command(value) {
         Some(EffortCommand::Set(effort)) => Some(effort),
         Some(EffortCommand::Clear) => None,
         None => {
-            return write_dim_line(
+            return write_error_line(
+                state,
                 &format!(
-                    "norn: invalid reasoning effort '{value}'; expected low, medium, high, xhigh, max, ultra, or default"
+                    "/effort: invalid reasoning effort '{value}'; expected low, medium, high, xhigh, max, ultra, or default"
                 ),
-                guard,
             );
         }
     };
     if let Err(error) = apply_runtime_change(state, runtime, SelectionChange::Effort(effort)) {
-        return write_error_line(state, guard, &format!("/effort failed: {error}"));
+        return write_error_line(state, &format!("/effort failed: {error}"));
     }
+    state.transcript.model_changed()?;
     match effort {
         Some(effort) => write_dim_line(
             &format!("Reasoning effort: {}", effort_label(effort)),
-            guard,
+            state,
         ),
-        None => write_dim_line("Reasoning effort cleared.", guard),
+        None => write_dim_line("Reasoning effort cleared.", state),
     }
 }
 
 pub(super) fn handle_service_tier(
     state: &mut AppState,
     runtime: &mut RuntimeRefs,
-    guard: &mut TerminalGuard,
     arg: &str,
 ) -> Result<(), TuiError> {
     let value = arg.trim();
@@ -169,20 +167,21 @@ pub(super) fn handle_service_tier(
                 .model_selection
                 .tier()
                 .map_or("none", |tier| tier.as_str()),
-            guard,
+            state,
         );
     }
     match parse_service_tier_command(value) {
-        Some(ServiceTierCommand::Fast) => set_fast_service_tier(state, runtime, guard),
+        Some(ServiceTierCommand::Fast) => set_fast_service_tier(state, runtime),
         Some(ServiceTierCommand::Clear) => {
             if let Err(error) = apply_runtime_change(state, runtime, SelectionChange::Tier(None)) {
-                return write_error_line(state, guard, &format!("/service-tier failed: {error}"));
+                return write_error_line(state, &format!("/service-tier failed: {error}"));
             }
-            write_dim_line("Service tier cleared.", guard)
+            state.transcript.model_changed()?;
+            write_dim_line("Service tier cleared.", state)
         }
-        None => write_dim_line(
-            &format!("norn: invalid service tier '{value}'; expected fast or none"),
-            guard,
+        None => write_error_line(
+            state,
+            &format!("/service-tier: invalid service tier '{value}'; expected fast or none"),
         ),
     }
 }
@@ -190,16 +189,16 @@ pub(super) fn handle_service_tier(
 pub(super) fn set_fast_service_tier(
     state: &mut AppState,
     runtime: &mut RuntimeRefs,
-    guard: &mut TerminalGuard,
 ) -> Result<(), TuiError> {
     if let Err(error) = apply_runtime_change(
         state,
         runtime,
         SelectionChange::Tier(Some(ServiceTier::Fast)),
     ) {
-        return write_error_line(state, guard, &format!("/service-tier failed: {error}"));
+        return write_error_line(state, &format!("/service-tier failed: {error}"));
     }
-    write_dim_line("Service tier: fast", guard)
+    state.transcript.model_changed()?;
+    write_dim_line("Service tier: fast", state)
 }
 
 #[cfg(test)]

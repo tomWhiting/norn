@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use super::style::colour_for;
-use super::syntax::SyntaxHighlighter;
+use super::syntax::{SyntaxError, SyntaxHighlighter};
 use crate::terminal::caps::TerminalCaps;
 
 /// A semantic block of tool output.
@@ -59,11 +59,14 @@ pub enum ContentBlock<'a> {
 /// Code blocks are syntax-highlighted via `highlighter`; diffs get
 /// red/green colouring with syntax highlighting on each side;
 /// diagnostics are severity-coloured; plain text passes through.
+///
+/// # Errors
+/// Propagates syntax errors without returning partial styled output; blocks stay borrowed.
 pub fn render_blocks(
     blocks: &[ContentBlock<'_>],
     highlighter: &SyntaxHighlighter,
     caps: &TerminalCaps,
-) -> String {
+) -> Result<String, SyntaxError> {
     let mut out = String::new();
     for block in blocks {
         match block {
@@ -71,19 +74,19 @@ pub fn render_blocks(
                 path,
                 content,
                 line_numbered,
-            } => render_code(&mut out, path, content, *line_numbered, highlighter, caps),
+            } => render_code(&mut out, path, content, *line_numbered, highlighter, caps)?,
             ContentBlock::Diff {
                 path,
                 removed,
                 added,
-            } => render_diff(&mut out, path, removed, added, highlighter, caps),
+            } => render_diff(&mut out, path, removed, added, highlighter, caps)?,
             ContentBlock::Diagnostic { severity, message } => {
                 render_diagnostic(&mut out, severity, message, caps);
             }
             ContentBlock::Plain { text } => out.push_str(text),
         }
     }
-    out
+    Ok(out)
 }
 
 /// Muted line-number colour (grey).
@@ -101,7 +104,7 @@ fn render_code(
     line_numbered: bool,
     highlighter: &SyntaxHighlighter,
     caps: &TerminalCaps,
-) {
+) -> Result<(), SyntaxError> {
     let lang = lang_from_path(path);
     if !line_numbered {
         // Strip the trailing newline before highlighting — syntect
@@ -110,9 +113,9 @@ fn render_code(
         // the output end with `\n{reset}`. body.lines() in
         // write_tool_result would then split on that embedded `\n`
         // and emit an extra blank `│` line.
-        out.push_str(&highlighter.highlight(content.trim_end_matches('\n'), lang, caps));
+        out.push_str(&highlighter.highlight(content.trim_end_matches('\n'), lang, caps)?);
         out.push('\n');
-        return;
+        return Ok(());
     }
     let num_style = colour_for(LINE_NUM_RGB, caps);
     for line in content.lines() {
@@ -120,13 +123,14 @@ fn render_code(
             let _ = write!(out, "{num_style}{prefix}\t\x1b[0m");
             // Pass `code` to the highlighter without appending `\n`
             // for the same reason as the non-line-numbered branch.
-            out.push_str(&highlighter.highlight(code, lang, caps));
+            out.push_str(&highlighter.highlight(code, lang, caps)?);
             out.push('\n');
         } else {
             out.push_str(line);
             out.push('\n');
         }
     }
+    Ok(())
 }
 
 /// Render a diff with red/green colouring and syntax highlighting.
@@ -137,7 +141,7 @@ fn render_diff(
     added: &str,
     highlighter: &SyntaxHighlighter,
     caps: &TerminalCaps,
-) {
+) -> Result<(), SyntaxError> {
     let lang = lang_from_path(path);
     let red_fg = colour_for(termina::style::RgbColor::new(220, 50, 47), caps);
     let green_fg = colour_for(termina::style::RgbColor::new(38, 166, 91), caps);
@@ -150,18 +154,19 @@ fn render_diff(
             // in the highlighted text. body.lines() in
             // write_tool_result would then split on the embedded `\n`
             // and emit an extra blank `│` line between diff lines.
-            let highlighted_line = highlighter.highlight(line, lang, caps);
+            let highlighted_line = highlighter.highlight(line, lang, caps)?;
             let _ = write!(out, "\x1b[2m{red_fg}- \x1b[0m{highlighted_line}\x1b[0m");
             out.push('\n');
         }
     }
     if !added.is_empty() {
         for line in added.lines() {
-            let highlighted_line = highlighter.highlight(line, lang, caps);
+            let highlighted_line = highlighter.highlight(line, lang, caps)?;
             let _ = write!(out, "\x1b[2m{green_fg}+ \x1b[0m{highlighted_line}\x1b[0m");
             out.push('\n');
         }
     }
+    Ok(())
 }
 
 /// Render a diagnostic with severity colouring.
@@ -214,13 +219,51 @@ fn lang_from_path(path: &str) -> Option<&str> {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::missing_const_for_fn,
-    clippy::uninlined_format_args
-)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_highlighted_block_refuses_partial_success_and_keeps_original_content()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let highlighter = crate::render::syntax::tests::failing_highlighter()?;
+        let original = String::from("safe\n!");
+        let numbered = String::from("1\tsafe\n2\t!");
+        for block in [
+            ContentBlock::Code {
+                path: "source.failure",
+                content: &original,
+                line_numbered: false,
+            },
+            ContentBlock::Code {
+                path: "source.failure",
+                content: &numbered,
+                line_numbered: true,
+            },
+            ContentBlock::Diff {
+                path: "source.failure",
+                removed: &original,
+                added: "unchanged",
+            },
+            ContentBlock::Diff {
+                path: "source.failure",
+                removed: "unchanged",
+                added: &original,
+            },
+        ] {
+            assert!(matches!(
+                render_blocks(&[block], &highlighter, &caps()),
+                Err(SyntaxError::Highlight {
+                    source: syntect::Error::ParsingError(
+                        syntect::parsing::ParsingError::UnresolvedContextReference(_)
+                    ),
+                    ..
+                })
+            ));
+        }
+        assert_eq!(original, "safe\n!");
+        assert_eq!(numbered, "1\tsafe\n2\t!");
+        Ok(())
+    }
 
     fn hl() -> SyntaxHighlighter {
         SyntaxHighlighter::new()
@@ -231,45 +274,49 @@ mod tests {
     }
 
     #[test]
-    fn code_block_produces_highlighted_output() {
+    fn code_block_produces_highlighted_output() -> Result<(), Box<dyn std::error::Error>> {
         let blocks = vec![ContentBlock::Code {
             path: "main.rs",
             content: "fn main() {}\n",
             line_numbered: false,
         }];
-        let rendered = render_blocks(&blocks, &hl(), &caps());
+        let rendered = render_blocks(&blocks, &hl(), &caps())?;
         assert!(!rendered.is_empty());
         assert!(rendered.contains("fn"));
         assert!(rendered.contains('\x1b'));
+        Ok(())
     }
 
     #[test]
-    fn line_numbered_code_splits_prefix_from_body() {
+    fn line_numbered_code_splits_prefix_from_body() -> Result<(), Box<dyn std::error::Error>> {
         let blocks = vec![ContentBlock::Code {
             path: "lib.rs",
             content: "1\tuse std::io;\n2\t\n3\tfn foo() {}\n",
             line_numbered: true,
         }];
-        let rendered = render_blocks(&blocks, &hl(), &caps());
+        let rendered = render_blocks(&blocks, &hl(), &caps())?;
         assert!(rendered.contains("1\t"));
         assert!(rendered.contains("fn"));
         assert!(rendered.contains('\x1b'));
+        Ok(())
     }
 
     #[test]
-    fn diff_block_has_plus_minus_markers() {
+    fn diff_block_has_plus_minus_markers() -> Result<(), Box<dyn std::error::Error>> {
         let blocks = vec![ContentBlock::Diff {
             path: "main.rs",
             removed: "let x = 1;",
             added: "let x = 2;",
         }];
-        let rendered = render_blocks(&blocks, &hl(), &caps());
+        let rendered = render_blocks(&blocks, &hl(), &caps())?;
         assert!(rendered.contains('-'));
         assert!(rendered.contains('+'));
+        Ok(())
     }
 
     #[test]
-    fn diff_block_emits_one_newline_per_line_with_no_blanks() {
+    fn diff_block_emits_one_newline_per_line_with_no_blanks()
+    -> Result<(), Box<dyn std::error::Error>> {
         // Regression: syntect preserved the input newline inside its
         // SGR-bracketed range, so the highlighted output ended in
         // `\n{reset}`. The render previously appended a second `\n`,
@@ -281,7 +328,7 @@ mod tests {
             removed: "let a = 1;\nlet b = 2;",
             added: "let a = 9;\nlet b = 8;",
         }];
-        let rendered = render_blocks(&blocks, &hl(), &caps());
+        let rendered = render_blocks(&blocks, &hl(), &caps())?;
         assert!(
             !rendered.contains("\n\n"),
             "diff body must have no embedded blank lines: {rendered:?}",
@@ -289,10 +336,12 @@ mod tests {
         // Two removed + two added → four lines, four newlines exactly.
         let newline_count = rendered.bytes().filter(|&b| b == b'\n').count();
         assert_eq!(newline_count, 4, "got: {rendered:?}");
+        Ok(())
     }
 
     #[test]
-    fn line_numbered_code_emits_one_newline_per_line_with_no_blanks() {
+    fn line_numbered_code_emits_one_newline_per_line_with_no_blanks()
+    -> Result<(), Box<dyn std::error::Error>> {
         // Same regression as diff_block_emits_one_newline_per_line —
         // the line-numbered code path used to append a second newline
         // after each highlighted code line, producing blank `│` rows
@@ -302,7 +351,7 @@ mod tests {
             content: "1\tuse std::io;\n2\tuse std::fs;\n3\tfn main() {}\n",
             line_numbered: true,
         }];
-        let rendered = render_blocks(&blocks, &hl(), &caps());
+        let rendered = render_blocks(&blocks, &hl(), &caps())?;
         assert!(
             !rendered.contains("\n\n"),
             "line-numbered body must have no embedded blank lines: {rendered:?}",
@@ -310,26 +359,29 @@ mod tests {
         // Three content lines → three newlines exactly.
         let newline_count = rendered.bytes().filter(|&b| b == b'\n').count();
         assert_eq!(newline_count, 3, "got: {rendered:?}");
+        Ok(())
     }
 
     #[test]
-    fn diagnostic_block_contains_severity() {
+    fn diagnostic_block_contains_severity() -> Result<(), Box<dyn std::error::Error>> {
         let blocks = vec![ContentBlock::Diagnostic {
             severity: "error",
             message: "type mismatch",
         }];
-        let rendered = render_blocks(&blocks, &hl(), &caps());
+        let rendered = render_blocks(&blocks, &hl(), &caps())?;
         assert!(rendered.contains("error"));
         assert!(rendered.contains("type mismatch"));
+        Ok(())
     }
 
     #[test]
-    fn plain_block_passes_through() {
+    fn plain_block_passes_through() -> Result<(), Box<dyn std::error::Error>> {
         let blocks = vec![ContentBlock::Plain {
             text: Cow::Borrowed("hello world"),
         }];
-        let rendered = render_blocks(&blocks, &hl(), &caps());
+        let rendered = render_blocks(&blocks, &hl(), &caps())?;
         assert_eq!(rendered, "hello world");
+        Ok(())
     }
 
     #[test]

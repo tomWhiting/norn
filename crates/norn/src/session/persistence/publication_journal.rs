@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::session::spool::SpoolInheritance;
 use crate::session::{SessionIndexEntry, SessionPersistError};
 use crate::util::PrivateRoot;
 
@@ -14,6 +15,7 @@ use super::publication_recovery::remove_owned_after_failure;
 
 pub(super) const TIMELINE_PUBLICATION_VERSION: u32 = 2;
 pub(super) const AUDIO_PUBLICATION_VERSION: u32 = 3;
+pub(super) const SPOOL_PUBLICATION_VERSION: u32 = 4;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -26,20 +28,31 @@ pub(super) struct PublicationJournal {
     pub(super) timeline_sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) audio_bundle: Option<AudioBundleJournal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) spool_inheritance: Option<SpoolInheritance>,
 }
 
 pub(super) fn validate_journal_metadata(
     journal: &PublicationJournal,
 ) -> Result<(), SessionPersistError> {
     let version_matches_payload = matches!(
-        (journal.norn_session_publication, &journal.audio_bundle),
-        (TIMELINE_PUBLICATION_VERSION, None) | (AUDIO_PUBLICATION_VERSION, Some(_))
+        (
+            journal.norn_session_publication,
+            &journal.audio_bundle,
+            &journal.spool_inheritance
+        ),
+        (TIMELINE_PUBLICATION_VERSION, None, None)
+            | (AUDIO_PUBLICATION_VERSION, Some(_), None)
+            | (SPOOL_PUBLICATION_VERSION, _, Some(_))
     );
     if !version_matches_payload {
         return Err(conflict(
             &journal.entry.id,
             "the publication journal version is unsupported",
         ));
+    }
+    if let Some(manifest) = &journal.spool_inheritance {
+        manifest.validate_destination(&journal.entry)?;
     }
     if let Some(audio_bundle) = &journal.audio_bundle {
         if journal.parent_precondition.is_some()
@@ -99,7 +112,15 @@ pub(super) fn read_journal(
     transaction_id: &str,
 ) -> Result<PublicationJournal, SessionPersistError> {
     let file = root.open_read(path)?;
-    let journal: PublicationJournal = serde_json::from_reader(BufReader::new(file))?;
+    let journal: PublicationJournal =
+        serde_json::from_reader(BufReader::new(file)).map_err(|error| {
+            SessionPersistError::EventStore(format!(
+                "publication journal {transaction_id} is malformed ({:?}, line {}, column {})",
+                error.classify(),
+                error.line(),
+                error.column()
+            ))
+        })?;
     if journal.transaction_id != transaction_id {
         return Err(conflict(
             &journal.entry.id,

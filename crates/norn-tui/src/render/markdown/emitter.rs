@@ -13,7 +13,7 @@ use termina::escape::csi::{Csi, Sgr};
 use termina::style::{ColorSpec, Intensity};
 
 use crate::render::style::{colour_for, hyperlink, italic};
-use crate::render::syntax::SyntaxHighlighter;
+use crate::render::syntax::{SyntaxError, SyntaxHighlighter};
 use crate::terminal::caps::TerminalCaps;
 
 use super::{BLOCKQUOTE_PREFIX, INLINE_CODE_COLOUR, italic_off};
@@ -184,10 +184,10 @@ impl<'a> Emitter<'a> {
         }
     }
 
-    pub(super) fn handle(&mut self, event: Event<'_>) {
+    pub(super) fn handle(&mut self, event: Event<'_>) -> Result<(), SyntaxError> {
         match event {
             Event::Start(tag) => self.handle_start(tag),
-            Event::End(end) => self.handle_end(end),
+            Event::End(end) => self.handle_end(end)?,
             Event::Text(text) => self.handle_text(&text),
             Event::Code(text) => self.handle_inline_code(&text),
             Event::InlineMath(text) => self.handle_inline_math(&text),
@@ -208,6 +208,7 @@ impl<'a> Emitter<'a> {
             }
             Event::FootnoteReference(_) => {}
         }
+        Ok(())
     }
 
     fn handle_start(&mut self, tag: Tag<'_>) {
@@ -260,7 +261,7 @@ impl<'a> Emitter<'a> {
         }
     }
 
-    fn handle_end(&mut self, end: TagEnd) {
+    fn handle_end(&mut self, end: TagEnd) -> Result<(), SyntaxError> {
         match end {
             TagEnd::Paragraph if self.list_stack.is_empty() => {
                 self.paragraph_pending = true;
@@ -296,7 +297,7 @@ impl<'a> Emitter<'a> {
             TagEnd::Strikethrough => {
                 self.output.push_str("\x1b[29m");
             }
-            TagEnd::CodeBlock => self.end_code_block(),
+            TagEnd::CodeBlock => self.end_code_block()?,
             TagEnd::List(_) => {
                 self.list_stack.pop();
             }
@@ -336,6 +337,7 @@ impl<'a> Emitter<'a> {
             TagEnd::Table => self.end_table(),
             _ => {}
         }
+        Ok(())
     }
 
     fn handle_text(&mut self, text: &str) {
@@ -508,17 +510,20 @@ impl<'a> Emitter<'a> {
         self.output.push('\n');
     }
 
-    fn end_code_block(&mut self) {
-        let code = std::mem::take(&mut self.code_block_buffer);
-        let lang = self.code_block_lang.take();
-        let highlighted = self
-            .highlighter
-            .highlight(&code, lang.as_deref(), self.caps);
+    fn end_code_block(&mut self) -> Result<(), SyntaxError> {
+        let highlighted = self.highlighter.highlight(
+            &self.code_block_buffer,
+            self.code_block_lang.as_deref(),
+            self.caps,
+        )?;
+        self.code_block_buffer.clear();
+        self.code_block_lang = None;
         self.output.push_str(&highlighted);
         self.in_code_block = false;
         if !highlighted.ends_with('\n') {
             self.output.push('\n');
         }
+        Ok(())
     }
 
     fn end_link(&mut self) {

@@ -1,7 +1,7 @@
 {
   "id": "NRT-001",
   "cluster": "norn-retained-tui",
-  "status": "implementation_in_progress",
+  "status": "local_preview_installed_release_verification_pending",
   "title": "Retained foreground transcript and read-only tool Changes",
   "baseline": "f0cb7476ceb80ce6b9c85a02088cdb8297e960a3",
   "depends_on": [
@@ -25,7 +25,7 @@
     "S3"
   ],
   "purpose": "Make terminal history compact, readable and stable under resize while preserving exact semantic evidence and existing execution behavior.",
-  "task": "Implement the settled NRT-001 checkpoint on frozen NCS commit f0cb7476ceb80ce6b9c85a02088cdb8297e960a3. R0 registers this contract; R1 and R8 (R4.layout) may then run independently. R2 follows R1; R3 follows R2; R4 follows R3 and R8; R5, R6 and R7 follow sequentially. Root owns R8 only; one integration owner owns overlapping R3-R6 paths. NCS must be exact-commit venue-green and integrated before NRT landing. If NCS changes, reconcile/rebase and repeat exact-candidate verification. No approval or preference placeholder remains. Stop and name required files before editing outside a row wall.",
+  "task": "Implement the settled NRT-001 checkpoint on frozen NCS commit f0cb7476ceb80ce6b9c85a02088cdb8297e960a3. R0 registers this contract; R1, R8 (R4.layout) and R9 (R4.text) may then run independently. R2 retains semantic completion dependency on R1, with early dispatch after the fixed shared contract under D-R2-DISPATCH; R3 follows R2; R4 follows R3, R8 and R9; R5, R6 and R7 follow sequentially. Root owns R8 and R9; one integration owner owns overlapping R3-R6 paths. NCS must be exact-commit venue-green and integrated before NRT landing. If NCS changes, reconcile/rebase and repeat exact-candidate verification. No approval or preference placeholder remains. Stop and name required files before editing outside a row wall.",
   "requirements": [
     {
       "id": "R0",
@@ -91,7 +91,9 @@
           "crates/norn/src/session_view/live.rs",
           "crates/norn/src/session_view/committed.rs",
           "crates/norn/src/session_view/response.rs",
-          "crates/norn/src/session_view/tools.rs"
+          "crates/norn/src/session_view/tools.rs",
+          "crates/norn/src/session_view/index.rs",
+          "crates/norn/src/session_view/local.rs"
         ],
         "delete": []
       },
@@ -102,7 +104,12 @@
         "No Ready/snapshot subscription API or durable generation claim is introduced.",
         "Implement the six public core seams named in design.json.public_core_contracts. Cursor/body minting is crate-internal and source-owner validated; public consumers cannot construct arbitrary approved roots/fields.",
         "Projection inputs/history items carry compact approved metadata and body references, never cloned raw SessionEvent/ResponseTranscriptItem payloads containing opaque/private state. Validate every provenance/correlation boundary and retain unknown origin explicitly.",
-        "Design provenance: I1-I8, D4, producer-coverage.json in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+        "Design provenance: I1-I8, D4, producer-coverage.json in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json.",
+        "Each committed insertion/page application uses incremental ordering and direct identity/per-call lookup; it must not sort/join the entire view or rescan full history for each orphan. Meaningful operation-count fixtures distinguish local updates from total-history work; no invented timing SLA.",
+        "A result whose parent invocation is outside the loaded page stays explicitly pending/unresolved until the correct invocation is available. Reuse of a call_id in a different invocation/response scope must not silently attach that result to the wrong call.",
+        "ToolItem → ToolCall → Committed alias chains preserve the original early streaming anchor through final commit. Alias resolution is transitive, cycle-safe and source-scoped; index updates do not drop prior aliases.",
+        "The ordered index stores each ViewItem once, exposes ordered iterator/range/lookup access and shares existing body references; no second body store or duplicated full retained item collection.",
+        "Expose a borrowed indexed traversal beginning at an exact current ItemId in either direction, with declared inclusion semantics, using the existing ID-to-order lookup and BTreeMap range. Pinned viewport painting must not linearly seek through all earlier/later compact items. Missing or foreign identity is explicit, never an empty success or unrelated fallback; proven alias resolution remains separately explicit. No body loading/cloning, extra row owner or provider work. Regression fixtures cover committed/live boundaries, inclusivity, missing/foreign IDs and work bounded by requested rows rather than retained history length."
       ],
       "acceptance_greps": [
         "rg -n \"pub mod session_view\" crates/norn/src/lib.rs",
@@ -111,7 +118,8 @@
       "design_refs": [
         "I1-I8",
         "D4",
-        "producer-coverage.json"
+        "producer-coverage.json",
+        "D-R1-INDEX"
       ],
       "checklist": [
         "C1"
@@ -131,24 +139,42 @@
       "files": {
         "modify": [
           "crates/norn/src/session/store.rs",
-          "crates/norn/src/session/spool.rs"
+          "crates/norn/src/session/spool.rs",
+          "crates/norn/src/session/branch.rs",
+          "crates/norn/src/session/manager/fork.rs",
+          "crates/norn/src/session/manager/open.rs",
+          "crates/norn/src/session/persistence/index.rs",
+          "crates/norn/src/session/persistence/publication.rs",
+          "crates/norn/src/session/persistence/publication_journal.rs",
+          "crates/norn/src/session/persistence/publication_audio.rs",
+          "crates/norn/src/session/persistence/publication_tests.rs"
         ],
         "create": [
           "crates/norn/src/session/store/history_page.rs",
           "crates/norn/src/session/store/history_page_tests.rs",
           "crates/norn/src/session/spool/range.rs",
-          "crates/norn/src/session/spool/range_tests.rs"
+          "crates/norn/src/session/spool/range_tests.rs",
+          "crates/norn/src/session/spool/inheritance.rs",
+          "crates/norn/src/session/spool/inheritance_tests.rs",
+          "crates/norn/src/session/persistence/publication_spool.rs"
         ],
         "delete": []
       },
       "acceptance": [
         "Refuse wrong source/generation, mismatched EventId/ordinal, stale provisional revision, forged/traversing/outside-root spool references and unavailable/malformed bodies.",
         "Real temporary spool tests prove requested byte ranges, UTF-8 chunk reconstruction, short reads and file failures; raw JSON-range reads do not claim decoded arbitrary field paging.",
-        "Store pages clone only selected records; render/resize have zero body/history reads. A user page/search/expand action requests explicit demand and exposes partial coverage.",
+        "R2 may transiently clone only the explicitly selected SessionEvents while holding the store lock, release the lock, and call project_committed off-lock. This bounded selected-event staging is not retained view state. Every public/retained HistoryPage carries only compact HistoryRecord values and approved body capabilities, never raw SessionEvent/opaque provider payloads. No filesystem I/O or display projection occurs under the store lock; no full-history clone is introduced. Render/resize have zero history/body reads; explicit read actions retain demand and coverage state.",
         "No new committed push/append-family edits: later host owner must integrate ordinary, batch, idempotent and provider-identity-adoption paths separately. Do not emit a fake durable cursor.",
-        "Initialize distinct StoreInstanceId in all three EventStore constructors and validate every cursor against that instance/session binding. Empty-start is explicit.",
+        "Initialize a distinct local store_generation UUID in all three EventStore constructors and validate every cursor against that instance/session binding. Empty-start is explicit; no durable generation is claimed.",
         "Range reads use the owning SpoolWriter private data_dir/registered/root_session_id and PrivateRoot; no caller-supplied root path or exported arbitrary-path capability.",
-        "Design provenance: I6-I8, F1, F4, session-host-review STORE-COMMIT/BODY-RANGES in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+        "Design provenance: I6-I8, F1, F4, session-host-review STORE-COMMIT/BODY-RANGES in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json.",
+        "Dispatch provenance D-R2-DISPATCH: early disjoint implementation is authorized after shared contract freeze; integrated acceptance requires R1 and R2 completed.",
+        "Modify crates/norn/src/session/branch.rs only to add a pub(crate) MailboxId::generation() -> Uuid accessor, or equivalent crate-private equality check. Initial managed EventStore view-source binding must validate actual SessionBinding/session-index generation against its owning SpoolWriter registered.generation as well as the session ID. Preserve all other branch behavior, existing mailbox serde/wire representation and visibility outside the crate. No generic identity service is introduced.",
+        "R2-01 preserves exact ToolResult/spool_ref bytes and response-publication commitments. Closed inherited-spool authority is a publication-owned sidecar at the fixed owner-derived <destination-root>/spool-inheritance.json path, never an appendable Custom or ChildBranch grant. The existing atomic independent-fork journal carries its exact closed manifest: destination session/index generation, actual source session/generation/path, actual ChildBranch EventId/anchor, and unique exact copied EventId/reference grants with validated origin generations. Recovery publishes deterministic manifest bytes through a private temporary and exclusive publication before timeline/index publication; retries verify an existing sidecar exactly. Preserve existing journal recovery and strict directory inventory, admitting only the journal-declared known sidecar alongside audio. Resume/read hydration refuses duplicate, conflicting or mismatched manifests; source and destination registered generations are checked in one index transaction before PrivateRoot range reads. Carry only publication-owned validated prior grants through fork-of-fork. Appending a forged well-shaped Custom and matching ChildBranch with real current generation values confers zero authority. Pre-feature cross-root references without durable source-generation proof remain explicitly unavailable. R2-02 revalidates the current attached SpoolWriter against the immutable owner binding before every history/body read. No Custom metadata event, new index field, signature service, whole-body spool decoding or raw provider-state display is introduced.",
+        "Real tests exercise independent fork -> demanded body read -> resume -> read -> fork-of-fork, source deletion/recreation, malformed authority, and writer replacement after a capability was minted. Generation metadata stays non-display and no raw scalar values enter malformed-authority errors. Additional persistence/append paths require a further explicit wall amendment before edits.",
+        "Exercise journal stops before/after sidecar publication and before/after timeline/index publication, exact idempotent recovery, malformed/conflicting sidecars, and combined audio+spool known-file inventories. Preserve existing journal-version behavior for prior timeline/audio transactions. Source generation changes cannot substitute new bytes behind an inherited capability.",
+        "Core test-only cleanup within current modified source walls: review_child_context exclusively owns loop/commands.rs, session/branch.rs and session/spool.rs under crates/norn/src. norn_models retains loop/classify.rs and provider/agent_event.rs. Remove the five inherited allow attributes and resolve their underlying test unwrap/expect uses, preserving every semantic assertion and production bytes for this cleanup. Propagate Result failures; no skips, weaker assertions, wildcard bypasses or unrelated unchanged-module changes. Common-owner Clippy style repairs are a separately identified existing task, not permission to change production through this test-cleanup partition. The 52-file pre-thaw core AST snapshot remains historical evidence. Source ownership must be acknowledged before parallel cleanup; no concurrent writes to a shared file. The whole-workspace Clippy01 run has ended and root explicitly released the document freeze. These are existing paths only and all NRT acceptance and final verification requirements remain.",
+        "The existing modified-core test cleanup includes inherited panic/panic!, expect_err and unwrap_err as well as unwrap and expect. Replace these with contextful fallible Result diagnostics while preserving every original semantic assertion and production bytes for the cleanup. No new skips, weaker assertions, or replacement bypasses."
       ],
       "acceptance_greps": [
         "rg -n \"history_page|HistoryCursor\" crates/norn/src/session/store.rs crates/norn/src/session/store/history_page.rs",
@@ -158,14 +184,34 @@
         "I6-I8",
         "F1",
         "F4",
-        "session-host-review STORE-COMMIT/BODY-RANGES"
+        "session-host-review STORE-COMMIT/BODY-RANGES",
+        "D-R2-DISPATCH",
+        "D-R2-MAILBOX-GENERATION",
+        "D-R2-SPOOL-INHERITANCE"
       ],
       "checklist": [
         "C2"
       ],
       "stories": [
         "S1"
-      ]
+      ],
+      "dependency_note": {
+        "decision": "D-R2-DISPATCH",
+        "condition": "R2 may dispatch after the R1 opaque cursor/body/HistoryRecord contract listed here is fixed and both owners have received it, while remaining R1 reducer tests and static refinement continue. Root has accepted that freeze at this amendment. norn_models owns only R2 store/spool paths; channels_compatibility owns R1 session_view paths. Any shared contract change is coordinated with both owners before editing it. R2 semantic completion and integration/test acceptance still require completed R1 and R2; depends_on remains R1.",
+        "shared_contract_fixed": [
+          "ViewSource and SessionIdentity; local store_generation UUID supplied by the actual EventStore instance",
+          "HistoryCursor: opaque fields; source()/position() read access; crate-internal empty/event/validate",
+          "HistoryRecord: opaque compact record; cursor()/items() read access",
+          "project_committed(&HistoryCursor, &SessionEvent) -> Result<HistoryRecord, ViewError>: crate-internal off-lock projection seam",
+          "SessionProjection::apply_history_record and reconcile_history_record consume compact records",
+          "BodyRef: opaque capability; origin()/representation() inspection; crate-internal validated committed minting",
+          "BodyOrigin::Committed is store-owned; Provisional and Local are projection-owned and rejected by the R2 store body reader",
+          "BodyRange with explicit offset and NonZeroUsize byte demand; BodyRepresentation/DisplayField allowlist",
+          "resolve_committed_body returns approved inline text or explicit SpoolRequired; no caller-supplied spool root/path",
+          "ViewError is the shared typed error"
+        ],
+        "staging_vs_public_projection": "R2 may transiently clone only the explicitly selected SessionEvents while holding the store lock, release the lock, and call project_committed off-lock. This bounded selected-event staging is not retained view state. Every public/retained HistoryPage carries only compact HistoryRecord values and approved body capabilities, never raw SessionEvent/opaque provider payloads. No filesystem I/O or display projection occurs under the store lock; no full-history clone is introduced."
+      }
     },
     {
       "id": "R3",
@@ -194,14 +240,23 @@
           "crates/norn-tui/src/app/event_loop.rs",
           "crates/norn-tui/src/app/render.rs",
           "crates/norn-tui/src/agents/tabs.rs",
-          "crates/norn-tui/src/events/schema_render.rs"
+          "crates/norn-tui/src/events/schema_render.rs",
+          "crates/norn-cli/src/tui/driver.rs",
+          "crates/norn-tui/src/error.rs",
+          "crates/norn-tui/tests/pty_smoke.rs",
+          "crates/norn-tui/tests/model_selection.rs",
+          "crates/norn-tui/tests/support/mcp_channels_tui.rs",
+          "crates/norn-tui/src/app/autocomplete.rs",
+          "crates/norn-tui/src/app/edit.rs"
         ],
         "create": [
           "crates/norn-tui/src/app/transcript.rs",
           "crates/norn-tui/src/app/transcript_tests.rs",
           "crates/norn-tui/src/app/notices.rs",
           "crates/norn-tui/src/app/view_config.rs",
-          "crates/norn-tui/src/app/view_config_tests.rs"
+          "crates/norn-tui/src/app/view_config_tests.rs",
+          "crates/norn-tui/src/render/retained_structured.rs",
+          "crates/norn-tui/src/render/retained_structured_tests.rs"
         ],
         "delete": []
       },
@@ -212,7 +267,14 @@
         "Channels remain external framed content; no slash parsing or fabricated human sender. Child results retain actual child/source identity even where the old display used write_user_message.",
         "All production writes leave semantic producers; only the later single frame/terminal owner writes terminal bytes. This row and R4 are an integration unit, not separately shippable UI.",
         "ViewConfig owns the declared history/body/clipboard preferences from D-F4, with typed validation, visible effective values and explicit /view updates. R1/R2 contain no default demand sizes. Geometry defaults remain solely in render/layout.rs, avoiding duplicated constants.",
-        "Design provenance: D4-D5, I1-I8, producer-coverage.json in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+        "Design provenance: D4-D5, I1-I8, producer-coverage.json in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json.",
+        "Pass an explicit Arc<SessionBinding> into TuiInputs, whose declaration is in app/event_loop.rs already inside R3. The real CLI obtains its actual AgentToolInfra.session from its assembled coordination runtime; missing required infra is an explicit launch error, never a fabricated identity. Initialize and validate ViewSource through EventStore::bind_view_source. /new validates the newly created binding before the existing rotation commit, then replaces the view source and cursor/body state. Add transparent ViewError and HistoryReadError to TuiError in error.rs. Update only binding/error wiring in the three existing TuiInputs fixtures using their actual ephemeral setup; their semantic/PTY assertions remain unchanged until the sequential R7 work. Preserve resolved NCS launch-mode validation before provider/MCP construction.",
+        "Update AppState::new fixtures in app/autocomplete.rs and app/edit.rs only to supply explicit isolated ViewSource values. Production AppState requires an owner-supplied validated source; no unbound Option or invented disk authority. This fixture-only wall addition preserves their existing behavior assertions.",
+        "R3/R5 completion requires the NRT-002 exact producer publication-binding repair and its required proof. Existing implementation/integration authoring may continue under exclusive coordinated ownership; duplication, guessed association or an unverified repair cannot be reported complete. NRT-001 and NRT-002 form one final checkpoint; completion gates do not add circular source-authoring prerequisites.",
+        "For one exact admitted execution, normal End and TurnCompleted facts share one compact completed-execution presentation row. Selection or expansion exposes every original completion fact, source, model, usage, timing and availability field. Errors, cancellation and coverage gaps remain explicit. Never drop metadata, invent success or associate records by text, time or proximity. Implement presentation only through existing TUI file walls.",
+        "Pure parallel authoring slice: render/retained_structured.rs and retained_structured_tests.rs provide a source-mapped RenderedMarkdown adapter for complete multi-field assistant JSON, preserving the existing secondary-fields/Ctrl+E acceptance. Every displayed field/range maps back to the supplied approved original source; partial JSON remains the original text with explicit partial state. Do not synthesize BodyRefs, invent content/fields or parse ANSI. No module wiring, body I/O, provider work or runtime mutation in this slice; the TUI owner integrates it against current source/revision mapping and retains all original bytes and secondary fields.",
+        "Tom's no-allow-anywhere instruction overrides the inherited CLAUDE.md test exception. Before landing, remove inherited allow attributes and resolve the underlying test unwrap/expect uses in the eleven already-modified TUI files named by this partition. Preserve every assertion and propagate failures through Result; no skips, weaker assertions, renamed unused values or replacement lint bypasses. This is test-only cleanup of these current modified files, not unrelated unchanged-module or public-history audit work. Exclusive test-cleanup partition: review_child_context owns test-only cleanup in crates/norn-tui/src/agents/tabs.rs, crates/norn-tui/src/app/autocomplete.rs, crates/norn-tui/src/app/helpers.rs, crates/norn-tui/src/events/schema_render.rs, crates/norn-tui/src/render/fixed_panel.rs, crates/norn-tui/src/render/markdown.rs, crates/norn-tui/src/render/text.rs. norn_tui retains crates/norn-tui/src/app/dispatch.rs, crates/norn-tui/src/app/event_loop.rs, crates/norn-tui/src/app/slash.rs, crates/norn-tui/src/app/state.rs. The active source owner must explicitly acknowledge handoff before parallel cleanup starts; no concurrent writes to any shared file. Production behavior remains unchanged, and all current brief acceptance and final verification requirements remain.",
+        "Root records the TUI owner's explicit handoff of test-only crates/norn-cli/src/tui/driver.rs to review_child_context. This existing NRT-001 R3 path has one inherited allow attribute and one test expect operation. Remove those structurally with a contextful fallible Result while preserving the real pre-terminal startup/error assertion and all test attributes. The production prefix must remain byte-identical to the final core/CLI audit; no production behavior change, suppression, skip or weaker oracle."
       ],
       "acceptance_greps": [
         "rg -n \"Transcript|session_view|notice|incomplete\" crates/norn-tui/src/app/transcript.rs crates/norn-tui/src/app/notices.rs",
@@ -221,13 +283,21 @@
       "design_refs": [
         "D4-D5",
         "I1-I8",
-        "producer-coverage.json"
+        "producer-coverage.json",
+        "D-R3-BINDING",
+        "D-NRT-002",
+        "D-COMPLETION-ROW",
+        "D-STRUCTURED-DETAILS",
+        "D-CLI-TEST-CLEANUP"
       ],
       "checklist": [
         "C3"
       ],
       "stories": [
         "S1"
+      ],
+      "completion_dependencies": [
+        "NRT-002"
       ]
     },
     {
@@ -235,7 +305,8 @@
       "title": "Own frame, layout, caret and styled content",
       "depends_on": [
         "R3",
-        "R8"
+        "R8",
+        "R9"
       ],
       "spec": "WHEN the app paints or receives geometry/input, THE SYSTEM SHALL compose one full-screen frame under the viewport invariants and restore terminal modes on every supported exit path.",
       "files": {
@@ -268,15 +339,24 @@
           "crates/norn-tui/src/agents/tabs.rs",
           "crates/norn-tui/src/terminal/setup.rs",
           "crates/norn-tui/src/terminal/caps.rs",
-          "crates/norn-tui/Cargo.toml"
+          "crates/norn-tui/Cargo.toml",
+          "Cargo.lock",
+          "crates/norn-tui/src/agents/mod.rs",
+          "crates/norn-tui/src/tools/rich/edit.rs",
+          "crates/norn-tui/src/render/layout.rs",
+          "crates/norn-tui/src/render/layout_tests.rs"
         ],
         "create": [
           "crates/norn-tui/src/render/frame.rs",
-          "crates/norn-tui/src/render/retained_text.rs",
           "crates/norn-tui/src/render/frame_tests.rs",
           "crates/norn-tui/src/app/viewport.rs",
           "crates/norn-tui/src/app/viewport_tests.rs",
-          "crates/norn-tui/src/app/focus.rs"
+          "crates/norn-tui/src/app/focus.rs",
+          "crates/norn-tui/src/render/retained_markdown.rs",
+          "crates/norn-tui/src/render/retained_markdown_tests.rs",
+          "crates/norn-tui/src/app/render/transcript.rs",
+          "crates/norn-tui/src/app/render/composer.rs",
+          "crates/norn-tui/src/render/retained_markdown/mapping.rs"
         ],
         "delete": [
           "crates/norn-tui/src/render/scroll_region.rs"
@@ -284,11 +364,25 @@
       },
       "acceptance": [
         "Alternate-screen entry/leave, bracketed paste, mouse/Kitty/synchronized output and cursor restoration are owned exactly once. No production DECSTBM scroll-growth/cursor-accounting API remains.",
-        "Retain semantic markdown/code/diff/structured formatting as styled rows; no ANSI capture/parser/terminal emulator is introduced. Renderer errors are handled visibly. No dependency addition in this wall.",
+        "Retain semantic markdown/code/diff/structured formatting as direct styled rows; no ANSI capture/parser/terminal emulator is introduced. Renderer errors are handled visibly. Permit a direct unicode-segmentation = \"1.13.2\" dependency in crates/norn-tui/Cargo.toml and only its norn-tui dependency-list membership in Cargo.lock. The exact version already exists in the lockfile; no package version/checksum churn or other dependency/policy change. Grapheme boundaries govern retained styled-row clipping, wrapping and selection; scalar-only clipping is not an acceptable substitute. Existing ANSI-producing APIs are adapted to direct styled spans; no ANSI parser/capture is introduced.",
         "Full-width composer, no global header/footer; narrow switch/restore, popup and focus follow the D-F2 geometry. Zero/tiny sizes preserve state without coordinate underflow or accidental submission.",
         "Resize invalidates layout only; stable logical anchor/selection, draft, provider-call count and store-event count remain unchanged. Incoming live updates cannot steal focus.",
-        "Update crates/norn-tui/Cargo.toml package description from obsolete DECSTBM wording only; no dependency or manifest policy changes. R8 owns layout.rs/layout_tests.rs; integration consumes its public rectangles/geometry without editing those files concurrently.",
-        "Design provenance: D1, viewport_invariants, WS-01, WS-02, WS-16 in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+        "Update crates/norn-tui/Cargo.toml package description from obsolete DECSTBM wording and add only the dependency authorized by D-R4-GRAPHEMES. R8 owns layout.rs/layout_tests.rs; integration consumes its public rectangles/geometry without editing those files concurrently.",
+        "Design provenance: D1, viewport_invariants, WS-01, WS-02, WS-16 in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json.",
+        "The retained Markdown adapter uses the existing pulldown-cmark dependency and emits R9 StyledText directly, with no ANSI intermediates. It retains source/display spans for exact text and explicit transformed or generated segments. Controls are escaped before display offsets are recorded; entities, escapes, link syntax and generated list/break markers never pretend to have one-to-one byte offsets. Fixed examples cover nested inline/block formatting, code, lists, tables, links, HTML-as-text and streamed incomplete syntax. The frame must consume its declared mapping for original-byte anchors/copy; incomplete chunks do not silently claim complete Markdown formatting.",
+        "Keep render responsibilities within the 500 production-line limit: app/render.rs coordinates ScreenState/frame publication; app/render/transcript.rs prepares visible transcript/body mapping; app/render/composer.rs prepares the draft and completion popup. retained_markdown/mapping.rs owns the original/display mapping types and source-boundary queries, re-exported without API changes by retained_markdown.rs. These named modules add no separate renderer owner or fallback behavior.",
+        "agents/mod.rs changes are re-export-only: remove obsolete native-scrollback replay helper exports while preserving TabState and retained-session exports. No implementation belongs in mod.rs.",
+        "Tom's no-allow-anywhere instruction overrides the inherited CLAUDE.md test exception. Before landing, remove inherited allow attributes and resolve the underlying test unwrap/expect uses in the eleven already-modified TUI files named by this partition. Preserve every assertion and propagate failures through Result; no skips, weaker assertions, renamed unused values or replacement lint bypasses. This is test-only cleanup of these current modified files, not unrelated unchanged-module or public-history audit work. Exclusive test-cleanup partition: review_child_context owns test-only cleanup in crates/norn-tui/src/agents/tabs.rs, crates/norn-tui/src/app/autocomplete.rs, crates/norn-tui/src/app/helpers.rs, crates/norn-tui/src/events/schema_render.rs, crates/norn-tui/src/render/fixed_panel.rs, crates/norn-tui/src/render/markdown.rs, crates/norn-tui/src/render/text.rs. norn_tui retains crates/norn-tui/src/app/dispatch.rs, crates/norn-tui/src/app/event_loop.rs, crates/norn-tui/src/app/slash.rs, crates/norn-tui/src/app/state.rs. The active source owner must explicitly acknowledge handoff before parallel cleanup starts; no concurrent writes to any shared file. Production behavior remains unchanged, and all current brief acceptance and final verification requirements remain.",
+        "review_tui exclusively owns the approved legacy syntax repair in render/syntax.rs, render/content.rs, render/markdown/emitter.rs, render/markdown.rs, events/schema_render.rs and tools/rich/edit.rs under crates/norn-tui/src. The last file changes test callers only. Coordinate the already modified Markdown/schema files with their frozen owners before writes; no retained App or unrelated tool-renderer wiring is authorized.",
+        "Change legacy SyntaxHighlighter::highlight to Result<String, SyntaxError>, retaining the original syntect::Error as typed source and the actual code-line byte offset. Never turn highlighting failure into an empty range list, omit an original line or return a labelled successful String. Replace the four discarded format Results with infallible String construction. The already typed retained highlight_spans contract is unchanged.",
+        "Propagate the same typed SyntaxError through legacy render_blocks/code/diff, emitter handle/end-code, MarkdownRenderer render_segment/try_flush_styled/feed/finalize and schema render_assistant_message/render_structured/render_event/field helpers. Existing infallible user/thinking/tool/status arms remain successful values. Adapt all exact legacy test callers fallibly; no unwrap, expect, ignore or replacement suppression.",
+        "Render the candidate Markdown segment before draining pending source or publishing paragraph/dim state. A failure retains original pending content and consistent state; do not duplicate or replay an already accepted feed chunk. Borrowed ContentBlock/SessionEvent/JSON source bodies remain unchanged. No partial ANSI output may escape as a successful render after failure.",
+        "Prove a deterministic highlighting error retains its syntect source and exact byte offset, and prove failed streaming rendering preserves pending source/state. Preserve every existing ANSI/formatting expectation, successful multiline and numbered code, both diff sides and complete/partial fence behavior. Current retained App uses a separate typed path; this repair proves no new live-App recovery or on-screen error presentation.",
+        "Keep the existing no-allow-anywhere instruction: newly touched test modules cannot add or rely on inherited suppression to permit new fallible-call bypasses. Any complete test-only cleanup extent is explicitly assigned separately. Required tests, formatting, strict workspace Clippy and source policy remain pending until actual execution; this registration is not a pass.",
+        "Root additionally assigns review_tui complete test-only policy cleanup in these two already-approved syntax-repair files: remove the inherited allow attribute in render/content.rs (unwrap_used, missing_const_for_fn, uninlined_format_args) and resolve its underlying test style structurally; remove the inherited unwrap_used allow plus all six test unwraps in tools/rich/edit.rs. Preserve every test attribute, assertion predicate and meaningful refusal through contextful fallible Result diagnostics. tools/rich/edit.rs production bytes remain identical; content.rs production changes are limited to the separately approved typed syntax propagation. No unrelated production changes, replacement suppression, skip or weaker oracle. This cleanup remains a release/landing requirement and is not grounds to mislabel a separate ready preview as a release.",
+        "Direct user correction at 09:16 Melbourne on 6 September 2026: restore the original visual styling inside the retained fullscreen renderer; do not roll back, discard current work or return to the old terminal ownership. Deliver the local fix within 30 minutes (requested 09:46 Melbourne). norn_tui owns exactly render/frame.rs, render/layout.rs, render/layout_tests.rs, app/render.rs, app/render/composer.rs and app/render/transcript.rs under crates/norn-tui/src. Restore the earlier dim top-left mode/token rule, plain input, bottom-right model/effort/tier/session rule and last-row key hints, keeping the composer full width. Reuse the inspected main styling; the owner's stated three chrome rows yield when terminal height is below six. This direct user ruling supersedes earlier no-footer/minimal-chrome appearance clauses only, not retained-frame ownership, resize safety or source identity.",
+        "Restore the original blue > first-line user prompt, two-column continuations and blank turn margin; remove generic You submitted/Assistant presentation headings. Preserve semantic role, exact source maps, IDs, original body bytes, keyboard operation and full-width composition. Borders, colors, prompt labels and layout are presentation changes; never reconstruct/drop transcript evidence or change runtime input meaning.",
+        "The ordinary TUI view hides only the typed Metadata category and exposes it through explicit detail inspection; do not remove it from the semantic projection or persisted history, or use arbitrary text/label matching. norn_tui owns app/render/transcript.rs presentation integration; root coordinates any shared visibility wiring with that owner rather than writing the same file concurrently. Existing data preservation, publication binding, completion grouping, pinned reading and typed error requirements remain."
       ],
       "acceptance_greps": [
         "rg -n \"DECSTBM|write_to_scroll|note_scroll_newlines|restore_scroll_cursor|save_scroll_cursor\" crates/norn-tui/src",
@@ -299,7 +393,10 @@
         "viewport_invariants",
         "WS-01",
         "WS-02",
-        "WS-16"
+        "WS-16",
+        "D-R4-GRAPHEMES",
+        "D-LEGACY-SYNTAX-ERROR",
+        "D-USER-PREVIEW-PRESENTATION"
       ],
       "checklist": [
         "C4"
@@ -340,16 +437,22 @@
           "crates/norn-tui/src/tools/summary_tests.rs",
           "crates/norn-tui/src/app/changes.rs",
           "crates/norn-tui/src/app/changes_tests.rs",
-          "crates/norn-tui/src/render/changes.rs"
+          "crates/norn-tui/src/render/changes.rs",
+          "crates/norn-tui/src/app/render/changes.rs"
         ],
         "delete": []
       },
       "acceptance": [
-        "Every known and unknown tool starts compact; original description/call/status/duration stays visible, with missing fields explicitly unavailable. Individual historic expansion obeys D-F3 override rules.",
+        "Every known and unknown tool starts compact: the collapsed row prioritizes the original tool-use description and lifecycle, with concise duration when recorded. Missing description is explicit. Exact call ID, commitment, duration availability and description parse errors remain visible in expanded detail or the selected Changes view; they do not add repeated technical bookkeeping to every collapsed row. Individual historic expansion obeys D-F3 override rules.",
         "Real edit/write/patch output shapes prove committed-with-diagnostic-error distinct from blocked/uncommitted; no action-log-success filter.",
         "Opening an old link reads its recorded argument/result/spool references only, even after disk changes or deletion. Missing before-content cannot produce an empty-baseline diff.",
         "Bash/MCP/unknown writer coverage remains explicitly unknown; no invented authorship or session-wide diff. Changes exposes no save/mutation handler.",
-        "Design provenance: D3, change_evidence_rules, I5-I6, WS-03, WS-05, WS-06 in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+        "Design provenance: D3, change_evidence_rules, I5-I6, WS-03, WS-05, WS-06 in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json.",
+        "Parallel authoring exception: the four pure summary/changes implementation and test files may be authored while R4 integrates. No module wiring or shared-state edits in that slice; R4 remains the prerequisite for R5 integration, validation and completion.",
+        "app/render/changes.rs owns selected-call parsing/cache and direct read-only Changes preparation, keeping app/render.rs below500 production lines. It consumes only complete approved exact BodyRefs already supplied by the caller; no filesystem reads, source relabelling or session-wide diff inference.",
+        "R3/R5 completion requires the NRT-002 exact producer publication-binding repair and its required proof. Existing implementation/integration authoring may continue under exclusive coordinated ownership; duplication, guessed association or an unverified repair cannot be reported complete. NRT-001 and NRT-002 form one final checkpoint; completion gates do not add circular source-authoring prerequisites.",
+        "For one exact admitted execution, normal End and TurnCompleted facts share one compact completed-execution presentation row. Selection or expansion exposes every original completion fact, source, model, usage, timing and availability field. Errors, cancellation and coverage gaps remain explicit. Never drop metadata, invent success or associate records by text, time or proximity. Implement presentation only through existing TUI file walls.",
+        "Tom's no-allow-anywhere instruction overrides the inherited CLAUDE.md test exception. Before landing, remove inherited allow attributes and resolve the underlying test unwrap/expect uses in the eleven already-modified TUI files named by this partition. Preserve every assertion and propagate failures through Result; no skips, weaker assertions, renamed unused values or replacement lint bypasses. This is test-only cleanup of these current modified files, not unrelated unchanged-module or public-history audit work. Exclusive test-cleanup partition: review_child_context owns test-only cleanup in crates/norn-tui/src/agents/tabs.rs, crates/norn-tui/src/app/autocomplete.rs, crates/norn-tui/src/app/helpers.rs, crates/norn-tui/src/events/schema_render.rs, crates/norn-tui/src/render/fixed_panel.rs, crates/norn-tui/src/render/markdown.rs, crates/norn-tui/src/render/text.rs. norn_tui retains crates/norn-tui/src/app/dispatch.rs, crates/norn-tui/src/app/event_loop.rs, crates/norn-tui/src/app/slash.rs, crates/norn-tui/src/app/state.rs. The active source owner must explicitly acknowledge handoff before parallel cleanup starts; no concurrent writes to any shared file. Production behavior remains unchanged, and all current brief acceptance and final verification requirements remain."
       ],
       "acceptance_greps": [
         "rg -n \"Compact|Collapsed|description|call_id\" crates/norn-tui/src/tools/summary.rs crates/norn-tui/src/tools/verbosity.rs",
@@ -361,13 +464,18 @@
         "I5-I6",
         "WS-03",
         "WS-05",
-        "WS-06"
+        "WS-06",
+        "D-NRT-002",
+        "D-COMPLETION-ROW"
       ],
       "checklist": [
         "C5"
       ],
       "stories": [
         "S2"
+      ],
+      "completion_dependencies": [
+        "NRT-002"
       ]
     },
     {
@@ -403,7 +511,13 @@
           "crates/norn-tui/src/app/search_tests.rs",
           "crates/norn-tui/src/app/export.rs",
           "crates/norn-tui/src/app/export_tests.rs",
-          "crates/norn-tui/src/terminal/clipboard.rs"
+          "crates/norn-tui/src/terminal/clipboard.rs",
+          "crates/norn-tui/src/app/view_actions/commands.rs",
+          "crates/norn-tui/src/app/view_actions/keys.rs",
+          "crates/norn-tui/src/app/view_actions/mouse.rs",
+          "crates/norn-tui/src/app/render/hit.rs",
+          "crates/norn-tui/src/app/view_actions/reading.rs",
+          "crates/norn-tui/src/app/view_actions/reading_tests.rs"
         ],
         "delete": []
       },
@@ -416,7 +530,17 @@
         "Register /view once in the shared built-in catalogue as TUI-only. Preserve exhaustive CLI enum handling without installing a CLI action or sending view commands to the model. Slash completion/help use this same entry.",
         "The /view palette lists and invokes every view action and explicit settings: focus, pane visibility, split, browse, expand/reset overrides, follow/pin, selection, copy/export, search scope/load-more, history/body demand and clipboard capability. Mid-turn /view is intercepted locally before steer/queue admission; other input behavior is unchanged.",
         "F6/Shift+F6 cycles visible regions; F2 toggles upper pane; PgUp/PgDn browse focus; non-composer Enter expands; F3 search, F4 copy, F5 export; arrows resize a focused divider. Existing composer/popup/cancellation actions have precedence. Unavailable function keys have the /view equivalent.",
-        "Design provenance: viewport_invariants, F2-F5, WS-11, WS-16, producer-coverage.json in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+        "Design provenance: viewport_invariants, F2-F5, WS-11, WS-16, producer-coverage.json in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json.",
+        "Parallel authoring exception: selection.rs and selection_tests.rs may be authored as a pure source/revision-bound original-byte selection module while R4/R5 integrate. No clipboard, filesystem, module wiring or runtime mutations belong in that slice. R5 remains prerequisite for R6 integration, validation and completion.",
+        "Parallel authoring exception: terminal/clipboard.rs may be implemented independently as a pure explicit-capability copy-preparation module with inline tests, using existing termina OSC 52 formatting. No terminal probing, writes, environment reads, clipboard reads, new dependencies or shared module wiring in this slice. Unspecified/disabled capability emits no sequence; integration alone owns writes and may report sent only after write/flush succeeds, never acknowledged clipboard success. R5 remains integration/completion prerequisite.",
+        "Hit testing and mouse dispatch validate the current frame source, body revision and rendered source-map identity. A logical placeholder anchor may preserve a requested item/offset while content is unavailable, but it is not the identity of a painted source map and cannot authorize selection, copy or an unrelated hit. Keep those identities distinct; stale/missing mappings are explicit and never rebound through a placeholder fallback.",
+        "Parallel authoring exception: app/search.rs and app/search_tests.rs may be authored independently as a pure literal-query search module over source-bound original text prefixes, with grapheme-safe match/selection boundaries. Every result retains exact source/body revision and original-byte coordinates and declares loaded-transcript, selected-body or explicitly requested older-history scope, including partial/unavailable coverage. An unsearched suffix or older range is never reported as no match. No I/O, provider work, module wiring or runtime mutation belongs in this slice. R5 remains prerequisite for R6 integration, validation and completion.",
+        "Parallel authoring exception: app/export.rs and app/export_tests.rs may be authored independently for exporting explicitly scoped, source/revision-bound original text to an explicit operator path. Default writes create a new file; replacement requires an explicit overwrite choice. Preserve original hard newlines and report missing/partial source coverage and path-specific errors; no hidden transcript persistence. Filesystem work must run off the terminal event loop when integrated. This authoring slice does not wire modules, dispatch runtime work or mutate session/provider state. R5 remains prerequisite for R6 integration, validation and completion.",
+        "Split reading-action orchestration into app/view_actions/reading.rs and reading_tests.rs: typed search state, navigation to an exact source/body-revision hit, and supervised explicit-path export I/O workers. Existing commands.rs owns command grammar. Preserve current-frame source/map identity independently of logical placeholder anchors, source-scoped partial/unavailable search/export status, create-new by default and explicit overwrite choice. Export filesystem work stays off the terminal event loop; worker completion/errors remain supervised and source-bound. This adds no provider, persistence or session-control capability. R5 remains prerequisite for R6 integration, validation and completion.",
+        "Tom's no-allow-anywhere instruction overrides the inherited CLAUDE.md test exception. Before landing, remove inherited allow attributes and resolve the underlying test unwrap/expect uses in the eleven already-modified TUI files named by this partition. Preserve every assertion and propagate failures through Result; no skips, weaker assertions, renamed unused values or replacement lint bypasses. This is test-only cleanup of these current modified files, not unrelated unchanged-module or public-history audit work. Exclusive test-cleanup partition: review_child_context owns test-only cleanup in crates/norn-tui/src/agents/tabs.rs, crates/norn-tui/src/app/autocomplete.rs, crates/norn-tui/src/app/helpers.rs, crates/norn-tui/src/events/schema_render.rs, crates/norn-tui/src/render/fixed_panel.rs, crates/norn-tui/src/render/markdown.rs, crates/norn-tui/src/render/text.rs. norn_tui retains crates/norn-tui/src/app/dispatch.rs, crates/norn-tui/src/app/event_loop.rs, crates/norn-tui/src/app/slash.rs, crates/norn-tui/src/app/state.rs. The active source owner must explicitly acknowledge handoff before parallel cleanup starts; no concurrent writes to any shared file. Production behavior remains unchanged, and all current brief acceptance and final verification requirements remain.",
+        "Core test-only cleanup within current modified source walls: review_child_context exclusively owns loop/commands.rs, session/branch.rs and session/spool.rs under crates/norn/src. norn_models retains loop/classify.rs and provider/agent_event.rs. Remove the five inherited allow attributes and resolve their underlying test unwrap/expect uses, preserving every semantic assertion and production bytes for this cleanup. Propagate Result failures; no skips, weaker assertions, wildcard bypasses or unrelated unchanged-module changes. Common-owner Clippy style repairs are a separately identified existing task, not permission to change production through this test-cleanup partition. The 52-file pre-thaw core AST snapshot remains historical evidence. Source ownership must be acknowledged before parallel cleanup; no concurrent writes to a shared file. The whole-workspace Clippy01 run has ended and root explicitly released the document freeze. These are existing paths only and all NRT acceptance and final verification requirements remain.",
+        "The existing modified-core test cleanup includes inherited panic/panic!, expect_err and unwrap_err as well as unwrap and expect. Replace these with contextful fallible Result diagnostics while preserving every original semantic assertion and production bytes for the cleanup. No new skips, weaker assertions, or replacement bypasses.",
+        "Root records the TUI owner's explicit handoff of test-only crates/norn-cli/src/commands/slash/registry.rs to review_child_context. This existing NRT-001 R6 path has one inherited allow attribute and thirteen test unwrap/expect/panic operations. Remove those structurally with fallible Result helpers/tests, preserving all semantic assertions, test attributes, expected failures and resource lifetime guards. The production prefix must remain byte-identical to the final core/CLI audit. No suppression, skip, weaker oracle or unrelated module change."
       ],
       "acceptance_greps": [
         "rg -n \"Copy|Search|Export|Focus|Follow\" crates/norn-tui/src/app/view_actions.rs",
@@ -427,7 +551,8 @@
         "F2-F5",
         "WS-11",
         "WS-16",
-        "producer-coverage.json"
+        "producer-coverage.json",
+        "D-CLI-TEST-CLEANUP"
       ],
       "checklist": [
         "C6"
@@ -448,11 +573,15 @@
           "crates/norn-tui/tests/pty_smoke.rs",
           "crates/norn-tui/tests/model_selection.rs",
           "crates/norn-tui/tests/mcp_channels.rs",
-          "crates/norn-tui/tests/support/mcp_channels_tui.rs"
+          "crates/norn-tui/tests/support/mcp_channels_tui.rs",
+          "Cargo.toml",
+          "Cargo.lock"
         ],
         "create": [
           "crates/norn-tui/tests/retained_workspace.rs",
-          "crates/norn-tui/tests/support/retained_workspace.rs"
+          "crates/norn-tui/tests/support/retained_workspace.rs",
+          "crates/norn-tui/tests/support/retained_screen.rs",
+          "docs/release-notes/0.1.0-preview.1.md"
         ],
         "delete": []
       },
@@ -461,7 +590,13 @@
         "Existing model/budget/prompt-history, channel wake/hold/next-turn and child/cancel tests retain their semantic assertions; replace old escape-sequence shape assertions with new owned-frame/restoration assertions.",
         "Supported real terminal and multiplexer selection/copy/restoration require recorded manual evidence; PTY OSC52 bytes alone cannot prove actual clipboard acceptance. Capture old artifact if reproducible; otherwise label initial diagnosis source-supported, not runtime-reproduced.",
         "Run strict fmt/all-target Clippy and declared battery legs on final exact commit at205, with source/gates/guard/venue witnesses and raw result references. Required rigorous review and source-transfer authorization are separate from a green battery. No local pass/fixture timing is a landing receipt or performance claim.",
-        "Design provenance: acceptance.json, D5, WS-01, WS-02, WS-03, WS-11, WS-16 in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json."
+        "Design provenance: acceptance.json, D5, WS-01, WS-02, WS-03, WS-11, WS-16 in ../design.json; producer obligations ../producer-coverage.json; PTY oracles ../acceptance.json.",
+        "Parallel fixture-authoring exception: after the current source freeze ends, channels_fixture alone may update the existing canonical pty_smoke.rs, model_selection.rs, mcp_channels.rs and support/mcp_channels_tui.rs. The already-declared retained_workspace.rs and support/retained_workspace.rs may be authored by a separate explicitly assigned owner. Preserve every semantic assertion and PTY acceptance. This permits authoring only: R7 validation/completion still requires R6 and the NRT-002 publication-binding repair. No source collision, early acceptance or extra path is authorized.",
+        "Use tests/support/retained_screen.rs as one shared existing-vte terminal observer for the canonical PTY suites, owned only by channels_fixture. Preserve real visible geometry, alternate-screen/resize/mode and exact-occurrence assertions plus real termios restoration; do not replace semantic assertions with weaker substring checks. No new dependency, clipboard acknowledgement, provider certification or broader terminal-matrix claim is introduced.",
+        "The already-registered R7 new_retained_workspace parallel-authoring partition is assigned to review_tui, exclusively for tests/retained_workspace.rs and tests/support/retained_workspace.rs. Author persistent actual-App PTY-04 reading-control/resize fixtures using the shared retained_screen oracle API and the existing 33-check external R6 evidence as a source of scenarios, not a substitute for executing these fixtures. channels_fixture remains the exclusive canonical-fixture/shared-oracle owner. No source paths or acceptance scope are added, and R6/NRT-002 prerequisites still gate R7 validation/completion.",
+        "Within the existing canonical pty_smoke.rs wall, channels_fixture owns the child-result reporting repair: do not discard tx.send(result).await. The supervised fixture must retain and surface send failure, including the undelivered child outcome, and inspect the spawned task outcome; merely joining an ignored Result is insufficient. Preserve the existing actual-App assertions, deadline/termination behavior and the original application failure as evidence. This is fixture error supervision, not permission to weaken failed scenarios or alter production code.",
+        "Root owns the minimal checked-preview version step before the next full build: change only workspace.package.version in Cargo.toml from 0.1.0 to 0.1.0-preview.1, and only the four local workspace package versions norn, norn-cli, norn-macros and norn-tui in Cargo.lock. No dependency resolution or dependency version/source/checksum change. Create docs/release-notes/0.1.0-preview.1.md naming actual preview features and known limitations; do not rewrite historical UNRELEASED.md or add an installer/CHANGELOG. Existing Clap Cargo version and protocol version fields derive from the Cargo package version; the inspected CLI tests contain no hard-coded 0.1.0 version assertion needing a new path. This root-owned metadata authoring may precede R7 final verification, whose R6/NRT-002 prerequisites remain unchanged.",
+        "User explicitly authorizes ongoing checked local preview installations. Increment the preview prerelease number for each subsequent successful checked update; first stable 0.1.0 still requires proper release checks. Before replacement, verify candidate source/artifact hash, version/help behavior, and a recoverable hash-verified backup. After replacement, verify installed hash/version and record the receipt/rollback path, then invoke macOS /usr/bin/say with the exact text Norn updated. If speech fails, retain the truthful installed state and report the announcement failure. No tag, public release, main merge, background updater, extra service or wider installer implementation is implied. This local preview procedure does not replace exact-candidate release/landing verification."
       ],
       "acceptance_greps": [
         "rg -n \"retained_workspace|resize|selection|copy|Lagged\" crates/norn-tui/tests/retained_workspace.rs",
@@ -474,14 +609,39 @@
         "WS-02",
         "WS-03",
         "WS-11",
-        "WS-16"
+        "WS-16",
+        "D-CLI-TEST-CLEANUP",
+        "D-CHECKED-PREVIEW-VERSION"
       ],
       "checklist": [
         "C7"
       ],
       "stories": [
         "S3"
-      ]
+      ],
+      "completion_dependencies": [
+        "R6",
+        "NRT-002"
+      ],
+      "parallel_authoring_partitions": {
+        "canonical_fixtures": {
+          "owner": "channels_fixture",
+          "paths": [
+            "crates/norn-tui/tests/pty_smoke.rs",
+            "crates/norn-tui/tests/model_selection.rs",
+            "crates/norn-tui/tests/mcp_channels.rs",
+            "crates/norn-tui/tests/support/mcp_channels_tui.rs",
+            "crates/norn-tui/tests/support/retained_screen.rs"
+          ]
+        },
+        "new_retained_workspace": {
+          "owner": "review_tui",
+          "paths": [
+            "crates/norn-tui/tests/retained_workspace.rs",
+            "crates/norn-tui/tests/support/retained_workspace.rs"
+          ]
+        }
+      }
     },
     {
       "id": "R8",
@@ -545,6 +705,49 @@
         ],
         "scope": "Supplied root proof verified by reading records and source hashes; no test rerun by registration agent. Layout is not wired into TUI. No full workspace, NCS/NRT venue, landing or whole-checkpoint pass."
       }
+    },
+    {
+      "id": "R9",
+      "label": "R4.text",
+      "title": "R4.text — independent grapheme-safe styled row geometry",
+      "depends_on": [
+        "R0"
+      ],
+      "owner": "root",
+      "spec": "WHEN supplied validated plain displayed text, ordered styles and explicit width/tab geometry, THE SYSTEM SHALL wrap, clip and map complete graphemes without terminal I/O or session semantics.",
+      "files": {
+        "modify": [],
+        "create": [
+          "crates/norn-tui/src/render/retained_text.rs",
+          "crates/norn-tui/src/render/retained_text_tests.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "Use one plain displayed string with ordered typed style byte ranges. Segment extended grapheme clusters across style-span boundaries, then produce cell-bounded styled rows with displayed-byte ranges and hit-test boundaries. Style is data, never embedded ANSI. No norn/session types, body reads, terminal I/O, application state or provider work belongs in this module. The integration adapter separately maps original approved body bytes through visible escaping into these displayed-byte positions.",
+        "Validate style ranges at construction: in-bounds, ordered/nonoverlapping, valid UTF-8 boundaries; malformed ranges and disallowed terminal/bidi controls produce typed errors with their offsets. Keep hard newlines and explicitly parameterized tab stops. Zero target width produces an explicit nonpaint result without losing caller text or looping; zero-column graphemes preserve source identity and make progress.",
+        "Greedy wrapping preserves hard lines, spaces and whole extended grapheme clusters. Clip to a bounded cell interval without emitting half of a wide cluster or silently rewriting the saved logical range. A cluster wider than available columns is explicitly unpaintable at that geometry; resizing can reveal it unchanged.",
+        "Tests include CJK width, ZWJ emoji, combining marks, variation selectors and style boundaries inside a cluster; tabs at multiple columns with explicit tab-stop policy; empty strings/hard newlines/trailing spaces; invalid ranges/controls; zero/tiny width; greedy wrap; clipping at both halves of wide cells; byte-range-to-cell and cell-hit-to-byte mapping. Assertions distinguish displayed-byte coordinates from original body bytes.",
+        "Root alone owns these exact two files. This row depends only on R0 and may run alongside R1/R2/R3. It does not wire render/mod.rs or modify Cargo files; R4 integrates it after R3, R8 and R9 and owns the already-approved unicode-segmentation manifest/lock change.",
+        "A small external diagnostic harness may use the existing resolved unicode-segmentation/unicode-width packages to exercise this pure seam before workspace wiring. Label that evidence as bounded local diagnostics, never a workspace or venue receipt.",
+        "Design provenance: D-R4-TEXT, D-R4-GRAPHEMES and viewport_invariants in ../design.json; R4 owns the final full-frame and real PTY acceptance."
+      ],
+      "acceptance_greps": [
+        "rg -n \"grapheme|range|clip|wrap|hit\" crates/norn-tui/src/render/retained_text.rs",
+        "rg -n \"ZWJ|combining|zero|CJK|span|tab\" crates/norn-tui/src/render/retained_text_tests.rs"
+      ],
+      "design_refs": [
+        "D-R4-TEXT",
+        "D-R4-GRAPHEMES",
+        "viewport_invariants"
+      ],
+      "checklist": [
+        "C4"
+      ],
+      "stories": [
+        "S2"
+      ],
+      "status": "registered_ready_for_independent_dispatch"
     }
   ],
   "sequential_overlaps": [
@@ -745,6 +948,345 @@
         ]
       },
       "reason": "Executable settled actions and owner-bound defaults need exact files before code; pure layout has an independent two-file wall. Root also approved R1 live.rs, committed.rs, response.rs and tools.rs before edits for the500 production LOC boundary."
+    },
+    {
+      "at_melbourne": "2026-09-05T22:14:00.816104+10:00",
+      "row": "R2",
+      "authority": "Root narrow wall approval before implementation; norn_models owns the change",
+      "modify_additions": [
+        "crates/norn/src/session/branch.rs"
+      ],
+      "scope": "Modify crates/norn/src/session/branch.rs only to add a pub(crate) MailboxId::generation() -> Uuid accessor, or equivalent crate-private equality check. Initial managed EventStore view-source binding must validate actual SessionBinding/session-index generation against its owning SpoolWriter registered.generation as well as the session ID. Preserve all other branch behavior, existing mailbox serde/wire representation and visibility outside the crate. No generic identity service is introduced.",
+      "source_anchor": "crates/norn/src/session/branch.rs:102 existing private from_generation"
+    },
+    {
+      "at_melbourne": "2026-09-05T22:18:32.105071+10:00",
+      "row": "R1",
+      "create_additions": [
+        "crates/norn/src/session_view/index.rs"
+      ],
+      "authority": "Root approval before owner edit",
+      "provenance": "review_tui source review findings: quadratic full-view sort/join per committed record; orphan-by-history rescans; missing-parent/wrong reused-call association; early ToolItem anchor alias chain loss. Root relayed and accepted these findings in this task.",
+      "scope": "R1 index.rs owns every ViewItem exactly once and maintains ordered committed keys, live order, direct ItemId lookup and per-call correlation indexes. Replace full-view sort/join per committed record and orphan-result × full-history rescans with incremental indexed operations. The new unreleased items() API becomes ordered iterator/range/lookup access; do not duplicate ViewItems or body storage. Existing typed body/cursor capability contracts remain unchanged.",
+      "typed_body_contract_changed": false
+    },
+    {
+      "at_melbourne": "2026-09-05T22:30:19.165409+10:00",
+      "row": "R1",
+      "authority": "Root approval before owner edit",
+      "create_additions": [
+        "crates/norn/src/session_view/local.rs"
+      ],
+      "scope": "Split existing source-owned local notices/body-range reads/exact EventId reconciliation from projection.rs into session_view/local.rs to satisfy the 500 production LOC requirement. No new capability, alternate body store or weakening of identity validation."
+    },
+    {
+      "at_melbourne": "2026-09-05T22:30:19.165409+10:00",
+      "row": "R4",
+      "authority": "Root approval after current lockfile and renderer inspection",
+      "modify_additions": [
+        "Cargo.lock"
+      ],
+      "scope": "Permit a direct unicode-segmentation = \"1.13.2\" dependency in crates/norn-tui/Cargo.toml and only its norn-tui dependency-list membership in Cargo.lock. The exact version already exists in the lockfile; no package version/checksum churn or other dependency/policy change. Grapheme boundaries govern retained styled-row clipping, wrapping and selection; scalar-only clipping is not an acceptable substitute. Existing ANSI-producing APIs are adapted to direct styled spans; no ANSI parser/capture is introduced.",
+      "source_anchors": [
+        "crates/norn-tui/Cargo.toml:30 unicode-width only",
+        "Cargo.lock:6406 existing unicode-segmentation 1.13.2"
+      ]
+    },
+    {
+      "at_melbourne": "2026-09-05T22:33:01.928447+10:00",
+      "row": "R3",
+      "authority": "Root approved named paths before source edits",
+      "modify_additions": [
+        "crates/norn-cli/src/tui/driver.rs",
+        "crates/norn-tui/src/error.rs",
+        "crates/norn-tui/tests/pty_smoke.rs",
+        "crates/norn-tui/tests/model_selection.rs",
+        "crates/norn-tui/tests/support/mcp_channels_tui.rs"
+      ],
+      "scope": "Pass an explicit Arc<SessionBinding> into TuiInputs, whose declaration is in app/event_loop.rs already inside R3. The real CLI obtains its actual AgentToolInfra.session from its assembled coordination runtime; missing required infra is an explicit launch error, never a fabricated identity. Initialize and validate ViewSource through EventStore::bind_view_source. /new validates the newly created binding before the existing rotation commit, then replaces the view source and cursor/body state. Add transparent ViewError and HistoryReadError to TuiError in error.rs. Update only binding/error wiring in the three existing TuiInputs fixtures using their actual ephemeral setup; their semantic/PTY assertions remain unchanged until the sequential R7 work. Preserve resolved NCS launch-mode validation before provider/MCP construction.",
+      "entrypoint_note": "TuiInputs is declared in app/event_loop.rs, not lib.rs; no additional R3 lib.rs change is needed."
+    },
+    {
+      "at_melbourne": "2026-09-05T22:39:56.736796+10:00",
+      "authority": "Root approved independent R4.text slice before source edit",
+      "row": "R9",
+      "label": "R4.text",
+      "transfer_from_R4": [
+        "crates/norn-tui/src/render/retained_text.rs"
+      ],
+      "create_additions": [
+        "crates/norn-tui/src/render/retained_text_tests.rs"
+      ],
+      "scope": "Use one plain displayed string with ordered typed style byte ranges. Segment extended grapheme clusters across style-span boundaries, then produce cell-bounded styled rows with displayed-byte ranges and hit-test boundaries. Style is data, never embedded ANSI. No norn/session types, body reads, terminal I/O, application state or provider work belongs in this module. The integration adapter separately maps original approved body bytes through visible escaping into these displayed-byte positions.",
+      "manifest_owner": "R4 retains manifest/lock wiring ownership"
+    },
+    {
+      "at_melbourne": "2026-09-06T00:27:14.815132+10:00",
+      "authority": "Root requested exact R6 wall additions before implementation",
+      "row": "R6",
+      "create_additions": [
+        "crates/norn-tui/src/app/view_actions/commands.rs",
+        "crates/norn-tui/src/app/view_actions/keys.rs",
+        "crates/norn-tui/src/app/view_actions/mouse.rs",
+        "crates/norn-tui/src/app/render/hit.rs"
+      ],
+      "scope": "Split local view commands, keys, mouse and current-frame hit mapping without widening session/provider control. Hit testing and mouse dispatch validate the current frame source, body revision and rendered source-map identity. A logical placeholder anchor may preserve a requested item/offset while content is unavailable, but it is not the identity of a painted source map and cannot authorize selection, copy or an unrelated hit. Keep those identities distinct; stale/missing mappings are explicit and never rebound through a placeholder fallback.",
+      "depends_on_unchanged": [
+        "R5"
+      ]
+    },
+    {
+      "at_melbourne": "2026-09-06T00:46:03.172215+10:00",
+      "authority": "Root approved owner-requested R6 reading orchestration split before source edits",
+      "row": "R6",
+      "create_additions": [
+        "crates/norn-tui/src/app/view_actions/reading.rs",
+        "crates/norn-tui/src/app/view_actions/reading_tests.rs"
+      ],
+      "scope": "Split reading-action orchestration into app/view_actions/reading.rs and reading_tests.rs: typed search state, navigation to an exact source/body-revision hit, and supervised explicit-path export I/O workers. Existing commands.rs owns command grammar. Preserve current-frame source/map identity independently of logical placeholder anchors, source-scoped partial/unavailable search/export status, create-new by default and explicit overwrite choice. Export filesystem work stays off the terminal event loop; worker completion/errors remain supervised and source-bound. This adds no provider, persistence or session-control capability. R5 remains prerequisite for R6 integration, validation and completion.",
+      "depends_on_unchanged": [
+        "R5"
+      ]
+    },
+    {
+      "at_melbourne": "2026-09-06T01:11:39.340329+10:00",
+      "authority": "Root approved exact paths before implementation",
+      "rows": [
+        "R3",
+        "R7"
+      ],
+      "create_additions": [
+        "crates/norn-tui/src/render/retained_structured.rs",
+        "crates/norn-tui/src/render/retained_structured_tests.rs",
+        "crates/norn-tui/tests/support/retained_screen.rs"
+      ],
+      "scope": "Pure parallel authoring slice: render/retained_structured.rs and retained_structured_tests.rs provide a source-mapped RenderedMarkdown adapter for complete multi-field assistant JSON, preserving the existing secondary-fields/Ctrl+E acceptance. Every displayed field/range maps back to the supplied approved original source; partial JSON remains the original text with explicit partial state. Do not synthesize BodyRefs, invent content/fields or parse ANSI. No module wiring, body I/O, provider work or runtime mutation in this slice; the TUI owner integrates it against current source/revision mapping and retains all original bytes and secondary fields.\n\nUse tests/support/retained_screen.rs as one shared existing-vte terminal observer for the canonical PTY suites, owned only by channels_fixture. Preserve real visible geometry, alternate-screen/resize/mode and exact-occurrence assertions plus real termios restoration; do not replace semantic assertions with weaker substring checks. No new dependency, clipboard acknowledgement, provider certification or broader terminal-matrix claim is introduced."
+    },
+    {
+      "at_melbourne": "2026-09-06T01:22:24.530237+10:00",
+      "authority": "Root approved test-only authoring partition within existing walls",
+      "source_wall_changed": false,
+      "scope": "Tom's no-allow-anywhere instruction overrides the inherited CLAUDE.md test exception. Before landing, remove inherited allow attributes and resolve the underlying test unwrap/expect uses in the eleven already-modified TUI files named by this partition. Preserve every assertion and propagate failures through Result; no skips, weaker assertions, renamed unused values or replacement lint bypasses. This is test-only cleanup of these current modified files, not unrelated unchanged-module or public-history audit work.\n\nExclusive test-cleanup partition: review_child_context owns test-only cleanup in crates/norn-tui/src/agents/tabs.rs, crates/norn-tui/src/app/autocomplete.rs, crates/norn-tui/src/app/helpers.rs, crates/norn-tui/src/events/schema_render.rs, crates/norn-tui/src/render/fixed_panel.rs, crates/norn-tui/src/render/markdown.rs, crates/norn-tui/src/render/text.rs. norn_tui retains crates/norn-tui/src/app/dispatch.rs, crates/norn-tui/src/app/event_loop.rs, crates/norn-tui/src/app/slash.rs, crates/norn-tui/src/app/state.rs. The active source owner must explicitly acknowledge handoff before parallel cleanup starts; no concurrent writes to any shared file. Production behavior remains unchanged, and all current brief acceptance and final verification requirements remain."
+    },
+    {
+      "at_melbourne": "2026-09-06T01:46:13.056851+10:00",
+      "authority": "Root assigned exact current modified core files",
+      "source_wall_changed": false,
+      "scope": "Core test-only cleanup within current modified source walls: review_child_context exclusively owns loop/commands.rs, session/branch.rs and session/spool.rs under crates/norn/src. norn_models retains loop/classify.rs and provider/agent_event.rs. Remove the five inherited allow attributes and resolve their underlying test unwrap/expect uses, preserving every semantic assertion and production bytes for this cleanup. Propagate Result failures; no skips, weaker assertions, wildcard bypasses or unrelated unchanged-module changes. Common-owner Clippy style repairs are a separately identified existing task, not permission to change production through this test-cleanup partition.\n\nThe 52-file pre-thaw core AST snapshot remains historical evidence. Source ownership must be acknowledged before parallel cleanup; no concurrent writes to a shared file. The whole-workspace Clippy01 run has ended and root explicitly released the document freeze. These are existing paths only and all NRT acceptance and final verification requirements remain."
+    },
+    {
+      "at_melbourne": "2026-09-06T01:48:54.206859+10:00",
+      "authority": "Root clarified inherited core test cleanup within existing walls",
+      "source_wall_changed": false,
+      "scope": "The existing modified-core test cleanup includes inherited panic/panic!, expect_err and unwrap_err as well as unwrap and expect. Replace these with contextful fallible Result diagnostics while preserving every original semantic assertion and production bytes for the cleanup. No new skips, weaker assertions, or replacement bypasses. norn_models additionally performs test-only cleanup in its already-owned NRT-002 R1 crates/norn/src/tests/integration.rs: the inspected inherited test code has six unwrap, sixteen expect and two panic uses. Do not remove or edit the allow attribute in unchanged tests/mod.rs, and do not expand into unrelated test modules. This is an existing-path cleanup; all owner coordination and final verification requirements remain."
+    },
+    {
+      "at_melbourne": "2026-09-06T08:47:58.446688+10:00",
+      "authority": "Root released actual-App freeze; TUI test handoff acknowledged by root",
+      "source_wall_changed": false,
+      "new_source_paths": [],
+      "audit": {
+        "path": "/private/tmp/nrt-001-proof/core-cli-source-policy-final-01/REVIEW.json",
+        "sha256": "c9624277190064be439daa3c37383db145d214de61b02b8388199992a8d620b3",
+        "verdict": "changes_requested"
+      },
+      "parts": [
+        {
+          "file": "crates/norn-cli/src/commands/slash/registry.rs",
+          "brief_and_row": [
+            {
+              "brief": "NRT-001",
+              "recorded_owner": null,
+              "row": "R6"
+            }
+          ],
+          "owner": "review_child_context",
+          "requires_current_owner_handoff": "norn_tui explicit handoff",
+          "source_sha256": "41ec9b8327427f22abc287c54982e9914f960263976e05452ae2e871d8d4c544",
+          "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+          "operation_counts": {
+            "expect": 2,
+            "panic": 3,
+            "unwrap": 8
+          },
+          "total_operations": 13,
+          "preserve_production_prefix": {
+            "cfg_test_line": 442,
+            "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+            "production_prefix_bytes": 16666,
+            "production_prefix_sha256": "0cb91e595d8009b07fe9d2ce5a0acc3131b6fdc57f7e65eb134054fb3c379bd9"
+          }
+        },
+        {
+          "file": "crates/norn-cli/src/print/orchestrator.rs",
+          "brief_and_row": [
+            {
+              "brief": "NRT-002",
+              "recorded_owner": "norn_models",
+              "row": "R1"
+            }
+          ],
+          "owner": "norn_models",
+          "requires_current_owner_handoff": false,
+          "source_sha256": "0fe4a0185e3234ddb3c337f0751b7e861be585a1c8c9528b32517764de35e287",
+          "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+          "operation_counts": {
+            "expect": 6,
+            "expect_err": 1,
+            "panic": 1,
+            "unwrap": 12,
+            "unwrap_err": 2
+          },
+          "total_operations": 22,
+          "preserve_production_prefix": {
+            "cfg_test_line": 712,
+            "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+            "production_prefix_bytes": 32797,
+            "production_prefix_sha256": "2ef9464fff54b996d2c13c607aabd42d5579a522c34bc34834897b119213f848"
+          }
+        },
+        {
+          "file": "crates/norn-cli/src/print/output.rs",
+          "brief_and_row": [
+            {
+              "brief": "NRT-002",
+              "recorded_owner": "norn_models",
+              "row": "R1"
+            }
+          ],
+          "owner": "norn_models",
+          "requires_current_owner_handoff": false,
+          "source_sha256": "4bea124e6594d92d062c9f6caa820b7106bf1d89b779bc0ee8cebcd2a89d83c0",
+          "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+          "operation_counts": {
+            "expect": 3,
+            "unwrap": 38
+          },
+          "total_operations": 41,
+          "preserve_production_prefix": {
+            "cfg_test_line": 504,
+            "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+            "production_prefix_bytes": 20171,
+            "production_prefix_sha256": "abd4e938ae0578db924fb35516c6895ab1e4d131eaab8f2fb79dd5a6139e5caf"
+          }
+        },
+        {
+          "file": "crates/norn-cli/src/tui/driver.rs",
+          "brief_and_row": [
+            {
+              "brief": "NRT-001",
+              "recorded_owner": null,
+              "row": "R3"
+            }
+          ],
+          "owner": "review_child_context",
+          "requires_current_owner_handoff": "norn_tui explicit handoff",
+          "source_sha256": "a78544ec3ad4188cea9c087079972f32b8922fe2f9682f27b29ecabd76221312",
+          "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+          "operation_counts": {
+            "expect": 1
+          },
+          "total_operations": 1,
+          "preserve_production_prefix": {
+            "cfg_test_line": 342,
+            "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+            "production_prefix_bytes": 13628,
+            "production_prefix_sha256": "b3c3a573f4b0ad46753e84b5de1ab3b1c2fd92a1c153e41b1ef1e7fdf99384f0"
+          }
+        }
+      ],
+      "source_owner_handoff_acknowledged": true,
+      "scope": "Existing-wall test-only cleanup; all production-prefix hashes and semantic assertions preserved. Canonical pty_smoke result-send supervision retains original failures.",
+      "unapproved": "syntax.rs production strategy and PTY05 instrumentation are not authorized by this registration."
+    },
+    {
+      "at_melbourne": "2026-09-06T08:52:48.524145+10:00",
+      "authority": "Root approved typed error propagation rather than a labelled success String",
+      "row": "R4",
+      "owner": "review_tui",
+      "modify_paths": [
+        "crates/norn-tui/src/render/syntax.rs",
+        "crates/norn-tui/src/render/content.rs",
+        "crates/norn-tui/src/render/markdown/emitter.rs",
+        "crates/norn-tui/src/render/markdown.rs",
+        "crates/norn-tui/src/events/schema_render.rs",
+        "crates/norn-tui/src/tools/rich/edit.rs"
+      ],
+      "added_modify_membership": [
+        "crates/norn-tui/src/tools/rich/edit.rs"
+      ],
+      "test_only_paths": [
+        "crates/norn-tui/src/tools/rich/edit.rs"
+      ],
+      "plan": {
+        "path": "/private/tmp/nrt-001-proof/legacy-syntax-error-plan.json",
+        "sha256": "11a9fd64634253d287d48cc8042489000d7f15de5cfa0822a8253d175de1be67"
+      },
+      "scope": "review_tui exclusively owns the approved legacy syntax repair in render/syntax.rs, render/content.rs, render/markdown/emitter.rs, render/markdown.rs, events/schema_render.rs and tools/rich/edit.rs under crates/norn-tui/src. The last file changes test callers only. Coordinate the already modified Markdown/schema files with their frozen owners before writes; no retained App or unrelated tool-renderer wiring is authorized.\n\nChange legacy SyntaxHighlighter::highlight to Result<String, SyntaxError>, retaining the original syntect::Error as typed source and the actual code-line byte offset. Never turn highlighting failure into an empty range list, omit an original line or return a labelled successful String. Replace the four discarded format Results with infallible String construction. The already typed retained highlight_spans contract is unchanged.\n\nPropagate the same typed SyntaxError through legacy render_blocks/code/diff, emitter handle/end-code, MarkdownRenderer render_segment/try_flush_styled/feed/finalize and schema render_assistant_message/render_structured/render_event/field helpers. Existing infallible user/thinking/tool/status arms remain successful values. Adapt all exact legacy test callers fallibly; no unwrap, expect, ignore or replacement suppression.\n\nRender the candidate Markdown segment before draining pending source or publishing paragraph/dim state. A failure retains original pending content and consistent state; do not duplicate or replay an already accepted feed chunk. Borrowed ContentBlock/SessionEvent/JSON source bodies remain unchanged. No partial ANSI output may escape as a successful render after failure.\n\nProve a deterministic highlighting error retains its syntect source and exact byte offset, and prove failed streaming rendering preserves pending source/state. Preserve every existing ANSI/formatting expectation, successful multiline and numbered code, both diff sides and complete/partial fence behavior. Current retained App uses a separate typed path; this repair proves no new live-App recovery or on-screen error presentation.\n\nKeep the existing no-allow-anywhere instruction: newly touched test modules cannot add or rely on inherited suppression to permit new fallible-call bypasses. Any complete test-only cleanup extent is explicitly assigned separately. Required tests, formatting, strict workspace Clippy and source policy remain pending until actual execution; this registration is not a pass.",
+      "excluded_paths": [
+        "render/mod.rs",
+        "events/mod.rs",
+        "error.rs",
+        "tools/renderer.rs",
+        "tools/rich/read.rs",
+        "tools/rich/patch.rs",
+        "app/render/transcript.rs",
+        "retained_markdown",
+        "retained_structured"
+      ]
+    },
+    {
+      "at_melbourne": "2026-09-06T08:53:06.078168+10:00",
+      "authority": "Root approved exact two-file inherited test cleanup extent",
+      "row": "R4",
+      "owner": "review_tui",
+      "paths": [
+        "crates/norn-tui/src/render/content.rs",
+        "crates/norn-tui/src/tools/rich/edit.rs"
+      ],
+      "new_paths": [],
+      "attribute_count": 2,
+      "test_unwrap_count": 6,
+      "scope": "Root additionally assigns review_tui complete test-only policy cleanup in these two already-approved syntax-repair files: remove the inherited allow attribute in render/content.rs (unwrap_used, missing_const_for_fn, uninlined_format_args) and resolve its underlying test style structurally; remove the inherited unwrap_used allow plus all six test unwraps in tools/rich/edit.rs. Preserve every test attribute, assertion predicate and meaningful refusal through contextful fallible Result diagnostics. tools/rich/edit.rs production bytes remain identical; content.rs production changes are limited to the separately approved typed syntax propagation. No unrelated production changes, replacement suppression, skip or weaker oracle. This cleanup remains a release/landing requirement and is not grounds to mislabel a separate ready preview as a release."
+    },
+    {
+      "at_melbourne": "2026-09-06T09:18:32.890692+10:00",
+      "authority": "Direct user authorization relayed by root; metadata prerequisite to next preview build",
+      "row": "R7",
+      "owner": "root",
+      "modify": [
+        "Cargo.toml",
+        "Cargo.lock"
+      ],
+      "create": [
+        "docs/release-notes/0.1.0-preview.1.md"
+      ],
+      "scope": "Root owns the minimal checked-preview version step before the next full build: change only workspace.package.version in Cargo.toml from 0.1.0 to 0.1.0-preview.1, and only the four local workspace package versions norn, norn-cli, norn-macros and norn-tui in Cargo.lock. No dependency resolution or dependency version/source/checksum change. Create docs/release-notes/0.1.0-preview.1.md naming actual preview features and known limitations; do not rewrite historical UNRELEASED.md or add an installer/CHANGELOG. Existing Clap Cargo version and protocol version fields derive from the Cargo package version; the inspected CLI tests contain no hard-coded 0.1.0 version assertion needing a new path. This root-owned metadata authoring may precede R7 final verification, whose R6/NRT-002 prerequisites remain unchanged.",
+      "local_install_procedure": "User explicitly authorizes ongoing checked local preview installations. Increment the preview prerelease number for each subsequent successful checked update; first stable 0.1.0 still requires proper release checks. Before replacement, verify candidate source/artifact hash, version/help behavior, and a recoverable hash-verified backup. After replacement, verify installed hash/version and record the receipt/rollback path, then invoke macOS /usr/bin/say with the exact text Norn updated. If speech fails, retain the truthful installed state and report the announcement failure. No tag, public release, main merge, background updater, extra service or wider installer implementation is implied. This local preview procedure does not replace exact-candidate release/landing verification.",
+      "new_test_paths": [],
+      "programme_rows": [
+        "NWP-07.2",
+        "NWP-07.3",
+        "NWP-07.5"
+      ]
+    },
+    {
+      "at_melbourne": "2026-09-06T09:20:44.335830+10:00",
+      "authority": "Direct urgent user correction relayed by root",
+      "row": "R4",
+      "owner": "norn_tui",
+      "modify_paths": [
+        "crates/norn-tui/src/render/frame.rs",
+        "crates/norn-tui/src/render/layout.rs",
+        "crates/norn-tui/src/render/layout_tests.rs",
+        "crates/norn-tui/src/app/render.rs",
+        "crates/norn-tui/src/app/render/composer.rs",
+        "crates/norn-tui/src/app/render/transcript.rs"
+      ],
+      "new_source_files": [],
+      "scope": "Direct user correction at 09:16 Melbourne on 6 September 2026: restore the original visual styling inside the retained fullscreen renderer; do not roll back, discard current work or return to the old terminal ownership. Deliver the local fix within 30 minutes (requested 09:46 Melbourne). norn_tui owns exactly render/frame.rs, render/layout.rs, render/layout_tests.rs, app/render.rs, app/render/composer.rs and app/render/transcript.rs under crates/norn-tui/src. Restore the earlier dim top-left mode/token rule, plain input, bottom-right model/effort/tier/session rule and last-row key hints, keeping the composer full width. Reuse the inspected main styling; the owner's stated three chrome rows yield when terminal height is below six. This direct user ruling supersedes earlier no-footer/minimal-chrome appearance clauses only, not retained-frame ownership, resize safety or source identity.\n\nRestore the original blue > first-line user prompt, two-column continuations and blank turn margin; remove generic You submitted/Assistant presentation headings. Preserve semantic role, exact source maps, IDs, original body bytes, keyboard operation and full-width composition. Borders, colors, prompt labels and layout are presentation changes; never reconstruct/drop transcript evidence or change runtime input meaning.\n\nThe ordinary TUI view hides only the typed Metadata category and exposes it through explicit detail inspection; do not remove it from the semantic projection or persisted history, or use arbitrary text/label matching. norn_tui owns app/render/transcript.rs presentation integration; root coordinates any shared visibility wiring with that owner rather than writing the same file concurrently. Existing data preservation, publication binding, completion grouping, pinned reading and typed error requirements remain.",
+      "deadline_requested_melbourne": "2026-09-06T09:46:00+10:00",
+      "no_scope_expansion": "Persistence, attach, editor integration and unrelated feature/documentation expansion paused; root owns version/build/install."
     }
   ],
   "dispatch_graph": {
@@ -763,7 +1305,8 @@
     ],
     "R4": [
       "R3",
-      "R8"
+      "R8",
+      "R9"
     ],
     "R5": [
       "R4"
@@ -773,21 +1316,277 @@
     ],
     "R7": [
       "R6"
+    ],
+    "R9": [
+      "R0"
     ]
   },
   "concurrency": {
     "permitted_independent": [
       "R1 semantic core and root R8 pure layout after R0",
-      "R8 may remain independent during R2/R3 until R4 integration"
+      "R8 may remain independent during R2/R3 until R4 integration",
+      "R2 store/spool implementation may run concurrently with remaining R1 reducer/test/static work after the fixed shared cursor/body/HistoryRecord contract, under D-R2-DISPATCH.",
+      "Root R9 pure styled-row geometry may run after R0, independently of R1/R2/R3; main R4 consumes the completed seam without editing its two files concurrently."
     ],
     "forbidden": [
       "concurrent edits to any overlapping row path",
       "host lane store/history/body edits overlapping R2",
-      "editing root-owned layout files from R4 integration without an amended handoff"
+      "editing root-owned layout files from R4 integration without an amended handoff",
+      "editing root-owned retained_text.rs/retained_text_tests.rs from integration without an amended handoff"
     ],
-    "landing_is_complete_unit": "R3-R6 are one integrated local UI checkpoint; foundation progress is not user-delivery readiness."
+    "landing_is_complete_unit": "R3-R6 are one integrated local UI checkpoint; foundation progress is not user-delivery readiness.",
+    "test_cleanup_partitions": [
+      {
+        "at_melbourne": "2026-09-06T01:22:24.530237+10:00",
+        "authority": "Root relayed user no-allow instruction and approved exact current-file partition",
+        "owner_ack_required_before_edit": true,
+        "test_only_cleanup_owner": "review_child_context",
+        "test_only_cleanup_paths": [
+          "crates/norn-tui/src/agents/tabs.rs",
+          "crates/norn-tui/src/app/autocomplete.rs",
+          "crates/norn-tui/src/app/helpers.rs",
+          "crates/norn-tui/src/events/schema_render.rs",
+          "crates/norn-tui/src/render/fixed_panel.rs",
+          "crates/norn-tui/src/render/markdown.rs",
+          "crates/norn-tui/src/render/text.rs"
+        ],
+        "active_owner": "norn_tui",
+        "active_owner_paths": [
+          "crates/norn-tui/src/app/dispatch.rs",
+          "crates/norn-tui/src/app/event_loop.rs",
+          "crates/norn-tui/src/app/slash.rs",
+          "crates/norn-tui/src/app/state.rs"
+        ],
+        "new_source_paths": [],
+        "acceptance": "Tom's no-allow-anywhere instruction overrides the inherited CLAUDE.md test exception. Before landing, remove inherited allow attributes and resolve the underlying test unwrap/expect uses in the eleven already-modified TUI files named by this partition. Preserve every assertion and propagate failures through Result; no skips, weaker assertions, renamed unused values or replacement lint bypasses. This is test-only cleanup of these current modified files, not unrelated unchanged-module or public-history audit work."
+      }
+    ],
+    "core_test_cleanup_partitions": [
+      {
+        "at_melbourne": "2026-09-06T01:46:13.056851+10:00",
+        "authority": "Root approved existing-path core test cleanup after Clippy01 completion",
+        "test_only_owner": "review_child_context",
+        "test_only_paths": [
+          "crates/norn/src/loop/commands.rs",
+          "crates/norn/src/session/branch.rs",
+          "crates/norn/src/session/spool.rs"
+        ],
+        "common_owner": "norn_models",
+        "common_owner_paths": [
+          "crates/norn/src/loop/classify.rs",
+          "crates/norn/src/provider/agent_event.rs",
+          "crates/norn/src/tests/integration.rs"
+        ],
+        "new_source_paths": [],
+        "production_bytes_preserved_for_cleanup": true,
+        "scope": "Core test-only cleanup within current modified source walls: review_child_context exclusively owns loop/commands.rs, session/branch.rs and session/spool.rs under crates/norn/src. norn_models retains loop/classify.rs and provider/agent_event.rs. Remove the five inherited allow attributes and resolve their underlying test unwrap/expect uses, preserving every semantic assertion and production bytes for this cleanup. Propagate Result failures; no skips, weaker assertions, wildcard bypasses or unrelated unchanged-module changes. Common-owner Clippy style repairs are a separately identified existing task, not permission to change production through this test-cleanup partition. The existing modified-core test cleanup includes inherited panic/panic!, expect_err and unwrap_err as well as unwrap and expect. Replace these with contextful fallible Result diagnostics while preserving every original semantic assertion and production bytes for the cleanup. No new skips, weaker assertions, or replacement bypasses.",
+        "covered_test_operations": [
+          "unwrap",
+          "expect",
+          "unwrap_err",
+          "expect_err",
+          "panic"
+        ],
+        "unchanged_parent_module_excluded": "crates/norn/src/tests/mod.rs"
+      }
+    ],
+    "cli_test_cleanup_partitions": [
+      {
+        "at_melbourne": "2026-09-06T08:47:58.446688+10:00",
+        "authority": "Root released actual-App freeze; TUI test handoff acknowledged by root",
+        "source_wall_changed": false,
+        "new_source_paths": [],
+        "audit": {
+          "path": "/private/tmp/nrt-001-proof/core-cli-source-policy-final-01/REVIEW.json",
+          "sha256": "c9624277190064be439daa3c37383db145d214de61b02b8388199992a8d620b3",
+          "verdict": "changes_requested"
+        },
+        "parts": [
+          {
+            "file": "crates/norn-cli/src/commands/slash/registry.rs",
+            "brief_and_row": [
+              {
+                "brief": "NRT-001",
+                "recorded_owner": null,
+                "row": "R6"
+              }
+            ],
+            "owner": "review_child_context",
+            "requires_current_owner_handoff": "norn_tui explicit handoff",
+            "source_sha256": "41ec9b8327427f22abc287c54982e9914f960263976e05452ae2e871d8d4c544",
+            "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+            "operation_counts": {
+              "expect": 2,
+              "panic": 3,
+              "unwrap": 8
+            },
+            "total_operations": 13,
+            "preserve_production_prefix": {
+              "cfg_test_line": 442,
+              "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+              "production_prefix_bytes": 16666,
+              "production_prefix_sha256": "0cb91e595d8009b07fe9d2ce5a0acc3131b6fdc57f7e65eb134054fb3c379bd9"
+            }
+          },
+          {
+            "file": "crates/norn-cli/src/print/orchestrator.rs",
+            "brief_and_row": [
+              {
+                "brief": "NRT-002",
+                "recorded_owner": "norn_models",
+                "row": "R1"
+              }
+            ],
+            "owner": "norn_models",
+            "requires_current_owner_handoff": false,
+            "source_sha256": "0fe4a0185e3234ddb3c337f0751b7e861be585a1c8c9528b32517764de35e287",
+            "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+            "operation_counts": {
+              "expect": 6,
+              "expect_err": 1,
+              "panic": 1,
+              "unwrap": 12,
+              "unwrap_err": 2
+            },
+            "total_operations": 22,
+            "preserve_production_prefix": {
+              "cfg_test_line": 712,
+              "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+              "production_prefix_bytes": 32797,
+              "production_prefix_sha256": "2ef9464fff54b996d2c13c607aabd42d5579a522c34bc34834897b119213f848"
+            }
+          },
+          {
+            "file": "crates/norn-cli/src/print/output.rs",
+            "brief_and_row": [
+              {
+                "brief": "NRT-002",
+                "recorded_owner": "norn_models",
+                "row": "R1"
+              }
+            ],
+            "owner": "norn_models",
+            "requires_current_owner_handoff": false,
+            "source_sha256": "4bea124e6594d92d062c9f6caa820b7106bf1d89b779bc0ee8cebcd2a89d83c0",
+            "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+            "operation_counts": {
+              "expect": 3,
+              "unwrap": 38
+            },
+            "total_operations": 41,
+            "preserve_production_prefix": {
+              "cfg_test_line": 504,
+              "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+              "production_prefix_bytes": 20171,
+              "production_prefix_sha256": "abd4e938ae0578db924fb35516c6895ab1e4d131eaab8f2fb79dd5a6139e5caf"
+            }
+          },
+          {
+            "file": "crates/norn-cli/src/tui/driver.rs",
+            "brief_and_row": [
+              {
+                "brief": "NRT-001",
+                "recorded_owner": null,
+                "row": "R3"
+              }
+            ],
+            "owner": "review_child_context",
+            "requires_current_owner_handoff": "norn_tui explicit handoff",
+            "source_sha256": "a78544ec3ad4188cea9c087079972f32b8922fe2f9682f27b29ecabd76221312",
+            "remove_attribute": "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]",
+            "operation_counts": {
+              "expect": 1
+            },
+            "total_operations": 1,
+            "preserve_production_prefix": {
+              "cfg_test_line": 342,
+              "instruction": "Preserve all bytes before this complete cfg(test) module, public/private production APIs and existing assertion predicates. Remove only this attribute and structurally propagate Result/Option failures in test helpers/tests; explicit expected-failure arms return contextful errors. Preserve lifetime guards. No test skipping or wildcard bypasses.",
+              "production_prefix_bytes": 13628,
+              "production_prefix_sha256": "b3c3a573f4b0ad46753e84b5de1ab3b1c2fd92a1c153e41b1ef1e7fdf99384f0"
+            }
+          }
+        ],
+        "source_owner_handoff_acknowledged": true,
+        "scope": "Existing-wall test-only cleanup; all production-prefix hashes and semantic assertions preserved. Canonical pty_smoke result-send supervision retains original failures.",
+        "unapproved": "syntax.rs production strategy and PTY05 instrumentation are not authorized by this registration."
+      }
+    ]
   },
   "design_source": "../design.json",
   "producer_contract": "../producer-coverage.json",
-  "acceptance_contract": "../acceptance.json"
+  "acceptance_contract": "../acceptance.json",
+  "dependency_amendments": [
+    {
+      "at_melbourne": "2026-09-05T22:10:12.256904+10:00",
+      "authority": "Root ruling within authorized parallel work",
+      "row": "R2",
+      "depends_on_unchanged": [
+        "R1"
+      ],
+      "decision": "D-R2-DISPATCH",
+      "condition": "R2 may dispatch after the R1 opaque cursor/body/HistoryRecord contract listed here is fixed and both owners have received it, while remaining R1 reducer tests and static refinement continue. Root has accepted that freeze at this amendment. norn_models owns only R2 store/spool paths; channels_compatibility owns R1 session_view paths. Any shared contract change is coordinated with both owners before editing it. R2 semantic completion and integration/test acceptance still require completed R1 and R2; depends_on remains R1.",
+      "file_wall_changed": false
+    },
+    {
+      "at_melbourne": "2026-09-06T00:27:14.815132+10:00",
+      "authority": "Root ruling within authorized parallel work",
+      "row": "R6",
+      "depends_on_unchanged": [
+        "R5"
+      ],
+      "condition": "Parallel authoring exception: app/search.rs and app/search_tests.rs may be authored independently as a pure literal-query search module over source-bound original text prefixes, with grapheme-safe match/selection boundaries. Every result retains exact source/body revision and original-byte coordinates and declares loaded-transcript, selected-body or explicitly requested older-history scope, including partial/unavailable coverage. An unsearched suffix or older range is never reported as no match. No I/O, provider work, module wiring or runtime mutation belongs in this slice. R5 remains prerequisite for R6 integration, validation and completion.\n\nParallel authoring exception: app/export.rs and app/export_tests.rs may be authored independently for exporting explicitly scoped, source/revision-bound original text to an explicit operator path. Default writes create a new file; replacement requires an explicit overwrite choice. Preserve original hard newlines and report missing/partial source coverage and path-specific errors; no hidden transcript persistence. Filesystem work must run off the terminal event loop when integrated. This authoring slice does not wire modules, dispatch runtime work or mutate session/provider state. R5 remains prerequisite for R6 integration, validation and completion.",
+      "file_wall_changed": false,
+      "note": "Search/export paths already belonged to R6; separate wall amendment registers only the four view-action/hit paths."
+    },
+    {
+      "at_melbourne": "2026-09-06T01:09:56.305304+10:00",
+      "authority": "Root approved binding repair and early canonical fixture authoring",
+      "rows": [
+        "R3",
+        "R5",
+        "R7"
+      ],
+      "condition": "R3/R5 completion requires the NRT-002 exact producer publication-binding repair and its required proof. Existing implementation/integration authoring may continue under exclusive coordinated ownership; duplication, guessed association or an unverified repair cannot be reported complete. NRT-001 and NRT-002 form one final checkpoint; completion gates do not add circular source-authoring prerequisites.\n\nParallel fixture-authoring exception: after the current source freeze ends, channels_fixture alone may update the existing canonical pty_smoke.rs, model_selection.rs, mcp_channels.rs and support/mcp_channels_tui.rs. The already-declared retained_workspace.rs and support/retained_workspace.rs may be authored by a separate explicitly assigned owner. Preserve every semantic assertion and PTY acceptance. This permits authoring only: R7 validation/completion still requires R6 and the NRT-002 publication-binding repair. No source collision, early acceptance or extra path is authorized.",
+      "depends_on_fields_unchanged": true
+    }
+  ],
+  "owner_assignments": [
+    {
+      "at_melbourne": "2026-09-06T01:27:59.991409+10:00",
+      "authority": "Root assigned already-registered R7 partition",
+      "row": "R7",
+      "owner": "review_tui",
+      "paths": [
+        "crates/norn-tui/tests/retained_workspace.rs",
+        "crates/norn-tui/tests/support/retained_workspace.rs"
+      ],
+      "source_wall_changed": false,
+      "scope": "The already-registered R7 new_retained_workspace parallel-authoring partition is assigned to review_tui, exclusively for tests/retained_workspace.rs and tests/support/retained_workspace.rs. Author persistent actual-App PTY-04 reading-control/resize fixtures using the shared retained_screen oracle API and the existing 33-check external R6 evidence as a source of scenarios, not a substitute for executing these fixtures. channels_fixture remains the exclusive canonical-fixture/shared-oracle owner. No source paths or acceptance scope are added, and R6/NRT-002 prerequisites still gate R7 validation/completion."
+    }
+  ],
+  "local_preview_checkpoint": {
+    "recorded_melbourne": "2026-09-06T09:51:07.844963+10:00",
+    "version": "norn 0.1.0-preview.1",
+    "installed_melbourne": "2026-09-06T09:48:51.879860+10:00",
+    "binary_sha256": "75f855762e8faaf31570cddb7e2a4ca4b61e4aef5856caddd8a4540541857697",
+    "receipt_path": "/Users/tom/.local/state/norn/install-backups/20260906-094851-restored-preview/receipt.json",
+    "receipt_sha256": "acd6c20415e33c276d9e59ad3ee51a8768c41e35fa91b7ba8bc951ab3b626bb1",
+    "checks": "Strict workspace Clippy05, fmt06, release build and selected unit/PTY/MCP/model/workspace tests pass on captured source. Documentation status update follows those checks.",
+    "test_counts": {
+      "unit": 795,
+      "MCP": 4,
+      "model_suite": 6,
+      "canonical_PTY_suite": 23,
+      "workspace_suite": 3
+    },
+    "status": "local_preview_installed;exact_venue_and_review_pending",
+    "remaining": [
+      "205 exact-commit battery and review",
+      "Iridium composer",
+      "live attach/detach",
+      "restart-persisted view preferences"
+    ],
+    "main_landing_or_public_release": false,
+    "late_after_requested_deadline": true
+  }
 }

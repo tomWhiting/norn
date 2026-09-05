@@ -256,18 +256,16 @@ impl SessionManager {
         let replay = ReplaySummary {
             replayed_events: artifacts.events.len(),
         };
+        let spool =
+            SpoolWriter::for_session(&self.data_dir, &entry, durability, self.index_lock_deadline);
+        spool.validate_inherited_history(&artifacts.events)?;
         let mut store = EventStore::with_sink_and_events(Box::new(sink), artifacts.events);
         store.attach_provider_affinity(ManagedProviderAffinity::new(
             self.data_dir.clone(),
             entry.clone(),
             self.index_lock_deadline,
         ));
-        store.attach_spool(SpoolWriter::for_session(
-            &self.data_dir,
-            &entry,
-            durability,
-            self.index_lock_deadline,
-        ));
+        store.attach_spool(spool);
         store.attach_response_audio(ResponseAudioStore::for_session(
             &self.data_dir,
             &entry,

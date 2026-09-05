@@ -6,6 +6,7 @@ pub mod minimal;
 pub mod renderer;
 pub mod rich;
 pub mod status;
+pub mod summary;
 mod verbosity;
 
 pub use renderer::{ToolRenderer, renderer_for};

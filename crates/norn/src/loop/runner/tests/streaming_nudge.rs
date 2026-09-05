@@ -40,6 +40,7 @@ async fn streaming_events_forwarded_to_broadcast() {
             AgentEventKind::Subagent(_)
             | AgentEventKind::Message(_)
             | AgentEventKind::McpChannel(_)
+            | AgentEventKind::Observed(_)
             | AgentEventKind::StreamRetry(_)
             | AgentEventKind::Compaction(_) => {
                 unexpected_events += 1;

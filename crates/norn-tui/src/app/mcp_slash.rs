@@ -5,12 +5,12 @@ use norn::integration::{
 };
 
 use crate::TuiError;
-use crate::terminal::setup::TerminalGuard;
 
 use super::slash::write_dim_line;
+use super::{notices, state::AppState};
 
 type McpCommandResult = Result<Vec<String>, LiveMcpCommandError>;
-type McpJoinResult = Result<McpCommandResult, tokio::task::JoinError>;
+pub(super) type McpJoinResult = Result<McpCommandResult, tokio::task::JoinError>;
 
 /// UI waiter for a command whose actor mutation is commit-on-enqueue.
 ///
@@ -21,12 +21,7 @@ pub(super) struct McpCommandTask {
 }
 
 impl McpCommandTask {
-    pub(super) fn is_finished(&self) -> bool {
-        self.handle
-            .as_ref()
-            .is_none_or(tokio::task::JoinHandle::is_finished)
-    }
-
+    #[cfg(test)]
     async fn complete(mut self) -> Option<McpJoinResult> {
         let handle = self.handle.take()?;
         Some(handle.await)
@@ -61,10 +56,19 @@ pub(super) const fn mcp_exit_is_blocked(task: Option<&McpCommandTask>) -> bool {
     task.is_some()
 }
 
-pub(super) fn render_pending_mcp_exit(guard: &mut TerminalGuard) -> Result<(), TuiError> {
+/// Await the installed task by mutable reference so losing a select branch
+/// cannot detach its result. With no task, this future remains pending.
+pub(super) async fn wait_mcp_result(task: &mut Option<McpCommandTask>) -> McpJoinResult {
+    match task.as_mut().and_then(|task| task.handle.as_mut()) {
+        Some(handle) => handle.await,
+        None => std::future::pending().await,
+    }
+}
+
+pub(super) fn render_pending_mcp_exit(state: &mut AppState) -> Result<(), TuiError> {
     write_dim_line(
         "norn: wait for the running /mcp command to finish before exiting",
-        guard,
+        state,
     )
 }
 
@@ -72,42 +76,44 @@ pub(super) fn handle_mcp(
     arguments: &str,
     control: Option<&McpControlHandle>,
     task: &mut Option<McpCommandTask>,
-    guard: &mut TerminalGuard,
+    state: &mut AppState,
 ) -> Result<(), TuiError> {
     match start_mcp(arguments, control, task) {
-        Ok(McpStartOutcome::Started) => write_dim_line("MCP command running...", guard),
+        Ok(McpStartOutcome::Started) => write_dim_line("MCP command running...", state),
         Ok(McpStartOutcome::Busy) => {
-            write_dim_line("norn: another /mcp command is still running", guard)
+            write_dim_line("norn: another /mcp command is still running", state)
         }
-        Err(error) => write_dim_line(&format!("norn: {error}"), guard),
+        Err(error) => {
+            notices::error(state, "/mcp failed", &error.to_string())?;
+            Ok(())
+        }
     }
 }
 
-pub(super) async fn render_completed_mcp(
+/// Consume exactly one completed waiter and retain all command diagnostics.
+pub(super) fn render_completed_mcp(
+    state: &mut AppState,
     task: &mut Option<McpCommandTask>,
-    guard: &mut TerminalGuard,
+    result: McpJoinResult,
 ) -> Result<(), TuiError> {
-    if !task.as_ref().is_some_and(McpCommandTask::is_finished) {
-        return Ok(());
-    }
-    let Some(task) = task.take() else {
-        return Ok(());
-    };
-    let result = match task.complete().await {
-        Some(Ok(result)) => result,
-        Some(Err(error)) => {
+    *task = None;
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => {
             tracing::error!(%error, "TUI MCP command task failed");
-            return write_dim_line("norn: the /mcp command task failed", guard);
+            notices::error(state, "/mcp command task failed", &error.to_string())?;
+            return Ok(());
         }
-        None => return Ok(()),
     };
     match result {
         Ok(lines) => {
             for line in lines {
-                write_dim_line(&line, guard)?;
+                write_dim_line(&line, state)?;
             }
         }
-        Err(error) => write_dim_line(&format!("norn: {error}"), guard)?,
+        Err(error) => {
+            notices::error(state, "/mcp failed", &error.to_string())?;
+        }
     }
     Ok(())
 }
@@ -198,6 +204,37 @@ mod tests {
             .ok_or("MCP task handle was missing")??;
         assert!(completion.is_ok());
         assert!(!mcp_exit_is_blocked(task.as_ref()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn losing_completion_select_preserves_the_installed_waiter()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::future::Future;
+        use std::task::Poll;
+
+        let release = Arc::new(Notify::new());
+        let worker_release = Arc::clone(&release);
+        let mut task = Some(McpCommandTask {
+            handle: Some(tokio::spawn(async move {
+                worker_release.notified().await;
+                Ok(vec!["original result".to_owned()])
+            })),
+        });
+        {
+            let mut waiting = std::pin::pin!(wait_mcp_result(&mut task));
+            std::future::poll_fn(|context| match waiting.as_mut().poll(context) {
+                Poll::Pending => Poll::Ready(Ok(())),
+                Poll::Ready(result) => {
+                    Poll::Ready(Err(format!("wait completed before release: {result:?}")))
+                }
+            })
+            .await?;
+        }
+        assert!(mcp_exit_is_blocked(task.as_ref()));
+        release.notify_one();
+        let result = wait_mcp_result(&mut task).await??;
+        assert_eq!(result, ["original result"]);
         Ok(())
     }
 

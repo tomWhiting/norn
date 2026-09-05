@@ -114,7 +114,11 @@ pub(super) fn apply_edit_action(
             state.input_editor.clear();
             dismiss_autocomplete(state);
         }
-        InputAction::ToggleVerbosity => state.verbosity = state.verbosity.toggle(),
+        InputAction::ToggleVerbosity => {
+            state.verbosity = state.verbosity.toggle();
+            state.transcript.config.expanded_tools = !state.transcript.config.expanded_tools;
+            state.screen.allow_body_load = true;
+        }
         InputAction::ToggleThinking => state.display_toggles.toggle(),
     }
     let input_rows = sync_input_area(&mut state.input_editor, cols, terminal_rows);
@@ -166,7 +170,7 @@ mod tests {
             TerminalCaps::baseline(),
             InputHistory::in_memory(),
             registry,
-            root_id,
+            crate::app::state::test_view_source(root_id),
             StatusBar::default(),
         ))
     }
@@ -196,7 +200,12 @@ mod tests {
         let mut state = fresh_state()?;
         let text = (0..50).map(|_| "x").collect::<Vec<_>>().join("\n");
         type_action_text(&mut state, &text, 80, 24);
-        assert_eq!(state.fixed_panel.total_height(), 15);
+        // The restored three-row framing leaves ten visible input rows at 24 rows.
+        assert_eq!(state.fixed_panel.total_height(), 13);
+        assert_eq!(
+            crate::app::render::capped_input_height(&state.input_editor, 80, 24),
+            10
+        );
         let layout = wrap::layout(
             state.input_editor.lines(),
             state.input_editor.cursor_position().0,
@@ -206,7 +215,7 @@ mod tests {
         let cursor_row = u16::try_from(layout.cursor.visual_row)?;
         let viewport_top = state.input_editor.viewport_top();
         assert!(cursor_row >= viewport_top);
-        assert!(cursor_row < viewport_top + 12);
+        assert!(cursor_row < viewport_top + 10);
         Ok(())
     }
 

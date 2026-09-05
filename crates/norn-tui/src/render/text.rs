@@ -5,8 +5,6 @@
 //! tool-in-flight mode, and the future activity log can all pull their
 //! width-truncation utility from one place.
 
-use std::borrow::Cow;
-
 use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
 
 /// Display width for text painted into the input area.
@@ -21,25 +19,6 @@ pub(crate) fn input_display_width(ch: char) -> usize {
     } else {
         ch.width().unwrap_or(0)
     }
-}
-
-/// Return text that is safe to write inside a cursor-addressed panel row.
-///
-/// User input can arrive through paste and may contain escape or other
-/// control bytes. Those must never be written back to the terminal as
-/// controls, because they could corrupt raw-mode state or repaint outside
-/// the fixed panel. Printable text is borrowed unchanged; controls are
-/// rendered as `?`, a single-column placeholder that matches
-/// [`input_display_width`].
-pub(crate) fn terminal_safe_input_text(text: &str) -> Cow<'_, str> {
-    if !text.chars().any(char::is_control) {
-        return Cow::Borrowed(text);
-    }
-    Cow::Owned(
-        text.chars()
-            .map(|ch| if ch.is_control() { '?' } else { ch })
-            .collect(),
-    )
 }
 
 /// Truncate `text` to at most `width` display columns.
@@ -111,7 +90,6 @@ pub(crate) fn format_count(n: u64) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -161,18 +139,6 @@ mod tests {
     fn truncate_with_ellipsis_width_one_returns_single_ellipsis() {
         let out = truncate_with_ellipsis("hello", 1);
         assert_eq!(out, "\u{2026}");
-    }
-
-    #[test]
-    fn terminal_safe_input_text_borrows_printable_text() {
-        let out = terminal_safe_input_text("hello");
-        assert!(matches!(out, std::borrow::Cow::Borrowed("hello")));
-    }
-
-    #[test]
-    fn terminal_safe_input_text_replaces_controls() {
-        let out = terminal_safe_input_text("a\x1b[31mb\tc");
-        assert_eq!(out, "a?[31mb?c");
     }
 
     #[test]

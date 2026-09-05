@@ -23,7 +23,9 @@ use norn::tools::agent::AgentModel;
 use norn_tui::{TuiInputs, input::InputHistory, render::fixed_panel::StatusBar};
 use portable_pty::{CommandBuilder, native_pty_system};
 use serde_json::{Value, json};
-use vte::{Params, Parser, Perform};
+#[path = "support/retained_screen.rs"]
+pub mod retained_screen;
+use retained_screen::{Lifecycle, Screen};
 
 const CHILD_SCENARIO: &str = "NORN_TUI_MODEL_SELECTION_SCENARIO";
 const CAPTURE_PATH: &str = "NORN_TUI_MODEL_SELECTION_CAPTURE";
@@ -407,6 +409,7 @@ async fn run_fixture(
     reservation.confirm()?;
     let (event_sender, agent_event_rx) = tokio::sync::broadcast::channel(8);
     Box::pin(norn_tui::run_app(TuiInputs {
+        session_binding: Arc::new(norn::session::SessionBinding::ephemeral_root()),
         provider: Arc::clone(&provider) as Arc<dyn Provider>,
         executor: Arc::new(ToolRegistry::with_context(context)),
         store: Arc::new(EventStore::new()),
@@ -504,6 +507,33 @@ impl PtySession {
         Ok(())
     }
 
+    fn wait_frame(
+        &mut self,
+        start: usize,
+        predicate: impl Fn(&Screen) -> bool,
+    ) -> TestResult<Screen> {
+        let deadline = Instant::now() + DEADLINE;
+        loop {
+            if let Some(screen) = retained_screen::latest(&self.output, &[(24, 180)])?
+                && screen.end_offset > start
+                && predicate(&screen)
+            {
+                screen.assert_composer(1)?;
+                return Ok(screen);
+            }
+            let chunk = self
+                .incoming
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .map_err(|error| {
+                    io::Error::other(format!(
+                        "waiting for completed model-selection frame: {error}; output:\n{}",
+                        String::from_utf8_lossy(&self.output)
+                    ))
+                })??;
+            self.output.extend(chunk);
+        }
+    }
+
     fn command(&mut self, command: &str, confirmation: &str) -> TestResult {
         self.recent_start = self.output.len();
         self.writer.write_all(command.as_bytes())?;
@@ -512,49 +542,75 @@ impl PtySession {
             self.writer.write_all(b" ")?;
         }
         self.writer.write_all(b"\r")?;
+        // Typing pins the reading viewport. Settings and provider replies are
+        // appended at the tail; only the explicit status view keeps its anchor.
+        if command != "/view status" {
+            self.writer.write_all(b"/view follow \r")?;
+        }
         self.writer.flush()?;
-        self.wait_from(confirmation, self.recent_start)?;
-        // A completed panel redraw follows the command, so inspect its display too.
-        let confirmation_end = find_end(&self.output, confirmation, self.recent_start)?;
-        self.wait_from("^C exit", confirmation_end)
+        self.wait_frame(self.recent_start, |screen| screen.contains(confirmation))?;
+        Ok(())
     }
 
     fn probe(&mut self, index: usize) -> TestResult {
-        self.command(&format!("probe-{index}"), &format!("fixture-reply-{index}"))
+        self.command(&format!("probe-{index}"), &format!("fixture-reply-{index}"))?;
+        // The command already follows the live tail. A completed frame from
+        // this probe remains valid; an idempotent follow need not repaint it.
+        self.wait_frame(self.recent_start, |screen| {
+            let lines = screen.lines();
+            let answer = lines
+                .iter()
+                .rposition(|line| line.contains(&format!("fixture-reply-{index}")));
+            let completion = lines
+                .iter()
+                .rposition(|line| line.contains("Turn completed"));
+            matches!((answer, completion), (Some(answer), Some(completion)) if completion > answer)
+        })?;
+        Ok(())
     }
 
     fn assert_recent_contains(&self, text: &str) -> TestResult {
-        if String::from_utf8_lossy(&self.output[self.recent_start..]).contains(text) {
+        let screen = Screen::from_output(&self.output, 24, 180)?;
+        if screen.end_offset > self.recent_start && screen.contains(text) {
             Ok(())
         } else {
-            Err(io::Error::other(format!("PTY command output missing {text:?}")).into())
+            Err(io::Error::other(format!(
+                "PTY command frame missing {text:?}: {}",
+                screen.debug_text()
+            ))
+            .into())
         }
     }
 
-    fn assert_status(&self, model: &str, effort: Option<&str>, tier: Option<&str>) -> TestResult {
-        let mut lines = PrintedLines::default();
-        Parser::new().advance(&mut lines, &self.output);
-        lines.finish_line();
-        let status = lines
-            .lines
-            .iter()
-            .rev()
-            .find(|line| line.contains(SESSION_NAME))
-            .ok_or_else(|| io::Error::other("TUI status row missing"))?;
-        let mut expected = vec![model.to_owned()];
-        if let Some(tier) = tier {
-            expected.push(format!("tier:{tier}"));
-        }
-        if let Some(effort) = effort {
-            expected.push(format!("effort:{effort}"));
-        }
-        expected.push(SESSION_NAME.to_owned());
-        assert!(
-            status.contains(&expected.join(" • ")),
-            "unexpected TUI status: {status}"
-        );
-        assert_eq!(status.contains("effort:"), effort.is_some());
-        assert_eq!(status.contains("tier:"), tier.is_some());
+    fn assert_status(
+        &mut self,
+        model: &str,
+        effort: Option<&str>,
+        tier: Option<&str>,
+    ) -> TestResult {
+        self.command("/view status", "Current view and runtime status")?;
+        let expected = [
+            format!("Model: {model}"),
+            format!("Session: {SESSION_NAME}"),
+            format!("Reasoning effort: {}", effort.unwrap_or("unset")),
+            format!("Service tier: {}", tier.unwrap_or("unset")),
+        ];
+        self.wait_frame(self.recent_start, |screen| {
+            let lines = screen.lines();
+            lines
+                .iter()
+                .rposition(|line| line.trim() == "Current view and runtime status")
+                .and_then(|header| lines.get(header + 1..header + 1 + expected.len()))
+                .is_some_and(|fields| {
+                    fields
+                        .iter()
+                        .zip(&expected)
+                        .all(|(field, expected)| field.trim() == expected)
+                })
+        })?;
+        // Return the local reading viewport to the live tail before the next provider probe.
+        self.writer.write_all(b"/view follow \r")?;
+        self.writer.flush()?;
         Ok(())
     }
 }
@@ -571,6 +627,11 @@ fn run_scenario(
         pixel_width: 0,
         pixel_height: 0,
     })?;
+    #[cfg(unix)]
+    let initial_termios = pair
+        .master
+        .get_termios()
+        .ok_or_else(|| io::Error::other("model-selection PTY termios unavailable"))?;
     let mut command = CommandBuilder::new(std::env::current_exe()?);
     command.args(["--exact", "model_selection_child_entrypoint", "--nocapture"]);
     command.env(CHILD_SCENARIO, scenario);
@@ -616,12 +677,15 @@ fn run_scenario(
         recent_start: 0,
     };
     let result = session
-        .wait_from("fixture-reply-0", 0)
+        .wait_from(std::str::from_utf8(retained_screen::SYNC_QUERY)?, 0)
         .and_then(|()| {
-            let marker_end = find_end(&session.output, "fixture-reply-0", 0)?;
-            session.wait_from("^C exit", marker_end)
-        })
-        .and_then(|()| interaction(&mut session));
+            session.writer.write_all(retained_screen::PROBE_REPLY)?;
+            session.writer.flush()?;
+            session.wait_frame(0, |screen| {
+                screen.contains("fixture-reply-0") && screen.contains("Turn completed")
+            })?;
+            interaction(&mut session)
+        });
     if result.is_err() {
         process.killer.kill()?;
     } else {
@@ -644,7 +708,17 @@ fn run_scenario(
     reader_thread
         .join()
         .map_err(|payload| thread_panic_error("PTY reader", payload.as_ref()))??;
+    for chunk in session.incoming.try_iter() {
+        session.output.extend(chunk?);
+    }
     result?;
+    #[cfg(unix)]
+    assert_eq!(
+        pair.master.get_termios(),
+        Some(initial_termios),
+        "model-selection PTY termios changed"
+    );
+    Lifecycle::from_output(&session.output, 24, 180).assert_restored()?;
     assert!(
         status.success(),
         "model-selection child exited with {status:?}"
@@ -678,48 +752,6 @@ impl Drop for ChildCleanup {
             && let Err(error) = self.killer.kill()
         {
             eprintln!("failed to stop model-selection PTY child during cleanup: {error}");
-        }
-    }
-}
-
-fn find_end(bytes: &[u8], marker: &str, start: usize) -> io::Result<usize> {
-    bytes[start..]
-        .windows(marker.len())
-        .position(|chunk| chunk == marker.as_bytes())
-        .map(|position| start + position + marker.len())
-        .ok_or_else(|| io::Error::other(format!("PTY marker {marker:?} vanished")))
-}
-
-// Only completed printed lines are needed to inspect the last status redraw;
-// this is not a substitute terminal emulator or a production rendering seam.
-#[derive(Default)]
-struct PrintedLines {
-    lines: Vec<String>,
-    current: String,
-}
-
-impl PrintedLines {
-    fn finish_line(&mut self) {
-        if !self.current.is_empty() {
-            self.lines.push(std::mem::take(&mut self.current));
-        }
-    }
-}
-
-impl Perform for PrintedLines {
-    fn print(&mut self, character: char) {
-        self.current.push(character);
-    }
-    fn execute(&mut self, byte: u8) {
-        if byte == b'\n' || byte == b'\r' {
-            self.finish_line();
-        }
-    }
-    fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
-        // The renderer addresses each complete row before writing it.
-        if !ignore && intermediates.is_empty() && matches!(action, 'H' | 'f') && !params.is_empty()
-        {
-            self.finish_line();
         }
     }
 }

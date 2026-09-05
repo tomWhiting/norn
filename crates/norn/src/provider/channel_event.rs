@@ -42,6 +42,9 @@ impl std::fmt::Debug for McpChannelDeliveryEvent {
 /// A persisted message could not be published to the current live observers.
 #[derive(Debug, thiserror::Error)]
 pub enum McpChannelObservationError {
+    /// The scoped native event could not preserve its exact execution owner.
+    #[error(transparent)]
+    Observation(#[from] Box<super::agent_event::ObservationError>),
     /// A sender belonging to another agent cannot attribute this delivery.
     #[error("channel recipient {recipient} does not match event sender {sender}")]
     RecipientMismatch {

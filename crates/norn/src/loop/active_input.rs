@@ -12,6 +12,8 @@ use std::fmt;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use crate::session::events::EventId;
+
 /// Operator input accepted for the currently running logical turn.
 #[derive(Debug)]
 pub struct ActiveInput {
@@ -33,12 +35,14 @@ impl ActiveInput {
         &self.content
     }
 
-    /// Notify the originating surface that the input was durably persisted.
-    pub fn mark_delivered(&self) {
+    /// Notify the originating surface of the exact event accepted by the store.
+    /// This does not promise durability beyond the store's configured policy.
+    pub fn mark_delivered(&self, event_id: &EventId) {
         if self
             .delivery_tx
             .send(ActiveInputDelivery {
                 id: self.id,
+                event_id: event_id.clone(),
                 content: self.content.clone(),
             })
             .is_err()
@@ -56,6 +60,8 @@ impl ActiveInput {
 pub struct ActiveInputDelivery {
     /// Unique id of the delivered input.
     pub id: Uuid,
+    /// Exact accepted user-message event, supplied by the append owner.
+    pub event_id: EventId,
     /// The exact content persisted as the model-visible user message.
     pub content: String,
 }
@@ -196,11 +202,13 @@ mod tests {
         assert_eq!(drained[0].id(), id);
         assert_eq!(drained[0].content(), "please adjust");
 
-        drained[0].mark_delivered();
+        let event_id = EventId::new();
+        drained[0].mark_delivered(&event_id);
         assert_eq!(
             delivery_rx.recv().await,
             Some(ActiveInputDelivery {
                 id,
+                event_id,
                 content: "please adjust".to_string(),
             }),
         );

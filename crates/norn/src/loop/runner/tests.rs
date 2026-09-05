@@ -52,6 +52,7 @@ mod pending_mailbox_api;
 mod persisted_compaction;
 mod post_batch_steer;
 mod provider_tool_surface;
+mod publication_binding;
 mod refusal_matrix;
 mod request_customization;
 mod response_publication_timeout;

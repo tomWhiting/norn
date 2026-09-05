@@ -8,6 +8,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::session::events::SessionEvent;
+use crate::session::spool::SpoolInheritance;
 use crate::util::PrivateRoot;
 
 use super::super::io::session_file_relative;
@@ -31,6 +32,8 @@ mod publication_journal;
 mod publication_parent;
 #[path = "publication_recovery.rs"]
 mod publication_recovery;
+#[path = "publication_spool.rs"]
+mod publication_spool;
 #[path = "publication_timeline.rs"]
 mod publication_timeline;
 #[path = "publication_timeline_error.rs"]
@@ -42,14 +45,18 @@ use publication_audio::{
 };
 use publication_conflict::{conflict, path_occupied};
 use publication_journal::{
-    AUDIO_PUBLICATION_VERSION, PublicationJournal, TIMELINE_PUBLICATION_VERSION, read_journal,
-    validate_journal_metadata, write_journal,
+    AUDIO_PUBLICATION_VERSION, PublicationJournal, SPOOL_PUBLICATION_VERSION,
+    TIMELINE_PUBLICATION_VERSION, read_journal, validate_journal_metadata, write_journal,
 };
 use publication_parent::{
     ParentPrecondition, child_precondition, validate_parent_generation,
     validate_parent_precondition_shape,
 };
 use publication_recovery::{allocate_transaction_id, inventory_and_remove_orphans};
+use publication_spool::{
+    ensure_inheritance_destination_unclaimed, recover_inheritance, reject_unexpected_inheritance,
+    remove_inheritance_temporary, validate_spool_only_directory,
+};
 use publication_timeline::{
     TimelineFacts, apply_timeline_facts, inspect_if_present, inspect_timeline, write_timeline_stage,
 };
@@ -60,6 +67,7 @@ enum PublicationCheckpoint {
     TimelineStaged,
     JournalPublished,
     AudioPublished,
+    SpoolPublished,
     TimelinePublished,
     IndexPublished,
 }
@@ -183,6 +191,14 @@ fn publish_with_precondition(
     }
     ensure_candidate_is_unclaimed(root, &entries, entry)?;
 
+    let spool_inheritance = artifact_source
+        .map(|source| SpoolInheritance::prepare(root, &entries, source, entry, events))
+        .transpose()?
+        .flatten();
+    reject_unexpected_inheritance(root, entry)?;
+    if spool_inheritance.is_some() {
+        ensure_inheritance_destination_unclaimed(root, entry)?;
+    }
     let transaction_id = allocate_transaction_id(root)?;
     let audio_bundle = if let Some(source) = artifact_source {
         stage_audio_bundle(root, &transaction_id, source, entry, events)?
@@ -203,7 +219,9 @@ fn publish_with_precondition(
     validate_index_entries(&candidate_entries)?;
 
     let journal = PublicationJournal {
-        norn_session_publication: if audio_bundle.is_some() {
+        norn_session_publication: if spool_inheritance.is_some() {
+            SPOOL_PUBLICATION_VERSION
+        } else if audio_bundle.is_some() {
             AUDIO_PUBLICATION_VERSION
         } else {
             TIMELINE_PUBLICATION_VERSION
@@ -214,6 +232,7 @@ fn publish_with_precondition(
         timeline_bytes: facts.bytes,
         timeline_sha256: facts.sha256,
         audio_bundle,
+        spool_inheritance,
     };
     let journal_path = write_journal(root, &journal)?;
     checkpoint(PublicationCheckpoint::JournalPublished)?;
@@ -239,9 +258,20 @@ fn recover_one(
     validate_parent_generation(entries, journal.parent_precondition.as_ref())?;
 
     let row_exists = ensure_recoverable_row(entries, &journal.entry)?;
+    if journal.spool_inheritance.is_some() {
+        if journal.audio_bundle.is_none() {
+            validate_spool_only_directory(root, &transaction_id, &journal.entry)?;
+        }
+        remove_inheritance_temporary(root, &transaction_id, &journal.entry)?;
+    }
     let audio_stage_was_verified = if let Some(manifest) = &journal.audio_bundle {
-        let stage_was_verified =
-            recover_audio_bundle(root, &transaction_id, &journal.entry, manifest)?;
+        let stage_was_verified = recover_audio_bundle(
+            root,
+            &transaction_id,
+            &journal.entry,
+            manifest,
+            journal.spool_inheritance.is_some(),
+        )?;
         checkpoint(PublicationCheckpoint::AudioPublished)?;
         stage_was_verified
     } else {
@@ -254,6 +284,13 @@ fn recover_one(
         false
     };
 
+    if let Some(manifest) = &journal.spool_inheritance {
+        manifest.validate_sources(entries)?;
+        recover_inheritance(root, &transaction_id, &journal.entry, manifest)?;
+        checkpoint(PublicationCheckpoint::SpoolPublished)?;
+    } else {
+        reject_unexpected_inheritance(root, &journal.entry)?;
+    }
     let stage_path = timeline_stage_path(&transaction_id);
     let final_path = session_file_relative(&journal.entry)?;
     let stage_facts = inspect_if_present(root, &stage_path, &journal.entry.id)?;

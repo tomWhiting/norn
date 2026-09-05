@@ -47,7 +47,7 @@ fn control(
     builder: Arc<InitialBuilder>,
 ) -> Result<(McpControlHandle, Arc<McpRuntimeStore>), Box<dyn std::error::Error + Send + Sync>> {
     let state = McpConfigState::from_layers(
-        directory.to_path_buf(),
+        directory.canonicalize()?,
         std::array::from_fn(|_| BTreeMap::new()),
         BTreeMap::new(),
     )?;

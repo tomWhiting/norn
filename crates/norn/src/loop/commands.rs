@@ -50,6 +50,8 @@ pub enum BuiltinSlashKind {
     Quit,
     /// `/help`.
     Help,
+    /// `/view` frontend-local retained-screen controls.
+    View,
     /// `/model`.
     Model,
     /// `/effort` and `/reasoning-effort`.
@@ -162,6 +164,16 @@ pub const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         autocomplete: "Show help",
         cli_description: "Show available commands",
         cli: true,
+        tui: true,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::View,
+        name: "view",
+        usage: "/view [action]",
+        help: "Browse, select, search and configure the retained screen",
+        autocomplete: "Screen controls and reading tools",
+        cli_description: "Interactive screen controls",
+        cli: false,
         tui: true,
     },
     BuiltinSlashCommand {
@@ -589,14 +601,9 @@ pub fn preprocess_input(
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::missing_const_for_fn,
-    clippy::needless_pass_by_value
-)]
 mod tests {
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
     use super::*;
 
     fn registry_with_review() -> SlashCommandRegistry {
@@ -611,47 +618,50 @@ mod tests {
     }
 
     #[test]
-    fn non_slash_input_passes_through() {
+    fn non_slash_input_passes_through() -> TestResult {
         let reg = registry_with_review();
-        let out = preprocess_input("hello world", &reg).unwrap();
+        let out = preprocess_input("hello world", &reg)?;
         match out {
             PreprocessResult::Passthrough(s) => assert_eq!(s, "hello world"),
             PreprocessResult::Expanded { .. } => {
-                panic!("non-slash input must pass through unchanged")
+                return Err("non-slash input must pass through unchanged".into());
             }
         }
+        Ok(())
     }
 
     #[test]
-    fn unknown_slash_passes_through() {
+    fn unknown_slash_passes_through() -> TestResult {
         let reg = registry_with_review();
-        let out = preprocess_input("/no-such-command foo", &reg).unwrap();
+        let out = preprocess_input("/no-such-command foo", &reg)?;
         match out {
             PreprocessResult::Passthrough(s) => assert_eq!(s, "/no-such-command foo"),
             PreprocessResult::Expanded { .. } => {
-                panic!("unknown slash command must pass through unchanged")
+                return Err("unknown slash command must pass through unchanged".into());
             }
         }
+        Ok(())
     }
 
     #[test]
-    fn empty_slash_passes_through() {
+    fn empty_slash_passes_through() -> TestResult {
         let reg = registry_with_review();
-        let out = preprocess_input("/   ", &reg).unwrap();
+        let out = preprocess_input("/   ", &reg)?;
         assert!(matches!(out, PreprocessResult::Passthrough(_)));
+        Ok(())
     }
 
     #[test]
-    fn slash_skill_expands_with_arg() {
+    fn slash_skill_expands_with_arg() -> TestResult {
         let reg = registry_with_review();
-        let out = preprocess_input("/review foo.rs", &reg).unwrap();
+        let out = preprocess_input("/review foo.rs", &reg)?;
         match out {
             PreprocessResult::Expanded { messages } => {
                 assert_eq!(messages.len(), 1, "skill expansion produces one message");
                 let body = messages[0]
                     .content
                     .as_ref()
-                    .expect("skill message has content");
+                    .ok_or("skill message has content")?;
                 assert!(
                     body.contains("review"),
                     "body must mention skill name: {body}"
@@ -661,25 +671,30 @@ mod tests {
                     "body must mention argument: {body}"
                 );
             }
-            PreprocessResult::Passthrough(_) => panic!("expected expansion"),
+            PreprocessResult::Passthrough(_) => return Err("expected expansion".into()),
         }
+        Ok(())
     }
 
     #[test]
-    fn slash_skill_without_arg_still_expands() {
+    fn slash_skill_without_arg_still_expands() -> TestResult {
         let reg = registry_with_review();
-        let out = preprocess_input("/review", &reg).unwrap();
+        let out = preprocess_input("/review", &reg)?;
         match out {
             PreprocessResult::Expanded { messages } => {
-                let body = messages[0].content.as_ref().unwrap();
+                let body = messages[0]
+                    .content
+                    .as_ref()
+                    .ok_or("expanded skill message must contain content")?;
                 assert!(body.contains("review"));
             }
-            PreprocessResult::Passthrough(_) => panic!("expected expansion"),
+            PreprocessResult::Passthrough(_) => return Err("expected expansion".into()),
         }
+        Ok(())
     }
 
     #[test]
-    fn slash_tool_expands_as_tool_call() {
+    fn slash_tool_expands_as_tool_call() -> TestResult {
         let mut reg = SlashCommandRegistry::new();
         reg.register(SlashCommand {
             name: "noop".to_owned(),
@@ -688,7 +703,7 @@ mod tests {
                 args: serde_json::json!({"k": 1}),
             },
         });
-        let out = preprocess_input("/noop", &reg).unwrap();
+        let out = preprocess_input("/noop", &reg)?;
         match out {
             PreprocessResult::Expanded { messages } => {
                 assert_eq!(messages.len(), 1);
@@ -696,15 +711,16 @@ mod tests {
                 assert_eq!(messages[0].tool_calls.len(), 1);
                 assert_eq!(messages[0].tool_calls[0].name, "noop_tool");
                 let parsed: serde_json::Value =
-                    serde_json::from_str(&messages[0].tool_calls[0].arguments).unwrap();
+                    serde_json::from_str(&messages[0].tool_calls[0].arguments)?;
                 assert_eq!(parsed, serde_json::json!({"k": 1}));
             }
-            PreprocessResult::Passthrough(_) => panic!("expected expansion"),
+            PreprocessResult::Passthrough(_) => return Err("expected expansion".into()),
         }
+        Ok(())
     }
 
     #[test]
-    fn slash_custom_receives_argument() {
+    fn slash_custom_receives_argument() -> TestResult {
         let mut reg = SlashCommandRegistry::new();
         reg.register(SlashCommand {
             name: "echo".to_owned(),
@@ -725,13 +741,14 @@ mod tests {
                 }),
             },
         });
-        let out = preprocess_input("/echo hello there", &reg).unwrap();
+        let out = preprocess_input("/echo hello there", &reg)?;
         match out {
             PreprocessResult::Expanded { messages } => {
                 assert_eq!(messages[0].content.as_deref(), Some("custom:hello there"));
             }
-            PreprocessResult::Passthrough(_) => panic!("expected expansion"),
+            PreprocessResult::Passthrough(_) => return Err("expected expansion".into()),
         }
+        Ok(())
     }
 
     #[test]
@@ -834,14 +851,15 @@ mod tests {
     }
 
     #[test]
-    fn builtins_register_all_three() {
+    fn builtins_register_all_three() -> TestResult {
         let mut reg = SlashCommandRegistry::new();
         reg.register_builtins();
         assert!(reg.get("compact").is_some());
         assert!(reg.get("help").is_some());
         assert!(reg.get("status").is_some());
-        let out = preprocess_input("/help", &reg).unwrap();
+        let out = preprocess_input("/help", &reg)?;
         assert!(matches!(out, PreprocessResult::Expanded { .. }));
+        Ok(())
     }
 
     #[test]

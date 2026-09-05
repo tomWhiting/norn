@@ -1,0 +1,754 @@
+//! Visible semantic rows and demanded-body display cache; no persistence or terminal I/O.
+
+use std::sync::Arc;
+
+use norn::session_view::{BodyRef, ItemDirection, ItemInclusion, ViewItem, ViewItemKind};
+
+use crate::TuiError;
+use crate::app::state::AppState;
+use crate::app::transcript::Transcript;
+use crate::app::viewport::{AnchorPosition, AnchorState, ViewAnchor};
+use crate::render::frame::{Frame, PaintRow};
+use crate::render::layout::Rect;
+use crate::render::retained_markdown::{RenderedMarkdown, SourceMapping, render_markdown};
+use crate::render::retained_text::TextRow;
+
+use super::{DisplayCache, ScreenState, interaction, layout_rows, push_text, safe_text};
+
+type LogicalRow = (ViewAnchor, Arc<RenderedMarkdown>, TextRow, Option<BodyRef>);
+
+struct RowGroup {
+    text: Arc<RenderedMarkdown>,
+    rows: Arc<[TextRow]>,
+    reference: Option<BodyRef>,
+    fixed_offset: Option<usize>,
+}
+
+pub(super) fn conversation(
+    state: &mut AppState,
+    frame: &mut Frame,
+    area: Rect,
+) -> Result<(), TuiError> {
+    let status = super::composer::activity_status(state);
+    let status_area = status.as_ref().filter(|_| area.height > 1).map(|_| Rect {
+        row: area.row + area.height - 1,
+        height: 1,
+        ..area
+    });
+    let area = Rect {
+        height: area.height.saturating_sub(u16::from(status_area.is_some())),
+        ..area
+    };
+    let reconciliation = state
+        .screen
+        .viewport
+        .reconcile(&state.transcript.projection)
+        .map_err(interaction)?;
+    if matches!(
+        reconciliation.anchor,
+        Some(AnchorState::BodyStale | AnchorState::ItemUnavailable)
+    ) {
+        push_text(
+            frame,
+            "Pinned content revision is no longer current. Its original selection remains pinned; use /view follow to return to live content.",
+            area,
+            false,
+            false,
+        )?;
+        return Ok(());
+    }
+    if let Some(navigation) = state.screen.navigation.take() {
+        let anchor = state.screen.viewport.anchor().cloned();
+        let moved = window(
+            state,
+            area.width,
+            anchor.as_ref(),
+            navigation.backwards,
+            navigation.rows,
+            true,
+        )?;
+        if let Some((anchor, _, _, _)) = moved.last() {
+            state
+                .screen
+                .viewport
+                .scroll_to(anchor.clone(), &state.transcript.projection)
+                .map_err(interaction)?;
+        }
+        state.screen.demands.clear();
+    }
+    let anchor = state.screen.viewport.anchor().cloned();
+    let follows = state.screen.viewport.follows_tail();
+    let mut visible = window(
+        state,
+        area.width,
+        if follows { None } else { anchor.as_ref() },
+        follows,
+        usize::from(area.height),
+        false,
+    )?;
+    if follows {
+        visible.reverse();
+    }
+    for (index, (anchor, text, geometry, body)) in visible.into_iter().enumerate() {
+        let selected = state.screen.viewport.selected() == Some(&anchor.item);
+        let input = state
+            .transcript
+            .projection
+            .item(&anchor.item)
+            .is_some_and(|item| matches!(item.kind, ViewItemKind::Input));
+        let area = if input && body.is_some() {
+            super::composer::input_margin(
+                frame,
+                area,
+                index,
+                matches!(
+                    &anchor.position,
+                    AnchorPosition::Body {
+                        original_offset: 0,
+                        ..
+                    }
+                ),
+            )?
+        } else {
+            area
+        };
+        let selection = super::hit::selection_ranges(
+            state,
+            &anchor.item,
+            body.as_ref(),
+            &text,
+            geometry.bytes(),
+        );
+        state.screen.hit_rows.push(super::hit::HitRow {
+            area,
+            row: u16::try_from(index).map_err(|source| TuiError::FrameCoordinate {
+                value: index,
+                source,
+            })?,
+            anchor: anchor.clone(),
+            body,
+            text: Arc::clone(&text),
+            geometry: geometry.clone(),
+        });
+        state.screen.visible.push(anchor);
+        frame.rows.push(PaintRow {
+            area,
+            row: u16::try_from(index).map_err(|source| TuiError::FrameCoordinate {
+                value: index,
+                source,
+            })?,
+            text,
+            geometry,
+            selected,
+            selection,
+            composer: false,
+        });
+    }
+    if let (Some(status), Some(area)) = (status, status_area) {
+        push_text(frame, &status, area, false, false)?;
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct RowWindow<'a> {
+    anchor: Option<&'a ViewAnchor>,
+    backwards: bool,
+    limit: usize,
+    exclusive: bool,
+}
+
+fn window(
+    state: &mut AppState,
+    columns: u16,
+    anchor: Option<&ViewAnchor>,
+    backwards: bool,
+    limit: usize,
+    exclusive: bool,
+) -> Result<Vec<LogicalRow>, TuiError> {
+    let items: Box<dyn Iterator<Item = &ViewItem> + '_> = if let Some(anchor) = anchor {
+        Box::new(state.transcript.projection.items_from(
+            &anchor.item,
+            if backwards {
+                ItemDirection::Earlier
+            } else {
+                ItemDirection::Later
+            },
+            ItemInclusion::Inclusive,
+        )?)
+    } else if backwards {
+        Box::new(state.transcript.projection.items().rev())
+    } else {
+        Box::new(state.transcript.projection.items())
+    };
+    let mut rows = Vec::new();
+    for item in items {
+        if matches!(item.kind, ViewItemKind::Metadata) && !state.transcript.config.expanded_tools {
+            continue;
+        }
+        if state.transcript.completion_hidden(&item.id)
+            && state.screen.viewport.selected() != Some(&item.id)
+            && anchor.is_none_or(|anchor| anchor.item != item.id)
+        {
+            continue;
+        }
+        if matches!(item.kind, ViewItemKind::Thinking) && !state.display_toggles.thinking_visible {
+            continue;
+        }
+        let groups = item_groups(
+            &state.transcript,
+            &mut state.screen,
+            item,
+            if matches!(item.kind, ViewItemKind::Input) {
+                columns.saturating_sub(2).max(1)
+            } else {
+                columns
+            },
+            state.display_toggles.secondary_fields_visible,
+        )?;
+        let requested = RowWindow {
+            anchor: anchor.filter(|anchor| anchor.item == item.id),
+            backwards,
+            limit: limit.saturating_sub(rows.len()),
+            exclusive,
+        };
+        collect_rows(
+            &groups,
+            item,
+            requested,
+            &mut rows,
+            &mut state.screen.demands,
+        );
+        if rows.len() == limit {
+            break;
+        }
+    }
+    Ok(rows)
+}
+
+fn collect_rows(
+    groups: &[RowGroup],
+    item: &ViewItem,
+    requested: RowWindow<'_>,
+    output: &mut Vec<LogicalRow>,
+    demands: &mut Vec<(norn::session_view::ItemId, BodyRef)>,
+) {
+    let RowWindow {
+        anchor,
+        backwards,
+        limit,
+        exclusive,
+    } = requested;
+    let anchor_position = anchor.and_then(|anchor| locate_anchor(groups, &anchor.position));
+    let group_order: Box<dyn Iterator<Item = (usize, &RowGroup)> + '_> = if backwards {
+        Box::new(groups.iter().enumerate().rev())
+    } else {
+        Box::new(groups.iter().enumerate())
+    };
+    let mut added = 0;
+    for (group_index, group) in group_order {
+        let (start, end) = match anchor_position {
+            Some((anchor_group, anchor_row)) if group_index == anchor_group => {
+                if backwards {
+                    (0, anchor_row)
+                } else {
+                    (
+                        anchor_row
+                            .saturating_add(usize::from(exclusive))
+                            .min(group.rows.len()),
+                        group.rows.len(),
+                    )
+                }
+            }
+            Some((anchor_group, _))
+                if (backwards && group_index > anchor_group)
+                    || (!backwards && group_index < anchor_group) =>
+            {
+                continue;
+            }
+            _ => (0, group.rows.len()),
+        };
+        let rows: Box<dyn Iterator<Item = &TextRow> + '_> = if backwards {
+            Box::new(group.rows[start..end].iter().rev())
+        } else {
+            Box::new(group.rows[start..end].iter())
+        };
+        for row in rows {
+            if added == limit {
+                return;
+            }
+            if let Some(reference) = &group.reference {
+                let demand = (item.id.clone(), reference.clone());
+                if !demands.contains(&demand) {
+                    demands.push(demand);
+                }
+            }
+            output.push((
+                ViewAnchor {
+                    item: item.id.clone(),
+                    position: row_position(group, row),
+                },
+                Arc::clone(&group.text),
+                row.clone(),
+                group
+                    .reference
+                    .clone()
+                    .filter(|_| group.fixed_offset.is_none()),
+            ));
+            added += 1;
+        }
+    }
+}
+
+fn locate_anchor(groups: &[RowGroup], position: &AnchorPosition) -> Option<(usize, usize)> {
+    match position {
+        AnchorPosition::Header => Some((0, 0)),
+        AnchorPosition::Body {
+            reference,
+            original_offset,
+        } => {
+            // The actual original body precedes any continuation notice for the same ref.
+            let (group_index, group) = groups
+                .iter()
+                .enumerate()
+                .find(|(_, group)| group.reference.as_ref() == Some(reference))?;
+            let row_index = group.rows.partition_point(|row| matches!(row_position(group,row),AnchorPosition::Body { original_offset: offset, .. } if offset <= *original_offset)).saturating_sub(1);
+            Some((group_index, row_index))
+        }
+    }
+}
+
+fn row_position(group: &RowGroup, row: &TextRow) -> AnchorPosition {
+    let Some(reference) = &group.reference else {
+        return AnchorPosition::Header;
+    };
+    if let Some(original_offset) = group.fixed_offset {
+        return AnchorPosition::Body {
+            reference: reference.clone(),
+            original_offset,
+        };
+    }
+    let bytes = row.bytes();
+    let first_span = group
+        .text
+        .spans
+        .partition_point(|span| span.display.end <= bytes.start);
+    let offset = group.text.spans[first_span..]
+        .iter()
+        .take_while(|span| span.display.start < bytes.end)
+        .find_map(|span| {
+            if span.display.end <= bytes.start || span.display.start >= bytes.end {
+                return None;
+            }
+            match &span.source {
+                SourceMapping::Exact { original } => {
+                    Some(original.start + bytes.start.saturating_sub(span.display.start))
+                }
+                SourceMapping::Transformed { original } => Some(original.start),
+                SourceMapping::Generated => None,
+            }
+        });
+    // Generated-only blank rows attach to the following/preceding original boundary,
+    // never become selected original bytes themselves (selection uses the full map).
+    let original_offset = offset
+        .or_else(|| {
+            group.text.spans[..first_span]
+                .iter()
+                .rev()
+                .find_map(|span| {
+                    if span.display.end > bytes.start {
+                        return None;
+                    }
+                    match &span.source {
+                        SourceMapping::Exact { original }
+                        | SourceMapping::Transformed { original } => Some(original.end),
+                        SourceMapping::Generated => None,
+                    }
+                })
+        })
+        .unwrap_or(0);
+    AnchorPosition::Body {
+        reference: reference.clone(),
+        original_offset,
+    }
+}
+
+fn item_groups(
+    transcript: &Transcript,
+    screen: &mut ScreenState,
+    item: &ViewItem,
+    columns: u16,
+    secondary_fields: bool,
+) -> Result<Vec<RowGroup>, TuiError> {
+    let expanded = screen
+        .tool_overrides
+        .get(&item.id)
+        .copied()
+        .unwrap_or(transcript.config.expanded_tools);
+    let label = match &item.kind {
+        ViewItemKind::Tool(tool) => crate::app::tool_calls::label(tool, expanded),
+        ViewItemKind::Input | ViewItemKind::Text | ViewItemKind::Structured => String::new(),
+        _ => item.label.as_str().to_owned(),
+    };
+    let mut groups = vec![local_group(&label, columns, None)?];
+    if (matches!(&item.kind, ViewItemKind::Tool(_)) && !expanded)
+        || (transcript.completion_compact(&item.id)
+            && !screen
+                .tool_overrides
+                .get(&item.id)
+                .copied()
+                .unwrap_or(false)
+            && screen.viewport.selected() != Some(&item.id))
+    {
+        return Ok(groups);
+    }
+    for reference in &item.bodies {
+        let Some(body) = transcript.body(reference) else {
+            groups.push(local_group(
+                "[content not loaded]",
+                columns,
+                Some(reference.clone()),
+            )?);
+            continue;
+        };
+        let length = body.original.len();
+        let content =
+            crate::app::streaming::complete_prefix(&body.original, body.next_offset.is_some());
+        let cache = match screen.displayed.entry(reference.clone()) {
+            std::collections::hash_map::Entry::Occupied(entry)
+                if entry.get().original_len == length
+                    && entry.get().secondary_fields == secondary_fields =>
+            {
+                entry.into_mut()
+            }
+            entry => {
+                let text = if matches!(item.kind, ViewItemKind::Text | ViewItemKind::Structured) {
+                    Arc::new(
+                        crate::render::retained_structured::render_structured(
+                            content,
+                            secondary_fields,
+                            &screen.highlighter,
+                        )
+                        .map_err(interaction)?,
+                    )
+                } else if matches!(item.kind, ViewItemKind::Thinking) {
+                    Arc::new(render_markdown(content, &screen.highlighter)?)
+                } else if matches!(item.kind, ViewItemKind::Input) {
+                    super::composer::input_text(content)?
+                } else {
+                    safe_text(content)?
+                };
+                let rows = Arc::from(layout_rows(&text.styled, columns)?);
+                let cache = DisplayCache {
+                    original_len: length,
+                    secondary_fields,
+                    text,
+                    columns,
+                    rows,
+                };
+                match entry {
+                    std::collections::hash_map::Entry::Occupied(mut entry) => {
+                        entry.insert(cache);
+                        entry.into_mut()
+                    }
+                    std::collections::hash_map::Entry::Vacant(entry) => entry.insert(cache),
+                }
+            }
+        };
+        if cache.columns != columns {
+            cache.rows = Arc::from(layout_rows(&cache.text.styled, columns)?);
+            cache.columns = columns;
+        }
+        groups.push(RowGroup {
+            text: Arc::clone(&cache.text),
+            rows: Arc::clone(&cache.rows),
+            reference: Some(reference.clone()),
+            fixed_offset: None,
+        });
+        if body.next_offset.is_some() {
+            let mut more = local_group(
+                "[more content available: /view more]",
+                columns,
+                Some(reference.clone()),
+            )?;
+            more.fixed_offset = Some(body.original.len());
+            groups.push(more);
+        }
+    }
+    Ok(groups)
+}
+
+fn local_group(
+    label: &str,
+    columns: u16,
+    reference: Option<BodyRef>,
+) -> Result<RowGroup, TuiError> {
+    let text = safe_text(label)?;
+    let rows: Vec<_> = layout_rows(&text.styled, columns)?
+        .into_iter()
+        .take(1)
+        .collect();
+    Ok(RowGroup {
+        text,
+        rows: Arc::from(rows),
+        fixed_offset: reference.as_ref().map(|_| 0),
+        reference,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::transcript::LoadedBody;
+    use norn::provider::request::{ToolCallCaller, ToolCallKind};
+    use norn::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
+    use norn::session::{EventStore, SessionBinding};
+    use uuid::Uuid;
+
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+    #[test]
+    fn coalesced_input_preserves_reads_until_current_frame_demands_exist() -> TestResult {
+        let store = Arc::new(EventStore::new());
+        let source =
+            store.bind_view_source(&SessionBinding::ephemeral_root(), Uuid::new_v4(), None)?;
+        let mut state = AppState::new(
+            crate::terminal::caps::TerminalCaps::baseline(),
+            crate::input::history::InputHistory::in_memory(),
+            norn::agent::registry::AgentRegistry::shared(),
+            source,
+            crate::render::fixed_panel::StatusBar::default(),
+        );
+        let item = crate::app::notices::notice(
+            &mut state,
+            "Selected completion",
+            Some("Exact source and usage details"),
+        )?;
+        let reference = state
+            .transcript
+            .projection
+            .item(&item)
+            .and_then(|item| item.bodies.first())
+            .ok_or("notice body absent")?
+            .clone();
+        state
+            .screen
+            .viewport
+            .select(item, &state.transcript.projection)?;
+        state.screen.terminal_event(1);
+        state.screen.request_older = true;
+        state.screen.request_more = true;
+        super::super::load_visible(&mut state, &store)?;
+        assert!(state.screen.request_older);
+        assert!(state.screen.request_more);
+        assert!(state.screen.allow_body_load);
+        assert!(state.transcript.history_tasks.is_empty());
+        assert!(state.transcript.body_tasks.is_empty());
+        assert!(state.transcript.body(&reference).is_none());
+
+        crate::app::event_loop::insert_paste_text(&mut state, "draft survives");
+        // Arrivals beyond the captured frontier cannot postpone this frame.
+        state.screen.terminal_event(99);
+        assert_eq!(state.screen.ready_batch_remaining, 0);
+        let frame = super::super::prepare(&mut state, 80, 24)?;
+        assert!(!frame.rows.is_empty());
+        assert!(
+            state
+                .screen
+                .demands
+                .iter()
+                .any(|(_, body)| body == &reference)
+        );
+        super::super::load_visible(&mut state, &store)?;
+        assert!(!state.screen.request_older);
+        assert!(!state.screen.request_more);
+        assert!(!state.screen.allow_body_load);
+        assert_eq!(state.input_editor.text(), "draft survives");
+        assert_eq!(
+            state
+                .transcript
+                .body(&reference)
+                .ok_or("selected body not loaded")?
+                .original,
+            "Exact source and usage details"
+        );
+        Ok(())
+    }
+
+    fn tool_fixture() -> TestResult<(Transcript, ViewItem)> {
+        let store = EventStore::new();
+        let source =
+            store.bind_view_source(&SessionBinding::ephemeral_root(), Uuid::new_v4(), None)?;
+        let base = EventBase::new(None);
+        let parent = base.id.clone();
+        store.append(SessionEvent::AssistantMessage {
+            base, response_items: Vec::new(), content: String::new(), thinking: String::new(), reasoning: Vec::new(),
+            tool_calls: vec![ToolCallEvent { call_id: "call".to_owned(), name: "edit".to_owned(), arguments: serde_json::json!({"path":"source.rs","old_string":"abc","new_string":"xyz","tool_use_description":"A deliberately long descriptive tool header that must never consume all terminal rows"}), kind: ToolCallKind::Function, caller: ToolCallCaller::Absent }],
+            usage: EventUsage::default(), stop_reason: "tool_use".to_owned(), response_id: None,
+        })?;
+        store.append(SessionEvent::ToolResult {
+            base: EventBase::new(Some(parent)),
+            tool_call_id: "call".to_owned(),
+            tool_name: "edit".to_owned(),
+            output: serde_json::json!({"committed":true,"path":"source.rs"}),
+            spool_ref: None,
+            duration_ms: 7,
+        })?;
+        let mut transcript = Transcript::new(source);
+        transcript.accept_history(&store.history_page(&transcript.initial_history()?)?)?;
+        let item = transcript
+            .projection
+            .items()
+            .find(|item| matches!(item.kind, ViewItemKind::Tool(_)))
+            .ok_or("tool absent")?
+            .clone();
+        assert_eq!(item.bodies.len(), 2);
+        for reference in &item.bodies {
+            let demand = transcript
+                .demand_body(&item.id, reference, false)?
+                .ok_or("demand absent")?;
+            transcript.accept_body(&demand, LoadedBody::from(store.read_body(&demand.read)?))?;
+        }
+        Ok((transcript, item))
+    }
+
+    #[test]
+    fn backwards_argument_anchor_excludes_later_result_body() -> TestResult {
+        let (transcript, item) = tool_fixture()?;
+        let mut screen = ScreenState::new(transcript.projection.source().clone());
+        screen.tool_overrides.insert(item.id.clone(), true);
+        let groups = item_groups(&transcript, &mut screen, &item, 12, false)?;
+        let argument_group = groups.get(1).ok_or("argument group absent")?;
+        let anchor = ViewAnchor {
+            item: item.id.clone(),
+            position: row_position(
+                argument_group,
+                argument_group
+                    .rows
+                    .get(2)
+                    .ok_or("wrapped argument absent")?,
+            ),
+        };
+        let mut rows = Vec::new();
+        let mut demands = Vec::new();
+        collect_rows(
+            &groups,
+            &item,
+            RowWindow {
+                anchor: Some(&anchor),
+                backwards: true,
+                limit: 4,
+                exclusive: true,
+            },
+            &mut rows,
+            &mut demands,
+        );
+        assert!(!rows.is_empty());
+        for (position, _, _, _) in rows {
+            if let AnchorPosition::Body { reference, .. } = position.position {
+                assert_eq!(reference, item.bodies[0]);
+            }
+        }
+        assert!(
+            !demands
+                .iter()
+                .any(|(_, reference)| reference == &item.bodies[1])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn header_is_one_row_and_body_anchor_survives_reflow() -> TestResult {
+        let (transcript, item) = tool_fixture()?;
+        let mut screen = ScreenState::new(transcript.projection.source().clone());
+        screen.tool_overrides.insert(item.id.clone(), true);
+        let narrow = item_groups(&transcript, &mut screen, &item, 8, false)?;
+        assert_eq!(narrow[0].rows.len(), 1);
+        let anchor = row_position(
+            &narrow[1],
+            narrow[1].rows.get(3).ok_or("narrow row absent")?,
+        );
+        let wide = item_groups(&transcript, &mut screen, &item, 18, false)?;
+        assert_eq!(wide[0].rows.len(), 1);
+        let (group, row) = locate_anchor(&wide, &anchor).ok_or("reflow anchor absent")?;
+        assert_eq!(group, 1);
+        let AnchorPosition::Body {
+            reference,
+            original_offset,
+        } = anchor
+        else {
+            return Err("expected body anchor".into());
+        };
+        let AnchorPosition::Body {
+            reference: actual,
+            original_offset: actual_offset,
+        } = row_position(&wide[group], &wide[group].rows[row])
+        else {
+            return Err("expected mapped body".into());
+        };
+        assert_eq!(actual, reference);
+        assert!(actual_offset <= original_offset);
+        Ok(())
+    }
+
+    #[test]
+    fn unchanged_body_and_width_reuse_wrapped_geometry() -> TestResult {
+        let (transcript, item) = tool_fixture()?;
+        let mut screen = ScreenState::new(transcript.projection.source().clone());
+        screen.tool_overrides.insert(item.id.clone(), true);
+        let first = item_groups(&transcript, &mut screen, &item, 40, false)?;
+        let second = item_groups(&transcript, &mut screen, &item, 40, false)?;
+        assert!(Arc::ptr_eq(&first[1].text, &second[1].text));
+        assert!(Arc::ptr_eq(&first[1].rows, &second[1].rows));
+        let mut visible = Vec::new();
+        let mut demands = Vec::new();
+        collect_rows(
+            &second,
+            &item,
+            RowWindow {
+                anchor: None,
+                backwards: true,
+                limit: 2,
+                exclusive: false,
+            },
+            &mut visible,
+            &mut demands,
+        );
+        assert_eq!(visible.len(), 2);
+        Ok(())
+    }
+    #[test]
+    fn one_row_navigation_advances_past_header_and_repeated_body_rows() -> TestResult {
+        let (transcript, item) = tool_fixture()?;
+        let mut screen = ScreenState::new(transcript.projection.source().clone());
+        screen.tool_overrides.insert(item.id.clone(), true);
+        let groups = item_groups(&transcript, &mut screen, &item, 8, false)?;
+        let mut anchor = ViewAnchor {
+            item: item.id.clone(),
+            position: AnchorPosition::Header,
+        };
+        let mut positions = Vec::new();
+        for _ in 0..10 {
+            let mut rows = Vec::new();
+            let mut demands = Vec::new();
+            collect_rows(
+                &groups,
+                &item,
+                RowWindow {
+                    anchor: Some(&anchor),
+                    backwards: false,
+                    limit: 1,
+                    exclusive: true,
+                },
+                &mut rows,
+                &mut demands,
+            );
+            let (next, _, _, _) = rows.first().ok_or("one-row move did not advance")?;
+            assert_ne!(next, &anchor);
+            assert!(!positions.contains(next));
+            positions.push(next.clone());
+            anchor = next.clone();
+        }
+        Ok(())
+    }
+}

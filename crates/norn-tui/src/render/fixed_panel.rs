@@ -36,10 +36,6 @@ pub(crate) const SEPARATOR_ROWS: u16 = 1;
 /// Rows occupied by the always-present session metadata divider.
 const METADATA_SEPARATOR_ROWS: u16 = 1;
 
-/// Minimal fixed-panel height used before optional surfaces are active.
-pub(crate) const MIN_PANEL_HEIGHT: u16 =
-    SEPARATOR_ROWS + 1 + METADATA_SEPARATOR_ROWS + HELP_BAR_ROWS;
-
 /// Box-drawings light horizontal (U+2500) — the separator glyph.
 const SEPARATOR_CHAR: char = '\u{2500}';
 
@@ -547,8 +543,9 @@ impl FixedPanel {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
     use std::time::Instant;
 
     use super::*;
@@ -648,25 +645,26 @@ mod tests {
     }
 
     #[test]
-    fn render_clears_dirty_and_updates_height() {
+    fn render_clears_dirty_and_updates_height() -> TestResult {
         let mut panel = FixedPanel::new(StatusBar::default());
         panel.set_agent_lines(2);
         assert!(panel.height_dirty());
         let caps = TerminalCaps::baseline();
         let mut buf: Vec<u8> = Vec::new();
-        panel.render(&mut buf, &caps, 24, 80).unwrap();
+        panel.render(&mut buf, &caps, 24, 80)?;
         assert!(!panel.height_dirty(), "render clears the dirty flag");
+        Ok(())
     }
 
     #[test]
-    fn render_stays_within_panel_rows() {
+    fn render_stays_within_panel_rows() -> TestResult {
         let mut panel = FixedPanel::new(StatusBar::default());
         let caps = TerminalCaps::baseline();
         let mut buf: Vec<u8> = Vec::new();
         // 24 rows, panel height 4 → panel occupies zero-based rows 20-23,
         // i.e. one-based rows 21-24.
-        panel.render(&mut buf, &caps, 24, 80).unwrap();
-        let out = String::from_utf8(buf).unwrap();
+        panel.render(&mut buf, &caps, 24, 80)?;
+        let out = String::from_utf8(buf)?;
         assert!(
             out.contains("\x1b[21;1H"),
             "separator row must be addressed"
@@ -685,15 +683,16 @@ mod tests {
                 "redraw must not address scroll region row {one_based}"
             );
         }
+        Ok(())
     }
 
     #[test]
-    fn render_paints_dim_horizontal_separator_as_first_panel_row() {
+    fn render_paints_dim_horizontal_separator_as_first_panel_row() -> TestResult {
         let mut panel = FixedPanel::new(StatusBar::default());
         let caps = TerminalCaps::baseline();
         let mut buf: Vec<u8> = Vec::new();
-        panel.render(&mut buf, &caps, 24, 80).unwrap();
-        let out = String::from_utf8(buf).unwrap();
+        panel.render(&mut buf, &caps, 24, 80)?;
+        let out = String::from_utf8(buf)?;
         // Separator sits at one-based row 21 with 24 terminal rows and a
         // 4-row default panel.
         assert!(
@@ -708,26 +707,28 @@ mod tests {
             out.contains("\x1b[2m"),
             "separator must be wrapped in dim SGR: {out:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn input_divider_shows_mode_and_token_chip() {
+    fn input_divider_shows_mode_and_token_chip() -> TestResult {
         let mut panel = FixedPanel::new(StatusBar::default());
         panel.set_input_mode_label("queue");
         panel.status_bar_mut().input_tokens = 12;
         panel.status_bar_mut().output_tokens = 34;
         let caps = TerminalCaps::baseline();
         let mut buf: Vec<u8> = Vec::new();
-        panel.render(&mut buf, &caps, 24, 40).unwrap();
-        let out = String::from_utf8(buf).unwrap();
+        panel.render(&mut buf, &caps, 24, 40)?;
+        let out = String::from_utf8(buf)?;
         assert!(
             out.contains("🮠 queue • 12↑ 34↓ 🮣"),
             "top chip must show mode and token counters: {out:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn input_divider_generating_adds_live_output_and_compact_elapsed() {
+    fn input_divider_generating_adds_live_output_and_compact_elapsed() -> TestResult {
         let mut panel = FixedPanel::new(StatusBar::default());
         panel.status_bar_mut().input_tokens = 1_000;
         panel.status_bar_mut().output_tokens = 2_000;
@@ -738,27 +739,29 @@ mod tests {
         });
         let caps = TerminalCaps::baseline();
         let mut buf: Vec<u8> = Vec::new();
-        panel.render(&mut buf, &caps, 24, 80).unwrap();
-        let out = String::from_utf8(buf).unwrap();
+        panel.render(&mut buf, &caps, 24, 80)?;
+        let out = String::from_utf8(buf)?;
         assert!(
             out.contains("🮠 steer • 1,000↑ 2,300↓ • 1m20s 🮣"),
             "top chip must show root-turn totals plus live output estimate: {out:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn input_divider_omits_estimate_marker() {
+    fn input_divider_omits_estimate_marker() -> TestResult {
         let mut panel = FixedPanel::new(StatusBar::default());
         panel.status_bar_mut().input_tokens = 12_345;
         panel.status_bar_mut().input_tokens_estimated = true;
         let caps = TerminalCaps::baseline();
         let mut buf: Vec<u8> = Vec::new();
-        panel.render(&mut buf, &caps, 24, 80).unwrap();
-        let out = String::from_utf8(buf).unwrap();
+        panel.render(&mut buf, &caps, 24, 80)?;
+        let out = String::from_utf8(buf)?;
         assert!(
             out.contains("🮠 steer • 12,345↑ 0↓ 🮣"),
             "estimated input must not carry a visual approximation marker: {out:?}"
         );
+        Ok(())
     }
 
     #[test]
@@ -770,7 +773,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_divider_shows_model_and_session() {
+    fn metadata_divider_shows_model_and_session() -> TestResult {
         let bar = StatusBar {
             model_name: "claude-opus".to_string(),
             session_name: "demo".to_string(),
@@ -783,16 +786,17 @@ mod tests {
             reasoning_effort: None,
         };
         let mut buf: Vec<u8> = Vec::new();
-        bar.render_metadata_divider(0, 80, &mut buf).unwrap();
-        let out = String::from_utf8(buf).unwrap();
+        bar.render_metadata_divider(0, 80, &mut buf)?;
+        let out = String::from_utf8(buf)?;
         assert!(out.contains("claude-opus"));
         assert!(out.contains("demo"));
         assert!(out.contains("🮠"), "metadata chip left cap: {out:?}");
         assert!(out.contains("🮣"), "metadata chip right cap: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn status_bar_render_shows_key_hints() {
+    fn status_bar_render_shows_key_hints() -> TestResult {
         let bar = StatusBar {
             model_name: "claude-opus".to_string(),
             session_name: "demo".to_string(),
@@ -806,16 +810,17 @@ mod tests {
         };
         let caps = TerminalCaps::baseline();
         let mut buf: Vec<u8> = Vec::new();
-        bar.render(0, 80, &mut buf, &caps).unwrap();
-        let out = String::from_utf8(buf).unwrap();
+        bar.render(0, 80, &mut buf, &caps)?;
+        let out = String::from_utf8(buf)?;
         assert!(out.contains("Alt+Enter"), "newline key hint must appear");
         assert!(out.contains("^O verbose"), "verbosity hint: {out:?}");
         assert!(out.contains("^E thinking"), "thinking hint: {out:?}");
         assert!(out.contains("^T queue"), "mode-toggle hint: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn status_bar_render_shows_runtime_mode_badges() {
+    fn status_bar_render_shows_runtime_mode_badges() -> TestResult {
         let bar = StatusBar {
             model_name: "gpt-5.5".to_string(),
             session_name: "demo".to_string(),
@@ -828,9 +833,10 @@ mod tests {
             reasoning_effort: Some("high".to_string()),
         };
         let mut buf: Vec<u8> = Vec::new();
-        bar.render_metadata_divider(0, 120, &mut buf).unwrap();
-        let out = String::from_utf8(buf).unwrap();
+        bar.render_metadata_divider(0, 120, &mut buf)?;
+        let out = String::from_utf8(buf)?;
         assert!(out.contains("tier:fast"), "service tier badge: {out:?}");
         assert!(out.contains("effort:high"), "effort badge: {out:?}");
+        Ok(())
     }
 }

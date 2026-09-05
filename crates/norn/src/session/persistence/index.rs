@@ -242,6 +242,20 @@ pub(crate) fn with_registered_generation<T>(
     operation(lock.root())
 }
 
+/// Read source spool authority under the same index transaction as its destination.
+/// The callback must validate every admitted source against these current entries.
+pub(crate) fn with_registered_spool_entries<T>(
+    data_dir: &Path,
+    registered: &SessionIndexEntry,
+    lock_deadline: Option<Duration>,
+    operation: impl FnOnce(&PrivateRoot, &[SessionIndexEntry]) -> Result<T, SessionPersistError>,
+) -> Result<T, SessionPersistError> {
+    let lock = lock_recovered_index(data_dir, lock_deadline)?;
+    let entries = codec::read_index_in(lock.root())?;
+    registered_position(&entries, registered)?;
+    operation(lock.root(), &entries)
+}
+
 /// Conditionally mutate a row only while it remains the exact generation and
 /// timeline path previously resolved by the caller.
 pub(crate) fn update_registered_entry(

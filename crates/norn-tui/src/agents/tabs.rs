@@ -1,54 +1,6 @@
-//! Multi-agent tab state and `EventStore` replay.
-//!
-//! [`TabState`] tracks which agent owns the scroll region and which
-//! agents are available as background tabs the user can switch to.
-//! [`replay_events`] re-renders the last N events of a target agent's
-//! [`EventStore`] through the same [`crate::events::render_event`]
-//! dispatch the live event loop uses, prefixed with a dim
-//! `════════ switched to: {name} ════════` separator (see
-//! [`write_switch_separator_and_replay`]).
-//!
-//! The module owns *state* and *pure rendering helpers* only. Wiring
-//! Tab/Enter keystrokes, looking display names up from the
-//! [`norn::agent::registry::AgentRegistry`], and triggering
-//! [`TabState::remove_agent`] on hold-window expiry all live in NT-011
-//! (event loop) and a future NT-009 amendment for the visual highlight.
-//!
-//! ## Cycle semantics (R2)
-//!
-//! The cycle order is `[active_agent_id, ..background_agents]`. The
-//! first [`TabState::cycle_focus`] from a cleared focus lands on index
-//! `0` (the active tab), then advances modulo the list length on each
-//! subsequent press. Single-agent sessions (`background_agents.is_empty()`
-//! and the active is the only tracked id) cycle to nothing — the
-//! method is a no-op and [`TabState::focused_agent_id`] returns `None`.
-//!
-//! ## Switch semantics (R3)
-//!
-//! [`TabState::switch_to`] is unconditional with respect to user input:
-//! the empty-input gate (`Enter on focused agent only when input buffer
-//! is empty`) is the event loop's job. The method itself returns the
-//! previously active id when a switch happened so the caller can prove
-//! the state transition for tests.
+//! Pure agent tab identity and navigation state; history is read through source-bound pages.
 
-use std::io;
-
-use termina::escape::csi::{Csi, Sgr};
-use termina::style::Intensity;
 use uuid::Uuid;
-
-use norn::session::store::EventStore;
-
-use crate::events::{DisplayToggles, render_event};
-use crate::render::scroll_region::{write_separator, write_to_scroll};
-use crate::terminal::caps::TerminalCaps;
-
-/// Default number of events replayed when switching tabs.
-///
-/// The brief pins 20 — small enough to stay within a typical terminal
-/// pane on the slow path (large code-block dumps), large enough to give
-/// the user back the immediate context when they switch.
-pub const DEFAULT_REPLAY_COUNT: usize = 20;
 
 /// State for the multi-agent tab strip.
 ///
@@ -204,135 +156,11 @@ impl TabState {
     }
 }
 
-/// Replay the last `count` events from `store` through
-/// [`render_event`].
-///
-/// Slices `store.events()` from `len.saturating_sub(count)` so the
-/// view is always a valid Rust subslice — no panic when `count`
-/// exceeds the store length. Each rendered string is appended via
-/// [`write_to_scroll`] so bare `\n`s become `\r\n` for the raw-mode
-/// terminal (CO7 — append-only at the cursor).
-///
-/// `toggles.thinking_visible` controls whether persisted
-/// `AssistantMessage.thinking` content surfaces in the scrollback. The
-/// underlying renderer ([`crate::events::render_assistant_message`])
-/// reads the field from the event itself so replay sees the same
-/// thinking the live session recorded, including GPT-style `Thought
-/// about ...` summary blocks.
-///
-/// # Errors
-///
-/// Returns the first I/O error from `writer`.
-pub fn replay_events<W: io::Write>(
-    store: &EventStore,
-    count: usize,
-    caps: &TerminalCaps,
-    toggles: DisplayToggles,
-    terminal_width: u16,
-    writer: &mut W,
-) -> io::Result<()> {
-    for event in store.last_events(count) {
-        let rendered = render_event(&event, caps, toggles, terminal_width);
-        write_to_scroll(&rendered, writer)?;
-    }
-    Ok(())
-}
-
-/// Write a dim-styled tab-switch separator to the scroll region.
-///
-/// Renders `════════ switched to: {agent_name} ════════` bracketed by
-/// a dim SGR (entry) and a normal-intensity SGR (exit) so the line
-/// reads as muted on the user's terminal. The width-padding behaviour
-/// comes from [`write_separator`] — the helper falls back to printing
-/// the bare label on its own line when `terminal_width` is too small.
-///
-/// # Errors
-///
-/// Returns the first I/O error from `writer`.
-pub fn write_switch_separator<W: io::Write>(
-    agent_name: &str,
-    terminal_width: u16,
-    writer: &mut W,
-) -> io::Result<()> {
-    write!(writer, "{}", Csi::Sgr(Sgr::Intensity(Intensity::Dim)))?;
-    let label = format!("switched to: {agent_name}");
-    write_separator(&label, terminal_width, writer)?;
-    write!(writer, "{}", Csi::Sgr(Sgr::Intensity(Intensity::Normal)))
-}
-
-/// Write a tab-switch separator, then replay the last `count` events.
-///
-/// The separator is always written before any event byte hits the
-/// writer — that ordering is the R5 invariant the brief pins.
-///
-/// # Errors
-///
-/// Returns the first I/O error from `writer`.
-pub fn write_switch_separator_and_replay<W: io::Write>(
-    agent_name: &str,
-    terminal_width: u16,
-    store: &EventStore,
-    count: usize,
-    caps: &TerminalCaps,
-    toggles: DisplayToggles,
-    writer: &mut W,
-) -> io::Result<()> {
-    write_switch_separator(agent_name, terminal_width, writer)?;
-    replay_events(store, count, caps, toggles, terminal_width, writer)
-}
-
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::missing_const_for_fn,
-    clippy::similar_names,
-    clippy::too_many_arguments
-)]
 mod tests {
     use std::collections::HashSet;
 
-    use chrono::Utc;
-    use serde_json::json;
-
-    use norn::session::events::{EventBase, EventId, EventUsage, SessionEvent};
-    use norn::session::store::EventStore;
-
     use super::*;
-
-    fn caps() -> TerminalCaps {
-        TerminalCaps::baseline()
-    }
-
-    fn base() -> EventBase {
-        EventBase {
-            id: EventId::new(),
-            parent_id: None,
-            timestamp: Utc::now(),
-        }
-    }
-
-    fn user(content: &str) -> SessionEvent {
-        SessionEvent::UserMessage {
-            base: base(),
-            content: content.to_owned(),
-        }
-    }
-
-    fn assistant(content: &str, thinking: &str) -> SessionEvent {
-        SessionEvent::AssistantMessage {
-            response_items: Vec::new(),
-            base: base(),
-            content: content.to_owned(),
-            thinking: thinking.to_owned(),
-            reasoning: Vec::new(),
-            tool_calls: vec![],
-            usage: EventUsage::default(),
-            stop_reason: String::new(),
-            response_id: None,
-        }
-    }
 
     // ---------------- TabState construction (R1) ----------------
 
@@ -460,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    fn cycle_focus_three_agent_tree_visits_all_three() {
+    fn cycle_focus_three_agent_tree_visits_all_three() -> Result<(), &'static str> {
         // Brief R2 acceptance: 'Tab on 3-agent tree cycles through all three'.
         let root = Uuid::new_v4();
         let a = Uuid::new_v4();
@@ -470,14 +298,21 @@ mod tests {
         tabs.add_agent(b);
 
         tabs.cycle_focus();
-        let first = tabs.focused_agent_id().expect("first cycle");
+        let first = tabs
+            .focused_agent_id()
+            .ok_or("first cycle must focus an agent")?;
         tabs.cycle_focus();
-        let second = tabs.focused_agent_id().expect("second cycle");
+        let second = tabs
+            .focused_agent_id()
+            .ok_or("second cycle must focus an agent")?;
         tabs.cycle_focus();
-        let third = tabs.focused_agent_id().expect("third cycle");
+        let third = tabs
+            .focused_agent_id()
+            .ok_or("third cycle must focus an agent")?;
 
         let visited: HashSet<Uuid> = [first, second, third].into_iter().collect();
         assert_eq!(visited, HashSet::from([root, a, b]));
+        Ok(())
     }
 
     #[test]
@@ -537,195 +372,5 @@ mod tests {
         assert!(tabs.focused_agent_id().is_some());
         tabs.switch_to(child);
         assert!(tabs.focused_agent_id().is_none());
-    }
-
-    // ---------------- replay_events (R4) ----------------
-
-    #[test]
-    fn replay_last_five_from_ten_includes_only_the_last_five() {
-        // Brief R4 acceptance / verification: 'replay last 5 from store
-        // with 10 UserMessages contains content of messages 6-10 and
-        // not 1-5'.
-        let store = EventStore::new();
-        for i in 1..=10 {
-            store
-                .append(user(&format!("msg-{i:02}")))
-                .expect("append user");
-        }
-
-        let mut buf: Vec<u8> = Vec::new();
-        replay_events(&store, 5, &caps(), DisplayToggles::default(), 80, &mut buf).expect("replay");
-        let out = String::from_utf8(buf).expect("utf8");
-        for i in 1..=5 {
-            assert!(
-                !out.contains(&format!("msg-{i:02}")),
-                "msg-{i:02} must not appear in last-5 replay; out={out:?}"
-            );
-        }
-        for i in 6..=10 {
-            assert!(
-                out.contains(&format!("msg-{i:02}")),
-                "msg-{i:02} must appear in last-5 replay; out={out:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn replay_count_larger_than_store_length_renders_all_events() {
-        let store = EventStore::new();
-        store.append(user("only")).expect("append");
-        let mut buf: Vec<u8> = Vec::new();
-        replay_events(
-            &store,
-            DEFAULT_REPLAY_COUNT,
-            &caps(),
-            DisplayToggles::default(),
-            80,
-            &mut buf,
-        )
-        .expect("replay");
-        let out = String::from_utf8(buf).expect("utf8");
-        assert!(out.contains("only"));
-    }
-
-    #[test]
-    fn replay_assistant_with_thinking_renders_thinking_when_visible() {
-        // Brief R4 acceptance / verification: 'replayed AssistantMessage
-        // with thinking="deliberating" contains "thinking: deliberating"
-        // when toggles.thinking_visible == true'.
-        let store = EventStore::new();
-        store
-            .append(assistant("answer", "deliberating"))
-            .expect("append");
-
-        let toggles = DisplayToggles::default();
-        assert!(toggles.thinking_visible);
-
-        let mut buf: Vec<u8> = Vec::new();
-        replay_events(&store, 5, &caps(), toggles, 80, &mut buf).expect("replay");
-        let out = String::from_utf8(buf).expect("utf8");
-        assert!(
-            out.contains("thinking: deliberating"),
-            "thinking text must surface in replay; out={out:?}"
-        );
-        assert!(
-            out.contains("answer"),
-            "assistant content must appear: {out:?}"
-        );
-    }
-
-    #[test]
-    fn replay_assistant_with_markdown_summary_renders_thought_block() {
-        let store = EventStore::new();
-        store
-            .append(assistant(
-                "answer",
-                "**Creating a markdown table**\n\nI need to prepare an answer.",
-            ))
-            .expect("append");
-
-        let mut buf: Vec<u8> = Vec::new();
-        replay_events(&store, 5, &caps(), DisplayToggles::default(), 80, &mut buf).expect("replay");
-        let out = String::from_utf8(buf).expect("utf8");
-        assert!(out.contains("Thought about"), "got: {out:?}");
-        assert!(out.contains("Creating a markdown table"), "got: {out:?}");
-        assert!(out.contains("I need to prepare an answer."), "got: {out:?}");
-        assert!(!out.contains("thinking:"), "got: {out:?}");
-        assert!(out.contains("answer"), "got: {out:?}");
-    }
-
-    #[test]
-    fn replay_assistant_without_thinking_visible_omits_thinking() {
-        let store = EventStore::new();
-        store
-            .append(assistant("answer", "deliberating"))
-            .expect("append");
-        let toggles = DisplayToggles {
-            thinking_visible: false,
-            secondary_fields_visible: false,
-        };
-        let mut buf: Vec<u8> = Vec::new();
-        replay_events(&store, 5, &caps(), toggles, 80, &mut buf).expect("replay");
-        let out = String::from_utf8(buf).expect("utf8");
-        assert!(
-            !out.contains("deliberating"),
-            "thinking text must NOT surface when toggle is off; out={out:?}"
-        );
-    }
-
-    #[test]
-    fn replay_routes_tool_results_through_per_tool_renderer() {
-        let store = EventStore::new();
-        store
-            .append(SessionEvent::ToolResult {
-                base: base(),
-                tool_call_id: "tc_1".to_owned(),
-                tool_name: "bash".to_owned(),
-                output: json!({"exit_code": 0, "stdout": "ok\n", "stderr": ""}),
-                spool_ref: None,
-                duration_ms: 12,
-            })
-            .expect("append");
-        let mut buf: Vec<u8> = Vec::new();
-        replay_events(&store, 5, &caps(), DisplayToggles::default(), 80, &mut buf).expect("replay");
-        let out = String::from_utf8(buf).expect("utf8");
-        assert!(
-            out.contains("0.01s"),
-            "bash renderer duration must appear: {out:?}"
-        );
-    }
-
-    // ---------------- separator (R5) ----------------
-
-    #[test]
-    fn switch_separator_contains_label_box_char_and_dim_sgr() {
-        // Brief R5 verification: 'switch separator output contains
-        // "switched to: {name}", the "═" box-drawing char, and the dim
-        // SGR escape "\x1b[2m"'.
-        let mut buf: Vec<u8> = Vec::new();
-        write_switch_separator("researcher", 60, &mut buf).expect("separator");
-        let out = String::from_utf8(buf).expect("utf8");
-        assert!(out.contains("switched to: researcher"), "label: {out:?}");
-        assert!(out.contains('═'), "box char: {out:?}");
-        assert!(out.contains("\x1b[2m"), "dim SGR: {out:?}");
-    }
-
-    #[test]
-    fn switch_separator_emits_normal_sgr_to_close_dim() {
-        let mut buf: Vec<u8> = Vec::new();
-        write_switch_separator("tester", 50, &mut buf).expect("separator");
-        let out = String::from_utf8(buf).expect("utf8");
-        // termina renders normal-intensity as `\x1b[22m`.
-        assert!(out.contains("\x1b[22m"), "normal SGR: {out:?}");
-    }
-
-    // ---------------- ordering invariant (R3 + R4 + R5) ----------------
-
-    #[test]
-    fn separator_byte_offset_precedes_first_replayed_event() {
-        // Brief verification: 'in replay_with_separator output, the
-        // "switched to:" substring byte offset is strictly less than
-        // the byte offset of the first replayed event's content'.
-        let store = EventStore::new();
-        store.append(user("hello-replay")).expect("append");
-
-        let mut buf: Vec<u8> = Vec::new();
-        write_switch_separator_and_replay(
-            "researcher",
-            60,
-            &store,
-            DEFAULT_REPLAY_COUNT,
-            &caps(),
-            DisplayToggles::default(),
-            &mut buf,
-        )
-        .expect("separator+replay");
-        let out = String::from_utf8(buf).expect("utf8");
-        let sep_at = out.find("switched to:").expect("separator label present");
-        let event_at = out.find("hello-replay").expect("replayed event present");
-        assert!(
-            sep_at < event_at,
-            "separator must precede the first replayed event byte: sep={sep_at} event={event_at} out={out:?}"
-        );
     }
 }
