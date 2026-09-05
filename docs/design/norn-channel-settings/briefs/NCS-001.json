@@ -129,14 +129,16 @@
       "files": {
         "modify": [
           "crates/norn-cli/tests/mcp_launch.rs",
-          "crates/norn-cli/tests/support/mcp_launch_fixture.rs"
+          "crates/norn-cli/tests/support/mcp_launch_fixture.rs",
+          "crates/norn-cli/tests/channel_mode_policy.rs"
         ],
         "create": []
       },
       "acceptance": [
         "Real process runs saved/default wake with no dedicated channel flags and receives attributed notification.",
         "Inline channels configuration and explicit off precedence work; ordinary non-channel server still provides a tool.",
-        "Driven next-turn from persisted settings refuses before sentinel process starts."
+        "Driven next-turn from persisted settings refuses before sentinel process starts.",
+        "Existing real CLI help coverage states NAME=off|next-turn|wake and retains mode lifetime, unavailable Hold and no-server-launch assertions. Corrected after exact-f0cb battery7 exposed the pre-NCS spelling assertion."
       ],
       "checklist": [
         "C4"
