@@ -11,7 +11,8 @@
     "C4",
     "C5",
     "C6",
-    "C7"
+    "C7",
+    "C8"
   ],
   "stories": [
     "S1",
@@ -169,7 +170,7 @@
       "acceptance": [
         "Real committed temporary Git fixtures prove clean execution, tracked/index/untracked refusal before execution, ignored build-output acceptance, moved HEAD refusal, post-execution dirtiness refusal, Git failure refusal and command exit propagation.",
         "A change restored inside the command is explicitly tested as a documented limitation, not reported as immutable execution.",
-        "All five declared legs invoke the guard; diagnostic-runner runs both Python regression suites with first-failure propagation.",
+        "Every declared leg invokes the guard; diagnostic-runner runs all declared Python regression suites with first-failure propagation. R8 adds a compile-only live target leg while preserving this requirement.",
         "Guard logs name HEAD, declaration SHA256, guard SHA256, command exit and any failed probe; landing review compares digests with the exact reviewed commit.",
         "No Cargo/build/service operations occur in these fixture tests; no invented timeouts, waivers or source cleanup.",
         "A same-length source edit with restored mtime and a clean Git status is still refused by direct blob identity; mode changes with core.fileMode disabled and symlink-target changes are refused. Blob/filter normalization is not silently accepted: this guard requires the checked-out bytes to match committed blobs."
@@ -179,6 +180,48 @@
       ],
       "stories": [
         "S2"
+      ]
+    },
+    {
+      "id": "R8",
+      "title": "Make prerequisite failures observable and separate the opt-in live API smoke",
+      "spec": "THE SYSTEM SHALL replace all ten identified local Python/permission runtime-pass returns with named Result errors carrying NORN_TEST_PREREQUISITE_UNMET, without depending on tracing subscribers. THE SYSTEM SHALL move the preexisting live OpenAI hello smoke into a live-api-smoke required-feature integration target that refuses absent credentials before provider construction. Normal release verification SHALL compile and strictly lint that target without executing its network request. An explicit Aion workflow SHALL execute the live target only when dispatched, using the existing named worker-environment credential seam, exact HEAD/source guards and a structured receipt that never carries credential values or raw provider logs. The normal release receipt SHALL state that live API execution is a distinct, unmeasured acceptance lane until its own receipt exists.",
+      "files": {
+        "create": [
+          "crates/norn/src/test_prerequisite.rs",
+          "crates/norn/tests/live_openai_smoke.rs",
+          "scripts/live-openai-smoke.py",
+          "scripts/tests/live_openai_smoke_test.py",
+          "workflows/live-openai-smoke/workflow.awl",
+          "workflows/live-openai-smoke/worker.awl",
+          "workflows/live-openai-smoke/README.md"
+        ],
+        "modify": [
+          "crates/norn/Cargo.toml",
+          "crates/norn/src/lib.rs",
+          "crates/norn/src/provider/openai/provider.rs",
+          "crates/norn/src/tools/lsp/workspace_backend/stub_tests.rs",
+          "crates/norn/src/tools/search/tool.rs",
+          "gates.json",
+          "scripts/tests/remote_battery_test.py",
+          "scripts/tests/source_bound_leg_test.py"
+        ]
+      },
+      "acceptance": [
+        "A real Rust test-harness subprocess with a missing prerequisite exits nonzero and emits the declared marker without a tracing subscriber; a satisfied control succeeds.",
+        "The seven Python and three permission prerequisite paths cannot return a passing test on unavailable prerequisites; existing behavior assertions are preserved.",
+        "The ordinary test suite cannot run the live OpenAI request; workspace/all-target Clippy enables norn/live-api-smoke to lint the required-feature target, and a source-guarded serial cargo test --no-run leg compiles/links it without a request.",
+        "Live workflow/worker contracts contain no credential field or value; the runner admits only OPENAI_TEST_KEY from its own environment or the documented immediate worker-parent environment seam, and refuses absence before Cargo or network execution.",
+        "Runner fixtures exercise absent credentials, exact-commit mismatch, failed and successful guarded commands, source-witness validation and secret-free receipts with synthetic credentials; they perform no actual Cargo or network call.",
+        "Both AWL documents check locally; no deploy, worker startup, credential reading or live provider request occurs in this repair.",
+        "The e32cfc1 historical receipt and review packet remain unchanged. New source requires new review and exact-commit verification."
+      ],
+      "checklist": [
+        "C8"
+      ],
+      "stories": [
+        "S2",
+        "S3"
       ]
     }
   ],
@@ -192,7 +235,10 @@
     "python3 scripts/tests/source_bound_leg_test.py",
     "bash -n scripts/remote-battery.sh",
     "Brief coverage and explicit gates declaration validation",
-    "205 exact-commit receipt plus Fable review before landing"
+    "205 exact-commit receipt plus Fable review before landing",
+    "python3 scripts/tests/live_openai_smoke_test.py",
+    "aion awl check workflows/live-openai-smoke/workflow.awl",
+    "aion awl check workflows/live-openai-smoke/worker.awl"
   ],
   "wall_amendments": [
     {
@@ -231,6 +277,27 @@
         "scripts/source-bound-leg.py",
         "scripts/tests/source_bound_leg_test.py",
         "gates.json"
+      ]
+    },
+    {
+      "row": "R8",
+      "reason": "Owner was given the optional live-lane choice; parent adopted the explicit lane separation working design and authorized this reversible repair. Register exact files before implementation. The existing unproven receipt exposed a baseline skip-observability defect, not an Astra failure.",
+      "added": [
+        "crates/norn/src/test_prerequisite.rs",
+        "crates/norn/tests/live_openai_smoke.rs",
+        "scripts/live-openai-smoke.py",
+        "scripts/tests/live_openai_smoke_test.py",
+        "workflows/live-openai-smoke/workflow.awl",
+        "workflows/live-openai-smoke/worker.awl",
+        "workflows/live-openai-smoke/README.md",
+        "crates/norn/Cargo.toml",
+        "crates/norn/src/lib.rs",
+        "crates/norn/src/provider/openai/provider.rs",
+        "crates/norn/src/tools/lsp/workspace_backend/stub_tests.rs",
+        "crates/norn/src/tools/search/tool.rs",
+        "gates.json",
+        "scripts/tests/remote_battery_test.py",
+        "scripts/tests/source_bound_leg_test.py"
       ]
     }
   ]

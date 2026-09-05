@@ -8,6 +8,12 @@ description = "Headless agent runtime for Yggdrasil — orchestratable AI agent 
 [features]
 test-utils = []
 libyggd-ast = ["dep:libyggd"]
+live-api-smoke = []
+
+[[test]]
+name = "live_openai_smoke"
+path = "tests/live_openai_smoke.rs"
+required-features = ["live-api-smoke"]
 
 [dependencies]
 async-trait = { workspace = true }

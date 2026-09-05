@@ -1308,7 +1308,8 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn permission_denied_subtree_is_reported_in_skipped() {
+    async fn permission_denied_subtree_is_reported_in_skipped()
+    -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempdir().expect("tempdir");
@@ -1323,8 +1324,11 @@ mod tests {
             // Running as root: the permission gate cannot be exercised.
             std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755))
                 .expect("chmod restore");
-            tracing::info!("skipping permission-denied test: process can read 0o000 dirs");
-            return;
+            return Err(crate::test_prerequisite::missing(
+                "permission_denied_subtree_is_reported_in_skipped",
+                "the process must not read directories with mode 0o000",
+            )
+            .into());
         }
 
         let tool = SearchTool::new();
@@ -1363,6 +1367,7 @@ mod tests {
             Some(false),
             "an unreadable subtree is skipped, not truncated"
         );
+        Ok(())
     }
 
     #[tokio::test]

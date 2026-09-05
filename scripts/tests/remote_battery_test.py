@@ -220,7 +220,9 @@ class VenueDeclarationTests(unittest.TestCase):
     def test_required_legs_are_partitioned_locked_and_not_receipts(self):
         declaration = json.loads((REPO_ROOT / "gates.json").read_text(encoding="utf-8"))
         legs = declaration["legs"]
-        self.assertEqual([leg["name"] for leg in legs], LEGS + ["diagnostic-runner"])
+        self.assertEqual([leg["name"] for leg in legs],
+                         ["fmt", "clippy", "live-smoke-build",
+                          "tests", "doctests", "diagnostic-runner"])
         for leg in legs:
             self.assertTrue(leg["cmd"])
             self.assertIn(leg["band"], {"serial", "own_lane", "fanout"})
@@ -233,6 +235,9 @@ class VenueDeclarationTests(unittest.TestCase):
         self.assertIn("-- -D warnings", by_name["clippy"]["cmd"])
         self.assertIn("--all-targets", by_name["tests"]["cmd"])
         self.assertIn("--doc", by_name["doctests"]["cmd"])
+        self.assertIn("--features norn/live-api-smoke", by_name["clippy"]["cmd"])
+        self.assertIn("--no-run", by_name["live-smoke-build"]["cmd"])
+        self.assertEqual(declaration["vacuity_marker"], "NORN_TEST_PREREQUISITE_UNMET")
         self.assertEqual(by_name["diagnostic-runner"]["band"], "fanout")
         self.assertIn("terminal receipt", declaration["authority_note"])
         self.assertIn("source-binding limitation", declaration["source_binding_note"])

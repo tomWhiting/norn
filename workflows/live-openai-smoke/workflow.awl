@@ -1,0 +1,28 @@
+//! Explicit live OpenAI acceptance, separate from normal release compile/lint coverage.
+workflow norn_live_openai_smoke
+  input repo_path: String
+  input expected_head: String
+  outcome reported: type LiveOutcome, route success
+  outcome refused: type LiveOutcome, route failure
+
+type LiveReceipt {
+  expected_head: String,
+  head_commit: String,
+  gates_sha256: String,
+  guard_sha256: String,
+  runner_sha256: String,
+  verdict: String,
+  reason: String,
+  command_exit: Int,
+  test_target: String,
+}
+type LiveOutcome { receipt: LiveReceipt }
+
+worker norn_live_openai_smoke_205
+  action measure(repo_path: String, expected_head: String) -> LiveReceipt
+    node venue205
+
+step measure
+  measure(repo_path: repo_path, expected_head: expected_head) -> result
+  outcome passed: if result.verdict == "green", route reported(receipt: result)
+  outcome failed: else, route refused(receipt: result)
