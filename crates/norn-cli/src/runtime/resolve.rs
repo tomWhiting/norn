@@ -125,7 +125,7 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
     {
         model.clone_into(&mut profile.model);
     }
-    let effort_source = if cli.reasoning_effort.is_some() {
+    let mut effort_source = if cli.reasoning_effort.is_some() {
         "--reasoning-effort"
     } else if profile.reasoning_effort.is_some() {
         "profile.reasoning_effort"
@@ -198,6 +198,11 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         ProviderKind::OpenaiCompatible => Some(norn::model_selection::CatalogBackend::CHAT),
         ProviderKind::ClaudeRunner => None,
     };
+    if profile.reasoning_effort.is_none() {
+        profile.reasoning_effort =
+            norn::model_selection::defaults::reasoning_effort(backend, &profile.model);
+        effort_source = "Norn default reasoning effort";
+    }
     let explicit_window = config_overrides.context_window.or_else(|| {
         settings
             .agent

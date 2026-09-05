@@ -18,7 +18,7 @@ The supplied Codex catalogue has new model facts. Existing cross-backend lookups
 
 ## Decisions
 
-- Keep the existing Sol default; import factual visible-model metadata on the Codex subscription route only. Preserve older model entries absent from this snapshot; absence is not retirement.
+- Owner amendment, 5 September 2026 Melbourne (NMS-002): Astra replaces Sol as default; CLI defaults to high where the selected Codex model declares support. Astra derives a372000-token operating window, choosing one of Tom’s proposed values. Explicit overrides win. Provider metadata stays factual and separate; older models remain available.
 - Astra alias is astra. Codex default and maximum windows remain distinct. No 300-400K hard planning cap is introduced.
 - Represent advertised ultra as an effort identifier, validate it against the actual selected backend/model, and document that this is not automatic task delegation. Live provider support is an explicit remaining verification, not inferred from fixtures.
 - Startup and live switching must use selected provider/backend and explicit context-override provenance; prepare/validate before mutating model, budgets and inherited context.
@@ -129,6 +129,10 @@ The supplied Codex catalogue has new model facts. Existing cross-backend lookups
 | `docs/design/norn-cli/briefs/NC-004.json` | NMS-001 R1 carried review documentation amendment before edit |  |
 | `docs/design/norn-cli/briefs/NC-004.md` | NMS-001 R1 carried review documentation amendment before edit |  |
 | `crates/norn-cli/src/print/error.rs` | NMS-001 R3 production-LOC repair: existing print failure reporting and pre-assembly envelope helpers |  |
+| `crates/norn/src/model_selection/defaults.rs` | NMS-002 R1 exact file wall |  |
+| `crates/norn-cli/src/config/profile_loader.rs` | NMS-002 R1 exact file wall |  |
+| `docs/design/norn-model-selection/design.json` | NMS-002 R1 exact file wall |  |
+| `docs/design/norn-model-selection/DESIGN.md` | NMS-002 R1 exact file wall |  |
 
 ## Constraints
 

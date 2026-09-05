@@ -14,7 +14,7 @@
 //!   may not declare automatic prompt commands; user profiles and explicit
 //!   profile paths retain that trusted capability.
 //! - When the caller passes [`None`], a minimal default profile is built
-//!   with the generated catalog default model (`gpt-5.6-sol`) and a default
+//!   with the generated catalog default model (`gpt-6-astra`) and a default
 //!   system instruction.
 //!
 //! Errors propagate as [`BuildError`] so the entry point can map them onto
@@ -153,9 +153,9 @@ mod tests {
     }
 
     #[test]
-    fn default_profile_uses_gpt_5_6_sol_catalog_default() {
+    fn default_profile_uses_astra_catalog_default() {
         let profile = default_profile();
-        assert_eq!(DEFAULT_MODEL, "gpt-5.6-sol");
+        assert_eq!(DEFAULT_MODEL, "gpt-6-astra");
         assert_eq!(profile.model, DEFAULT_MODEL);
         assert_eq!(
             profile.system_instructions,

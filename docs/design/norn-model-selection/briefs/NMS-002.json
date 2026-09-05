@@ -1,0 +1,78 @@
+{
+  "id": "NMS-002",
+  "cluster": "norn-model-selection",
+  "title": "Owner-selected Astra startup defaults",
+  "depends_on": [
+    "NMS-001"
+  ],
+  "checklist": [
+    "C1",
+    "C2",
+    "C3"
+  ],
+  "stories": [
+    "S1",
+    "S2",
+    "S3"
+  ],
+  "purpose": "Apply Tom\u2019s 5 September 2026 Melbourne request: Astra, high reasoning, and a larger configurable default context; coordinator selects the proposed 372000 option. NMS-001 owns the original catalogue and transition work; NMS-002 owns only the later defaults amendment to shared C1-C3/S1-S3.",
+  "task": "R1 changes only the named defaults, wiring, matching assertions and documentation. Leave source ready for Tom to rebuild; do not reinstall or claim a new landing receipt.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Separate Norn operating defaults from provider metadata",
+      "spec": "Default CLI model is gpt-6-astra. With no explicit effort, CLI requests high on the Codex route when that model declares high. Astra on Codex derives a 372000 context window when no explicit window exists. Explicit settings/profile/CLI values win. Model changes retain derived-versus-explicit context provenance. Other routes never borrow Codex metadata. Provider snapshot values remain unchanged.",
+      "files": {
+        "modify": [
+          "assets/models.json",
+          "crates/norn/src/model_catalog.rs",
+          "crates/norn/src/model_selection.rs",
+          "crates/norn/src/model_selection/tests.rs",
+          "crates/norn/tests/codex_catalogue_snapshot.rs",
+          "crates/norn-cli/src/config/profile_loader.rs",
+          "crates/norn-cli/src/runtime/resolve.rs",
+          "crates/norn-cli/tests/model_selection.rs",
+          "crates/norn-tui/src/app/model_selection.rs",
+          "crates/norn-tui/tests/model_selection.rs",
+          "docs/release-notes/UNRELEASED.md",
+          "docs/design/norn-model-selection/design.json",
+          "docs/design/norn-model-selection/DESIGN.md"
+        ],
+        "create": [
+          "crates/norn/src/model_selection/defaults.rs"
+        ]
+      },
+      "acceptance": [
+        "Default profile resolves Astra; CLI assembly requests High with derived372000.",
+        "Explicit context444000 and Low effort override defaults.",
+        "Switching Sol\u2192Spark\u2192Astra derives272000\u2192128000\u2192372000; explicit windows stay explicit.",
+        "Snapshot still records Astra272000/872000 and medium; public-route missing metadata still refuses derived windows.",
+        "Existing model/CLI/TUI transition assertions updated; no lint suppressions added."
+      ],
+      "acceptance_greps": [
+        "rg -n \"372_000|High\" crates/norn/src/model_selection/defaults.rs",
+        "rg -n \"gpt-6-astra\" assets/models.json"
+      ],
+      "checklist": [
+        "C1",
+        "C2",
+        "C3"
+      ],
+      "stories": [
+        "S1",
+        "S2",
+        "S3"
+      ]
+    }
+  ],
+  "verification": [
+    "cargo fmt --all -- --check",
+    "cargo clippy --workspace --all-targets -- -D warnings",
+    "Focused catalogue, default CLI assembly and existing model/TUI transition tests"
+  ],
+  "boundaries": [
+    "This owner decision supersedes the old keep-Sol instruction in NMS-001 R1.",
+    "No mutation of supplied provider metadata, credentials or installed binary.",
+    "Working-tree checks do not replace the exact-commit205 battery or pending Fable review."
+  ]
+}

@@ -156,8 +156,8 @@ fn assert_snapshot_fields(actual: &ModelEntry, expected: &SnapshotModel) {
 }
 
 #[test]
-fn codex_refresh_preserves_default_and_models_absent_from_snapshot() {
-    assert_eq!(default_selection().model, "gpt-5.6-sol");
+fn owner_default_is_astra_and_older_catalogue_models_remain() {
+    assert_eq!(default_selection().model, "gpt-6-astra");
     assert_eq!(resolve_model_alias("astra"), Some("gpt-6-astra"));
     assert_eq!(resolve_model_alias("gpt-6-astra"), Some("gpt-6-astra"));
     assert!(find_model("openai", "codex_subscription", "gpt-5.4").is_some());

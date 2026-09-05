@@ -49,7 +49,7 @@ fn slash_switches_derived_window_and_clears_only_unsupported_policy() -> TestRes
     assert_eq!(state.service_tier_snapshot(), None);
     dispatch_input("/model astra", &registry)?;
     assert_eq!(state.model_snapshot(), "gpt-6-astra");
-    assert_eq!(state.model_selection.lock().window(), 272_000);
+    assert_eq!(state.model_selection.lock().window(), 372_000);
     dispatch_input("/effort ultra", &registry)?;
     assert_eq!(
         state.reasoning_effort_snapshot(),
@@ -383,5 +383,23 @@ fn cli_padded_operator_alias_matches_live_resolution() -> TestResult {
         selection.prepare("  fast\t")?.model(),
         "gpt-5.3-codex-spark"
     );
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn astra_operating_defaults_and_explicit_settings_reach_cli_assembly() -> TestResult {
+    let (model, defaults) = resolved_model_fixture(&serde_json::json!({}), "astra")?;
+    assert_eq!(model, "gpt-6-astra");
+    assert_eq!(defaults.window(), 372_000);
+    assert_eq!(defaults.explicit_window(), None);
+    assert_eq!(defaults.effort(), Some(ReasoningEffort::High));
+    let (_, explicit) = resolved_model_fixture(
+        &serde_json::json!({"agent": {"context_window": 444_000, "reasoning_effort": "low"}}),
+        "astra",
+    )?;
+    assert_eq!(explicit.window(), 444_000);
+    assert_eq!(explicit.explicit_window(), Some(444_000));
+    assert_eq!(explicit.effort(), Some(ReasoningEffort::Low));
     Ok(())
 }

@@ -1,5 +1,8 @@
 //! Backend-bound model policy and prepared live transitions; no provider replacement.
 
+/// Owner-selected operating defaults, separate from factual provider metadata.
+pub mod defaults;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -186,8 +189,12 @@ pub fn resolve_window(
     explicit: Option<u64>,
 ) -> Result<u64, ConfigError> {
     let entry = backend.and_then(|route| route.model(model));
-    resolve_entry_window(model, entry, explicit)
-        .map_err(|reason| invalid(format!("{}: {reason}", backend_label(backend))))
+    resolve_entry_window(
+        model,
+        entry,
+        explicit.or_else(|| defaults::context_window(backend, model)),
+    )
+    .map_err(|reason| invalid(format!("{}: {reason}", backend_label(backend))))
 }
 
 fn resolve_entry_window(

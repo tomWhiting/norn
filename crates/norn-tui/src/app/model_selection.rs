@@ -307,7 +307,7 @@ mod tests {
         assert_eq!(fixture.selection.tier(), None);
         fixture.assert_published();
         fixture.change(SelectionChange::Model("astra"))?;
-        assert_eq!(fixture.selection.window(), 272_000);
+        assert_eq!(fixture.selection.window(), 372_000);
         fixture.assert_published();
         Ok(())
     }

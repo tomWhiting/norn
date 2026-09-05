@@ -87,7 +87,7 @@ fn keyboard_model_switch_updates_next_turn_budget_policy_and_history() -> TestRe
     assert_observation(
         &observations[2],
         "gpt-6-astra",
-        272_000,
+        372_000,
         Some("ultra"),
         Some("fast"),
     );
@@ -167,7 +167,7 @@ fn keyboard_model_switch_cannot_disable_bound_compaction() -> TestResult {
     assert_observation(
         &observations[2],
         "gpt-6-astra",
-        272_000,
+        372_000,
         Some("max"),
         Some("fast"),
     );

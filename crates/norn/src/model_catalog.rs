@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn default_selection_points_to_existing_model() {
         let default = default_selection();
-        assert_eq!(default.model, "gpt-5.6-sol");
+        assert_eq!(default.model, "gpt-6-astra");
         assert!(find_model(default.provider, default.backend, default.model).is_some());
     }
 

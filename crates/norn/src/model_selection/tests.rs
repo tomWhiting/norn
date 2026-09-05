@@ -25,7 +25,8 @@ fn derived_windows_follow_sol_spark_astra() -> Result<(), ConfigError> {
     assert_eq!(spark.window(), 128_000);
     let astra = spark.prepare("astra")?;
     assert_eq!(astra.model(), "gpt-6-astra");
-    assert_eq!(astra.window(), 272_000);
+    assert_eq!(astra.window(), 372_000);
+    assert_eq!(astra.explicit_window(), None);
     Ok(())
 }
 
