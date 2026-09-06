@@ -1,8 +1,8 @@
 {
   "id": "NUI-002",
   "title": "Use the reserved tool envelope description in retained tool rows",
-  "status": "registered_implementation_pending",
-  "source_repository": "/private/tmp/norn-frontend-preferences",
+  "status": "installed_local_preview_pending_venue_review",
+  "source_repository": "/private/tmp/norn-ui-polish",
   "source_head": "718ab1272375a4cc8edf9852018191b24ec6d52d",
   "source_files": {
     "crates/norn/src/session_view/tools.rs": "6c8b700935b4c2654f5e92efe7870d78cfcfa6d7ec10322ea472fe52ac8d8fb6",
@@ -34,11 +34,12 @@
         "C5"
       ],
       "stories": [
-        "S3"
+        "S2"
       ],
       "design_refs": [
         "D3"
-      ]
+      ],
+      "status": "implemented_locally_verified_installed;venue_review_pending"
     },
     {
       "id": "R2",
@@ -64,11 +65,12 @@
         "C5"
       ],
       "stories": [
-        "S3"
+        "S2"
       ],
       "design_refs": [
         "D3"
-      ]
+      ],
+      "status": "implemented_locally_verified_installed;venue_review_pending"
     },
     {
       "id": "R3",
@@ -97,17 +99,20 @@
         "C5"
       ],
       "stories": [
-        "S3"
+        "S2"
       ],
       "design_refs": [
         "D3"
-      ]
+      ],
+      "status": "implemented_locally_verified_installed;venue_review_pending"
     }
   ],
   "verification": [
-    "The external scratch registration precedes authoring; root verifies preimage hashes before applying to the registered UI worktree.",
-    "Direct Rust1.94 rustfmt, actual ast-grep no-bypass/forbidden-operation scan, git diff --check on patch and exact preimage hashes. No Cargo/provider/network execution.",
-    "The earlier preferences test build was interrupted to prioritize this user-reported repair; no test pass is inferred from that attempt. Root validates the final UI repair source before local installation."
+    "Agent scratch preparation used Rust 1.94 formatting, actual AST scans, patch checks and preimage hashes; it did not run Cargo. Root verified the three preimages against the UI worktree before application.",
+    "The earlier preferences test build was interrupted; it contributes no test verdict to this repair.",
+    "Final identical-source local checks passed: 44 session-view tests (/private/tmp/ntc-001-proof/projection-tests-03.json), 809 TUI unit tests (tui-tests-02.json), formatting (fmt-04.json), strict workspace/all-target Clippy (clippy-03.json), actual AST policy (policy-06/ast-policy.json) and the optimized build (release-build-01.json). All relative receipt names in this sentence are under /private/tmp/ntc-001-proof/.",
+    "Installed norn 0.1.0-preview.3 on 6 September 2026 at 12:15:10 Melbourne from 264700821b8df07226b0073053297857207b1809. Receipt: /Users/tom/.local/state/norn/install-backups/20260906-121510-description-preview/receipt.json. /private/tmp/ntc-001-proof/installation-confirmed.json records successful Mac speech. The prior preview.2 bytes remain beside the receipt for rollback.",
+    "Local preview only. The final checks and build bind identical source. No exact205 battery, Fable review, main landing, complete workspace test suite, new PTY run or public release is claimed for this repair."
   ],
   "cluster": "norn-retained-tui",
   "baseline": "718ab1272375a4cc8edf9852018191b24ec6d52d",
@@ -124,7 +129,7 @@
     "C5"
   ],
   "stories": [
-    "S3"
+    "S2"
   ],
   "design_source": "../design.json#D3",
   "release_version": "0.1.0-preview.3",
@@ -135,5 +140,36 @@
     ],
     "modify": [],
     "delete": []
-  }
+  },
+  "local_checkpoint": {
+    "at_melbourne": "2026-09-06T12:15:10.158802+10:00",
+    "version": "norn 0.1.0-preview.3",
+    "source_commit": "264700821b8df07226b0073053297857207b1809",
+    "installed_path": "/Users/tom/.cargo/bin/norn",
+    "sha256": "9023a9c5ad8c539d64e88c8938711a2f456c2c6b93e734bfac086b6164f63665",
+    "installation_receipt": "/Users/tom/.local/state/norn/install-backups/20260906-121510-description-preview/receipt.json",
+    "speech": {
+      "command": [
+        "/usr/bin/say",
+        "Norn updated"
+      ],
+      "exit": 0
+    },
+    "checks": {
+      "session_view_tests": {
+        "passed": 44,
+        "receipt": "/private/tmp/ntc-001-proof/projection-tests-03.json"
+      },
+      "tui_unit_tests": {
+        "passed": 809,
+        "receipt": "/private/tmp/ntc-001-proof/tui-tests-02.json"
+      },
+      "fmt": "/private/tmp/ntc-001-proof/fmt-04.json",
+      "strict_workspace_all_targets_clippy": "/private/tmp/ntc-001-proof/clippy-03.json",
+      "ast_policy": "/private/tmp/ntc-001-proof/policy-06/ast-policy.json",
+      "optimized_build": "/private/tmp/ntc-001-proof/release-build-01.json"
+    },
+    "scope": "Local preview only. The final checks and build bind identical source. No exact205 battery, Fable review, main landing, complete workspace test suite, new PTY run or public release is claimed for this repair."
+  },
+  "draft_source_repository": "/private/tmp/norn-frontend-preferences"
 }

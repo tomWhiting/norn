@@ -1,8 +1,10 @@
 # Unreleased — model selection, Channels and MCP startup
 
-## 0.1.0-preview.3 — compact tool descriptions (local validation pending)
+## 0.1.0-preview.3 — compact tool descriptions (installed local preview)
 
 Retained tool rows now read the reserved `tool_use_description` envelope field in live calls and restored history. Ordinary tool arguments named `description` are no longer mistaken for tool-use prose. Compact rows keep arguments and results collapsed; the preview.2 layout, multiline styling and changed-cell renderer are preserved. Saved frontend preferences are a separate, uninstalled follow-up.
+
+Installed 6 September 2026 at 12:15:10 Melbourne from `264700821b8df07226b0073053297857207b1809`; executable SHA256 `9023a9c5ad8c539d64e88c8938711a2f456c2c6b93e734bfac086b6164f63665`. Verification on identical source: 44 session-view tests, 809 TUI unit tests, formatting, strict workspace/all-target Clippy, and AST policy pass. The optimized binary was atomically installed with preview.2 retained for rollback and “Norn updated” spoken. This is a local preview; exact-commit 205 verification and review remain required for main. See [NUI-002](../design/norn-retained-tui/briefs/NUI-002.md) for receipts and coverage boundaries.
 
 
 5 September 2026, Melbourne time. No public version or release is declared. The historical NML-001/NV-002 installation checkpoint at 20:15 Melbourne on 5 September 2026 used exact commit `5227db49d805a4c0729912dca3832c842c8f39e1`, installed at 20:15:11 Melbourne on 5 September 2026 and merged to local/remote main. Installed SHA-256: `dc61b730918db4928e5e9ff0cf1194f7ed0fdfcf0d010286ab87f8d2d26e0a19`. Its exact 205 battery passed all six declared legs with 14 venue bindings; native build and installed help/list/redacted-error checks passed. Proof: `/private/tmp/nwp-04-proof/exact-battery-2/execution-result.json` and `/private/tmp/nwp-04-proof/native-release-2/installation.json`. Fresh Fable re-review remains pending; no new review pass or waiver is claimed.
