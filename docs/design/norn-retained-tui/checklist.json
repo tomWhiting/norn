@@ -64,17 +64,25 @@
       "items": [
         {
           "id": "C13",
-          "text": "Uniform multiline user-message styling without source-map changes"
+          "text": "Uniform multiline user-message styling without source-map changes",
+          "status": "local_preview_verified_installed;venue_review_pending"
         },
         {
           "id": "C14",
-          "text": "Native retained-frame flicker repair with exact frame/PTY evidence"
+          "text": "Native retained-frame flicker repair with exact frame/PTY evidence",
+          "status": "local_preview_verified_installed;venue_review_pending"
         },
         {
           "id": "C15",
-          "text": "Versioned checked local preview, rollback and truthful landing boundary"
+          "text": "Versioned checked local preview, rollback and truthful landing boundary",
+          "status": "local_preview_verified_installed;venue_review_pending"
         }
       ]
     }
-  ]
+  ],
+  "ui_polish_local_checkpoint": {
+    "state": "installed_local_preview_pending_venue_review",
+    "version": "norn 0.1.0-preview.2",
+    "proof": "/private/tmp/nui-001-proof/installed-preview-status.json"
+  }
 }

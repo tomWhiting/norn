@@ -323,6 +323,10 @@ User-authorized checked local preview installation may precede the exact205 land
 
 Keep NFP work intact in its separate branch/worktree; its next preview reservation becomes0.1.0-preview.3. No saved-preference, Iridium, daemon or attach capability is implied by this repair. Do not change any programme row ID.
 
+### D-NUI-LOCAL-RESULT: Recorded preview.2 installation and local proof
+
+NUI-001 code 119fbf0780a5dcc628002d548a28a49b50b96bdb was pushed on codex/norn-ui-polish and installed as norn 0.1.0-preview.2 at 11:08:29 Melbourne on 6 September 2026. Local all-target TUI tests reported 853 passing checks; strict workspace/all-target Clippy with live-api-smoke enabled, formatting and the 13-file changed-Rust policy scan passed. The optimized frame selection passed 15 tests. The 100-sample prepare-plus-delta means were 0.20063/0.21951 ms at 120x40 and 0.84749/0.88228 ms at 240x80 for unchanged/changed samples, with zero unchanged-output bytes and 45 bytes for the changed glyph. These measure local frame preparation/delta work, not terminal paint or input latency. The installation receipt and hashes are in ui_polish_checkpoint. macOS say Norn updated completed with exit zero. Exact 205 venue/review acceptance, main landing/public release, NFP preview.3 preferences, Iridium and attach remain separate and unclaimed.
+
 ## Goals
 
 - All eight identity invariants and all producer obligations remain explicit.

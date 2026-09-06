@@ -43,4 +43,10 @@ TUI startup now preserves typed build-error classification: argument failures ex
 
 Routine updates paint changed cells without clearing the screen. Initial and resized views repaint the visible area; unchanged frames emit no terminal output. Prepared updates use one write/flush, with synchronized output where detected and explicit cleanup after I/O failure. The last successful frame remains authoritative until the next write completes.
 
-Implementation and local verification are in progress under [NUI-001](../design/norn-retained-tui/briefs/NUI-001.md). This note does not declare an installation or venue pass. Saved frontend preferences remain separate work for preview.3.
+Installed locally at 11:08:29 Melbourne on 6 September 2026 from commit `119fbf0780a5dcc628002d548a28a49b50b96bdb`, pushed on `codex/norn-ui-polish`. Installed SHA-256: `793d0656e658ff953eb8f18b4991c4c5dbc82d460a342122d0a26b0c4b5665e9`. The previous executable was retained and hash-checked. Installation receipt: `/Users/tom/.local/state/norn/install-backups/20260906-110829-smooth-preview/receipt.json`.
+
+Local validation passed against identical frozen source: 809 TUI unit tests, four channel scenarios, six model-selection tests, 23 PTY checks, eight delta-observer tests and three workspace checks; strict workspace/all-target Clippy including the live-smoke feature; formatting; and an AST scan of all 13 changed Rust files with zero forbidden findings and a maximum of 433 production lines. Fifteen optimized frame tests also passed. Receipts: `/private/tmp/nui-001-proof/{tui-tests-03,clippy-03,release-frame-02,release-build-02,fmt-04}.json` and `policy-05/ast-policy.json`.
+
+The release-profile sample measured preparation and comparison of a cached visible surface over 100 iterations: about 0.20–0.22 ms per frame at 120×40 and 0.85–0.88 ms at 240×80. A one-character change emitted 45 bytes; unchanged frames emitted none. This measures renderer work, not physical terminal latency, provider latency or history parsing. Actual terminal feel remains subject to user testing.
+
+[NUI-001](../design/norn-retained-tui/briefs/NUI-001.md) is installed as an authorized local preview, not landed on main or declared a public release. The exact-commit venue battery and independent review remain required for landing. Saved frontend preferences remain separate work for preview.3.

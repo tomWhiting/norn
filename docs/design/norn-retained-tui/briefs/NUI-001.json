@@ -2,7 +2,7 @@
   "id": "NUI-001",
   "cluster": "norn-retained-tui",
   "title": "Repair native flicker and multiline user-message styling",
-  "status": "registered_implementation_in_progress",
+  "status": "installed_local_preview_pending_venue_review",
   "baseline": "039d0371c69e48753e3633e22f160ed4355e8377",
   "branch": "codex/norn-ui-polish",
   "worktree": "/private/tmp/norn-ui-polish",
@@ -51,7 +51,8 @@
       ],
       "design_refs": [
         "D-NUI-STYLE"
-      ]
+      ],
+      "status": "implemented_locally_verified_installed;venue_review_pending"
     },
     {
       "id": "R2",
@@ -113,7 +114,8 @@
         "independent_of": "norn_tui original seven production/private-test paths",
         "no_shared_file_writers": true,
         "assertions_preserved": true
-      }
+      },
+      "status": "implemented_locally_verified_installed;venue_review_pending"
     },
     {
       "id": "R3",
@@ -147,7 +149,8 @@
       ],
       "design_refs": [
         "D-NUI-CHECKPOINT"
-      ]
+      ],
+      "status": "implemented_locally_verified_installed;venue_review_pending"
     }
   ],
   "boundaries": [
@@ -249,5 +252,186 @@
       ],
       "production_changes": false
     }
-  ]
+  ],
+  "local_preview_checkpoint": {
+    "state": "installed_local_preview_pending_venue_review",
+    "recorded_at_melbourne": "2026-09-06T11:10:44.355056+10:00",
+    "installation_receipt": {
+      "path": "/Users/tom/.local/state/norn/install-backups/20260906-110829-smooth-preview/receipt.json",
+      "sha256": "5cecf4dfbacc2cd0e0aa80c55b628951440a85b070057ad96ec6bffaded7f24a"
+    },
+    "installed_at_melbourne": "2026-09-06T11:08:29.964979+10:00",
+    "version": "norn 0.1.0-preview.2",
+    "binary_sha256": "793d0656e658ff953eb8f18b4991c4c5dbc82d460a342122d0a26b0c4b5665e9",
+    "code_commit": "119fbf0780a5dcc628002d548a28a49b50b96bdb",
+    "branch": "codex/norn-ui-polish",
+    "commit_pushed": "root-confirmed feature branch",
+    "checks": {
+      "tui-tests-03": {
+        "path": "/private/tmp/nui-001-proof/tui-tests-03.json",
+        "sha256": "bb4ac48d881dfafd833ebaa1cf3516c742f2d783379fdd62d0f572b478efee14",
+        "command": [
+          "env",
+          "CARGO_TARGET_DIR=/private/tmp/norn-native-release-target",
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "norn-tui",
+          "--all-targets",
+          "-j4"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 34.246,
+        "at_melbourne": "2026-09-06T11:07:34.850464+10:00",
+        "source_unchanged": true,
+        "log": "/private/tmp/nui-001-proof/tui-tests-03.log",
+        "log_sha256": "ed31a56e1e9c13be03d8801eee38169079592b3643493d420646e7337f9818a6"
+      },
+      "clippy-03": {
+        "path": "/private/tmp/nui-001-proof/clippy-03.json",
+        "sha256": "b95a3f285b0c352afcbb3ea05ac794e02b4c7c288e042ed7ccf522309f4baef0",
+        "command": [
+          "env",
+          "CARGO_TARGET_DIR=/private/tmp/norn-native-release-target",
+          "cargo",
+          "clippy",
+          "--locked",
+          "--workspace",
+          "--all-targets",
+          "--features",
+          "norn/live-api-smoke",
+          "-j4",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 4.753,
+        "at_melbourne": "2026-09-06T11:07:39.847007+10:00",
+        "source_unchanged": true,
+        "log": "/private/tmp/nui-001-proof/clippy-03.log",
+        "log_sha256": "4555d1e182b2f574dc1d5e70619877d5483953bed670f73f115f7d8d395a8ecc"
+      },
+      "release-frame-02": {
+        "path": "/private/tmp/nui-001-proof/release-frame-02.json",
+        "sha256": "9e76e3452ce8190574020326f89c43976d588315a641d7e1f983090dc7753576",
+        "command": [
+          "env",
+          "CARGO_TARGET_DIR=/private/tmp/norn-native-release-target",
+          "cargo",
+          "test",
+          "--release",
+          "--locked",
+          "-p",
+          "norn-tui",
+          "--lib",
+          "-j4",
+          "render::frame::",
+          "--",
+          "--nocapture"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 2.252,
+        "at_melbourne": "2026-09-06T11:07:42.420428+10:00",
+        "source_unchanged": true,
+        "log": "/private/tmp/nui-001-proof/release-frame-02.log",
+        "log_sha256": "16cd476776b84a8c19013b36fd8183f3447f21e96981172d3a05bb4211dc4795"
+      },
+      "release-build-02": {
+        "path": "/private/tmp/nui-001-proof/release-build-02.json",
+        "sha256": "c36984e78dbb6b5fc2c68890eb05eae202824fbb7399a5d97b77971bbbd26e7b",
+        "command": [
+          "env",
+          "CARGO_TARGET_DIR=/private/tmp/norn-native-release-target",
+          "cargo",
+          "build",
+          "--release",
+          "--locked",
+          "-p",
+          "norn-cli",
+          "--bin",
+          "norn",
+          "-j4"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 0.855,
+        "at_melbourne": "2026-09-06T11:07:43.538153+10:00",
+        "source_unchanged": true,
+        "log": "/private/tmp/nui-001-proof/release-build-02.log",
+        "log_sha256": "8a816c956856af392dd5e6771f1fce2ccdfc04f2719a843fa82511eef2d20ec6"
+      },
+      "fmt-04": {
+        "path": "/private/tmp/nui-001-proof/fmt-04.json",
+        "sha256": "6560edf59f876365af4b717061b72150ddb15af4ada2d8deaa8225dac5a34614",
+        "command": [
+          "env",
+          "CARGO_TARGET_DIR=/private/tmp/norn-native-release-target",
+          "cargo",
+          "fmt",
+          "--all",
+          "--",
+          "--check"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 6.52,
+        "at_melbourne": "2026-09-06T11:07:50.278769+10:00",
+        "source_unchanged": true,
+        "log": "/private/tmp/nui-001-proof/fmt-04.log",
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "TUI_reported_check_counts": {
+      "unit": 809,
+      "channels": 4,
+      "model": 6,
+      "canonical_PTY": 23,
+      "delta_observer": 8,
+      "workspace": 3,
+      "total": 853,
+      "note": "Includes test entrypoints/oracle cases; not 853 actual interactive App scenarios"
+    },
+    "optimized_frame_tests": 15,
+    "frame_samples": [
+      {
+        "columns": 120,
+        "rows": 40,
+        "samples": 100,
+        "unchanged_mean_ms": 0.20063,
+        "changed_mean_ms": 0.21950999999999998,
+        "changed_glyph_output_bytes": 45,
+        "unchanged_output_bytes": 0
+      },
+      {
+        "columns": 240,
+        "rows": 80,
+        "samples": 100,
+        "unchanged_mean_ms": 0.84749,
+        "changed_mean_ms": 0.88228,
+        "changed_glyph_output_bytes": 45,
+        "unchanged_output_bytes": 0
+      }
+    ],
+    "measurement_scope": "100-sample optimized prepare plus delta work per geometry; not terminal paint latency, end-to-end input latency or universal flicker certification",
+    "source_policy": {
+      "path": "/private/tmp/nui-001-proof/policy-05/ast-policy.json",
+      "sha256": "316c84cb4557ebd10ad24db27c86e64a41ecb505623af23b200d4998b3076eb6",
+      "changed_Rust_files": 13,
+      "findings": 0,
+      "max_production_LOC": 433
+    },
+    "spoken_announcement": {
+      "words": "Norn updated",
+      "status": "completed exit0",
+      "evidence": "root confirmed macOS say and installer exit0"
+    },
+    "main_landing": false,
+    "public_release": false,
+    "remaining": [
+      "exact205 venue battery and required review",
+      "NFP saved preferences reserved preview.3",
+      "Iridium composer integration",
+      "actual hosted attach/detach"
+    ]
+  }
 }
