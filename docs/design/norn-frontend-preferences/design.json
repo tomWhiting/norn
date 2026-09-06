@@ -1,7 +1,7 @@
 {
   "cluster": "norn-frontend-preferences",
   "title": "Saved frontend preferences",
-  "status": "priority_handoff_NUI002_integration_and_verification_pending",
+  "status": "installed_local_preview_pending_venue_review",
   "baseline": "718ab1272375a4cc8edf9852018191b24ec6d52d",
   "branch": "codex/norn-frontend-preferences-integrated",
   "worktree": "/private/tmp/norn-frontend-preferences",
@@ -356,5 +356,11 @@
     "NFP_installation": "not installed",
     "production_Rust_edited": false,
     "external_programme_updated": false
+  },
+  "preview4_local_checkpoint": {
+    "source_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+    "installation_receipt": "/Users/tom/.local/state/norn/install-backups/20260906-124647-preferences-preview/receipt.json",
+    "verification_authority": "briefs/NFP-001.json preview4_local_checkpoint",
+    "main_landing": false
   }
 }

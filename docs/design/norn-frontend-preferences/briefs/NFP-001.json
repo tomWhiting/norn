@@ -1,7 +1,7 @@
 {
   "cluster": "norn-frontend-preferences",
   "title": "Persist existing frontend preferences through the shared settings writer",
-  "status": "integrated_restart_verified_full_checks_pending",
+  "status": "installed_local_preview_pending_venue_review",
   "baseline": "687f2efcdcc4704f6406f01703a1345b794891a2",
   "branch": "codex/norn-frontend-preferences-integrated",
   "worktree": "/private/tmp/norn-frontend-preferences",
@@ -140,7 +140,8 @@
           "No installed saved-preferences capability, main landing or release claim"
         ],
         "integration_proof_boundary": "Historical original-authoring-source proof; not verification of the new integration tree."
-      }
+      },
+      "status": "implemented_locally_verified_installed;venue_review_pending"
     },
     {
       "id": "R2",
@@ -207,7 +208,8 @@
       "stories": [
         "S2"
       ],
-      "save_trigger_status": "automatic_personal_saving_root_assumption_not_user_confirmed"
+      "save_trigger_status": "automatic_personal_saving_root_assumption_not_user_confirmed",
+      "status": "implemented_locally_verified_installed;venue_review_pending"
     },
     {
       "id": "R3",
@@ -325,7 +327,8 @@
           "docs/TUI-PREFERENCES.md"
         ],
         "production_changes": false
-      }
+      },
+      "status": "implemented_locally_verified_installed;venue_review_pending"
     }
   ],
   "boundaries": [
@@ -668,7 +671,7 @@
       "sha256": "bf3cf87f00f329d278214239756dd70d8c95f06a02e0bb25a7755ee7da5f3572",
       "interpretation": "Root intentionally interrupted compilation with SIGINT for the urgent tool-description repair; no test verdict. Source was unchanged."
     },
-    "NFP_installation": "not installed",
+    "NFP_installation": "Installed locally as0.1.0-preview.4; see preview4_local_checkpoint",
     "production_Rust_edited": false,
     "external_programme_updated": false
   },
@@ -708,6 +711,253 @@
     "cause": "Initial fixture MCP server has unsupported future key; McpConfigState correctly refuses it before Ready. The helper EOF diagnostic masked child stderr.",
     "isolated_child_proof": "/private/tmp/nfp-001-proof/nfp-public-helper-repro-g9lb7zfd/result.json",
     "repair_scope": "Two existing public-helper test files only; retain key preservation, ordering and lock assertions.",
-    "full_pass": false
+    "full_pass": false,
+    "resolved_by": {
+      "path": "/private/tmp/nfp-001-proof/integrated/workspace-preview4-02.json",
+      "scope": "Corrected fixture seed and child-error observability; all workspace targets passed"
+    }
+  },
+  "preview4_local_checkpoint": {
+    "status": "installed_local_preview_pending_venue_review",
+    "installation_receipt": {
+      "path": "/Users/tom/.local/state/norn/install-backups/20260906-124647-preferences-preview/receipt.json",
+      "sha256": "15319e50978b50eb326e8e90a521c19e418de00b353cc9615a415cb9b0bdb626"
+    },
+    "installation": {
+      "at_melbourne": "2026-09-06T12:46:47.499094+10:00",
+      "version": "norn 0.1.0-preview.4",
+      "installed": "/Users/tom/.cargo/bin/norn",
+      "sha256": "a1431e647a23bd372ee1b56b5262f9e27db91e76608ccd3d78da24fa922d0b1e",
+      "candidate": "/private/tmp/norn-native-release-target/release/norn",
+      "previous": "/Users/tom/.local/state/norn/install-backups/20260906-124647-preferences-preview/norn-previous",
+      "previous_sha256": "9023a9c5ad8c539d64e88c8938711a2f456c2c6b93e734bfac086b6164f63665",
+      "commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+      "validation": [
+        {
+          "path": "/private/tmp/nfp-001-proof/integrated/workspace-preview4-02.json",
+          "sha256": "4fd57bf91456232dd79f49762701acc85e36fa5738313e7b721df829f775b568"
+        },
+        {
+          "path": "/private/tmp/nfp-001-proof/integrated/clippy-preview4-01.json",
+          "sha256": "63c057f289faadbf672b97b99991a385a04a99c4c6198c6ab4e4f7a7f993ab5c"
+        },
+        {
+          "path": "/private/tmp/nfp-001-proof/integrated/fmt-preview4-02.json",
+          "sha256": "b399008b0b357a38fa317599b939a0c41cb63b610445a3e85f6333dd6ac5c07c"
+        },
+        {
+          "path": "/private/tmp/nfp-001-proof/integrated/doctests-preview4-01.json",
+          "sha256": "e8eeab63b0632b5c51221079728cdde02906cab257eaeeefbc8477eb02e38d8c"
+        },
+        {
+          "path": "/private/tmp/nfp-001-proof/integrated/live-build-preview4-01.json",
+          "sha256": "99a028a1048901c8cc0642ad1927ed060b54f7f9728cfadf1454276eacf0b28f"
+        },
+        {
+          "path": "/private/tmp/nfp-001-proof/integrated/remote_battery-preview4-02.json",
+          "sha256": "753ae4a6bedd2b2458e112a1290a574de0dcc992b248dde42c5e8baa90500818"
+        },
+        {
+          "path": "/private/tmp/nfp-001-proof/integrated/source_bound_leg-preview4-02.json",
+          "sha256": "ab52551d3d81dbca067132da5351e2ec99cc7ace2295706d4050d02e20e79da2"
+        },
+        {
+          "path": "/private/tmp/nfp-001-proof/integrated/live_openai_smoke-preview4-02.json",
+          "sha256": "3ab01980755e6698e7b0f5b4b83c08d768d28a70e0e23abbc87f3eb5edd775d1"
+        },
+        {
+          "path": "/private/tmp/nfp-001-proof/integrated/release-preview4-01.json",
+          "sha256": "bbb80f5488f28365f60dde256a329ef2d14d8851a53cff8acd55c642be2f6dfb"
+        }
+      ],
+      "scope": "Explicitly authorized local preview installation; not a main landing or public release",
+      "remaining": [
+        "205 exact-commit battery and review",
+        "Iridium composer",
+        "live attach/detach"
+      ]
+    },
+    "verification": [
+      {
+        "path": "/private/tmp/nfp-001-proof/integrated/workspace-preview4-02.json",
+        "sha256": "4fd57bf91456232dd79f49762701acc85e36fa5738313e7b721df829f775b568",
+        "command": [
+          "env",
+          "CARGO_TARGET_DIR=/private/tmp/norn-native-release-target",
+          "NORN_HOME=/private/tmp/nfp-001-proof/integrated/test-home",
+          "cargo",
+          "test",
+          "--locked",
+          "--workspace",
+          "--all-targets",
+          "--no-fail-fast",
+          "-j4",
+          "--",
+          "--nocapture"
+        ],
+        "exit": 0,
+        "source_unchanged": true,
+        "at_melbourne": "2026-09-06T12:39:28.625947+10:00",
+        "log": "/private/tmp/nfp-001-proof/integrated/workspace-preview4-02.log",
+        "log_sha256": "deb6ebe15ddf5da410d779d18a8d1f31c2227b4b4f8977abc315ce8531141a17"
+      },
+      {
+        "path": "/private/tmp/nfp-001-proof/integrated/clippy-preview4-01.json",
+        "sha256": "63c057f289faadbf672b97b99991a385a04a99c4c6198c6ab4e4f7a7f993ab5c",
+        "command": [
+          "env",
+          "CARGO_TARGET_DIR=/private/tmp/norn-native-release-target",
+          "cargo",
+          "clippy",
+          "--locked",
+          "--workspace",
+          "--all-targets",
+          "--features",
+          "norn/live-api-smoke",
+          "-j4",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "exit": 0,
+        "source_unchanged": true,
+        "at_melbourne": "2026-09-06T12:41:12.745788+10:00",
+        "log": "/private/tmp/nfp-001-proof/integrated/clippy-preview4-01.log",
+        "log_sha256": "ea705fbb3a691c4a147e1db4c377ac53263fe80eb3ee9d1da8636e6f695b6813"
+      },
+      {
+        "path": "/private/tmp/nfp-001-proof/integrated/fmt-preview4-02.json",
+        "sha256": "b399008b0b357a38fa317599b939a0c41cb63b610445a3e85f6333dd6ac5c07c",
+        "command": [
+          "cargo",
+          "fmt",
+          "--all",
+          "--",
+          "--check"
+        ],
+        "exit": 0,
+        "source_unchanged": true,
+        "at_melbourne": "2026-09-06T12:37:54.912360+10:00",
+        "log": "/private/tmp/nfp-001-proof/integrated/fmt-preview4-02.log",
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "/private/tmp/nfp-001-proof/integrated/doctests-preview4-01.json",
+        "sha256": "e8eeab63b0632b5c51221079728cdde02906cab257eaeeefbc8477eb02e38d8c",
+        "command": [
+          "env",
+          "CARGO_TARGET_DIR=/private/tmp/norn-native-release-target",
+          "NORN_HOME=/private/tmp/nfp-001-proof/integrated/test-home",
+          "cargo",
+          "test",
+          "--locked",
+          "--workspace",
+          "--doc",
+          "--no-fail-fast",
+          "-j4",
+          "--",
+          "--nocapture"
+        ],
+        "exit": 0,
+        "source_unchanged": true,
+        "at_melbourne": "2026-09-06T12:42:47.232468+10:00",
+        "log": "/private/tmp/nfp-001-proof/integrated/doctests-preview4-01.log",
+        "log_sha256": "1b285c8bfb578e1c8f7a49c1432a07e02185f4a27f195c923372aa66966a0f9a"
+      },
+      {
+        "path": "/private/tmp/nfp-001-proof/integrated/live-build-preview4-01.json",
+        "sha256": "99a028a1048901c8cc0642ad1927ed060b54f7f9728cfadf1454276eacf0b28f",
+        "command": [
+          "env",
+          "CARGO_TARGET_DIR=/private/tmp/norn-native-release-target",
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "norn",
+          "--features",
+          "live-api-smoke",
+          "--test",
+          "live_openai_smoke",
+          "--no-run",
+          "-j4"
+        ],
+        "exit": 0,
+        "source_unchanged": true,
+        "at_melbourne": "2026-09-06T12:44:01.363876+10:00",
+        "log": "/private/tmp/nfp-001-proof/integrated/live-build-preview4-01.log",
+        "log_sha256": "a8024057278a9672568c431e9024818786b94a5e52b19bb31f15e586ff85653b"
+      },
+      {
+        "path": "/private/tmp/nfp-001-proof/integrated/remote_battery-preview4-02.json",
+        "sha256": "753ae4a6bedd2b2458e112a1290a574de0dcc992b248dde42c5e8baa90500818",
+        "command": [
+          "python3",
+          "scripts/tests/remote_battery_test.py"
+        ],
+        "exit": 0,
+        "source_unchanged": true,
+        "at_melbourne": "2026-09-06T12:38:08.923524+10:00",
+        "log": "/private/tmp/nfp-001-proof/integrated/remote_battery-preview4-02.log",
+        "log_sha256": "36ea1dcbc2e984d1151ad6e896f491e56de6316b760ee5816b25de1fd0f12e7f"
+      },
+      {
+        "path": "/private/tmp/nfp-001-proof/integrated/source_bound_leg-preview4-02.json",
+        "sha256": "ab52551d3d81dbca067132da5351e2ec99cc7ace2295706d4050d02e20e79da2",
+        "command": [
+          "python3",
+          "scripts/tests/source_bound_leg_test.py"
+        ],
+        "exit": 0,
+        "source_unchanged": true,
+        "at_melbourne": "2026-09-06T12:38:09.114089+10:00",
+        "log": "/private/tmp/nfp-001-proof/integrated/source_bound_leg-preview4-02.log",
+        "log_sha256": "f77594043e4f9e24ad6373d8018092ff062707357ce4ff654ea023c16b886851"
+      },
+      {
+        "path": "/private/tmp/nfp-001-proof/integrated/live_openai_smoke-preview4-02.json",
+        "sha256": "3ab01980755e6698e7b0f5b4b83c08d768d28a70e0e23abbc87f3eb5edd775d1",
+        "command": [
+          "python3",
+          "scripts/tests/live_openai_smoke_test.py"
+        ],
+        "exit": 0,
+        "source_unchanged": true,
+        "at_melbourne": "2026-09-06T12:38:08.222365+10:00",
+        "log": "/private/tmp/nfp-001-proof/integrated/live_openai_smoke-preview4-02.log",
+        "log_sha256": "6da86a69e5dcd73ba8047f973e54922a71fb25ed2c766d35c853347f6cb4cf4c"
+      },
+      {
+        "path": "/private/tmp/nfp-001-proof/integrated/release-preview4-01.json",
+        "sha256": "bbb80f5488f28365f60dde256a329ef2d14d8851a53cff8acd55c642be2f6dfb",
+        "command": [
+          "env",
+          "CARGO_TARGET_DIR=/private/tmp/norn-native-release-target",
+          "cargo",
+          "build",
+          "--locked",
+          "--release",
+          "-p",
+          "norn-cli",
+          "--bin",
+          "norn",
+          "-j4"
+        ],
+        "exit": 0,
+        "source_unchanged": true,
+        "at_melbourne": "2026-09-06T12:46:13.841364+10:00",
+        "log": "/private/tmp/nfp-001-proof/integrated/release-preview4-01.log",
+        "log_sha256": "361fa6bfd62e23d57b4856bc323edbb6915d4718fb4827e8b4f16bfa436a5dbc"
+      }
+    ],
+    "policy": {
+      "path": "/private/tmp/nfp-001-proof/integrated/policy-preview4-02/ast-policy.json",
+      "sha256": "8762ae9a0f5f8db4cdc2a73cbc1970b2a963a4eb26b3f70d262d729de85dcefd",
+      "changed_Rust_files": 38,
+      "forbidden_findings": 0,
+      "maximum_production_LOC": 493
+    },
+    "scope": "Local preview. Full workspace/all-target tests,8doctests,strict Clippy,fmt,39runner tests and compile-only live-smoke check passed. No live provider request, exact205 verdict or independent Fable review is claimed.",
+    "main_landing": false
   }
 }

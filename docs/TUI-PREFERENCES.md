@@ -1,6 +1,6 @@
 # TUI preferences
 
-This guide describes the NFP-001 integration source for planned **0.1.0-preview.4**. It is not yet installed. The recorded preview.2 installation does not include these saved preferences. The urgent NUI-002 tool-description repair has priority as preview.3; this preferences stage must inherit it before final verification. Integrated verification and release status remain separate from this guide.
+Saved frontend preferences are installed locally in **Norn 0.1.0-preview.4**. Start a fresh session to use them. This version includes the earlier layout, flicker and tool-description fixes. Main-branch venue verification and independent review remain pending; exact local evidence is recorded in [NFP-001](design/norn-frontend-preferences/briefs/NFP-001.md).
 
 ## Choose where changes are saved
 
@@ -71,4 +71,4 @@ A failure before publication leaves the run values intact and stops automatic re
 
 “Published; durability uncertain” means the settings reached the document but durable directory sync was not confirmed. It is not a rollback. A save task ending without a known outcome also cannot be treated as a failed write: further saves are blocked until you inspect the settings and restart. Do not assume either case requires repeating an already-published write.
 
-The [authoritative brief](design/norn-frontend-preferences/briefs/NFP-001.md) records acceptance and verification. This guide does not claim completed integrated tests, installation, venue approval or a public release.
+The [authoritative brief](design/norn-frontend-preferences/briefs/NFP-001.md) records acceptance and verification. The installed local preview does not constitute venue approval or a public release.
