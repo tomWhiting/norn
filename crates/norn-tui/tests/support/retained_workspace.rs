@@ -661,6 +661,30 @@ impl Workspace {
         copies(&self.output.bytes()?)
     }
 
+    /// Exercise F4 while its Conversation feedback is hidden by another narrow pane.
+    /// Require one new clipboard payload and a valid current-geometry frame; no repaint is implied.
+    pub fn copy_with_hidden_feedback(&mut self) -> io::Result<Screen> {
+        let previous = self.copy_payloads()?.len();
+        let current = self.screen()?;
+        self.send(b"\x1bOS")?;
+        self.output.wait(
+            "one clipboard payload with retained pane geometry",
+            |bytes| {
+                let count = copies(bytes)?.len();
+                if count > previous + 1 {
+                    return Err(io::Error::other(
+                        "one F4 press emitted multiple clipboard payloads",
+                    ));
+                }
+                if count != previous + 1 {
+                    return Ok(None);
+                }
+                Ok(retained_screen::latest(bytes, &self.geometries)?
+                    .filter(|screen| screen.rows == current.rows && screen.cols == current.cols))
+            },
+        )
+    }
+
     /// Complete the already-running provider and observe its real usage update outside the dragged pane.
     pub fn release_provider(&mut self) -> io::Result<Screen> {
         let after = self.output.bytes()?.len();

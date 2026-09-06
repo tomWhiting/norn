@@ -64,27 +64,19 @@ fn exercise_panes(app: &mut Workspace) -> TestResult {
     let edited = app.input(format!("\x1b[200~{draft}\x1b[201~").as_bytes(), |screen| {
         screen.cursor.0 == draft.len()
     })?;
-    edited.assert_composer(1)?;
-    let input_row = edited.composer_rows()[0];
-    for (column, character) in draft.chars().enumerate() {
-        assert_eq!(
-            edited.cell(column, input_row),
-            Some(character.to_string().as_str())
-        );
-        assert_eq!(edited.foreground_at(column, input_row), None);
-    }
+    assert_draft_cells(&edited, &draft)?;
     // Physical function keys preserve the same draft and never admit a turn.
     let hidden = app.input(b"\x1b[18~", |screen| screen.cell(50, 0) != Some("│"))?;
     assert_no_split(&hidden)?;
-    assert_eq!(hidden.lines()[hidden.cursor.1], draft);
+    assert_draft_cells(&hidden, &draft)?;
     let diff = app.input(b"\x1b[19~", |screen| {
         screen.contains("Changes · select a tool call")
     })?;
     assert_eq!(diff.cell(50, 0), Some("│"));
-    assert_eq!(diff.lines()[diff.cursor.1], draft);
+    assert_draft_cells(&diff, &draft)?;
     let agents = app.input(b"\x1b[20~", |screen| screen.contains(" root  "))?;
     assert_eq!(agents.cell(50, 0), Some("│"));
-    assert_eq!(agents.lines()[agents.cursor.1], draft);
+    assert_draft_cells(&agents, &draft)?;
     agents.assert_composer(1)?;
     app.input(b"\x1b", |screen| {
         screen.cursor.0 == 0 && screen.lines()[screen.cursor.1].is_empty()
@@ -120,6 +112,25 @@ fn exercise_panes(app: &mut Workspace) -> TestResult {
     assert_wide_pane(&restored, " root  ")?;
     let closed = app.command("/pane ", "")?;
     assert_no_split(&closed)?;
+    Ok(())
+}
+
+/// This fixture's ASCII draft includes an intentional final blank, unlike `Screen::lines()`.
+fn assert_draft_cells(screen: &retained_screen::Screen, draft: &str) -> TestResult {
+    screen.assert_composer(1)?;
+    assert!(draft.is_ascii());
+    let input_row = screen.composer_rows()[0];
+    assert_eq!(screen.cursor, (draft.len(), input_row));
+    for (column, character) in draft.chars().enumerate() {
+        assert_eq!(
+            screen.cell(column, input_row),
+            Some(character.to_string().as_str())
+        );
+        assert_eq!(screen.foreground_at(column, input_row), None);
+    }
+    for column in draft.len()..usize::from(screen.cols) {
+        assert_eq!(screen.cell(column, input_row), Some(" "));
+    }
     Ok(())
 }
 
@@ -267,9 +278,31 @@ fn generated_diff_drag_copies_display_scope_and_keeps_snapshot_after_resize() ->
         );
         assert_eq!(app.copy_payloads()?, [b"Q2hhbmdlcw==".to_vec()]);
         app.resize(36, 10)?;
-        app.key(b"\x1bOS", "Sent 7 selected bytes")?;
-        assert_eq!(app.copy_payloads()?.last(), Some(&b"Q2hhbmdlcw==".to_vec()));
+        // Narrow Changes hides Conversation's feedback, but F4 still copies.
+        let copied = app.copy_with_hidden_feedback()?;
+        assert_eq!((copied.cols, copied.rows), (36, 10));
+        assert!(copied.lines()[0].starts_with("Changes"));
+        assert_eq!(
+            app.copy_payloads()?,
+            [b"Q2hhbmdlcw==".to_vec(), b"Q2hhbmdlcw==".to_vec()]
+        );
+        // F2 clears transient feedback; first assert its actual pane transition.
+        let conversation = app.input(b"\x1bOQ", |screen| {
+            screen.lines()[0].starts_with("Conversation")
+        })?;
+        assert_eq!((conversation.cols, conversation.rows), (36, 10));
         app.resize(100, 24)?;
+        // A fresh copy now shows its scope without narrow-pane clipping.
+        let copied = app.key(b"\x1bOS", "Sent 7 selected bytes")?;
+        assert!(copied.contains("displayed-text"));
+        assert_eq!(
+            app.copy_payloads()?,
+            [
+                b"Q2hhbmdlcw==".to_vec(),
+                b"Q2hhbmdlcw==".to_vec(),
+                b"Q2hhbmdlcw==".to_vec(),
+            ]
+        );
         app.command("/view focus composer", "Changes")?;
         assert_eq!(app.snapshot()?, before, "display selection admitted work");
         Ok(())
