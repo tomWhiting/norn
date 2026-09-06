@@ -314,7 +314,13 @@
       "id": "D-NUI004-PREVIEW",
       "title": "Truthful preview.6 metadata for verified R1-R3 only",
       "status": "registered_candidate_uninstalled",
-      "body": "Reserve 0.1.0-preview.6 as the candidate for R1-R3 pane controls, reviewed drag selection and Shift+Enter policy. Root updates only the registered manifests and release note, then verifies and installs only after actual candidate checks. R4 scrolling/latest remains pending and is not part of this checkpoint claim. Root alone updates workspace.package.version in Cargo.toml and only the four Norn workspace package version records in Cargo.lock to0.1.0-preview.6. No third-party dependency version, source, checksum, feature or lock resolution changes are authorized by this row. Update docs/release-notes/UNRELEASED.md to distinguish preview.6 candidate R1-R3 from the actually installed preview.5 source05109e6f6294c9af6f58657722dc7e968857b721. Use its recorded install/hash and local-check evidence when correcting stale preview.5 wording. Preserve historical failed/interrupted attempts with their own scope; baseline6378 tests and prior installation do not verify the new candidate. Keep candidate explicitly uninstalled/unverified until actual final checks and installation receipt exist. R4 scroll/latest and selected-agent view/message remain pending; do not imply those ship with R1-R3. No tag, public release, main merge, exact205 or Fable pass follows from a prerelease version or local preview. Root runs final fmt, strict workspace/all-target/live-feature Clippy, AST and500 production-line checks, relevant unit and actual idle/active/resize/restart tests on the composed final bytes. Preserve all required source/selection/grapheme/keyboard/draft and publication assertions and record actual failures; no bypasses or borrowed verdicts. For an authorized successful local update, verify build source identity, installed --version and binary SHA, preserve and verify rollback binary/receipt, then invoke macOS say with exact text Norn updated and record its exit. Record the actual source/binary/check hashes and install time only after completion. Local preview authority remains separate from main-landing exact-commit205 and Fable requirements."
+      "body": "Reserve 0.1.0-preview.6 as the candidate for R1-R3 pane controls, reviewed drag selection and Shift+Enter policy. Root updates only the registered manifests and release note, then verifies and installs only after actual candidate checks. R4 scrolling/latest remains pending and is not part of this checkpoint claim. Root alone updates workspace.package.version in Cargo.toml and only the four Norn workspace package version records in Cargo.lock to0.1.0-preview.6. No third-party dependency version, source, checksum, feature or lock resolution changes are authorized by this row. Update docs/release-notes/UNRELEASED.md to distinguish preview.6 candidate R1-R3 from the actually installed preview.5 source05109e6f6294c9af6f58657722dc7e968857b721. Use its recorded install/hash and local-check evidence when correcting stale preview.5 wording. Preserve historical failed/interrupted attempts with their own scope; baseline6378 tests and prior installation do not verify the new candidate. Keep candidate explicitly uninstalled/unverified until actual final checks and installation receipt exist. R4 scroll/latest and selected-agent view/message remain pending; do not imply those ship with R1-R3. No tag, public release, main merge, exact205 or Fable pass follows from a prerelease version or local preview. Root runs final fmt, strict workspace/all-target/live-feature Clippy, AST and500 production-line checks, relevant unit and actual idle/active/resize/restart tests on the composed final bytes. Preserve all required source/selection/grapheme/keyboard/draft and publication assertions and record actual failures; no bypasses or borrowed verdicts. For an authorized successful local update, verify build source identity, installed --version and binary SHA, preserve and verify rollback binary/receipt, then invoke macOS say with exact text Norn updated and record its exit. Record the actual source/binary/check hashes and install time only after completion. Local preview authority remains separate from main-landing exact-commit 205 and Fable requirements."
+    },
+    {
+      "id": "D-NUI004-INSTALLED-PREVIEW6",
+      "title": "Recorded local preview.6 installation",
+      "status": "locally_verified_installed_main_205_Fable_pending",
+      "body": "norn 0.1.0-preview.6 was installed locally at 2026-09-06T18:11:46.211489+10:00 from d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8; executable SHA256 14f7acae36de6125a9e3993c7d826e3cebd8bc3b2eadc29f8d652b1d1c04dd62. NUI-004 R1-R3 provide the one-cell divider, F7/F8/F9 pane controls, displayed-text drag/copy and persisted exact Shift+Enter with F10/button cycling. Final matching-manifest local checks passed: 6,393 standard workspace/all-target tests across 39 suites, zero failed/ignored; harnessless channel stdio 14 and channel TUI 4; eight doctests; strict workspace/all-target/live-feature Clippy, fmt and release build. Bounded composed source policy06/07 is bound by install-policy-preflight.json. The prior binary is retained for rollback; root confirms macOS say Norn updated succeeded. R4 scrolling/Latest is written, saved and paused uncompiled in /private/tmp/norn-scroll-latest, excluded from preview.6. Agent target viewing/messaging, remembered auxiliary content, editable Work/Session panels and hosted attach remain pending. No main landing, exact-commit 205, Fable or public release is claimed. Final bounded policy07 receipt: /private/tmp/nui-004-proof/source-policy-07/final-summary.json (SHA256 85fc083d9db85df43c48b7d97d4dbba741e4188c9fdaf7d43115eab99cf9d028); all 23 Rust and three metadata files match installed d4913e6."
     }
   ],
   "goals": [
@@ -2155,7 +2161,7 @@
     }
   },
   "pane_interaction_checkpoint": {
-    "status": "preview6_candidate_R1_R3_review_repairs_unverified_R4_pending",
+    "status": "R1_R3_locally_verified_installed_preview6_R4_paused_uncompiled_main_205_Fable_pending",
     "brief": "briefs/NUI-004.json",
     "baseline": "05109e6f6294c9af6f58657722dc7e968857b721",
     "branch": "codex/norn-pane-interaction",
@@ -2173,17 +2179,99 @@
         "scope": "Root-approved contract and exact proposed wall; no new execution proof."
       }
     ],
-    "no_new_test_build_install_claim": true,
+    "no_new_test_build_install_claim": false,
     "r4_registered_at_melbourne": "2026-09-06T17:00:18.425654+10:00",
     "r4_proposal_sha256": "28db063432436903fc1d27dd2517e3f1a3b811417566f08f26485c547f3275c2",
     "implementation_checkpoint": {
-      "recorded_at_melbourne": "2026-09-06T17:11:03.000166+10:00",
-      "authority": "Root reports R1-R3 authored but unverified; R4 source implementation remains pending.",
-      "installed_baseline_commit": "05109e6f6294c9af6f58657722dc7e968857b721",
-      "installed_baseline_version": "0.1.0-preview.5",
-      "postinstall_docs_commit": "2aa2d9c0f01216716a8b298841af3ee53308b8a7",
-      "interaction_test_build_install_claim": false,
-      "source_authority": "All registered files/specifications/acceptance and exclusive owners remain unchanged."
+      "recorded_at_melbourne": "2026-09-06T18:14:59.621023+10:00",
+      "installed_at_melbourne": "2026-09-06T18:11:46.211489+10:00",
+      "status": "R1_R3_locally_verified_installed_preview6_R4_paused_uncompiled_main_205_Fable_pending",
+      "version": "norn 0.1.0-preview.6",
+      "commit": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+      "binary_sha256": "14f7acae36de6125a9e3993c7d826e3cebd8bc3b2eadc29f8d652b1d1c04dd62",
+      "summary": "norn 0.1.0-preview.6 was installed locally at 2026-09-06T18:11:46.211489+10:00 from d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8; executable SHA256 14f7acae36de6125a9e3993c7d826e3cebd8bc3b2eadc29f8d652b1d1c04dd62. NUI-004 R1-R3 provide the one-cell divider, F7/F8/F9 pane controls, displayed-text drag/copy and persisted exact Shift+Enter with F10/button cycling. Final matching-manifest local checks passed: 6,393 standard workspace/all-target tests across 39 suites, zero failed/ignored; harnessless channel stdio 14 and channel TUI 4; eight doctests; strict workspace/all-target/live-feature Clippy, fmt and release build. Bounded composed source policy06/07 is bound by install-policy-preflight.json. The prior binary is retained for rollback; root confirms macOS say Norn updated succeeded. R4 scrolling/Latest is written, saved and paused uncompiled in /private/tmp/norn-scroll-latest, excluded from preview.6. Agent target viewing/messaging, remembered auxiliary content, editable Work/Session panels and hosted attach remain pending. No main landing, exact-commit 205, Fable or public release is claimed.",
+      "install_receipt": {
+        "path": "/Users/tom/.local/state/norn/install-backups/20260906-181146-interaction-preview/receipt.json",
+        "sha256": "4aa8154dbcc923a06e24cfd515b21aa047b89a47600af7223c8c274736860a40"
+      },
+      "validation": [
+        {
+          "path": "/private/tmp/nui-004-proof/validation/workspace-4.json",
+          "sha256": "7b4b347275e4affce5a8c4b0a6e29fe4225a9c0846fb50587276094cbce97dd4",
+          "log": "/private/tmp/nui-004-proof/validation/workspace-4.log",
+          "log_sha256": "3d65e168940f25eb6f5861a747e22e4c3b3685041341391236a40d724971eae6",
+          "source_unchanged": true
+        },
+        {
+          "path": "/private/tmp/nui-004-proof/validation/docs-2.json",
+          "sha256": "c9df503500a54ba0c77803dd0bbf8fd353011f66dbae0ea8425b2c142ad9fcc2",
+          "log": "/private/tmp/nui-004-proof/validation/docs-2.log",
+          "log_sha256": "1210086a6e2e0f4c459e0c2a7a07b045a8d2d3b7d9d7fcdd996b456b99ad913a",
+          "source_unchanged": true
+        },
+        {
+          "path": "/private/tmp/nui-004-proof/validation/clippy-5.json",
+          "sha256": "69af6f60a381607d96fc1ef8bf6a75d4374e369032d96f39771b463e827d5320",
+          "log": "/private/tmp/nui-004-proof/validation/clippy-5.log",
+          "log_sha256": "a6223a1e627fdb33347ae6490512e2c779d5c6d1f64bdbf28cf52994ec213256",
+          "source_unchanged": true
+        },
+        {
+          "path": "/private/tmp/nui-004-proof/validation/fmt-5.json",
+          "sha256": "1a73f212d69c90d838d260d873374bfad88f1254cdea1b4d392d3f39d9966b78",
+          "log": "/private/tmp/nui-004-proof/validation/fmt-5.log",
+          "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "source_unchanged": true
+        },
+        {
+          "path": "/private/tmp/nui-004-proof/validation/release-2.json",
+          "sha256": "1ec897d815909ed85ba1f590e594cbed35d593692dff774cbe094955c56a1a84",
+          "log": "/private/tmp/nui-004-proof/validation/release-2.log",
+          "log_sha256": "76fbfa86484970745e720341c5140a1e5f4fab65b73b0853c076a8ffcd5dbe79",
+          "source_unchanged": true
+        }
+      ],
+      "workspace": {
+        "suites": 39,
+        "passed": 6393,
+        "failed": 0,
+        "ignored": 0
+      },
+      "harnessless": {
+        "channel_stdio": 14,
+        "channel_TUI": 4
+      },
+      "doctests": {
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0
+      },
+      "matching_manifest_files": 2393,
+      "policy_preflight": {
+        "path": "/private/tmp/nui-004-proof/validation/install-policy-preflight.json",
+        "sha256": "eff0a2f5c6e30051aba2fd1cdd0d39d26c53fd6f05a8be23f40b93744fb919f6",
+        "scope": "Final composed bounded policy; unchanged25files from06 and one freshly scanned test file from07. Not a venue verdict."
+      },
+      "speech": {
+        "status": "succeeded",
+        "evidence": "Parent installation completion confirmation; installer receipt records binary/version/rollback."
+      },
+      "R4": {
+        "status": "written_saved_paused_uncompiled_not_in_preview6",
+        "checkpoint": "/private/tmp/nui-004-proof/r4-paused-checkpoint-01/CHECKPOINT.json",
+        "worktree": "/private/tmp/norn-scroll-latest"
+      },
+      "boundaries": {
+        "main_landing": false,
+        "venue205": false,
+        "Fable": false,
+        "public_release": false
+      },
+      "final_policy07": {
+        "path": "/private/tmp/nui-004-proof/source-policy-07/final-summary.json",
+        "sha256": "85fc083d9db85df43c48b7d97d4dbba741e4188c9fdaf7d43115eab99cf9d028",
+        "scope": "Final bounded policy07: 23 Rust files and three metadata files matched installed source d4913e6; no whole-repository or venue verdict."
+      }
     },
     "preview_candidate": {
       "version": "0.1.0-preview.6",
@@ -2195,11 +2283,43 @@
       "excluded_pending": [
         "R4"
       ],
-      "installed": false,
-      "new_verification_claim": false,
-      "registered_at_melbourne": "2026-09-06T17:15:28.419735+10:00"
+      "installed": true,
+      "new_verification_claim": true,
+      "registered_at_melbourne": "2026-09-06T17:15:28.419735+10:00",
+      "commit": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+      "installed_at_melbourne": "2026-09-06T18:11:46.211489+10:00"
     },
-    "review_repair_partition": "For the current R2 review repairs, review_child_context exclusively owns app/display_selection.rs, app/view_actions/mouse.rs and app/view_actions/commands.rs as whole files. norn_tui owns display_selection_tests.rs and existing R2 PTY/oracle tests and the remaining view_actions/reading seams. Root owns the small shared render.rs revocation/publication hook and F2/keys integration. Root HELP and channels send-policy hunks go through review_child_context while this repair partition is active; no concurrent writers."
+    "review_repair_partition": "For the current R2 review repairs, review_child_context exclusively owns app/display_selection.rs, app/view_actions/mouse.rs and app/view_actions/commands.rs as whole files. norn_tui owns display_selection_tests.rs and existing R2 PTY/oracle tests and the remaining view_actions/reading seams. Root owns the small shared render.rs revocation/publication hook and F2/keys integration. Root HELP and channels send-policy hunks go through review_child_context while this repair partition is active; no concurrent writers.",
+    "historical_status_records": [
+      {
+        "superseded_at_melbourne": "2026-09-06T18:14:59.621023+10:00",
+        "status": "preview6_candidate_R1_R3_review_repairs_unverified_R4_pending",
+        "implementation_checkpoint": {
+          "recorded_at_melbourne": "2026-09-06T17:11:03.000166+10:00",
+          "authority": "Root reports R1-R3 authored but unverified; R4 source implementation remains pending.",
+          "installed_baseline_commit": "05109e6f6294c9af6f58657722dc7e968857b721",
+          "installed_baseline_version": "0.1.0-preview.5",
+          "postinstall_docs_commit": "2aa2d9c0f01216716a8b298841af3ee53308b8a7",
+          "interaction_test_build_install_claim": false,
+          "source_authority": "All registered files/specifications/acceptance and exclusive owners remain unchanged."
+        },
+        "preview_candidate": {
+          "version": "0.1.0-preview.6",
+          "scope": [
+            "R1",
+            "R2",
+            "R3"
+          ],
+          "excluded_pending": [
+            "R4"
+          ],
+          "installed": false,
+          "new_verification_claim": false,
+          "registered_at_melbourne": "2026-09-06T17:15:28.419735+10:00"
+        },
+        "no_new_test_build_install_claim": true
+      }
+    ]
   },
   "ui_restoration_local_checkpoint": {
     "at_melbourne": "2026-09-06T16:55:55.268481+10:00",
