@@ -9,7 +9,7 @@ use crate::app::state::AppState;
 use crate::render::layout::SplitPreference;
 use std::num::{NonZeroU16, NonZeroUsize};
 
-const HELP: &str = "View controls\n/view focus composer|conversation|changes|divider · F6 / Shift+F6 cycles visible regions\n/pane [diff|agents] · toggle the side pane or select its content\n/view pane open|close|toggle|diff|agents · F2 switches upper pane\n/view split <conversation-weight> <changes-weight> · arrows resize focused divider\n/view up|down · PgUp/PgDn browse; Up/Down select rows outside composer\n/view expand|collapse|toggle|reset · Enter toggles selected tool\n/view compact|detailed · Ctrl+O toggles global tool detail\n/view follow|pin · return to live tail or keep current position\n/view older · demand one older history page\n/view more · demand next bytes of selected item's bodies\n/view history <events> · /view body <bytes> · positive demand preferences\n/view select <body-index> [<start-byte> <end-byte>] · select a whole loaded original body or explicit grapheme range\n/view selection [clear] · inspect/reset selection; mouse drag selects text\n/view copy · F4 · /view clipboard unspecified|disabled|osc52\n/view search [loaded|selected|older] <literal> · F3 · older requests one page and configured body prefixes; unavailable suffixes stay explicit\n/view next|previous · select a retained search hit; stale/unloaded revisions are refused\n/view export [--replace] <path> · F5 · original selection, create-new by default; spaces belong to the path\n/view status · current model, session, effort, tier, usage and local reading settings\n/view composer send-key enter|alt-enter · physical send key, independent of steer/queue\n/view preferences status|run|user|local|save · remembered or temporary frontend choices\n/view help · frontend actions never enter steer/queue";
+const HELP: &str = "View controls\n/view focus composer|conversation|changes|divider · F6 / Shift+F6 cycles visible regions\n/pane [diff|agents] · F7 toggle pane · F8 Diff · F9 Agents\n/view pane open|close|toggle|diff|agents · F2 switches upper pane\n/view split <conversation-weight> <changes-weight> · arrows resize focused divider\n/view up|down · PgUp/PgDn browse; Up/Down select rows outside composer\n/view expand|collapse|toggle|reset · Enter toggles selected tool\n/view compact|detailed · Ctrl+O toggles global tool detail\n/view follow|pin · return to live tail or keep current position\n/view older · demand one older history page\n/view more · demand next bytes of selected item's bodies\n/view history <events> · /view body <bytes> · positive demand preferences\n/view select <body-index> [<start-byte> <end-byte>] · select a whole loaded original body or explicit grapheme range\n/view selection [clear] · inspect/reset selection; mouse drag selects text\n/view copy · F4 · /view clipboard unspecified|disabled|osc52\n/view search [loaded|selected|older] <literal> · F3 · older requests one page and configured body prefixes; unavailable suffixes stay explicit\n/view next|previous · select a retained search hit; stale/unloaded revisions are refused\n/view export [--replace] <path> · F5 · original selection, create-new by default; spaces belong to the path\n/view status · current model, session, effort, tier, usage and local reading settings\n/view composer send-key enter|shift-enter|alt-enter · F10 cycles send key, independent of steer/queue\n/view preferences status|run|user|local|save · remembered or temporary frontend choices\n/view help · frontend actions never enter steer/queue";
 
 /// Whether this exact input belongs to the shared TUI-only view or pane commands.
 pub(in crate::app) fn is_frontend_command(text: &str) -> bool {
@@ -126,8 +126,13 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
             use crate::frontend_preferences::ComposerSendKey;
             state.composer_send_key = match *key {
                 "enter" => ComposerSendKey::Enter,
+                "shift-enter" => ComposerSendKey::ShiftEnter,
                 "alt-enter" => ComposerSendKey::AltEnter,
-                _ => return Err("Use /view composer send-key enter|alt-enter".to_owned()),
+                _ => {
+                    return Err(
+                        "Use /view composer send-key enter|shift-enter|alt-enter".to_owned()
+                    );
+                }
             };
             state.screen.feedback = Some(format!("Composer send key: {key}"));
             Ok(())
@@ -176,6 +181,7 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
         ["selection", "clear"] => {
             state.screen.selection = None;
             state.screen.selection_item = None;
+            state.screen.display_selection = None;
             Ok(())
         }
         ["selection"] => {
@@ -213,6 +219,7 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
                 "agents" => Some(AuxiliaryPane::Agents),
                 _ => None,
             } {
+                crate::app::display_selection::revoke_pointer_mapping(&mut state.screen);
                 state.screen.auxiliary = content;
                 state.screen.changes_open = true;
                 state.screen.upper = crate::render::layout::UpperPane::Changes;
@@ -228,6 +235,7 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
                     );
                 }
             };
+            crate::app::display_selection::revoke_pointer_mapping(&mut state.screen);
             Ok(())
         }
         ["split", left, right] => {

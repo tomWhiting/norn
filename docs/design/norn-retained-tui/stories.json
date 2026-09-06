@@ -45,6 +45,31 @@
           "id": "S8",
           "title": "Choose auxiliary content directly",
           "text": "As a participant I can use /pane to toggle the side area and /pane diff or /pane agents to select its actual content. Existing /view commands remain supported. Remembering the new content choice and selecting/viewing/messaging individual agents are explicitly tracked until implemented."
+        },
+        {
+          "id": "S9",
+          "title": "Control panes without leaving the draft",
+          "text": "I can toggle and choose panes directly with visible shortcuts and a thin divider, without losing my draft or sending a request."
+        },
+        {
+          "id": "S10",
+          "title": "Copy the displayed text I drag across",
+          "text": "I can visibly select conversation/tool headers, entries and Diff text, and understand whether copied bytes are original source or a captured display snapshot."
+        },
+        {
+          "id": "S11",
+          "title": "Choose and recover my exact send gesture",
+          "text": "I can persist Shift+Enter sending, keep bare Enter as newline and explicitly recover with the same keyboard/button policy cycle when terminal reporting is unconfirmed."
+        },
+        {
+          "id": "S12",
+          "title": "Scroll and return to the latest message explicitly",
+          "text": "I can keep a stable reading position while work continues, preserve every delivered scroll step and explicitly return to the selected conversation\u2019s latest admitted item. NUI-004 R4 now registers the implementation; actual source-bound App and measurement proof remains pending."
+        },
+        {
+          "id": "S13",
+          "title": "Know which local preview I can actually use",
+          "text": "I can distinguish a candidate from my verified installed preview, see its actual feature scope, recover the prior binary and hear Norn updated only after a successful checked local update."
         }
       ]
     }

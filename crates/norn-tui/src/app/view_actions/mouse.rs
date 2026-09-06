@@ -1,10 +1,11 @@
-//! Mouse focus, pane controls and exact mapped-body drag selection; no runtime control.
+//! Mouse focus, pane controls and source-aware visible-pane drag selection; no runtime control.
 
 use std::num::NonZeroU16;
 
 use termina::event::{KeyCode, KeyEvent, Modifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::TuiError;
+use crate::app::display_selection::{DisplayPane, revoke_pointer_mapping};
 use crate::app::focus::Focus;
 use crate::app::render::interaction;
 use crate::app::state::AppState;
@@ -48,6 +49,7 @@ fn apply_mouse(event: MouseEvent, state: &mut AppState) -> Result<bool, TuiError
             .pane_switch
             .is_some_and(|area| contains(area, event))
     {
+        revoke_pointer_mapping(&mut state.screen);
         state.screen.upper = match state.screen.upper {
             UpperPane::Conversation => UpperPane::Changes,
             UpperPane::Changes => UpperPane::Conversation,
@@ -60,7 +62,11 @@ fn apply_mouse(event: MouseEvent, state: &mut AppState) -> Result<bool, TuiError
             .composer_send_key_area
             .is_some_and(|area| contains(area, event))
     {
-        state.composer_send_key = state.composer_send_key.toggle();
+        state.composer_send_key = state.composer_send_key.next_policy();
+        state.screen.feedback = Some(format!(
+            "Composer send key: {}",
+            state.composer_send_key.label()
+        ));
         return Ok(true);
     }
     if state.screen.dragging_composer {
@@ -93,26 +99,7 @@ fn apply_mouse(event: MouseEvent, state: &mut AppState) -> Result<bool, TuiError
             MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
         )
     {
-        let hit = state
-            .screen
-            .hit_rows
-            .iter()
-            .find(|hit| {
-                hit.area.row + hit.row == event.row
-                    && hit.body.as_ref()
-                        == state
-                            .screen
-                            .selection
-                            .as_ref()
-                            .map(crate::app::selection::Selection::reference)
-            })
-            .cloned();
-        if matches!(event.kind, MouseEventKind::Up(_)) {
-            state.screen.dragging_selection = false;
-        }
-        if let Some(hit) = hit {
-            select_hit(state, &hit, event.column, true)?;
-        }
+        extend_display(state, event)?;
         return Ok(true);
     }
     let target = if contains(composer, event) {
@@ -170,37 +157,133 @@ fn apply_mouse(event: MouseEvent, state: &mut AppState) -> Result<bool, TuiError
                 state.screen.dragging_composer =
                     composer_pointer(state, event, event.modifiers.contains(Modifiers::SHIFT))?;
             }
-            if target == Focus::Conversation
-                && let Some(hit) = state
-                    .screen
-                    .hit_rows
-                    .iter()
-                    .find(|hit| hit.contains(event.column, event.row))
-                    .cloned()
-            {
-                state
-                    .screen
-                    .viewport
-                    .select(hit.anchor.item.clone(), &state.transcript.projection)
-                    .map_err(interaction)?;
-                state.screen.changes_row = 0;
-                if hit.body.is_some() {
-                    select_hit(state, &hit, event.column, false)?;
-                    state.screen.dragging_selection = true;
-                } else if state
+            if let Some(pane) = selection_pane(upper, target, state.screen.auxiliary) {
+                begin_display(state, event, pane)?;
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn selection_pane(
+    upper: UpperLayout,
+    target: Focus,
+    auxiliary: crate::app::render::AuxiliaryPane,
+) -> Option<DisplayPane> {
+    match (upper, target) {
+        (UpperLayout::Single { area, .. }, Focus::Conversation) => {
+            Some(DisplayPane::Conversation(area))
+        }
+        (UpperLayout::Single { area, .. }, Focus::Changes) => {
+            Some(DisplayPane::Auxiliary(area, auxiliary))
+        }
+        (UpperLayout::Split { conversation, .. }, Focus::Conversation) => {
+            Some(DisplayPane::Conversation(conversation))
+        }
+        (UpperLayout::Split { changes, .. }, Focus::Changes) => {
+            Some(DisplayPane::Auxiliary(changes, auxiliary))
+        }
+        _ => None,
+    }
+}
+
+fn begin_display(
+    state: &mut AppState,
+    event: MouseEvent,
+    pane: DisplayPane,
+) -> Result<(), TuiError> {
+    let frame =
+        state.screen.display_frame.as_ref().ok_or_else(|| {
+            interaction(std::io::Error::other("no published display for selection"))
+        })?;
+    let selection = crate::app::display_selection::DisplaySelection::capture(
+        state.transcript.projection.source().clone(),
+        std::sync::Arc::clone(frame),
+        pane,
+        &state.screen.hit_rows,
+        event.column,
+        event.row,
+    )
+    .map_err(interaction)?;
+    let hit = selection.hit(event.column, event.row).cloned();
+    let column = selection.focus_column().map_err(interaction)?;
+    state.screen.selection = None;
+    state.screen.selection_item = None;
+    state.screen.display_selection = Some(selection);
+    state.screen.dragging_selection = true;
+    if let Some(hit) = hit {
+        state
+            .screen
+            .viewport
+            .select(hit.anchor.item.clone(), &state.transcript.projection)
+            .map_err(interaction)?;
+        state.screen.changes_row = 0;
+        if hit.body.is_some() {
+            attempt_original(state, &hit, column, false);
+        }
+    }
+    Ok(())
+}
+
+fn extend_display(state: &mut AppState, event: MouseEvent) -> Result<(), TuiError> {
+    let Some(selection) = state.screen.display_selection.as_mut() else {
+        state.screen.dragging_selection = false;
+        return Ok(());
+    };
+    selection.extend(event.column, event.row);
+    let column = selection.focus_column().map_err(interaction)?;
+    let moved = selection.moved();
+    let hit = selection.hit(event.column, event.row).cloned();
+    let released = matches!(event.kind, MouseEventKind::Up(_));
+    if released {
+        state.screen.dragging_selection = false;
+    }
+    if let Some(hit) = hit.as_ref().filter(|hit| {
+        hit.body.as_ref()
+            == state
+                .screen
+                .selection
+                .as_ref()
+                .map(crate::app::selection::Selection::reference)
+    }) {
+        if hit.body.is_some() {
+            attempt_original(state, hit, column, true);
+        }
+    } else {
+        state.screen.selection = None;
+        state.screen.selection_item = None;
+    }
+    if released
+        && !moved
+        && hit.as_ref().is_some_and(|hit| {
+            hit.body.is_none()
+                && state
                     .transcript
                     .projection
                     .item(&hit.anchor.item)
                     .is_some_and(|item| {
                         matches!(item.kind, norn::session_view::ViewItemKind::Tool(_))
                     })
-                {
-                    expand(state, None)?;
-                }
-            }
-            Ok(true)
-        }
-        _ => Ok(false),
+        })
+    {
+        expand(state, None)?;
+    }
+    Ok(())
+}
+
+fn attempt_original(
+    state: &mut AppState,
+    hit: &crate::app::render::hit::HitRow,
+    column: u16,
+    extend: bool,
+) {
+    if let Err(error) = select_hit(state, hit, column, extend) {
+        state.screen.selection = None;
+        state.screen.selection_item = None;
+        state.screen.feedback = Some(format!(
+            "Displayed-text selection; original mapping unavailable: {error}"
+        ));
     }
 }
 

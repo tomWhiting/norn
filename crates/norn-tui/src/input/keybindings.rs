@@ -209,6 +209,7 @@ pub fn map_key_event(
 fn map_enter(mods: Modifiers, send_key: ComposerSendKey) -> InputAction {
     match send_key {
         ComposerSendKey::Enter if mods == Modifiers::NONE => InputAction::Submit,
+        ComposerSendKey::ShiftEnter if mods == Modifiers::SHIFT => InputAction::Submit,
         ComposerSendKey::AltEnter if mods == Modifiers::ALT => InputAction::Submit,
         _ => InputAction::InsertNewline,
     }

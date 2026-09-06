@@ -271,6 +271,7 @@ pub(super) fn next_hit(state: &mut AppState, backwards: bool) -> Result<(), TuiE
         .select(item.clone(), &state.transcript.projection)
         .map_err(interaction)?;
     state.screen.tool_overrides.insert(item.clone(), true);
+    state.screen.display_selection = None;
     state.screen.selection = Some(selection);
     state.screen.selection_item = Some(item);
     state.screen.search.current = Some(next);

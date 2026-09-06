@@ -33,6 +33,8 @@ pub struct Screen {
     background: Option<[u8; 3]>,
     foreground: Option<[u8; 3]>,
     foregrounds: Vec<Vec<Option<[u8; 3]>>>,
+    reversed: bool,
+    reversals: Vec<Vec<bool>>,
     previous: Option<(usize, usize)>,
     error: Option<String>,
     painted: Vec<Vec<bool>>,
@@ -51,6 +53,8 @@ impl Screen {
             background: None,
             foreground: None,
             foregrounds: vec![vec![None; usize::from(cols)]; usize::from(rows)],
+            reversed: false,
+            reversals: vec![vec![false; usize::from(cols)]; usize::from(rows)],
             previous: None,
             error: None,
             painted: vec![vec![false; usize::from(cols)]; usize::from(rows)],
@@ -94,6 +98,15 @@ impl Screen {
     /// Foreground of an observed cell; None is the terminal's ordinary foreground.
     pub fn foreground_at(&self, column: usize, row: usize) -> Option<[u8; 3]> {
         self.foregrounds.get(row)?.get(column).copied().flatten()
+    }
+
+    /// Actual reverse-video selection emphasis from the terminal cell stream.
+    pub fn selected_at(&self, column: usize, row: usize) -> bool {
+        self.reversals
+            .get(row)
+            .and_then(|line| line.get(column))
+            .copied()
+            .unwrap_or(false)
     }
 
     /// Actual input rows between the restored top and metadata chip rules.
@@ -220,8 +233,11 @@ impl Screen {
                 0 => {
                     self.background = None;
                     self.foreground = None;
+                    self.reversed = false;
                 }
-                1 | 2 | 3 | 4 | 7 | 9 => {}
+                1 | 2 | 3 | 4 | 9 => {}
+                7 => self.reversed = true,
+                27 => self.reversed = false,
                 39 => self.foreground = None,
                 49 => self.background = None,
                 38 | 48 => {
@@ -283,6 +299,7 @@ impl Perform for Screen {
             self.painted[location.1][column] = true;
             self.backgrounds[location.1][column] = self.background;
             self.foregrounds[location.1][column] = self.foreground;
+            self.reversals[location.1][column] = self.reversed;
             if column != location.0 {
                 self.cells[location.1][column].clear();
             }
@@ -317,6 +334,9 @@ impl Perform for Screen {
                     }
                     for row in &mut self.backgrounds {
                         row.fill(None);
+                    }
+                    for row in &mut self.reversals {
+                        row.fill(false);
                     }
                     for row in &mut self.foregrounds {
                         row.fill(None);

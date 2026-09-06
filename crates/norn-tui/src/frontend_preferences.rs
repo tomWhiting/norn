@@ -20,6 +20,8 @@ pub enum ComposerSendKey {
     /// Enter sends; Alt+Enter inserts a newline.
     #[default]
     Enter,
+    /// Shift+Enter sends; Enter inserts a newline.
+    ShiftEnter,
     /// Alt+Enter sends; Enter inserts a newline.
     AltEnter,
 }
@@ -30,15 +32,17 @@ impl ComposerSendKey {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Enter => "enter",
+            Self::ShiftEnter => "shift-enter",
             Self::AltEnter => "alt-enter",
         }
     }
 
-    /// The other supported send-key policy.
+    /// Cycle the three explicit send-key policies without changing the draft.
     #[must_use]
-    pub const fn toggle(self) -> Self {
+    pub const fn next_policy(self) -> Self {
         match self {
-            Self::Enter => Self::AltEnter,
+            Self::Enter => Self::ShiftEnter,
+            Self::ShiftEnter => Self::AltEnter,
             Self::AltEnter => Self::Enter,
         }
     }
@@ -311,8 +315,14 @@ impl FrontendPreferences {
             if let Some(value) = composer.get("send_key") {
                 result.composer_send_key = match value.as_str() {
                     Some("enter") => ComposerSendKey::Enter,
+                    Some("shift-enter") => ComposerSendKey::ShiftEnter,
                     Some("alt-enter") => ComposerSendKey::AltEnter,
-                    _ => return Err(invalid("tui.composer.send_key", "enter or alt-enter")),
+                    _ => {
+                        return Err(invalid(
+                            "tui.composer.send_key",
+                            "enter, shift-enter or alt-enter",
+                        ));
+                    }
                 };
             }
         }

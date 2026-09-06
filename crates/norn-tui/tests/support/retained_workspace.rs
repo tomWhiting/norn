@@ -18,7 +18,7 @@ use norn::provider::{
     AgentEvent, AgentEventSender, Provider, ProviderCapabilities, ProviderError, ProviderEvent,
     ProviderRequest, ProviderStream, StopReason, Usage,
 };
-use norn::session::events::SessionEvent;
+use norn::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
 use norn::session::store::EventStore;
 use norn::tool::ToolRegistry;
 use norn_tui::input::InputHistory;
@@ -38,6 +38,10 @@ const CHILD_ENV: &str = "NORN_RETAINED_WORKSPACE_CHILD";
 const CONTROL_ENV: &str = "NORN_RETAINED_WORKSPACE_CONTROL";
 const REPORT_ENV: &str = "NORN_RETAINED_WORKSPACE_REPORT";
 const COMPOSER_ENV: &str = "NORN_RETAINED_COMPOSER_SEND_KEY";
+const RECORDED_TOOL_ENV: &str = "NORN_RETAINED_RECORDED_TOOL";
+/// Recorded history, never a tool executed by this fixture.
+pub const TOOL_DESCRIPTION: &str = "Recorded tool selection";
+const RECORDED_ASSISTANT: &str = "recorded assistant context";
 const INITIAL: &str = "workspace provider held";
 const RELEASED: &str = "workspace provider released";
 
@@ -89,6 +93,9 @@ async fn child_app() -> TestResult {
         gate: Arc::clone(&gate),
     });
     let store = Arc::new(EventStore::new());
+    if std::env::var_os(RECORDED_TOOL_ENV).is_some() {
+        append_recorded_tool(&store)?;
+    }
     let registry = AgentRegistry::shared();
     let reservation = AgentRegistry::reserve(
         &registry,
@@ -177,6 +184,39 @@ async fn child_app() -> TestResult {
     Ok(())
 }
 
+fn append_recorded_tool(store: &EventStore) -> TestResult {
+    let call = SessionEvent::AssistantMessage {
+        base: EventBase::new(None),
+        response_items: Vec::new(),
+        content: RECORDED_ASSISTANT.to_owned(),
+        thinking: String::new(),
+        reasoning: Vec::new(),
+        tool_calls: vec![ToolCallEvent {
+            call_id: "recorded_selection_call".to_owned(),
+            name: "edit".to_owned(),
+            arguments: json!({"tool_use_description": TOOL_DESCRIPTION,
+                "description": "ordinary argument must not become the tool label",
+                "path": "/fixture/no-disk.txt", "old_string": "old fixture text", "new_string": "new fixture text"}),
+            kind: norn::provider::request::ToolCallKind::Function,
+            caller: norn::provider::request::ToolCallCaller::Absent,
+        }],
+        usage: EventUsage::default(),
+        stop_reason: "tool_use".to_owned(),
+        response_id: None,
+    };
+    let result = SessionEvent::ToolResult {
+        base: EventBase::new(Some(call.base().id.clone())),
+        tool_call_id: "recorded_selection_call".to_owned(),
+        tool_name: "edit".to_owned(),
+        output: json!({"committed": true, "path": "/fixture/no-disk.txt"}),
+        spool_ref: None,
+        duration_ms: 7,
+    };
+    store.append(call)?;
+    store.append(result)?;
+    Ok(())
+}
+
 struct GatedProvider {
     inner: Arc<MockProvider>,
     gate: Arc<Notify>,
@@ -215,6 +255,9 @@ fn census(store: &EventStore, provider: &MockProvider) -> Value {
             "event_ids": events.iter().map(|event| event.base().id.as_str()).collect::<Vec<_>>(),
             "user_events": events.iter().filter_map(|event| match event {
                 SessionEvent::UserMessage { content, .. } => Some(content.as_str()), _ => None,
+            }).collect::<Vec<_>>(),
+            "tool_results": events.iter().filter_map(|event| match event {
+                SessionEvent::ToolResult { tool_call_id, output, .. } => Some(json!({"call_id":tool_call_id,"output":output})), _ => None,
             }).collect::<Vec<_>>(),
             "assistant_events": events.iter().filter_map(|event| match event {
                 SessionEvent::AssistantMessage { content, .. } => Some(content.as_str()), _ => None,
@@ -269,12 +312,21 @@ pub struct Workspace {
     directory: tempfile::TempDir,
     final_report: PathBuf,
     send_key: Option<String>,
+    recorded_tool: bool,
     finished: bool,
 }
 
 /// Catch fixture assertions, then terminate/reap the child and join its reader before returning.
 pub fn with_workspace(exercise: impl FnOnce(&mut Workspace) -> TestResult) -> TestResult {
-    with_launch(None, |app| {
+    with_launch(None, false, false, |app| {
+        exercise(app)?;
+        Ok("workspace fixture prompt".to_owned())
+    })
+}
+
+/// Replay actual recorded tool events, then hold the one ordinary provider turn.
+pub fn with_recorded_tool(exercise: impl FnOnce(&mut Workspace) -> TestResult) -> TestResult {
+    with_launch(None, false, true, |app| {
         exercise(app)?;
         Ok("workspace fixture prompt".to_owned())
     })
@@ -285,15 +337,26 @@ pub fn with_composer(
     send_key: &str,
     exercise: impl FnOnce(&mut Workspace) -> TestResult<String>,
 ) -> TestResult {
-    with_launch(Some(send_key), exercise)
+    with_composer_keyboard(send_key, false, exercise)
+}
+
+/// Explicitly report or withhold Kitty disambiguation in this actual terminal peer.
+pub fn with_composer_keyboard(
+    send_key: &str,
+    kitty_confirmed: bool,
+    exercise: impl FnOnce(&mut Workspace) -> TestResult<String>,
+) -> TestResult {
+    with_launch(Some(send_key), kitty_confirmed, false, exercise)
 }
 
 fn with_launch(
     send_key: Option<&str>,
+    kitty_confirmed: bool,
+    recorded_tool: bool,
     exercise: impl FnOnce(&mut Workspace) -> TestResult<String>,
 ) -> TestResult {
     let startup = Instant::now();
-    let mut app = Workspace::start(send_key)?;
+    let mut app = Workspace::start(send_key, kitty_confirmed, recorded_tool)?;
     if let Some(send_key) = send_key {
         eprintln!(
             "{}",
@@ -316,7 +379,11 @@ fn with_launch(
 }
 
 impl Workspace {
-    fn start(send_key: Option<&str>) -> TestResult<Self> {
+    fn start(
+        send_key: Option<&str>,
+        kitty_confirmed: bool,
+        recorded_tool: bool,
+    ) -> TestResult<Self> {
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
         let address = listener.local_addr()?;
         let directory = tempfile::tempdir()?;
@@ -338,6 +405,9 @@ impl Workspace {
         command.env(CHILD_ENV, "1");
         command.env(CONTROL_ENV, address.to_string());
         command.env(REPORT_ENV, &final_report);
+        if recorded_tool {
+            command.env(RECORDED_TOOL_ENV, "1");
+        }
         if let Some(send_key) = send_key {
             let home = directory.path().join("norn-home");
             std::fs::create_dir(&home)?;
@@ -377,10 +447,11 @@ impl Workspace {
             directory,
             final_report,
             send_key: send_key.map(str::to_owned),
+            recorded_tool,
             finished: false,
         };
         app.reader = Some(std::thread::spawn(move || read_output(read, &output)));
-        if let Err(error) = app.admit(listener, address) {
+        if let Err(error) = app.admit(listener, address, kitty_confirmed) {
             let cleanup = app.finish(true);
             return Err(io::Error::other(format!(
                 "PTY admission: {error}; teardown: {cleanup:?}; captured stdout/stderr:\n{}",
@@ -391,7 +462,12 @@ impl Workspace {
         Ok(app)
     }
 
-    fn admit(&mut self, listener: TcpListener, address: SocketAddr) -> io::Result<()> {
+    fn admit(
+        &mut self,
+        listener: TcpListener,
+        address: SocketAddr,
+        kitty_confirmed: bool,
+    ) -> io::Result<()> {
         let (sender, accepted) = mpsc::sync_channel(1);
         let acceptor = std::thread::spawn(move || {
             sender.send(listener.accept()).map_err(|error| {
@@ -422,6 +498,9 @@ impl Workspace {
                 .any(|part| part == retained_screen::SYNC_QUERY)
                 .then_some(()))
         })?;
+        if kitty_confirmed {
+            self.send(b"\x1b[?1u")?;
+        }
         self.send(retained_screen::PROBE_REPLY)?;
         self.frame(0, |screen| {
             self.send_key.is_some() || screen.contains(INITIAL)
@@ -491,10 +570,10 @@ impl Workspace {
 
     /// The physical send key selected by this fixture's actual launch preferences.
     pub fn submit_key(&self) -> &'static [u8] {
-        if self.send_key.as_deref() == Some("alt-enter") {
-            b"\x1b\r"
-        } else {
-            b"\r"
+        match self.send_key.as_deref() {
+            Some("shift-enter") => b"\x1b[13;2u",
+            Some("alt-enter") => b"\x1b\r",
+            _ => b"\r",
         }
     }
 
@@ -582,6 +661,27 @@ impl Workspace {
         copies(&self.output.bytes()?)
     }
 
+    /// Complete the already-running provider and observe its real usage update outside the dragged pane.
+    pub fn release_provider(&mut self) -> io::Result<Screen> {
+        let after = self.output.bytes()?.len();
+        self.control("release")?;
+        self.frame(after, |screen| screen.contains("3↑ 4↓"))
+    }
+
+    /// Compare the observed transport payload with independently specified selected text.
+    pub fn assert_last_copy(&self, expected: &str) -> io::Result<()> {
+        use termina::escape::osc::{Osc, Selection};
+        let encoded = Osc::SetSelection(Selection::CLIPBOARD, expected).to_string();
+        let expected_payloads = copies(encoded.as_bytes())?;
+        let actual = self.copy_payloads()?;
+        if actual.last() != expected_payloads.last() || expected_payloads.len() != 1 {
+            return Err(io::Error::other(format!(
+                "selected text differs: expected {expected:?}; encoded actual {actual:?}"
+            )));
+        }
+        Ok(())
+    }
+
     fn release_and_stop(&mut self, expected_prompt: &str) -> io::Result<()> {
         // Composer scenarios may deliberately leave a multiline recalled draft.
         // Escape is the actual explicit clear action, not a test-only setter.
@@ -597,7 +697,12 @@ impl Workspace {
         self.control("release")?;
         self.command("/view follow", "Turn completed")?;
         let completed = self.snapshot()?;
-        if completed["assistant_events"] != json!([format!("{INITIAL}\n{RELEASED}")]) {
+        let mut expected_assistant = Vec::new();
+        if self.recorded_tool {
+            expected_assistant.push(RECORDED_ASSISTANT.to_owned());
+        }
+        expected_assistant.push(format!("{INITIAL}\n{RELEASED}"));
+        if completed["assistant_events"] != json!(expected_assistant) {
             return Err(io::Error::other(format!(
                 "completed provider output differs from exact released fixture: {completed}"
             )));

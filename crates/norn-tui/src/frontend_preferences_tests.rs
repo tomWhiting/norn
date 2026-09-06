@@ -83,7 +83,7 @@ fn invalid_owned_fields_are_refused_by_exact_dotted_path() {
         ),
         (json!({"input":{"send_key":"enter"}}), "tui.input.send_key"),
         (
-            json!({"composer":{"send_key":"shift-enter"}}),
+            json!({"composer":{"send_key":"control-enter"}}),
             "tui.composer.send_key",
         ),
         (
@@ -124,9 +124,14 @@ fn present_nonobjects_are_not_silently_defaults() {
 }
 
 #[test]
-fn send_key_labels_and_toggle_preserve_the_two_declared_policies() -> TestResult {
+fn send_key_labels_and_cycle_preserve_the_three_declared_policies() -> TestResult {
     for (policy, label, other) in [
-        (ComposerSendKey::Enter, "enter", ComposerSendKey::AltEnter),
+        (ComposerSendKey::Enter, "enter", ComposerSendKey::ShiftEnter),
+        (
+            ComposerSendKey::ShiftEnter,
+            "shift-enter",
+            ComposerSendKey::AltEnter,
+        ),
         (
             ComposerSendKey::AltEnter,
             "alt-enter",
@@ -134,11 +139,12 @@ fn send_key_labels_and_toggle_preserve_the_two_declared_policies() -> TestResult
         ),
     ] {
         assert_eq!(policy.label(), label);
-        assert_eq!(policy.toggle(), other);
-        assert_eq!(policy.toggle().toggle(), policy);
+        assert_eq!(policy.next_policy(), other);
+        assert_eq!(policy.next_policy().next_policy().next_policy(), policy);
         let decoded = FrontendPreferences::decode(Some(&json!({"composer":{"send_key":label}})))?;
         assert_eq!(decoded.composer_send_key, policy);
         assert_eq!(decoded.submit_mode, InFlightSubmitMode::Steer);
+        assert_eq!(decoded.projection()?["composer"], json!({"send_key":label}));
     }
     Ok(())
 }

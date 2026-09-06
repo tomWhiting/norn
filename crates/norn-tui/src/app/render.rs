@@ -50,6 +50,8 @@ pub struct ScreenState {
     pub(super) tool_overrides: HashMap<ItemId, bool>,
     pub(super) selection: Option<super::selection::Selection>,
     pub(super) selection_item: Option<ItemId>,
+    pub(super) display_frame: Option<Arc<Frame>>,
+    pub(super) display_selection: Option<super::display_selection::DisplaySelection>,
     pub(super) feedback: Option<String>,
     pub(super) request_copy: bool,
     pub(super) search: super::view_actions::reading::SearchState,
@@ -110,6 +112,8 @@ impl ScreenState {
             tool_overrides: HashMap::new(),
             selection: None,
             selection_item: None,
+            display_frame: None,
+            display_selection: None,
             feedback: None,
             request_copy: false,
             search: super::view_actions::reading::SearchState::new(),
@@ -156,6 +160,8 @@ impl ScreenState {
             self.tool_overrides.clear();
             self.selection = None;
             self.selection_item = None;
+            self.display_frame = None;
+            self.display_selection = None;
             self.feedback = None;
             self.request_copy = false;
             self.search = super::view_actions::reading::SearchState::new();
@@ -209,6 +215,7 @@ pub(crate) fn sync_input_area(
     cols: u16,
     terminal_rows: u16,
 ) -> Result<u16, TuiError> {
+    super::display_selection::sync_geometry(&mut state.screen, cols, terminal_rows);
     let height = state
         .composer_geometry
         .measure(&state.input_editor, cols, terminal_rows)?;
@@ -249,7 +256,8 @@ pub fn redraw_all(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(),
     {
         return Ok(());
     }
-    let frame = prepare(state, guard.terminal_columns(), guard.terminal_rows())?;
+    let mut frame = prepare(state, guard.terminal_columns(), guard.terminal_rows())?;
+    super::display_selection::paint(&mut state.screen, &mut frame).map_err(interaction)?;
     let prepared = frame.prepare(&state.terminal_caps)?;
     let publication = super::helpers::sync_with_guard(
         &state.terminal_caps,
@@ -260,8 +268,11 @@ pub fn redraw_all(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(),
     if publication.is_err() {
         state.screen.composer_send_key_area = None;
         state.screen.dragging_composer = false;
+        state.screen.display_frame = None;
+        state.screen.dragging_selection = false;
     }
     state.composer_geometry.finish_publication(publication)?;
+    state.screen.display_frame = Some(Arc::new(frame));
     // Publication and flush must succeed before either baseline is advanced.
     state.screen.dirty = false;
     state.screen.last_revision = Some(revision);

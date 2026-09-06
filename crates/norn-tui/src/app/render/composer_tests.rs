@@ -189,16 +189,29 @@ fn send_key_control_reuses_the_last_hint_row_and_never_claims_a_clipped_hit_area
         crate::app::state::test_view_source(uuid::Uuid::new_v4()),
         crate::render::fixed_panel::StatusBar::default(),
     );
-    for (policy, label) in [
+    for (policy, kitty, label) in [
         (
             crate::frontend_preferences::ComposerSendKey::Enter,
+            false,
             "[Enter sends]",
         ),
         (
             crate::frontend_preferences::ComposerSendKey::AltEnter,
+            false,
             "[Alt+Enter sends]",
         ),
+        (
+            crate::frontend_preferences::ComposerSendKey::ShiftEnter,
+            false,
+            "[Shift+Enter unconfirmed]",
+        ),
+        (
+            crate::frontend_preferences::ComposerSendKey::ShiftEnter,
+            true,
+            "[Shift+Enter sends]",
+        ),
     ] {
+        state.terminal_caps.kitty_keyboard = kitty;
         state.composer_send_key = policy;
         let frame = super::super::prepare(&mut state, 80, 24)?;
         let button = state
@@ -214,6 +227,10 @@ fn send_key_control_reuses_the_last_hint_row_and_never_claims_a_clipped_hit_area
             .find(|row| row.area.row == button.row)
             .ok_or("hint row missing")?;
         assert!(hint.text.styled.text().starts_with(label));
+        assert!(hint.text.styled.text().contains("F10 send key"));
+        if policy == crate::frontend_preferences::ComposerSendKey::ShiftEnter {
+            assert!(hint.text.styled.text().contains("Enter newline"));
+        }
         let Layout::Ready { composer, .. } = frame.layout else {
             return Err("composer missing".into());
         };

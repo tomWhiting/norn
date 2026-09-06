@@ -1,0 +1,393 @@
+{
+  "id": "NUI-004",
+  "cluster": "norn-retained-tui",
+  "title": "Pane controls, truthful drag selection and exact Shift+Enter policy",
+  "status": "preview6_candidate_R1_R3_review_repairs_unverified_R4_pending",
+  "baseline": "05109e6f6294c9af6f58657722dc7e968857b721",
+  "branch": "codex/norn-pane-interaction",
+  "worktree": "/private/tmp/norn-pane-interaction",
+  "written_at_melbourne": "2026-09-06T16:50:49.229245+10:00",
+  "design": "../design.json",
+  "depends_on": [
+    "NUI-003",
+    "NCP-001"
+  ],
+  "purpose": "Deliver direct pane interaction and usable drag/copy across displayed content while preserving original source selection, exact composer input policy and the familiar retained layout.",
+  "task": "R1-R3 are authored and undergoing registered review repair; R5 reserves their preview.6 metadata and local verification/install checkpoint. R4 remains registered but pending implementation and is not claimed by preview.6. Root owns Cargo, manifests, builds and installation; do not edit unlisted paths.",
+  "checklist": [
+    "C22",
+    "C23",
+    "C24",
+    "C25",
+    "C26"
+  ],
+  "stories": [
+    "S9",
+    "S10",
+    "S11",
+    "S12",
+    "S3",
+    "S13"
+  ],
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Thin divider and direct pane/send-policy shortcuts",
+      "owner": "root; shared test integration by norn_tui",
+      "status": "written_unverified",
+      "depends_on": [],
+      "spec": "Paint a thin one-cell vertical \u2502 pane divider in the same Dim style as the composer separator, with no extra rows. Handle F7 pane toggle, F8 Diff, F9 Agents and F10 composer send-policy cycle through existing typed state/control owners; preserve full-width composer and existing slash equivalents.",
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/render/frame.rs",
+          "crates/norn-tui/src/app/view_actions/keys.rs",
+          "crates/norn-tui/src/app/view_actions/commands.rs",
+          "crates/norn-tui/tests/retained_workspace.rs",
+          "crates/norn-tui/tests/support/retained_workspace.rs"
+        ],
+        "create": [],
+        "delete": []
+      },
+      "acceptance": [
+        "Paint a thin one-cell vertical \u2502 pane divider in the same Dim style as the composer separator, with no extra rows. Handle F7 pane toggle, F8 Diff, F9 Agents and F10 composer send-policy cycle through existing typed state/control owners; preserve full-width composer and existing slash equivalents.",
+        "Root owns render/frame.rs and app/view_actions/keys.rs. commands.rs changes by root are HELP text only and are integrated serially by its shared-file owner. F7 preserves selected content; F8/F9 select and show exact auxiliary content including narrow UpperPane::Changes behavior, using the existing pane command semantics. No shortcut selects/messages an agent or sends provider/steer/queue input.",
+        "F10 calls ComposerSendKey::next_policy() supplied by R3: Enter -> ShiftEnter -> AltEnter -> Enter. Handle one actual press; repeat/release cannot trigger repeated mutations or sends. Preserve draft, cursors, undo, existing preference edit/save handling, popup ownership and existing focus controls. The existing clickable button uses the same transition through the R2 mouse owner.",
+        "Use the existing divider cell/geometry only, respecting wide/narrow/tiny/zero dimensions and full-width composer; do not add global chrome or blanket clears. Divider hits cannot become selectable content or original source authority.",
+        "Coordinate actual retained_workspace test and support changes with the R2 owner. Prove shortcuts idle and during a provider turn, no request/admission on control changes, correct pane visibility at wide/narrow resize, draft/cursor preservation and unchanged frame bounds.",
+        "Keep each production file at or below500 nonblank/noncomment lines, thin module declarations and existing single input/frame/settings owners. No suppressions, ignored tests, unwrap/expect/panic variants, swallowed Results, arbitrary new limits/timeouts or silent prerequisite skips. Root alone runs Cargo/builds; final formatter, strict workspace/all-targets/live-feature Clippy, AST/LOC and actual idle/active/resize regression proof must bind final bytes. Local preview authorization does not waive independent review/exact-commit205 main-landing gates."
+      ],
+      "checklist": [
+        "C22"
+      ],
+      "stories": [
+        "S9"
+      ],
+      "design_refs": [
+        "D-NUI004-CONTROLS"
+      ]
+    },
+    {
+      "id": "R2",
+      "title": "Select displayed conversation and Diff text without false source authority",
+      "owner": "review_child_context selection/mouse/commands repair; norn_tui tests; root render/keys hooks",
+      "status": "written_review_fixes_required_unverified",
+      "depends_on": [],
+      "spec": "Ordinary dragging selects displayed text across tool headers, conversation entries and Diff rows. Prefer existing exact-source single-body copy when valid; otherwise use an immutable displayed-text snapshot. Preserve exact BodyRef selection/export separately. Never label generated Diff summaries original-file evidence.",
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/app/mod.rs",
+          "crates/norn-tui/src/app/render.rs",
+          "crates/norn-tui/src/app/view_actions.rs",
+          "crates/norn-tui/src/app/view_actions/mouse.rs",
+          "crates/norn-tui/src/app/view_actions/commands.rs",
+          "crates/norn-tui/src/app/view_actions/reading.rs",
+          "crates/norn-tui/tests/retained_workspace.rs",
+          "crates/norn-tui/tests/support/retained_workspace.rs",
+          "crates/norn-tui/tests/support/retained_screen.rs"
+        ],
+        "create": [
+          "crates/norn-tui/src/app/display_selection.rs",
+          "crates/norn-tui/src/app/display_selection_tests.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "Retain the actual successfully published typed Frame (Arc ownership) for current-pointer admission; do not reconstruct text from ANSI or take a second editor/model snapshot. Failed publication revokes that display authority.",
+        "On primary down capture one immutable visible-pane snapshot and grapheme-correct endpoints. Current display mappings remain tagged; there is no per-key history scan or body fetch.",
+        "Keep existing exact-source selection for a valid drag confined to one mapped BodyRef. Crossing generated text/entries/Diff, or losing exact-source currency while dragging, falls back to captured displayed text and clears any misleading original-range claim.",
+        "Selection remains within the chosen pane; body and generated runs form an explicit display scope. Composer keeps Iridium selection/cursor/undo ownership.",
+        "Pin captured bytes and pointer mapping through streaming. Resize must never reinterpret old screen coordinates as new content; preserve completed snapshot copy or explicitly end an incompatible in-flight drag while retaining bytes.",
+        "Copy feedback identifies original selected bytes versus displayed-text snapshot. Original export/search APIs continue to require their exact current original BodyRef and never silently export generated Diff text as original source.",
+        "Do not add global chrome or automatic transcript bookkeeping rows. Use existing copy feedback surface. No polling, timer, arbitrary limits, provider/MCP activation or terminal-owner changes.",
+        "Actual App PTY drag of normal assistant/user body, collapsed tool/generated header, multiple entries, and Diff rows shows a visible selected range; release followed by copy uses the expected scope and bytes.",
+        "Whole emoji/ZWJ/combining/CJK boundaries, reverse drag, wrapped rows, whitespace/gaps and cross-body bounds remain valid.",
+        "Streaming and resize do not silently retag original references or change captured copied bytes.",
+        "Existing source-mapped help-body copy/search/export and original hard-newline tests remain unchanged and pass; new displayed snapshot tests cannot replace them.",
+        "Composer real pointer drag and clipboard/undo behavior remain kernel-owned; fullwidth input and pane divider interactions remain intact.",
+        "Current stored Frame/capture allocation is bounded by actual visible content; capture on gesture, reuse Arc strings/rows where possible; no per-grapheme body copies or new full-history retained store.",
+        "Copy scope must remain explicit: valid current single-BodyRef original selection retains original hard-newline behavior; the immutable displayed snapshot is a different scope containing the actual visible generated/display text. Crossing entries or losing original currency cannot silently mint or retag an original range. Display selection creates no source/export permission.",
+        "For the current R2 review repairs, review_child_context exclusively owns app/display_selection.rs, app/view_actions/mouse.rs and app/view_actions/commands.rs as whole files. norn_tui owns display_selection_tests.rs and existing R2 PTY/oracle tests and the remaining view_actions/reading seams. Root owns the small shared render.rs revocation/publication hook and F2/keys integration. Root HELP and channels send-policy hunks go through review_child_context while this repair partition is active; no concurrent writers. app/mod.rs remains declaration-only; accepted exact search selection retires the displayed fallback through reading.rs.",
+        "norn_tui owns existing retained_workspace test/support and retained_screen helper changes, accepting R1 and R3 scenario/helper hunks serially. Tests preserve decoded geometry/lifecycle/source/copy assertions; generated or Diff displayed text is never labelled original-file evidence. Frame retention is only the successfully published typed frame; a failed publication revokes authority.",
+        "Keep each production file at or below500 nonblank/noncomment lines, thin module declarations and existing single input/frame/settings owners. No suppressions, ignored tests, unwrap/expect/panic variants, swallowed Results, arbitrary new limits/timeouts or silent prerequisite skips. Root alone runs Cargo/builds; final formatter, strict workspace/all-targets/live-feature Clippy, AST/LOC and actual idle/active/resize regression proof must bind final bytes. Local preview authorization does not waive independent review/exact-commit205 main-landing gates.",
+        "Bind a selection gesture to typed pane identity and selected auxiliary content identity as well as the exact source/publication. Conversation, Diff and Agents are distinct display scopes even when their rectangle or common pane-focus enum is equal. Switching content or source cannot rebind an old gesture or copy authority.",
+        "Original-source and displayed selection must use the same grapheme endpoint semantics for the same pointer gesture. A valid single-body selection cannot copy different graphemes merely because original versus displayed copy is chosen. Verify equality with combining marks, ZWJ emoji, wide glyphs, reverse drag and inclusive/exclusive edge cases while preserving original hard-newline rules.",
+        "Revoke the old published pointer/hit authority synchronously when resize is handled, before the next queued pointer event can be admitted. Waiting until redraw/flush to revoke is insufficient. Preserve captured completed bytes as a labelled snapshot, but never reinterpret old coordinates against new geometry or a different content/source.",
+        "Validate each distinct selected paint row once and retain compact selected row/range intersections. Avoid comparing/cloning the same paint row for every grapheme or allocating full body/cell copies. Preserve exact highlighted/copy ranges, explicit snapshot scope and current-source checks; measure or structurally prove the distinct-row bound in focused tests."
+      ],
+      "checklist": [
+        "C23"
+      ],
+      "stories": [
+        "S10",
+        "S3"
+      ],
+      "design_refs": [
+        "D-NUI004-SELECTION"
+      ]
+    },
+    {
+      "id": "R3",
+      "title": "Persist exact Shift+Enter policy with explicit keyboard/button recovery",
+      "owner": "channels_compatibility; root keys, norn_tui mouse/helper integration",
+      "status": "written_unverified",
+      "depends_on": [],
+      "spec": "ShiftEnter submits only the delivered exact SHIFT+Enter press; ordinary Enter is always one kernel newline in that mode. Alt/Control/Meta/Super mixtures do not accidentally submit. Repeats and releases never submit. Existing composer JSON projection, CAS writer, user/run/local scopes, whole-object precedence, conflict and startup validation continue unchanged.",
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/frontend_preferences.rs",
+          "crates/norn-tui/src/input/keybindings.rs",
+          "crates/norn-tui/src/app/view_actions/commands.rs",
+          "crates/norn-tui/src/app/render/composer.rs",
+          "crates/norn-tui/src/app/view_actions/mouse.rs",
+          "crates/norn-tui/src/frontend_preferences_tests.rs",
+          "crates/norn-tui/src/input/composer_keys_tests.rs",
+          "crates/norn-tui/src/app/render/composer_tests.rs",
+          "crates/norn-tui/src/app/frontend_preferences_tests.rs",
+          "crates/norn-tui/tests/iridium_composer.rs",
+          "crates/norn-tui/tests/support/retained_workspace.rs",
+          "crates/norn-cli/tests/composer_preferences.rs",
+          "crates/norn-cli/tests/support/composer_preferences.rs",
+          "crates/norn-tui/src/app/view_actions/keys.rs"
+        ],
+        "create": [],
+        "delete": []
+      },
+      "acceptance": [
+        "tui.composer.send_key: enter | shift-enter | alt-enter",
+        "/view composer send-key shift-enter; preserve enter and alt-enter",
+        "ComposerSendKey::ShiftEnter in the existing frontend_preferences owner",
+        "ShiftEnter submits only the delivered exact SHIFT+Enter press; ordinary Enter is always one kernel newline in that mode. Alt/Control/Meta/Super mixtures do not accidentally submit. Repeats and releases never submit.",
+        "Keep the existing declared global Enter default unless the owner explicitly changes that ruling. Persist ShiftEnter as the chosen User/Local preference rather than silently migrating every installation.",
+        "One next_policy() cycle: Enter -> ShiftEnter -> AltEnter -> Enter. Clickable button and F10 invoke the same value transition; preserve text/cursor/undo and existing preference save owner.",
+        "Existing composer JSON projection, CAS writer, user/run/local scopes, whole-object precedence, conflict and startup validation continue unchanged.",
+        "F10 cycles the same three policies on a single press only, including when Shift reporting was not detected. No provider/steer/queue admission; draft and undo survive.",
+        "terminal/caps.rs detects Kitty ReportFlags; terminal/setup.rs enables DISAMBIGUATE_ESCAPE_CODES and REPORT_ALTERNATE_KEYS only after detection. map_enter already relies on delivered exact modifiers.",
+        "Show Shift+Enter sends / Enter newline when Kitty disambiguation was detected and enabled.",
+        "Do not equate false Kitty probe with proven impossibility: a terminal mapping may still deliver CSI-u. Show Shift+Enter unconfirmed in the same existing hint/button row; honor actually delivered SHIFT events; plain CR remains newline. Keep editing and clickable policy recovery available.",
+        "No phantom Shift, no automatic Enter-send fallback, no stored preference rewrite, no new protocol probe or timeout.",
+        "Root explicitly settled exact SHIFT only, no Alt fallback or CR inversion. F10 and the existing clickable policy button provide explicit recovery; false Kitty detection does not reject startup.",
+        "Add pub const fn ComposerSendKey::next_policy(self) -> Self and label() spelling enter|shift-enter|alt-enter. Keep the existing declared Enter default; the selected Shift policy is saved via existing user/run/local CAS ownership and whole-tui-layer precedence. Do not silently migrate settings or serialize keyboard detection as a choice.",
+        "Exact SHIFT+Enter press submits only in ShiftEnter mode; bare Enter inserts one kernel newline. Alt/Control/Meta/Super mixtures, release and repeat cannot submit accidentally. No CR inversion, inferred Shift, Alt fallback or automatic send-policy rewrite. A negative Kitty probe means unconfirmed reporting, not proof of impossibility; honor actually delivered exact SHIFT events.",
+        "Existing /view composer send-key enter|shift-enter|alt-enter remains the only policy slash grammar. F10 and the clickable policy button use next_policy, preserve original draft/cursor/undo and provide explicit recovery when Shift reporting is unconfirmed. No added row or layout growth; keep existing clipped button hit areas.",
+        "channels_compatibility owns frontend_preferences.rs plus the schema/composer/test paths below. Root owns keys.rs and norn_tui owns mouse.rs; send them API/hunks without competing edits. During the current R2 review repair, commands.rs is serialized by review_child_context with root HELP and channels send-policy/norn_tui clear-selection hunks. Support retained_workspace.rs belongs to norn_tui, who integrates Shift physical-key/Kitty fixture support.",
+        "Actual iridium_composer App PTYs prove idle/active exact Shift, bare newline, unchanged draft across explicit F10/click recovery, capability confirmed/unconfirmed paths, no premature request and exact admitted original bytes. Actual CLI composer_preferences restart tests prove User/Local persistence and temporary Run, preserving malformed early refusal and exact request census. Unit tests retain closed decode/null/type validation and all modifier/press/repeat/release cases.",
+        "Keep each production file at or below500 nonblank/noncomment lines, thin module declarations and existing single input/frame/settings owners. No suppressions, ignored tests, unwrap/expect/panic variants, swallowed Results, arbitrary new limits/timeouts or silent prerequisite skips. Root alone runs Cargo/builds; final formatter, strict workspace/all-targets/live-feature Clippy, AST/LOC and actual idle/active/resize regression proof must bind final bytes. Local preview authorization does not waive independent review/exact-commit205 main-landing gates."
+      ],
+      "checklist": [
+        "C24"
+      ],
+      "stories": [
+        "S11"
+      ],
+      "design_refs": [
+        "D-NUI004-SEND"
+      ]
+    },
+    {
+      "id": "R4",
+      "title": "Preserve ordered scroll batches and provide a source-bound Latest action",
+      "owner": "norn_models; root/norn_tui/channels_compatibility serial shared integrations",
+      "status": "registered_implementation_pending_next_session",
+      "depends_on": [],
+      "spec": "Preserve every terminal-delivered wheel step through ordered adjacent-compatible motion segments in the existing finite ready batch, advancing from the evolving source/width-bound logical anchor. Add a current-published-frame Latest button in the existing hint row, sharing an explicit selected-source follow/catch-up action with /view follow; no automatic repin, second writer, new timer or pixel-delta claim.",
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/app/view_actions.rs",
+          "crates/norn-tui/src/app/view_actions/mouse.rs",
+          "crates/norn-tui/src/app/view_actions/commands.rs",
+          "crates/norn-tui/src/app/view_actions/reading.rs",
+          "crates/norn-tui/src/app/render.rs",
+          "crates/norn-tui/src/app/render/transcript.rs",
+          "crates/norn-tui/src/app/render/transcript_items.rs",
+          "crates/norn-tui/src/app/render/composer.rs",
+          "crates/norn-tui/src/app/render/composer_tests.rs",
+          "crates/norn-tui/src/app/transcript.rs",
+          "crates/norn-tui/src/app/turn/run.rs",
+          "crates/norn-tui/src/app/viewport_tests.rs",
+          "crates/norn-tui/tests/retained_workspace.rs",
+          "crates/norn-tui/tests/support/retained_workspace.rs"
+        ],
+        "create": [
+          "crates/norn-tui/src/app/render/navigation.rs",
+          "crates/norn-tui/src/app/render/navigation_tests.rs",
+          "crates/norn-tui/src/app/view_actions/latest.rs",
+          "crates/norn-tui/src/app/view_actions/latest_tests.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "Replace the single overwriteable ScrollRequest with a source-bound pending navigation plan. Capture the actual logical/published starting anchor only on the first movement; subsequent motion advances from that evolving logical position, never resets from visible.first.",
+        "Compress adjacent same-direction movements for the same source/pane/geometry with checked count arithmetic. Keep direction changes and pane/source/resize/explicit-anchor changes as semantic barriers. Do not sum an entire burst into one signed net value: at the top, Up then Down must still move down, whereas a zero net sum would incorrectly leave the viewport at the top.",
+        "Consume each ordered segment before final frame construction through a geometry-only cached-row advance that returns a final ViewAnchor. Count/skip cached row groups rather than allocating one LogicalRow/PaintRow per travelled row. Visible paint remains bounded by actual viewport height; body/style maps remain source/width/revision-bound.",
+        "No new timer, delay, frame rate, velocity multiplier, inertia or queue cap. The plan lives only for the existing finite ready frontier and coalesces runs; it is not a persistent input queue. Preserve every reported terminal wheel step. Current one-row-per-report behavior remains the factual baseline until Tom chooses a separate explicit sensitivity setting.",
+        "Non-wheel actions keep original arrival semantics. Explicit follow/anchor replacement clears or resolves earlier pending motion as part of that action, so old scroll work cannot repin the viewport after Latest. Resize keeps logical body/byte anchors, invalidates old row geometry and establishes a new geometry barrier. Source replacement cancels old motion explicitly.",
+        "Wheel targets stay independent: Conversation changes its logical anchor; Diff/Agents changes its own list offset; popup selection remains popup-owned; composer wheel behavior remains existing behavior. A mixed-pane burst never merges two targets.",
+        "Keep unknown history/body boundaries honest. This row does not pretend unloaded bytes are known rows or add eager whole-history/body reads. Existing explicit older/more requests remain available; any future automatic boundary demand requires its own precise registered behavior.",
+        "Display the exact label \u2193 Latest when the conversation viewport is pinned/not following, demonstrably away from tail, or an explicit latest catch-up is pending. Normal following tail has no button. A pin at the visible bottom may still offer resuming follow; this is deliberate.",
+        "Place it right-aligned in the existing final composer hint row, with normal measured terminal-cell widths. Reserve its rectangle before clipping remaining hints. No header/footer/new row, reduced composer width or overlay over transcript text.",
+        "At widths that cannot show the complete label, omit it and its hit region; /view follow remains available. When it fits, show the whole label and prevent overlap with send-key toggle, upcoming target label and other active hit regions. Never leave a clipped or hidden clickable region.",
+        "The button is generated chrome with no original-body copy capability. Its hit region carries current selected source/publication identity and becomes authoritative only after terminal write+flush succeeds. Clear it on failed publication, no-paint, resize or source replacement; queued clicks cannot activate an old target.",
+        "Click invokes the shared typed follow-latest action used by /view follow. It does not send text, change agent execution, steal composer focus, submit/clear the draft or silently replace selected agent. Preserve original selected-body capability for copy/export according to existing follow behavior.",
+        "Integrate with NUI004 drag selection through one owner of published hit regions; button hits take precedence only inside their exact non-overlapping rectangle.",
+        "Extract one follow_latest action: clear earlier pending navigation, call existing Viewport::follow_tail, mark the frame dirty, and request a source-bound catch-up outside paint. /view follow and mouse use the same path.",
+        "Reuse configured history_demand and newer_history from the highest observed page cursor. One active history job at a time; if an older read is pending, retain one explicit latest request until completion rather than swallowing the click. Capture the first actual read snapshot\u2019s accepted event frontier and catch up to it using bounded pages, with each completion yielding to the event loop. No eager whole-history clone or invented page count.",
+        "When no prior history cursor exists, reuse the existing bounded initial tail demand. Preserve explicit unloaded-body continuation notices; Latest means the latest admitted conversation item, not secretly downloading every byte of a large body.",
+        "An empty After result for a nonempty store must correctly prove the requested frontier has been reached; do not rely only on accept_history\u2019s current empty-store arm. Keep sparse/unavailable coverage explicit and never label merely loaded old history as current.",
+        "If the operator scrolls or changes target while catch-up is pending, accepted records may populate their valid source projection, but completion must not restore follow, steal focus, clear a newer draft or paint another source. User navigation cancels only the follow intent; normal canonical observation remains valid.",
+        "Attempt dirty frame publication on history/body/input completion in the active turn loop as well as the idle loop; do not make new navigation wait for the120fps status tick. Keep the existing status cadence unchanged in this row. A later idle-timer redesign is not needed to fix the lost steps.",
+        "Bind the action to the selected view/read handle when target switching is integrated. Never hardcode the root store for a button displayed over a child view.",
+        "First reproduce the old failure using actual App input batching: N same-direction SGR wheel reports in one ready batch must move exactly N available rows, matching individually published reports. Run idle and during MockProvider streaming.",
+        "After the semantic repair, compare fixed identical bursts and isolated steps on the same terminal size/source. Capture input receipt to successful frame publication latency, total bytes/write/flush counts, elapsed/CPU and final top anchor or numbered visible row. Report median/tail measurements without inventing a performance threshold or claiming pixel fidelity.",
+        "Separate warm loaded/cache-hit scrolling, first-entry body demand, reverse movement after existing cache eviction, large tool/Markdown body and width change. Preserve actual body-map Arc identity on warm same-width steps in unit tests; show no parser/layout rebuild or body/store I/O was requested by a cache hit.",
+        "Keep retained changed-cell output and one writer. Full frame preparation/changed-cell scanning and cold body reparse are candidates to measure, not established dominant costs. Do not add terminal scroll-region commands, a second writer, arbitrary overscan memory or an animation subsystem without fresh evidence.",
+        "Native trackpad feel still needs a human terminal check because SGR PTY reports model terminal-delivered wheel steps, not the OS\u2019s fractional gesture data. Preserve current API limitations honestly.",
+        "Root alone integrates app/render.rs and app/turn/run.rs; norn_tui alone integrates view_actions.rs, mouse.rs, reading.rs and shared retained_workspace test/support. channels_compatibility alone integrates commands.rs and composer.rs/composer_tests.rs. norn_models owns the remaining navigation/latest/transcript/viewport-test paths. Shared integration is serialized by the named whole-file owner; send API/hunks instead of writing competing changes.",
+        "Before either app/render.rs or app/turn/run.rs would exceed500 production lines, stop that edit and propose the exact extraction file and responsibility to root/docs owner; register the named create/module-declaration wall before creation. No unspecified extraction or source path is authorized. Existing new navigation/latest modules may own their registered pure responsibilities; they cannot become unrelated catch-all modules.",
+        "Keep each production file at or below500 nonblank/noncomment lines, thin module declarations and existing single input/frame/settings owners. No suppressions, ignored tests, unwrap/expect/panic variants, swallowed Results, arbitrary new limits/timeouts or silent prerequisite skips. Root alone runs Cargo/builds; final formatter, strict workspace/all-targets/live-feature Clippy, AST/LOC and actual idle/active/resize regression proof must bind final bytes. Local preview authorization does not waive independent review/exact-commit205 main-landing gates."
+      ],
+      "checklist": [
+        "C25"
+      ],
+      "stories": [
+        "S12"
+      ],
+      "design_refs": [
+        "D-NUI004-SCROLL"
+      ],
+      "api_contracts": [
+        "PendingNavigation::push(source, pane, geometry, direction, rows) -> Result; compress adjacent compatible runs, preserve ordered barriers; take consumes one finite batch.",
+        "render::navigation::advance_cached(...) -> Result<NavigationOutcome>; returns final source-bound anchor or explicit loaded-boundary/stale outcome without materializing traversed paint rows.",
+        "view_actions::latest::follow_latest(&mut AppState) -> Result<(),TuiError>; shared by command and mouse, records explicit source-bound demand and clears pending motion.",
+        "LatestHit { area, source, publication_owner }; prepared alongside the frame, committed only on successful publication; no public caller-minted identity.",
+        "Transcript::load_newer_for_latest(...) uses the existing supervised HistoryRead job surface and configured count; only the current follow request owns the captured catch-up frontier."
+      ],
+      "focused_tests": [
+        "Actual pending plan and cached advance:1,12 and large finite wheel bursts; same output as per-event execution; mixed direction at both boundaries; alternating panes; checked count overflow.",
+        "Wheel then /view follow in one finite batch; follow then wheel; resize interleaving; body revision replacement; source change. No stale motion or original-byte rebind.",
+        "Button absent while following, present while pinned, exact cell bounds in wide/narrow panes, no overlapping send button, hide on insufficient width, source change or failed write/flush.",
+        "Click Latest during streaming and during old-history read; one source-bound current-frontier demand; empty current-tail page; append during catch-up; late completion after manual scroll or target switch.",
+        "Actual App PTY numbered multi-page transcript: rapid SGR up/down, streaming output while pinned, click visible Latest, observe newest marker, then narrow/wide resize and verify composer draft/focus and terminal restoration.",
+        "Actual wide-grapheme/combining Markdown and Diff/Agents scrolling retain source maps; controls remain escaped; chrome never yields body copy bytes."
+      ],
+      "verification_plan": {
+        "unit": "Execute registered actual navigation/latest/composer/viewport tests after root freezes source. Tests may inspect existing private caches in their owned module; no production instrumentation or cfg(test) zombie code.",
+        "pty": "Extend actual retained_workspace MockProvider fixtures, send explicit SGR reports and independently emulate final screen. Exercise both idle and real run-loop paths. Do not infer success from absence of error or passive tree presence.",
+        "performance": "External /private/tmp/nui-004-proof/scroll-latest/measure_scroll.py may drive the compiled immutable actual-App PTY fixture and record raw captures/geometry/bytes/timing. No Cargo by a side agent; root builds and pins executable/source hashes.",
+        "policy": "Exact wall, fmt, strict Clippy, AST/LOC and meaningful runtime/PTY checks; final exact-commit205 declared battery remains root-owned.",
+        "not_run": "No reproduction executable, benchmark, Cargo, provider request or PTY was run for this proposal. The delta-loss finding is source-proven; latency bottleneck claims await measurements."
+      }
+    },
+    {
+      "id": "R5",
+      "title": "Version and verify the R1-R3 local preview checkpoint",
+      "owner": "root only",
+      "status": "registered_candidate_uninstalled",
+      "depends_on": [
+        "R1",
+        "R2",
+        "R3"
+      ],
+      "spec": "Reserve 0.1.0-preview.6 as the candidate for R1-R3 pane controls, reviewed drag selection and Shift+Enter policy. Root updates only the registered manifests and release note, then verifies and installs only after actual candidate checks. R4 scrolling/latest remains pending and is not part of this checkpoint claim.",
+      "files": {
+        "modify": [
+          "Cargo.toml",
+          "Cargo.lock",
+          "docs/release-notes/UNRELEASED.md"
+        ],
+        "create": [],
+        "delete": []
+      },
+      "acceptance": [
+        "Root alone updates workspace.package.version in Cargo.toml and only the four Norn workspace package version records in Cargo.lock to0.1.0-preview.6. No third-party dependency version, source, checksum, feature or lock resolution changes are authorized by this row.",
+        "Update docs/release-notes/UNRELEASED.md to distinguish preview.6 candidate R1-R3 from the actually installed preview.5 source05109e6f6294c9af6f58657722dc7e968857b721. Use its recorded install/hash and local-check evidence when correcting stale preview.5 wording. Preserve historical failed/interrupted attempts with their own scope; baseline6378 tests and prior installation do not verify the new candidate.",
+        "Keep candidate explicitly uninstalled/unverified until actual final checks and installation receipt exist. R4 scroll/latest and selected-agent view/message remain pending; do not imply those ship with R1-R3. No tag, public release, main merge, exact205 or Fable pass follows from a prerelease version or local preview.",
+        "Root runs final fmt, strict workspace/all-target/live-feature Clippy, AST and500 production-line checks, relevant unit and actual idle/active/resize/restart tests on the composed final bytes. Preserve all required source/selection/grapheme/keyboard/draft and publication assertions and record actual failures; no bypasses or borrowed verdicts.",
+        "For an authorized successful local update, verify build source identity, installed --version and binary SHA, preserve and verify rollback binary/receipt, then invoke macOS say with exact text Norn updated and record its exit. Record the actual source/binary/check hashes and install time only after completion. Local preview authority remains separate from main-landing exact-commit205 and Fable requirements.",
+        "Keep each production file at or below500 nonblank/noncomment lines, thin module declarations and existing single input/frame/settings owners. No suppressions, ignored tests, unwrap/expect/panic variants, swallowed Results, arbitrary new limits/timeouts or silent prerequisite skips. Root alone runs Cargo/builds; final formatter, strict workspace/all-targets/live-feature Clippy, AST/LOC and actual idle/active/resize regression proof must bind final bytes. Local preview authorization does not waive independent review/exact-commit205 main-landing gates."
+      ],
+      "checklist": [
+        "C26"
+      ],
+      "stories": [
+        "S13"
+      ],
+      "design_refs": [
+        "D-NUI004-PREVIEW"
+      ]
+    }
+  ],
+  "documentation_wall": [
+    "docs/design/norn-retained-tui/design.json",
+    "docs/design/norn-retained-tui/DESIGN.md",
+    "docs/design/norn-retained-tui/checklist.json",
+    "docs/design/norn-retained-tui/CHECKLIST.md",
+    "docs/design/norn-retained-tui/stories.json",
+    "docs/design/norn-retained-tui/USER-STORIES.md",
+    "docs/design/norn-retained-tui/briefs/NUI-004.json",
+    "docs/design/norn-retained-tui/briefs/NUI-004.md"
+  ],
+  "coordination": {
+    "commands_rs": "Current R2 repair whole-file owner is review_child_context; root HELP, existing channels send-policy and norn_tui selection-clear work are integrated serially by this owner.",
+    "render_rs": "Root serializes shared app/render.rs frame-publication/selection integration with norn_tui; frame.rs and keys.rs exclusively root.",
+    "mouse_and_reexports": "Current R2 repair: review_child_context owns mouse.rs, norn_tui retains view_actions.rs and test integration; preserve existing R3 next_policy button behavior.",
+    "retained_workspace": "norn_tui owns retained_workspace.rs, support/retained_workspace.rs and retained_screen.rs changes, accepting root shortcut and channels Shift/Kitty helper hunks.",
+    "composer_preferences": "channels_compatibility owns composer.rs/frontend_preferences schema and Shift tests; preserve existing composer.",
+    "scroll_integration": "Root alone integrates app/render.rs and app/turn/run.rs; norn_tui alone integrates view_actions.rs, mouse.rs, reading.rs and shared retained_workspace test/support. channels_compatibility alone integrates commands.rs and composer.rs/composer_tests.rs. norn_models owns the remaining navigation/latest/transcript/viewport-test paths. Shared integration is serialized by the named whole-file owner; send API/hunks instead of writing competing changes.",
+    "production_size_extraction": "Before either app/render.rs or app/turn/run.rs would exceed500 production lines, stop that edit and propose the exact extraction file and responsibility to root/docs owner; register the named create/module-declaration wall before creation. No unspecified extraction or source path is authorized. Existing new navigation/latest modules may own their registered pure responsibilities; they cannot become unrelated catch-all modules.",
+    "R2_review_repair_partition": "For the current R2 review repairs, review_child_context exclusively owns app/display_selection.rs, app/view_actions/mouse.rs and app/view_actions/commands.rs as whole files. norn_tui owns display_selection_tests.rs and existing R2 PTY/oracle tests and the remaining view_actions/reading seams. Root owns the small shared render.rs revocation/publication hook and F2/keys integration. Root HELP and channels send-policy hunks go through review_child_context while this repair partition is active; no concurrent writers."
+  },
+  "source_proposals": [
+    {
+      "path": "/private/tmp/nui-004-proof/drag-selection-proposal.json",
+      "sha256": "e0d6b0320bcc8dc29c5687566af3ba8f4b064e11e92441842f92093ad537eef2",
+      "scope": "Root-approved contract and exact proposed wall; no new execution proof."
+    },
+    {
+      "path": "/private/tmp/ncp-001-proof/shift-enter-plan/proposal.json",
+      "sha256": "2bbfe8e1e51cd3fa185c432f574dfbfe4496b730d6d7ca7fb3b2c02cbcda6cef",
+      "scope": "Root-approved contract and exact proposed wall; no new execution proof."
+    },
+    {
+      "path": "/private/tmp/ncp-001-proof/scroll-latest-design/PROPOSAL.json",
+      "sha256": "28db063432436903fc1d27dd2517e3f1a3b811417566f08f26485c547f3275c2",
+      "scope": "Root-approved R4 exact14 modify/4 create wall and source-grounded contract; no new execution or measurement proof."
+    }
+  ],
+  "boundaries": [
+    "Keep each production file at or below500 nonblank/noncomment lines, thin module declarations and existing single input/frame/settings owners. No suppressions, ignored tests, unwrap/expect/panic variants, swallowed Results, arbitrary new limits/timeouts or silent prerequisite skips. Root alone runs Cargo/builds; final formatter, strict workspace/all-targets/live-feature Clippy, AST/LOC and actual idle/active/resize regression proof must bind final bytes. Local preview authorization does not waive independent review/exact-commit205 main-landing gates.",
+    "Preserve original visual style, no new global header or extra composer rows, single terminal input/frame owner and typed retained projection. No provider/MCP/service activation through controls.",
+    "The existing Agents pane is a listing; selected main/fork/subagent conversation and messaging remain NUI-003 R4 until actually implemented. Existing auxiliary-content persistence remains its separately tracked requirement.",
+    "R4 scrolling/latest control is now registered and requires its own implementation/runtime proof. Tool forms with raw toggle, improved Bash display and Markdown fenced-code syntax remain durable planned programme work, not shipped by this registration.",
+    "Do not change the frozen old integration worktree or transfer its validation onto this new candidate. No additional files without a named amendment before edit."
+  ],
+  "verification": [
+    "JSON authority, exact source preimages, rendered Markdown and coverage before authors begin.",
+    "Root final fmt, strict Clippy, AST/500-production-line checks and actual idle/active/resize tests on final source.",
+    "No test, build, install, review or venue success is claimed by registration."
+  ],
+  "r4_registered_at_melbourne": "2026-09-06T17:00:18.425654+10:00",
+  "implementation_checkpoint": {
+    "recorded_at_melbourne": "2026-09-06T17:11:03.000166+10:00",
+    "authority": "Root reports R1-R3 authored but unverified; R4 source implementation remains pending.",
+    "installed_baseline_commit": "05109e6f6294c9af6f58657722dc7e968857b721",
+    "installed_baseline_version": "0.1.0-preview.5",
+    "postinstall_docs_commit": "2aa2d9c0f01216716a8b298841af3ee53308b8a7",
+    "interaction_test_build_install_claim": false,
+    "source_authority": "All registered files/specifications/acceptance and exclusive owners remain unchanged.",
+    "interaction_review_state": "R2 reviewer findings recorded as acceptance; fixes and final candidate verification pending."
+  },
+  "preview_candidate": {
+    "version": "0.1.0-preview.6",
+    "scope": [
+      "R1",
+      "R2",
+      "R3"
+    ],
+    "excluded_pending": [
+      "R4"
+    ],
+    "installed": false,
+    "new_verification_claim": false,
+    "registered_at_melbourne": "2026-09-06T17:15:28.419735+10:00"
+  }
+}

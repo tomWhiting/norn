@@ -274,6 +274,7 @@ fn select_original(
     .map_err(interaction)?;
     state.screen.selection = Some(selection);
     state.screen.selection_item = Some(id);
+    state.screen.display_selection = None;
     state.screen.feedback =
         Some("Original text selected; F4 copies, F5 prepares export".to_owned());
     Ok(())
@@ -340,20 +341,34 @@ pub(super) fn flush_copy(
     if !std::mem::take(&mut state.screen.request_copy) {
         return Ok(());
     }
-    let prepared =
-        selected_text(state).map(|text| prepare_copy(state.transcript.config.clipboard, text));
+    let selected = match selected_text(state) {
+        Ok(text) => Ok((text.to_owned(), "original selected bytes")),
+        Err(error) => match state.screen.display_selection.as_ref() {
+            Some(selection) => selection
+                .text(state.transcript.projection.source())
+                .map(|text| (text, "displayed-text snapshot bytes"))
+                .map_err(interaction),
+            None => Err(error),
+        },
+    };
+    let prepared = selected.map(|(text, scope)| {
+        (
+            prepare_copy(state.transcript.config.clipboard, &text),
+            scope,
+        )
+    });
     let message = match prepared {
         Err(error) => format!("Copy unavailable: {error}"),
-        Ok(CopyPreparation::Unavailable(reason)) => format!(
+        Ok((CopyPreparation::Unavailable(reason), _)) => format!(
             "Clipboard unavailable ({reason:?}); use /view clipboard osc52 to permit terminal copy, or /view export <absolute-path>"
         ),
-        Ok(CopyPreparation::Ready(copy)) => match guard
+        Ok((CopyPreparation::Ready(copy), scope)) => match guard
             .terminal_mut()
             .write_all(copy.as_bytes())
             .and_then(|()| guard.terminal_mut().flush())
         {
             Ok(()) => format!(
-                "Sent {} selected bytes ({} after control escaping) to the terminal clipboard transport; clipboard acceptance is unconfirmed",
+                "Sent {} selected bytes (scope: {scope}; {} after control escaping) to the terminal clipboard transport; clipboard acceptance is unconfirmed",
                 copy.original_bytes(),
                 copy.sanitized_bytes()
             ),

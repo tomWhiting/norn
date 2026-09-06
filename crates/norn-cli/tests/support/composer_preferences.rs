@@ -12,6 +12,8 @@ use crate::retained_screen::Screen;
 pub enum SendKey {
     /// Enter submits; a reported Alt+Enter inserts a newline.
     Enter,
+    /// A reported Shift+Enter submits; Enter inserts a newline.
+    ShiftEnter,
     /// A reported Alt+Enter submits; Enter inserts a newline.
     AltEnter,
 }
@@ -20,6 +22,7 @@ impl SendKey {
     fn submit(self) -> &'static [u8] {
         match self {
             Self::Enter => b"\r",
+            Self::ShiftEnter => b"\x1b[13;2u",
             Self::AltEnter => b"\x1b[13;3u",
         }
     }
@@ -27,7 +30,7 @@ impl SendKey {
     fn newline(self) -> &'static [u8] {
         match self {
             Self::Enter => b"\x1b[13;3u",
-            Self::AltEnter => b"\r",
+            Self::ShiftEnter | Self::AltEnter => b"\r",
         }
     }
 }

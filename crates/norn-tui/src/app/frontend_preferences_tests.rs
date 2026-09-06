@@ -70,6 +70,7 @@ fn composer_commands_change_only_the_send_policy_and_reject_unknown_keys() -> Te
         .queue_followup("accepted followup".to_owned());
     let source = state.transcript.projection.source().clone();
     for (command, expected) in [
+        ("composer send-key shift-enter", ComposerSendKey::ShiftEnter),
         ("composer send-key alt-enter", ComposerSendKey::AltEnter),
         ("composer send-key enter", ComposerSendKey::Enter),
     ] {
@@ -115,7 +116,7 @@ async fn composer_save_preserves_unowned_data_and_reinstalls_the_published_polic
     )?);
     let mut active = state();
     install(&mut active, launch);
-    super::super::view_actions::command("composer send-key alt-enter", &mut active)?;
+    super::super::view_actions::command("composer send-key shift-enter", &mut active)?;
     assert!(active.preferences.pending.is_some());
     drain(&mut active).await?;
     let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
@@ -124,12 +125,12 @@ async fn composer_save_preserves_unowned_data_and_reinstalls_the_published_polic
         saved["tui"]["extension_data"],
         original["tui"]["extension_data"]
     );
-    assert_eq!(saved["tui"]["composer"], json!({"send_key":"alt-enter"}));
+    assert_eq!(saved["tui"]["composer"], json!({"send_key":"shift-enter"}));
     let mut restored = state();
     let mut launch = FrontendPreferencesLaunch::run_only();
     launch.initial = FrontendPreferences::decode(saved.get("tui"))?;
     install(&mut restored, launch);
-    assert_eq!(restored.composer_send_key, ComposerSendKey::AltEnter);
+    assert_eq!(restored.composer_send_key, ComposerSendKey::ShiftEnter);
     assert_eq!(capture(&restored), capture(&active));
     assert!(restored.preferences.pending.is_none());
     assert_eq!(active.transcript.projection.items().len(), 0);
@@ -172,7 +173,7 @@ async fn one_pending_save_is_observed_before_latest_edits_are_published() -> Tes
     state
         .in_flight_input
         .set_mode(crate::app::active_input::InFlightSubmitMode::Queue);
-    state.composer_send_key = ComposerSendKey::AltEnter;
+    state.composer_send_key = ComposerSendKey::ShiftEnter;
     edited(&mut state)?;
     assert_eq!(
         state
@@ -204,7 +205,7 @@ async fn one_pending_save_is_observed_before_latest_edits_are_published() -> Tes
     )?)?;
     assert_eq!(saved["tui"]["view"]["changes_open"], true);
     assert_eq!(saved["tui"]["input"]["submit_mode"], "queue");
-    assert_eq!(saved["tui"]["composer"]["send_key"], "alt-enter");
+    assert_eq!(saved["tui"]["composer"]["send_key"], "shift-enter");
     assert_eq!(state.input_editor.text(), "typing stays available");
     assert!(!state.preferences.dirty);
     assert!(state.preferences.pending.is_none());

@@ -113,7 +113,12 @@ impl Frame {
         } = self.layout
         {
             for row in 0..divider.height {
-                output.put(divider.column, divider.row + row, 1, b"\x1b[0m\xe2\x94\x82")?;
+                output.put(
+                    divider.column,
+                    divider.row + row,
+                    1,
+                    b"\x1b[0m\x1b[2m\xe2\x94\x82",
+                )?;
             }
         }
         for row in &self.rows {

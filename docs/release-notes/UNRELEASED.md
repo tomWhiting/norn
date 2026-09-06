@@ -1,6 +1,22 @@
 # Unreleased — local preview candidates and recorded checkpoints
 
-## 0.1.0-preview.5 — Iridium composer (assembled candidate, not installed)
+## 0.1.0-preview.6 — interaction candidate (not installed)
+
+6 September 2026, Melbourne. This candidate preserves the retained full-screen renderer and full-width Iridium composer. It adds a dim, single-cell pane divider; F7 to toggle the pane, F8 for Diff and F9 for Agents; displayed-text drag selection across conversation entries and generated tool/Diff rows; and a saved Shift+Enter send policy. F10 and the existing clickable send-key hint cycle Enter, Shift+Enter and Alt+Enter. `/view composer send-key enter|shift-enter|alt-enter` uses the same settings owner. A terminal that has not confirmed modifier reporting is labelled unconfirmed; bare Enter remains a newline in Shift+Enter mode.
+
+Selection is bound to the displayed source and pane. Original-body copy remains available when the selection maps exactly; generated/cross-entry text is explicitly copied as displayed text. Resize and pane changes revoke active pointer mapping without changing captured copy bytes. Row comparisons and adjacent highlight ranges are coalesced to avoid repeating full-body comparisons per selected character.
+
+These changes are undergoing compilation, policy and actual-App tests. No preview.6 test pass, installation, public release or main landing is claimed here. Smooth wheel batching and the same-row Latest button remain NUI-004 R4; they are not part of this candidate. Agent target viewing/messaging and remembered auxiliary content remain separate open requirements. See [NUI-004](../design/norn-retained-tui/briefs/NUI-004.md).
+
+## 0.1.0-preview.5 — installed local checkpoint
+
+Installed 6 September 2026 at 16:49:05 Melbourne from `05109e6f6294c9af6f58657722dc7e968857b721`; executable SHA256 `d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933`. This checkpoint includes the Iridium composer, restored agent status/listing, `/pane diff|agents`, compact tool name plus description, semantic spacing and role/lifecycle styling. The file pane is read-only; the Agents pane is a listing, not target viewing or messaging.
+
+Final unchanged-source local checks passed: 6,378 workspace/all-target tests across 39 suites (no failures or ignores), eight doctests, strict workspace/all-target/live-smoke-feature Clippy, formatting and release build. The executable was installed atomically with rollback retained and “Norn updated” spoken. These are local-preview results; exact-commit venue 205 and independent Fable review remain open for main landing. The optimized composer benchmark was paused and has no passing latency result. Iridium remains pinned to private revision `15673cba9222489e3c3315bb1526f60a6224a187` with default features disabled.
+
+### Historical preview.5 assembly record — superseded by the installed checkpoint above
+
+The following records the earlier uninstalled assembly and its then-pending checks.
 
 6 September 2026, Melbourne. The source now assembles the plain Iridium composer inside the existing retained fullscreen interface. It keeps the full-width input, blue user-message styling, dim status rules, compact tool rows and read-only Changes pane. Editable file panels, Work/Session management and hosted attach are outside this checkpoint.
 

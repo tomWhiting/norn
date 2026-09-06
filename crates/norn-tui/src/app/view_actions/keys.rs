@@ -38,6 +38,23 @@ fn apply_key(key: KeyEvent, state: &mut AppState) -> Result<bool, TuiError> {
     }
     let focus = state.screen.focus.visible(available).map_err(interaction)?;
     let handled = match key.code {
+        KeyCode::Function(7) if key.modifiers.is_empty() => {
+            return super::command_named("pane", "", state).map(|_| true);
+        }
+        KeyCode::Function(8) if key.modifiers.is_empty() => {
+            return super::command_named("pane", "diff", state).map(|_| true);
+        }
+        KeyCode::Function(9) if key.modifiers.is_empty() => {
+            return super::command_named("pane", "agents", state).map(|_| true);
+        }
+        KeyCode::Function(10) if key.modifiers.is_empty() => {
+            state.composer_send_key = state.composer_send_key.next_policy();
+            state.screen.feedback = Some(format!(
+                "Composer send key: {}",
+                state.composer_send_key.label()
+            ));
+            true
+        }
         KeyCode::Function(3) => {
             prepare_command(state, "/view search ")?;
             true
@@ -68,6 +85,7 @@ fn apply_key(key: KeyEvent, state: &mut AppState) -> Result<bool, TuiError> {
             true
         }
         KeyCode::Function(2) => {
+            crate::app::display_selection::revoke_pointer_mapping(&mut state.screen);
             state.screen.changes_open = true;
             state.screen.upper = match state.screen.upper {
                 UpperPane::Conversation => UpperPane::Changes,

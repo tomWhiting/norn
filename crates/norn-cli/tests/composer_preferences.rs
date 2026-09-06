@@ -96,14 +96,41 @@ fn user_restart() -> TestResult {
         observe(
             app,
             SendKey::Enter,
-            "/view composer send-key alt-enter",
-            "Composer send key: alt-enter",
+            "/view composer send-key shift-enter",
+            "Composer send key: shift-enter",
         )?;
         observe(
             app,
-            SendKey::AltEnter,
+            SendKey::ShiftEnter,
             "/view preferences status",
             "Preference scope: User",
+        )?;
+        Ok(())
+    })?;
+    let shift_saved = document(&environment.user)?;
+    assert_eq!(
+        shift_saved["tui"]["composer"],
+        json!({"send_key":"shift-enter"})
+    );
+    assert_unowned(&shift_saved, &original);
+    environment.session(0, true, |app| {
+        observe(
+            app,
+            SendKey::ShiftEnter,
+            "/view status",
+            "Composer send key: shift-enter",
+        )?;
+        submit_multiline(
+            app,
+            SendKey::ShiftEnter,
+            "user ShiftEnter first γ",
+            "second 界",
+        )?;
+        observe(
+            app,
+            SendKey::ShiftEnter,
+            "/view composer send-key alt-enter",
+            "Composer send key: alt-enter",
         )?;
         Ok(())
     })?;
@@ -145,10 +172,11 @@ fn user_restart() -> TestResult {
         &environment.requests()?,
         &[
             "user Enter first α\nsecond 🙂",
+            "user ShiftEnter first γ\nsecond 界",
             "user AltEnter first β\nsecond 👩‍💻",
         ],
     )?;
-    environment.assert_mcp_launches(3)?;
+    environment.assert_mcp_launches(4)?;
     environment.finish()
 }
 
@@ -166,16 +194,21 @@ fn temporary_run() -> TestResult {
         observe(
             app,
             SendKey::AltEnter,
-            "/view composer send-key enter",
-            "Composer send key: enter",
+            "/view composer send-key shift-enter",
+            "Composer send key: shift-enter",
         )?;
         observe(
             app,
-            SendKey::Enter,
+            SendKey::ShiftEnter,
             "/view status",
-            "Composer send key: enter",
+            "Composer send key: shift-enter",
         )?;
-        submit_multiline(app, SendKey::Enter, "temporary first", "temporary second")?;
+        submit_multiline(
+            app,
+            SendKey::ShiftEnter,
+            "temporary first",
+            "temporary second",
+        )?;
         Ok(())
     })?;
     assert_eq!(std::fs::read(&environment.user)?, bytes);
@@ -235,13 +268,13 @@ fn local_shadowing() -> TestResult {
         observe(
             app,
             SendKey::AltEnter,
-            "/view composer send-key enter",
-            "Composer send key: enter",
+            "/view composer send-key shift-enter",
+            "Composer send key: shift-enter",
         )?;
         Ok(())
     })?;
     let saved = document(&local)?;
-    assert_eq!(saved["tui"]["composer"], json!({"send_key":"enter"}));
+    assert_eq!(saved["tui"]["composer"], json!({"send_key":"shift-enter"}));
     assert_eq!(
         saved["tui"]["extension_data"],
         original["tui"]["extension_data"]
@@ -251,11 +284,16 @@ fn local_shadowing() -> TestResult {
     environment.session(0, true, |app| {
         observe(
             app,
-            SendKey::Enter,
+            SendKey::ShiftEnter,
             "/view status",
-            "Composer send key: enter",
+            "Composer send key: shift-enter",
         )?;
-        submit_multiline(app, SendKey::Enter, "local root first", "local root second")?;
+        submit_multiline(
+            app,
+            SendKey::ShiftEnter,
+            "local root first",
+            "local root second",
+        )?;
         Ok(())
     })?;
     environment.session(1, true, |app| {

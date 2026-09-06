@@ -133,7 +133,7 @@
       "id": "D-R1-INDEX",
       "title": "Incremental single-owner view index and stable correlation",
       "status": "active",
-      "body": "R1 index.rs owns every ViewItem exactly once and maintains ordered committed keys, live order, direct ItemId lookup and per-call correlation indexes. Replace full-view sort/join per committed record and orphan-result × full-history rescans with incremental indexed operations. The new unreleased items() API becomes ordered iterator/range/lookup access; do not duplicate ViewItems or body storage. Existing typed body/cursor capability contracts remain unchanged.\n\n- Each committed insertion/page application uses incremental ordering and direct identity/per-call lookup; it must not sort/join the entire view or rescan full history for each orphan. Meaningful operation-count fixtures distinguish local updates from total-history work; no invented timing SLA.\n- A result whose parent invocation is outside the loaded page stays explicitly pending/unresolved until the correct invocation is available. Reuse of a call_id in a different invocation/response scope must not silently attach that result to the wrong call.\n- ToolItem → ToolCall → Committed alias chains preserve the original early streaming anchor through final commit. Alias resolution is transitive, cycle-safe and source-scoped; index updates do not drop prior aliases.\n- The ordered index stores each ViewItem once, exposes ordered iterator/range/lookup access and shares existing body references; no second body store or duplicated full retained item collection.\n\n- Expose a borrowed indexed traversal beginning at an exact current ItemId in either direction, with declared inclusion semantics, using the existing ID-to-order lookup and BTreeMap range. Pinned viewport painting must not linearly seek through all earlier/later compact items. Missing or foreign identity is explicit, never an empty success or unrelated fallback; proven alias resolution remains separately explicit. No body loading/cloning, extra row owner or provider work. Regression fixtures cover committed/live boundaries, inclusivity, missing/foreign IDs and work bounded by requested rows rather than retained history length.",
+      "body": "R1 index.rs owns every ViewItem exactly once and maintains ordered committed keys, live order, direct ItemId lookup and per-call correlation indexes. Replace full-view sort/join per committed record and orphan-result \u00d7 full-history rescans with incremental indexed operations. The new unreleased items() API becomes ordered iterator/range/lookup access; do not duplicate ViewItems or body storage. Existing typed body/cursor capability contracts remain unchanged.\n\n- Each committed insertion/page application uses incremental ordering and direct identity/per-call lookup; it must not sort/join the entire view or rescan full history for each orphan. Meaningful operation-count fixtures distinguish local updates from total-history work; no invented timing SLA.\n- A result whose parent invocation is outside the loaded page stays explicitly pending/unresolved until the correct invocation is available. Reuse of a call_id in a different invocation/response scope must not silently attach that result to the wrong call.\n- ToolItem \u2192 ToolCall \u2192 Committed alias chains preserve the original early streaming anchor through final commit. Alias resolution is transitive, cycle-safe and source-scoped; index updates do not drop prior aliases.\n- The ordered index stores each ViewItem once, exposes ordered iterator/range/lookup access and shares existing body references; no second body store or duplicated full retained item collection.\n\n- Expose a borrowed indexed traversal beginning at an exact current ItemId in either direction, with declared inclusion semantics, using the existing ID-to-order lookup and BTreeMap range. Pinned viewport painting must not linearly seek through all earlier/later compact items. Missing or foreign identity is explicit, never an empty success or unrelated fallback; proven alias resolution remains separately explicit. No body loading/cloning, extra row owner or provider work. Regression fixtures cover committed/live boundaries, inclusivity, missing/foreign IDs and work bounded by requested rows rather than retained history length.",
       "rationale": "review_tui identified work growing quadratically as committed history is applied and correctness gaps in page-orphan correlation and early-anchor aliases. Preserve semantic evidence while removing per-record full-view work."
     },
     {
@@ -214,7 +214,7 @@
     {
       "id": "D-PUBLICATION-CHRONOLOGY",
       "title": "Observed event-gap chronology and exact retained completion placement",
-      "body": "Chronology repair: channels_compatibility owns exactly session_view/index.rs, projection.rs, live.rs, publication.rs, projection_tests.rs and publication_tests.rs under the existing core responsibility. Core source remains frozen until root releases the running core library test; documentation registration alone is not source thaw. No new file, store/provider API or tool authority is authorized.\n\nIndex live/local presentation by the observed source-bound event gap, not wall-clock time or an invented sequence. Advance a monotonic cursor-ordinal boundary for every validated HistoryRecord, including zero-display metadata. Loading older history never rewinds that boundary or moves new local output ahead of already observed canonical events.\n\nAssociate the exact Done-created ItemId with its completed AttemptKey. When the exact accepted HistoryRecord reconciles, relocate that attempt’s retained Done within the matching completion bucket and update every existing index membership consistently. Preserve all ItemIds, source/body references and actual order evidence. A ticket with no provisional fragment still places its exact retained completion by the real record cursor. Receipt-before-history and history-before-receipt reconciliation are idempotent.\n\nBound completion relocation work to the matching attempt bucket with index updates O(bucket_size * log(indexed_rows)); no global completion scan, transcript clone, new identity map without ownership, arbitrary cap, polling or provider-ID/text matching. Preserve existing bounded tool lookup and indexed pinned traversal behavior.\n\nRegression proof includes an earlier local error/final completion followed by a later canonical human prompt and assistant answer, both ordinary and pinned Later traversal; later older/tail pages; zero-row metadata boundary advance; Done receipt/history in both orders and with skipped fragments; stable exact IDs/body refs; and operation-count bounds for a matching completion bucket. Reading remains pinned until the operator explicitly returns to live. The TUI final summary continues after drain; do not add speculative completion IDs or weaken current source fences."
+      "body": "Chronology repair: channels_compatibility owns exactly session_view/index.rs, projection.rs, live.rs, publication.rs, projection_tests.rs and publication_tests.rs under the existing core responsibility. Core source remains frozen until root releases the running core library test; documentation registration alone is not source thaw. No new file, store/provider API or tool authority is authorized.\n\nIndex live/local presentation by the observed source-bound event gap, not wall-clock time or an invented sequence. Advance a monotonic cursor-ordinal boundary for every validated HistoryRecord, including zero-display metadata. Loading older history never rewinds that boundary or moves new local output ahead of already observed canonical events.\n\nAssociate the exact Done-created ItemId with its completed AttemptKey. When the exact accepted HistoryRecord reconciles, relocate that attempt\u2019s retained Done within the matching completion bucket and update every existing index membership consistently. Preserve all ItemIds, source/body references and actual order evidence. A ticket with no provisional fragment still places its exact retained completion by the real record cursor. Receipt-before-history and history-before-receipt reconciliation are idempotent.\n\nBound completion relocation work to the matching attempt bucket with index updates O(bucket_size * log(indexed_rows)); no global completion scan, transcript clone, new identity map without ownership, arbitrary cap, polling or provider-ID/text matching. Preserve existing bounded tool lookup and indexed pinned traversal behavior.\n\nRegression proof includes an earlier local error/final completion followed by a later canonical human prompt and assistant answer, both ordinary and pinned Later traversal; later older/tail pages; zero-row metadata boundary advance; Done receipt/history in both orders and with skipped fragments; stable exact IDs/body refs; and operation-count bounds for a matching completion bucket. Reading remains pinned until the operator explicitly returns to live. The TUI final summary continues after drain; do not add speculative completion IDs or weaken current source fences."
     },
     {
       "id": "D-CHRONOLOGY-SPLIT-TEST-ROOT",
@@ -259,13 +259,13 @@
     {
       "id": "D-NUI003-AGENTS",
       "title": "Restore populated agent status through the retained frame",
-      "status": "registered_root_authorized",
+      "status": "implemented_locally_verified_installed;main_205_Fable_pending",
       "body": "AgentStatusPanel is still populated; restore its missing retained presentation through one typed snapshot per prepared frame. Reuse existing tree::collapse/order_for_display, current five-row-plus-overflow rule, recovery/hold semantics and formatting/activity/token facts. Root-only state adds zero agent chrome. Paint compact agent/fork status rows immediately above the full-width composer within the upper display allocation; preserve tiny geometry and existing pane behavior without changing layout.rs or composer input. Accepted child activity dirties the retained frame even if the root transcript projection revision does not change. Never turn formatted ANSI into typed rows, replay agent history, infer an active agent by text, or start/restart an agent to paint status. One AgentFrame snapshot carries both the existing compact five-row-plus-overflow strip and the full admitted agent listing, including the root, for the explicitly selected Agents pane. agents::paint_pane(&AgentFrame, &mut Frame, area, scroll) clips the full list to the current pane rectangle and uses its explicit scroll; it does not reuse the compact truncation as a data cap. No second status read or second state owner. Compact root-only state still adds zero agent chrome; an explicitly opened Agents pane can show its actual root. Root integrates the chosen rectangle and sole frame writer. Preserve exact identity/order/hold/recovery and explicit unavailable facts. Listing grants no target selection/history/message authority, fabricated transcript, history read or provider activation. Within already-modified agents/status_line.rs, norn_models removes inherited test-only allow attributes and underlying unwrap/expect/panic/unwrap_err/expect_err uses structurally. Preserve every test and assertion meaning, propagate contextual fallible Result errors, and leave unrelated production behavior unchanged. The user no-bypass instruction overrides the inherited CLAUDE.md test exception; no extra source path is authorized."
     },
     {
       "id": "D-NUI003-READABILITY",
       "title": "Readable semantic rows and generated separation",
-      "status": "registered_root_authorized",
+      "status": "implemented_locally_verified_installed;main_205_Fable_pending",
       "body": "Restore tool name beside its description with current lifecycle/duration and explicit missing-evidence wording. Insert exactly one generated blank between visible semantic items, replacing incidental empty-label gaps; no per-body-line, stream-chunk or token gaps. Use distinct BeforeItem anchors with no BodyRef, body demand or original copy/export authority. Work through indexed visible iteration/lookahead, preserve exact selection/source mappings and pinned scrolling, and reuse styled/wrapped caches without whole-history scans or per-paint reparsing. Use existing typed role/lifecycle facts: unchanged user blue RGB80/160/220, Error/failed tool red200/80/80, blocked/incomplete tool amber215/175/0, Thinking Dim+Italic merged with Markdown attributes and explicit code colors, Notice/Metadata dim. Do not search model descriptions for state words. Preserve actual source bytes, ranges, Markdown emphasis and code colors; colors supplement existing role/state words rather than being their only cue. Emit BeforeItem only when an earlier visible semantic item exists: no leading separator and no gap contributed by hidden metadata/thinking. Header remains a virtual navigation start for headerless assistant/input bodies; keep original body-cache construction and exact source/copy mappings unchanged."
     },
     {
@@ -277,8 +277,44 @@
     {
       "id": "D-NUI003-PANE",
       "title": "Direct pane commands and typed auxiliary content",
-      "status": "registered_root_authorized",
+      "status": "implemented_locally_verified_installed;main_205_Fable_pending",
       "body": "Recognize /pane as a TUI-only named entry using the existing View handler kind. /pane with no arguments toggles the existing auxiliary open state without changing selected content; /pane diff and /pane agents select the exact typed content and open it. Preserve all existing /view commands as supported aliases, help and autocomplete. Reject unknown arguments locally with LocalCommandOutcome::Rejected and preserve the draft. Both idle and active-turn paths dispatch the actual command name plus arguments through command_named; no /pane command enters provider input, steer or queue. Root adds AuxiliaryPane { Diff, Agents } and ScreenState.auxiliary in app/render.rs, defaulting to Diff to preserve the existing Changes view. Keep this content selector distinct from UpperPane, which controls conversation/auxiliary geometry focus. Root paints the selected content in the existing auxiliary rectangle and gates Changes evidence demand when Agents is selected; no new Changes body demand for agent listing. Preserve full-width composer, existing open/split/focus, narrow-terminal pane switching and current frame publication. This checkpoint keeps selected auxiliary content in current-run state. Existing saved open/split preferences remain unchanged. Persisting the new content selector through the existing frontend settings owner is required next work R6, not silently claimed here; /pane agents does not complete R4 target view/message. The existing /view pane grammar additionally accepts diff and agents as aliases for the same exact content selection. Explicit /pane diff|agents and /view pane diff|agents also set UpperPane::Changes, so the selected auxiliary content is immediately visible when narrow geometry can show only one upper pane. /pane with no arguments and /view pane toggle preserve the selected auxiliary content and focus, apart from existing visibility normalization; do not switch targets or alter transcript identity."
+    },
+    {
+      "id": "D-NUI004-CONTROLS",
+      "title": "Pane controls and one-cell divider",
+      "status": "registered_root_authorized",
+      "body": "Paint a thin one-cell vertical \u2502 pane divider in the same Dim style as the composer separator, with no extra rows. Handle F7 pane toggle, F8 Diff, F9 Agents and F10 composer send-policy cycle through existing typed state/control owners; preserve full-width composer and existing slash equivalents. Root owns render/frame.rs and app/view_actions/keys.rs. commands.rs changes by root are HELP text only and are integrated serially by its shared-file owner. F7 preserves selected content; F8/F9 select and show exact auxiliary content including narrow UpperPane::Changes behavior, using the existing pane command semantics. No shortcut selects/messages an agent or sends provider/steer/queue input. F10 calls ComposerSendKey::next_policy() supplied by R3: Enter -> ShiftEnter -> AltEnter -> Enter. Handle one actual press; repeat/release cannot trigger repeated mutations or sends. Preserve draft, cursors, undo, existing preference edit/save handling, popup ownership and existing focus controls. The existing clickable button uses the same transition through the R2 mouse owner."
+    },
+    {
+      "id": "D-NUI004-SELECTION",
+      "title": "Displayed snapshot selection and original-source selection",
+      "status": "registered_root_authorized",
+      "body": "Ordinary dragging selects displayed text across tool headers, conversation entries and Diff rows. Prefer existing exact-source single-body copy when valid; otherwise use an immutable displayed-text snapshot. Preserve exact BodyRef selection/export separately. Never label generated Diff summaries original-file evidence. Retain the actual successfully published typed Frame (Arc ownership) for current-pointer admission; do not reconstruct text from ANSI or take a second editor/model snapshot. Failed publication revokes that display authority. On primary down capture one immutable visible-pane snapshot and grapheme-correct endpoints. Current display mappings remain tagged; there is no per-key history scan or body fetch. Keep existing exact-source selection for a valid drag confined to one mapped BodyRef. Crossing generated text/entries/Diff, or losing exact-source currency while dragging, falls back to captured displayed text and clears any misleading original-range claim. Selection remains within the chosen pane; body and generated runs form an explicit display scope. Composer keeps Iridium selection/cursor/undo ownership. Pin captured bytes and pointer mapping through streaming. Resize must never reinterpret old screen coordinates as new content; preserve completed snapshot copy or explicitly end an incompatible in-flight drag while retaining bytes. Copy feedback identifies original selected bytes versus displayed-text snapshot. Original export/search APIs continue to require their exact current original BodyRef and never silently export generated Diff text as original source. Do not add global chrome or automatic transcript bookkeeping rows. Use existing copy feedback surface. No polling, timer, arbitrary limits, provider/MCP activation or terminal-owner changes. Bind a selection gesture to typed pane identity and selected auxiliary content identity as well as the exact source/publication. Conversation, Diff and Agents are distinct display scopes even when their rectangle or common pane-focus enum is equal. Switching content or source cannot rebind an old gesture or copy authority. Original-source and displayed selection must use the same grapheme endpoint semantics for the same pointer gesture. A valid single-body selection cannot copy different graphemes merely because original versus displayed copy is chosen. Verify equality with combining marks, ZWJ emoji, wide glyphs, reverse drag and inclusive/exclusive edge cases while preserving original hard-newline rules. Revoke the old published pointer/hit authority synchronously when resize is handled, before the next queued pointer event can be admitted. Waiting until redraw/flush to revoke is insufficient. Preserve captured completed bytes as a labelled snapshot, but never reinterpret old coordinates against new geometry or a different content/source. Validate each distinct selected paint row once and retain compact selected row/range intersections. Avoid comparing/cloning the same paint row for every grapheme or allocating full body/cell copies. Preserve exact highlighted/copy ranges, explicit snapshot scope and current-source checks; measure or structurally prove the distinct-row bound in focused tests. For the current R2 review repairs, review_child_context exclusively owns app/display_selection.rs, app/view_actions/mouse.rs and app/view_actions/commands.rs as whole files. norn_tui owns display_selection_tests.rs and existing R2 PTY/oracle tests and the remaining view_actions/reading seams. Root owns the small shared render.rs revocation/publication hook and F2/keys integration. Root HELP and channels send-policy hunks go through review_child_context while this repair partition is active; no concurrent writers."
+    },
+    {
+      "id": "D-NUI004-SEND",
+      "title": "Exact Shift policy and explicit recovery",
+      "status": "registered_root_authorized",
+      "body": "tui.composer.send_key: enter | shift-enter | alt-enter /view composer send-key shift-enter; preserve enter and alt-enter ComposerSendKey::ShiftEnter in the existing frontend_preferences owner ShiftEnter submits only the delivered exact SHIFT+Enter press; ordinary Enter is always one kernel newline in that mode. Alt/Control/Meta/Super mixtures do not accidentally submit. Repeats and releases never submit. Keep the existing declared global Enter default unless the owner explicitly changes that ruling. Persist ShiftEnter as the chosen User/Local preference rather than silently migrating every installation. One next_policy() cycle: Enter -> ShiftEnter -> AltEnter -> Enter. Clickable button and F10 invoke the same value transition; preserve text/cursor/undo and existing preference save owner. Existing composer JSON projection, CAS writer, user/run/local scopes, whole-object precedence, conflict and startup validation continue unchanged. F10 cycles the same three policies on a single press only, including when Shift reporting was not detected. No provider/steer/queue admission; draft and undo survive. terminal/caps.rs detects Kitty ReportFlags; terminal/setup.rs enables DISAMBIGUATE_ESCAPE_CODES and REPORT_ALTERNATE_KEYS only after detection. map_enter already relies on delivered exact modifiers. Show Shift+Enter sends / Enter newline when Kitty disambiguation was detected and enabled. Do not equate false Kitty probe with proven impossibility: a terminal mapping may still deliver CSI-u. Show Shift+Enter unconfirmed in the same existing hint/button row; honor actually delivered SHIFT events; plain CR remains newline. Keep editing and clickable policy recovery available. No phantom Shift, no automatic Enter-send fallback, no stored preference rewrite, no new protocol probe or timeout. Root explicitly settled exact SHIFT only, no Alt fallback or CR inversion. F10 and the existing clickable policy button provide explicit recovery; false Kitty detection does not reject startup. Add pub const fn ComposerSendKey::next_policy(self) -> Self and label() spelling enter|shift-enter|alt-enter. Keep the existing declared Enter default; the selected Shift policy is saved via existing user/run/local CAS ownership and whole-tui-layer precedence. Do not silently migrate settings or serialize keyboard detection as a choice. Exact SHIFT+Enter press submits only in ShiftEnter mode; bare Enter inserts one kernel newline. Alt/Control/Meta/Super mixtures, release and repeat cannot submit accidentally. No CR inversion, inferred Shift, Alt fallback or automatic send-policy rewrite. A negative Kitty probe means unconfirmed reporting, not proof of impossibility; honor actually delivered exact SHIFT events. Existing /view composer send-key enter|shift-enter|alt-enter remains the only policy slash grammar. F10 and the clickable policy button use next_policy, preserve original draft/cursor/undo and provide explicit recovery when Shift reporting is unconfirmed. No added row or layout growth; keep existing clipped button hit areas. channels_compatibility owns frontend_preferences.rs plus the schema/composer/test paths below. Root owns keys.rs and norn_tui owns mouse.rs; send them API/hunks without competing edits. commands.rs is serialized by channels_compatibility with root HELP and norn_tui clear-selection hunks. Support retained_workspace.rs belongs to norn_tui, who integrates Shift physical-key/Kitty fixture support. Actual iridium_composer App PTYs prove idle/active exact Shift, bare newline, unchanged draft across explicit F10/click recovery, capability confirmed/unconfirmed paths, no premature request and exact admitted original bytes. Actual CLI composer_preferences restart tests prove User/Local persistence and temporary Run, preserving malformed early refusal and exact request census. Unit tests retain closed decode/null/type validation and all modifier/press/repeat/release cases."
+    },
+    {
+      "id": "D-NUI004-PENDING",
+      "title": "Required scrolling and planned display work",
+      "status": "required_pending",
+      "body": "Tool forms/raw toggle, Bash display and Markdown fenced syntax remain planned programme work. Selected-agent view/message remains NUI-003 R4. NUI-004 scrolling/latest is now registered under D-NUI004-SCROLL, with implementation and verification pending; no installation or test result is inferred."
+    },
+    {
+      "id": "D-NUI004-SCROLL",
+      "title": "Ordered logical navigation and explicit source-bound Latest",
+      "status": "registered_root_authorized",
+      "body": "Preserve every terminal-delivered wheel step through ordered adjacent-compatible motion segments in the existing finite ready batch, advancing from the evolving source/width-bound logical anchor. Add a current-published-frame Latest button in the existing hint row, sharing an explicit selected-source follow/catch-up action with /view follow; no automatic repin, second writer, new timer or pixel-delta claim. Replace the single overwriteable ScrollRequest with a source-bound pending navigation plan. Capture the actual logical/published starting anchor only on the first movement; subsequent motion advances from that evolving logical position, never resets from visible.first. Compress adjacent same-direction movements for the same source/pane/geometry with checked count arithmetic. Keep direction changes and pane/source/resize/explicit-anchor changes as semantic barriers. Do not sum an entire burst into one signed net value: at the top, Up then Down must still move down, whereas a zero net sum would incorrectly leave the viewport at the top. Consume each ordered segment before final frame construction through a geometry-only cached-row advance that returns a final ViewAnchor. Count/skip cached row groups rather than allocating one LogicalRow/PaintRow per travelled row. Visible paint remains bounded by actual viewport height; body/style maps remain source/width/revision-bound. No new timer, delay, frame rate, velocity multiplier, inertia or queue cap. The plan lives only for the existing finite ready frontier and coalesces runs; it is not a persistent input queue. Preserve every reported terminal wheel step. Current one-row-per-report behavior remains the factual baseline until Tom chooses a separate explicit sensitivity setting. Non-wheel actions keep original arrival semantics. Explicit follow/anchor replacement clears or resolves earlier pending motion as part of that action, so old scroll work cannot repin the viewport after Latest. Resize keeps logical body/byte anchors, invalidates old row geometry and establishes a new geometry barrier. Source replacement cancels old motion explicitly. Wheel targets stay independent: Conversation changes its logical anchor; Diff/Agents changes its own list offset; popup selection remains popup-owned; composer wheel behavior remains existing behavior. A mixed-pane burst never merges two targets. Keep unknown history/body boundaries honest. This row does not pretend unloaded bytes are known rows or add eager whole-history/body reads. Existing explicit older/more requests remain available; any future automatic boundary demand requires its own precise registered behavior. Display the exact label \u2193 Latest when the conversation viewport is pinned/not following, demonstrably away from tail, or an explicit latest catch-up is pending. Normal following tail has no button. A pin at the visible bottom may still offer resuming follow; this is deliberate. Place it right-aligned in the existing final composer hint row, with normal measured terminal-cell widths. Reserve its rectangle before clipping remaining hints. No header/footer/new row, reduced composer width or overlay over transcript text. At widths that cannot show the complete label, omit it and its hit region; /view follow remains available. When it fits, show the whole label and prevent overlap with send-key toggle, upcoming target label and other active hit regions. Never leave a clipped or hidden clickable region. The button is generated chrome with no original-body copy capability. Its hit region carries current selected source/publication identity and becomes authoritative only after terminal write+flush succeeds. Clear it on failed publication, no-paint, resize or source replacement; queued clicks cannot activate an old target. Click invokes the shared typed follow-latest action used by /view follow. It does not send text, change agent execution, steal composer focus, submit/clear the draft or silently replace selected agent. Preserve original selected-body capability for copy/export according to existing follow behavior. Integrate with NUI004 drag selection through one owner of published hit regions; button hits take precedence only inside their exact non-overlapping rectangle. Extract one follow_latest action: clear earlier pending navigation, call existing Viewport::follow_tail, mark the frame dirty, and request a source-bound catch-up outside paint. /view follow and mouse use the same path. Reuse configured history_demand and newer_history from the highest observed page cursor. One active history job at a time; if an older read is pending, retain one explicit latest request until completion rather than swallowing the click. Capture the first actual read snapshot\u2019s accepted event frontier and catch up to it using bounded pages, with each completion yielding to the event loop. No eager whole-history clone or invented page count. When no prior history cursor exists, reuse the existing bounded initial tail demand. Preserve explicit unloaded-body continuation notices; Latest means the latest admitted conversation item, not secretly downloading every byte of a large body. An empty After result for a nonempty store must correctly prove the requested frontier has been reached; do not rely only on accept_history\u2019s current empty-store arm. Keep sparse/unavailable coverage explicit and never label merely loaded old history as current. If the operator scrolls or changes target while catch-up is pending, accepted records may populate their valid source projection, but completion must not restore follow, steal focus, clear a newer draft or paint another source. User navigation cancels only the follow intent; normal canonical observation remains valid. Attempt dirty frame publication on history/body/input completion in the active turn loop as well as the idle loop; do not make new navigation wait for the120fps status tick. Keep the existing status cadence unchanged in this row. A later idle-timer redesign is not needed to fix the lost steps. Bind the action to the selected view/read handle when target switching is integrated. Never hardcode the root store for a button displayed over a child view. First reproduce the old failure using actual App input batching: N same-direction SGR wheel reports in one ready batch must move exactly N available rows, matching individually published reports. Run idle and during MockProvider streaming. After the semantic repair, compare fixed identical bursts and isolated steps on the same terminal size/source. Capture input receipt to successful frame publication latency, total bytes/write/flush counts, elapsed/CPU and final top anchor or numbered visible row. Report median/tail measurements without inventing a performance threshold or claiming pixel fidelity. Separate warm loaded/cache-hit scrolling, first-entry body demand, reverse movement after existing cache eviction, large tool/Markdown body and width change. Preserve actual body-map Arc identity on warm same-width steps in unit tests; show no parser/layout rebuild or body/store I/O was requested by a cache hit. Keep retained changed-cell output and one writer. Full frame preparation/changed-cell scanning and cold body reparse are candidates to measure, not established dominant costs. Do not add terminal scroll-region commands, a second writer, arbitrary overscan memory or an animation subsystem without fresh evidence. Native trackpad feel still needs a human terminal check because SGR PTY reports model terminal-delivered wheel steps, not the OS\u2019s fractional gesture data. Preserve current API limitations honestly. Root alone integrates app/render.rs and app/turn/run.rs; norn_tui alone integrates view_actions.rs, mouse.rs, reading.rs and shared retained_workspace test/support. channels_compatibility alone integrates commands.rs and composer.rs/composer_tests.rs. norn_models owns the remaining navigation/latest/transcript/viewport-test paths. Shared integration is serialized by the named whole-file owner; send API/hunks instead of writing competing changes. Before either app/render.rs or app/turn/run.rs would exceed500 production lines, stop that edit and propose the exact extraction file and responsibility to root/docs owner; register the named create/module-declaration wall before creation. No unspecified extraction or source path is authorized. Existing new navigation/latest modules may own their registered pure responsibilities; they cannot become unrelated catch-all modules."
+    },
+    {
+      "id": "D-NUI004-PREVIEW",
+      "title": "Truthful preview.6 metadata for verified R1-R3 only",
+      "status": "registered_candidate_uninstalled",
+      "body": "Reserve 0.1.0-preview.6 as the candidate for R1-R3 pane controls, reviewed drag selection and Shift+Enter policy. Root updates only the registered manifests and release note, then verifies and installs only after actual candidate checks. R4 scrolling/latest remains pending and is not part of this checkpoint claim. Root alone updates workspace.package.version in Cargo.toml and only the four Norn workspace package version records in Cargo.lock to0.1.0-preview.6. No third-party dependency version, source, checksum, feature or lock resolution changes are authorized by this row. Update docs/release-notes/UNRELEASED.md to distinguish preview.6 candidate R1-R3 from the actually installed preview.5 source05109e6f6294c9af6f58657722dc7e968857b721. Use its recorded install/hash and local-check evidence when correcting stale preview.5 wording. Preserve historical failed/interrupted attempts with their own scope; baseline6378 tests and prior installation do not verify the new candidate. Keep candidate explicitly uninstalled/unverified until actual final checks and installation receipt exist. R4 scroll/latest and selected-agent view/message remain pending; do not imply those ship with R1-R3. No tag, public release, main merge, exact205 or Fable pass follows from a prerelease version or local preview. Root runs final fmt, strict workspace/all-target/live-feature Clippy, AST and500 production-line checks, relevant unit and actual idle/active/resize/restart tests on the composed final bytes. Preserve all required source/selection/grapheme/keyboard/draft and publication assertions and record actual failures; no bypasses or borrowed verdicts. For an authorized successful local update, verify build source identity, installed --version and binary SHA, preserve and verify rollback binary/receipt, then invoke macOS say with exact text Norn updated and record its exit. Record the actual source/binary/check hashes and install time only after completion. Local preview authority remains separate from main-landing exact-commit205 and Fable requirements."
     }
   ],
   "goals": [
@@ -290,18 +326,18 @@
     "These are checkpoint boundaries, not permanent feature cuts: independent host/attach, Iridium composer, editable/guarded file workspace, Work/Session panels, Liminal modules and request-local structured output remain wanted as recorded below."
   ],
   "structure": {
-    "Cargo.lock": "NRT-001 R4 norn-tui unicode-segmentation dependency membership only; NUI-001 R3 modify wall, owner root.",
+    "Cargo.lock": "NRT-001 R4 norn-tui unicode-segmentation dependency membership only; NUI-001 R3 modify wall, owner root. / NUI-004 R5 root-only preview metadata/release notes; no dependency updates",
     "crates/norn-cli/src/commands/slash/registry.rs": "NRT-001 R6 exact wall",
     "crates/norn-cli/src/tui/driver.rs": "NRT-001 R3 actual binding/error wiring only",
     "crates/norn-tui/Cargo.toml": "NRT-001 R4 exact wall",
     "crates/norn-tui/src/agents/activity_log.rs": "NRT-001 R4 exact wall",
-    "crates/norn-tui/src/agents/status_line.rs": "NRT-001 R4 exact wall; NUI-003 R1 modify — Restore the retained agent/fork status tree",
+    "crates/norn-tui/src/agents/status_line.rs": "NRT-001 R4 exact wall; NUI-003 R1 modify \u2014 Restore the retained agent/fork status tree",
     "crates/norn-tui/src/agents/tabs.rs": "NRT-001 R3, R4 exact wall",
     "crates/norn-tui/src/app/autocomplete.rs": "NRT-001 R4, R6 exact wall",
     "crates/norn-tui/src/app/changes.rs": "NRT-001 R5 exact wall",
     "crates/norn-tui/src/app/changes_tests.rs": "NRT-001 R5 exact wall",
     "crates/norn-tui/src/app/child_results.rs": "NRT-001 R3 exact wall",
-    "crates/norn-tui/src/app/dispatch.rs": "NRT-001 R3 exact wall; NRT-002 R3 exact modify wall; owner norn_tui; NUI-003 R1 modify — Restore the retained agent/fork status tree",
+    "crates/norn-tui/src/app/dispatch.rs": "NRT-001 R3 exact wall; NRT-002 R3 exact modify wall; owner norn_tui; NUI-003 R1 modify \u2014 Restore the retained agent/fork status tree",
     "crates/norn-tui/src/app/dispatch/finalization.rs": "NRT-001 R3 exact wall; NRT-002 R3 exact modify wall; owner norn_tui",
     "crates/norn-tui/src/app/edit.rs": "NRT-001 R6 exact wall",
     "crates/norn-tui/src/app/event_loop.rs": "NRT-001 R3, R4, R6 exact wall; NRT-002 R3 exact modify wall; owner norn_tui",
@@ -310,38 +346,38 @@
     "crates/norn-tui/src/app/focus.rs": "NRT-001 R4 exact wall",
     "crates/norn-tui/src/app/helpers.rs": "NRT-001 R3, R4 exact wall; NUI-001 R2 native frame publication/capability repair, owner norn_tui.",
     "crates/norn-tui/src/app/mcp_slash.rs": "NRT-001 R3 exact wall",
-    "crates/norn-tui/src/app/mod.rs": "NRT-001 R3, R4, R5, R6 exact wall",
+    "crates/norn-tui/src/app/mod.rs": "NRT-001 R3, R4, R5, R6 exact wall / NUI-004 R2 modify; explicit shared ownership in brief",
     "crates/norn-tui/src/app/model_selection.rs": "NRT-001 R3 exact wall",
     "crates/norn-tui/src/app/notices.rs": "NRT-001 R3 exact wall; NRT-002 R3 exact modify wall; owner norn_tui",
-    "crates/norn-tui/src/app/render.rs": "NRT-001 R3, R4 exact wall; NRT-002 R3 exact modify wall; owner norn_tui; NUI-001 R2 native frame publication/capability repair, owner norn_tui.; NUI-003 R1 modify — Restore the retained agent/fork status tree; NUI-003 R2 modify — Restore readable typed conversation rows; NUI-003 R5 modify — Provide direct pane commands and the actual Agents side listing",
+    "crates/norn-tui/src/app/render.rs": "NRT-001 R3, R4 exact wall; NRT-002 R3 exact modify wall; owner norn_tui; NUI-001 R2 native frame publication/capability repair, owner norn_tui.; NUI-003 R1 modify \u2014 Restore the retained agent/fork status tree; NUI-003 R2 modify \u2014 Restore readable typed conversation rows; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
     "crates/norn-tui/src/app/rotation.rs": "NRT-001 R3 exact wall",
     "crates/norn-tui/src/app/search.rs": "NRT-001 R6 exact wall",
     "crates/norn-tui/src/app/search_tests.rs": "NRT-001 R6 exact wall",
     "crates/norn-tui/src/app/selection.rs": "NRT-001 R6 exact wall",
     "crates/norn-tui/src/app/selection_tests.rs": "NRT-001 R6 exact wall",
     "crates/norn-tui/src/app/session_replay.rs": "NRT-001 R3 exact wall",
-    "crates/norn-tui/src/app/slash.rs": "NRT-001 R3, R6 exact wall; NUI-003 R5 modify — Provide direct pane commands and the actual Agents side listing",
+    "crates/norn-tui/src/app/slash.rs": "NRT-001 R3, R6 exact wall; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing",
     "crates/norn-tui/src/app/slash_catalog.rs": "NRT-001 R6 exact wall",
     "crates/norn-tui/src/app/state.rs": "NRT-001 R3, R4, R5 exact wall; NRT-002 R3 exact modify: root-turn usage reconciliation; norn_tui owner.",
     "crates/norn-tui/src/app/streaming.rs": "NRT-001 R3 exact wall",
     "crates/norn-tui/src/app/tool_calls.rs": "NRT-001 R3, R5 exact wall",
-    "crates/norn-tui/src/app/transcript.rs": "NRT-001 R3 exact wall; NRT-002 R3 exact modify wall; owner norn_tui",
+    "crates/norn-tui/src/app/transcript.rs": "NRT-001 R3 exact wall; NRT-002 R3 exact modify wall; owner norn_tui / NUI-004 R4 modify; exact shared owner in brief",
     "crates/norn-tui/src/app/transcript_tests.rs": "NRT-001 R3 exact wall; NRT-002 R3 exact modify wall; owner norn_tui",
-    "crates/norn-tui/src/app/turn/mid.rs": "NRT-001 R3, R4, R6 exact wall; NRT-002 R3 exact modify wall; owner norn_tui; NUI-003 R5 modify — Provide direct pane commands and the actual Agents side listing",
-    "crates/norn-tui/src/app/turn/run.rs": "NRT-001 R3 exact wall; NRT-002 R3 exact modify wall; owner norn_tui",
-    "crates/norn-tui/src/app/view_actions.rs": "NRT-001 R6 exact wall; NUI-003 R5 modify — Provide direct pane commands and the actual Agents side listing",
+    "crates/norn-tui/src/app/turn/mid.rs": "NRT-001 R3, R4, R6 exact wall; NRT-002 R3 exact modify wall; owner norn_tui; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing",
+    "crates/norn-tui/src/app/turn/run.rs": "NRT-001 R3 exact wall; NRT-002 R3 exact modify wall; owner norn_tui / NUI-004 R4 modify; exact shared owner in brief",
+    "crates/norn-tui/src/app/view_actions.rs": "NRT-001 R6 exact wall; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
     "crates/norn-tui/src/app/view_config.rs": "NRT-001 R3, R6 exact wall",
     "crates/norn-tui/src/app/view_config_tests.rs": "NRT-001 R3, R6 exact wall",
-    "crates/norn-tui/src/app/viewport.rs": "NRT-001 R4 exact wall; NUI-003 R2 modify — Restore readable typed conversation rows",
-    "crates/norn-tui/src/app/viewport_tests.rs": "NRT-001 R4 exact wall",
+    "crates/norn-tui/src/app/viewport.rs": "NRT-001 R4 exact wall; NUI-003 R2 modify \u2014 Restore readable typed conversation rows",
+    "crates/norn-tui/src/app/viewport_tests.rs": "NRT-001 R4 exact wall / NUI-004 R4 modify; exact shared owner in brief",
     "crates/norn-tui/src/error.rs": "NRT-001 R3 actual binding/error wiring only",
     "crates/norn-tui/src/events/schema_render.rs": "NRT-001 R3, R4 exact wall",
-    "crates/norn-tui/src/input/keybindings.rs": "NRT-001 R6 exact wall",
+    "crates/norn-tui/src/input/keybindings.rs": "NRT-001 R6 exact wall / NUI-004 R3 modify; explicit shared ownership in brief",
     "crates/norn-tui/src/lib.rs": "NRT-001 R4 exact wall",
     "crates/norn-tui/src/render/changes.rs": "NRT-001 R5 exact wall",
     "crates/norn-tui/src/render/content.rs": "NRT-001 R4, R5 exact wall",
     "crates/norn-tui/src/render/fixed_panel.rs": "NRT-001 R4 exact wall",
-    "crates/norn-tui/src/render/frame.rs": "NRT-001 R4 exact wall; NUI-001 R2 native frame publication/capability repair, owner norn_tui.",
+    "crates/norn-tui/src/render/frame.rs": "NRT-001 R4 exact wall; NUI-001 R2 native frame publication/capability repair, owner norn_tui. / NUI-004 R1 modify; explicit shared ownership in brief",
     "crates/norn-tui/src/render/frame_tests.rs": "NRT-001 R4 exact wall; NUI-001 R2 native frame publication/capability repair, owner norn_tui.",
     "crates/norn-tui/src/render/layout.rs": "NRT-001 R8 exact wall",
     "crates/norn-tui/src/render/layout_tests.rs": "NRT-001 R8 exact wall",
@@ -374,17 +410,17 @@
     "crates/norn-tui/src/tools/rich/read.rs": "NRT-001 R5 exact wall",
     "crates/norn-tui/src/tools/rich/search.rs": "NRT-001 R5 exact wall",
     "crates/norn-tui/src/tools/status.rs": "NRT-001 R5 exact wall",
-    "crates/norn-tui/src/tools/summary.rs": "NRT-001 R5 exact wall; NUI-003 R2 modify — Restore readable typed conversation rows",
-    "crates/norn-tui/src/tools/summary_tests.rs": "NRT-001 R5 exact wall; NUI-003 R2 modify — Restore readable typed conversation rows",
+    "crates/norn-tui/src/tools/summary.rs": "NRT-001 R5 exact wall; NUI-003 R2 modify \u2014 Restore readable typed conversation rows",
+    "crates/norn-tui/src/tools/summary_tests.rs": "NRT-001 R5 exact wall; NUI-003 R2 modify \u2014 Restore readable typed conversation rows",
     "crates/norn-tui/src/tools/verbosity.rs": "NRT-001 R5 exact wall",
     "crates/norn-tui/tests/mcp_channels.rs": "NRT-001 R7 exact wall; NRT-002 R4 exact modify wall; owner channels_fixture owns canonical source; parent owns execution; NUI-003 R3 test-only fixture migration, exclusive channels_compatibility",
     "crates/norn-tui/tests/model_selection.rs": "NRT-001 R3 actual binding/error wiring only; R7 subsequent fixture acceptance; NRT-002 R4 exact modify wall; owner channels_fixture owns canonical source; parent owns execution; NUI-003 R3 test-only fixture migration, exclusive channels_compatibility",
     "crates/norn-tui/tests/pty_smoke.rs": "NRT-001 R3 actual binding/error wiring only; R7 subsequent fixture acceptance; NRT-002 R4 exact modify wall; owner channels_fixture owns canonical source; parent owns execution; NUI-001 R2 channels_fixture: decoded-screen rendered-text observations; raw protocol/OSC and all semantic assertions preserved.",
-    "crates/norn-tui/tests/retained_workspace.rs": "NRT-001 R7 exact wall; exclusive R7 new-workspace fixture author: review_tui.; NUI-003 R3 modify — Prove the actual restored screen and preserve remaining requests",
+    "crates/norn-tui/tests/retained_workspace.rs": "NRT-001 R7 exact wall; exclusive R7 new-workspace fixture author: review_tui.; NUI-003 R3 modify \u2014 Prove the actual restored screen and preserve remaining requests / NUI-004 R1 modify; explicit shared ownership in brief / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
     "crates/norn-tui/tests/support/mcp_channels_tui.rs": "NRT-001 R3 actual binding/error wiring only; R7 subsequent fixture acceptance; NRT-002 R4 exact modify wall; owner channels_fixture owns canonical source; parent owns execution",
-    "crates/norn-tui/tests/support/retained_workspace.rs": "NRT-001 R7 exact wall; exclusive R7 new-workspace fixture author: review_tui.; NUI-001 R2 channels_fixture: preserve repeated nonconsecutive requested resize geometry and all existing bounds assertions.; NUI-003 R3 modify — Prove the actual restored screen and preserve remaining requests",
+    "crates/norn-tui/tests/support/retained_workspace.rs": "NRT-001 R7 exact wall; exclusive R7 new-workspace fixture author: review_tui.; NUI-001 R2 channels_fixture: preserve repeated nonconsecutive requested resize geometry and all existing bounds assertions.; NUI-003 R3 modify \u2014 Prove the actual restored screen and preserve remaining requests / NUI-004 R1 modify; explicit shared ownership in brief / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
     "crates/norn/src/lib.rs": "NRT-001 R1 exact wall",
-    "crates/norn/src/loop/commands.rs": "NRT-001 R6 exact wall; NUI-003 R5 modify — Provide direct pane commands and the actual Agents side listing",
+    "crates/norn/src/loop/commands.rs": "NRT-001 R6 exact wall; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing",
     "crates/norn/src/session/branch.rs": "NRT-001 R2 narrow crate-private mailbox generation accessor only",
     "crates/norn/src/session/manager/fork.rs": "NRT-001 R2 exact wall; closed generation-bound inherited spool authority",
     "crates/norn/src/session/manager/open.rs": "NRT-001 R2 exact wall; closed generation-bound inherited spool authority",
@@ -415,29 +451,29 @@
     "crates/norn/src/session_view/projection_tests.rs": "NRT-001 R1 exact wall; NRT-002 R2 test-only modify; explicit Observed exhaustive arm, original assertions preserved; owner channels_compatibility",
     "crates/norn/src/session_view/response.rs": "NRT-001 R1 exact wall",
     "crates/norn/src/session_view/tools.rs": "NRT-001 R1 exact wall",
-    "docs/design/norn-retained-tui/CHECKLIST.md": "NRT-001 R0 exact wall; NUI-003 R0 modify — Register the repair after the frozen validation is released",
-    "docs/design/norn-retained-tui/DESIGN.md": "NRT-001 R0 exact wall; NUI-003 R0 modify — Register the repair after the frozen validation is released",
-    "docs/design/norn-retained-tui/USER-STORIES.md": "NRT-001 R0 exact wall; NUI-003 R0 modify — Register the repair after the frozen validation is released",
+    "docs/design/norn-retained-tui/CHECKLIST.md": "NRT-001 R0 exact wall; NUI-003 R0 modify \u2014 Register the repair after the frozen validation is released / NUI-004 docs registration only",
+    "docs/design/norn-retained-tui/DESIGN.md": "NRT-001 R0 exact wall; NUI-003 R0 modify \u2014 Register the repair after the frozen validation is released / NUI-004 docs registration only",
+    "docs/design/norn-retained-tui/USER-STORIES.md": "NRT-001 R0 exact wall; NUI-003 R0 modify \u2014 Register the repair after the frozen validation is released / NUI-004 docs registration only",
     "docs/design/norn-retained-tui/acceptance.json": "NRT-001 R0 exact wall",
     "docs/design/norn-retained-tui/briefs/NRT-001.json": "NRT-001 R0 exact wall",
     "docs/design/norn-retained-tui/briefs/NRT-001.md": "NRT-001 R0 exact wall",
-    "docs/design/norn-retained-tui/checklist.json": "NRT-001 R0 exact wall; NUI-003 R0 modify — Register the repair after the frozen validation is released",
-    "docs/design/norn-retained-tui/design.json": "NRT-001 R0 exact wall; NUI-003 R0 modify — Register the repair after the frozen validation is released",
+    "docs/design/norn-retained-tui/checklist.json": "NRT-001 R0 exact wall; NUI-003 R0 modify \u2014 Register the repair after the frozen validation is released / NUI-004 docs registration only",
+    "docs/design/norn-retained-tui/design.json": "NRT-001 R0 exact wall; NUI-003 R0 modify \u2014 Register the repair after the frozen validation is released / NUI-004 docs registration only",
     "docs/design/norn-retained-tui/producer-coverage.json": "NRT-001 R0 exact wall",
-    "docs/design/norn-retained-tui/stories.json": "NRT-001 R0 exact wall; NUI-003 R0 modify — Register the repair after the frozen validation is released",
+    "docs/design/norn-retained-tui/stories.json": "NRT-001 R0 exact wall; NUI-003 R0 modify \u2014 Register the repair after the frozen validation is released / NUI-004 docs registration only",
     "crates/norn-tui/src/render/retained_text_tests.rs": "NRT-001 R9 root-owned pure styled text geometry tests",
     "crates/norn-tui/src/agents/mod.rs": "NRT-001 R4 exact wall; re-export-only, no module implementation",
     "crates/norn-tui/src/render/retained_markdown.rs": "NRT-001 R4 exact wall",
     "crates/norn-tui/src/render/retained_markdown_tests.rs": "NRT-001 R4 exact wall",
-    "crates/norn-tui/src/app/render/transcript.rs": "NRT-001 R4 exact wall; NRT-002 R3 exact modify wall; owner norn_tui; NUI-003 R2 modify — Restore readable typed conversation rows",
-    "crates/norn-tui/src/app/render/composer.rs": "NRT-001 R4 exact wall; NUI-001 R1 modify wall, owner root.",
+    "crates/norn-tui/src/app/render/transcript.rs": "NRT-001 R4 exact wall; NRT-002 R3 exact modify wall; owner norn_tui; NUI-003 R2 modify \u2014 Restore readable typed conversation rows / NUI-004 R4 modify; exact shared owner in brief",
+    "crates/norn-tui/src/app/render/composer.rs": "NRT-001 R4 exact wall; NUI-001 R1 modify wall, owner root. / NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
     "crates/norn-tui/src/render/retained_markdown/mapping.rs": "NRT-001 R4 exact wall",
-    "crates/norn-tui/src/app/render/changes.rs": "NRT-001 R5 exact wall; selected-call parsing/cache and direct read-only Changes preparation from complete approved exact BodyRefs supplied by caller; no filesystem reads, source relabelling or session-wide diff inference; NUI-003 R5 modify — Provide direct pane commands and the actual Agents side listing",
-    "crates/norn-tui/src/app/view_actions/commands.rs": "NRT-001 R6: local view command routing and explicit controls; existing provider/runtime ownership unchanged.; NUI-003 R5 modify — Provide direct pane commands and the actual Agents side listing",
-    "crates/norn-tui/src/app/view_actions/keys.rs": "NRT-001 R6: focus-aware view keys preserving composer, popup and cancellation precedence.",
-    "crates/norn-tui/src/app/view_actions/mouse.rs": "NRT-001 R6: mouse actions checked against current frame source/map identity and explicit focus.",
+    "crates/norn-tui/src/app/render/changes.rs": "NRT-001 R5 exact wall; selected-call parsing/cache and direct read-only Changes preparation from complete approved exact BodyRefs supplied by caller; no filesystem reads, source relabelling or session-wide diff inference; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing",
+    "crates/norn-tui/src/app/view_actions/commands.rs": "NRT-001 R6: local view command routing and explicit controls; existing provider/runtime ownership unchanged.; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing / NUI-004 R1 modify; explicit shared ownership in brief / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
+    "crates/norn-tui/src/app/view_actions/keys.rs": "NRT-001 R6: focus-aware view keys preserving composer, popup and cancellation precedence. / NUI-004 R1 modify; explicit shared ownership in brief / NUI-004 R3 modify; explicit shared ownership in brief",
+    "crates/norn-tui/src/app/view_actions/mouse.rs": "NRT-001 R6: mouse actions checked against current frame source/map identity and explicit focus. / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
     "crates/norn-tui/src/app/render/hit.rs": "NRT-001 R6: current-frame hit mapping, distinct from logical unloaded-placeholder anchors; no source identity fallback.",
-    "crates/norn-tui/src/app/view_actions/reading.rs": "NRT-001 R6: typed search state and exact-revision hit navigation; supervised explicit export I/O off the terminal event loop.",
+    "crates/norn-tui/src/app/view_actions/reading.rs": "NRT-001 R6: typed search state and exact-revision hit navigation; supervised explicit export I/O off the terminal event loop. / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
     "crates/norn-tui/src/app/view_actions/reading_tests.rs": "NRT-001 R6: reading-action state, revision fences and supervised explicit export orchestration regressions.",
     "crates/norn/src/provider/agent_event.rs": "NRT-002 R1 exact modify wall; owner norn_models",
     "crates/norn/src/loop/classify.rs": "NRT-002 R1 exact modify wall; owner norn_models",
@@ -465,26 +501,41 @@
     "docs/design/norn-retained-tui/briefs/NRT-002.md": "NRT-002 authoritative registration and derived documentation",
     "crates/norn-tui/src/render/retained_structured.rs": "NRT-001 R3 exact create wall: pure source-mapped complete structured-output adapter/tests, TUI owner integrates.",
     "crates/norn-tui/src/render/retained_structured_tests.rs": "NRT-001 R3 exact create wall: pure source-mapped complete structured-output adapter/tests, TUI owner integrates.",
-    "crates/norn-tui/tests/support/retained_screen.rs": "NRT-001 R7 and NRT-002 R4 exact create wall; channels_fixture exclusively owns shared existing-vte screen observer.; NUI-001 R2 channels_fixture verification partition: stateful same-dimension deltas and fully painted resize epochs with original assertions preserved.",
+    "crates/norn-tui/tests/support/retained_screen.rs": "NRT-001 R7 and NRT-002 R4 exact create wall; channels_fixture exclusively owns shared existing-vte screen observer.; NUI-001 R2 channels_fixture verification partition: stateful same-dimension deltas and fully painted resize epochs with original assertions preserved. / NUI-004 R2 modify; explicit shared ownership in brief",
     "crates/norn/src/provider/channel_event.rs": "NRT-002 R1 exact modify wall; Add a transparent boxed ObservationError variant in provider/channel_event.rs so checked scoped-envelope failures retain their actual typed source. Never relabel an observation/source failure as NoObservers or another delivery outcome; no payload duplication, new event route or observer authority.",
     "crates/norn/src/loop/runner/tests/streaming_nudge.rs": "NRT-002 R1 test-only modify; explicit Observed exhaustive arm, original assertions preserved; owner norn_models",
     "crates/norn-cli/src/print/orchestrator.rs": "NRT-002 R1 exact modify: box sole inner orchestrate_run future; preserve signal/sink/error/cancellation wrapper; norn_models owner.",
     "crates/norn/src/session_view/chronology.rs": "NRT-002 R2 private source-bound order/counter and exact completion membership; ItemIndex retains sole row ownership.",
     "crates/norn/src/integration/mcp_channel_startup_tests.rs": "NRT-002 R4 root-owned test-only canonical temporary-root correction; no no-follow policy change.",
-    "Cargo.toml": "NRT-001 R7 root-owned checked preview version metadata; no dependency updates or public release.; NUI-001 R3 modify wall, owner root.",
+    "Cargo.toml": "NRT-001 R7 root-owned checked preview version metadata; no dependency updates or public release.; NUI-001 R3 modify wall, owner root. / NUI-004 R5 root-only preview metadata/release notes; no dependency updates",
     "docs/release-notes/0.1.0-preview.1.md": "NRT-001 R7 root-owned checked preview version metadata; no dependency updates or public release.",
-    "crates/norn-tui/src/app/render/composer_tests.rs": "; NUI-001 R1 create wall, owner root.",
-    "docs/release-notes/UNRELEASED.md": "; NUI-001 R3 modify wall, owner root.",
+    "crates/norn-tui/src/app/render/composer_tests.rs": "; NUI-001 R1 create wall, owner root. / NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
+    "docs/release-notes/UNRELEASED.md": "; NUI-001 R3 modify wall, owner root. / NUI-004 R5 root-only preview metadata/release notes; no dependency updates",
     "crates/norn-tui/src/render/frame/diff.rs": "; NUI-001 R2 native frame publication/capability repair, owner norn_tui.",
     "crates/norn-tui/src/render/frame/diff_tests.rs": "; NUI-001 R2 native frame publication/capability repair, owner norn_tui.",
     "crates/norn-tui/tests/retained_screen_delta.rs": "; NUI-001 R2 channels_fixture verification partition: stateful same-dimension deltas and fully painted resize epochs with original assertions preserved.",
-    "docs/design/norn-retained-tui/briefs/NUI-003.json": "NUI-003 R0 create — Register the repair after the frozen validation is released",
-    "docs/design/norn-retained-tui/briefs/NUI-003.md": "NUI-003 R0 create — Register the repair after the frozen validation is released",
-    "crates/norn-tui/src/agents/status_line/retained.rs": "NUI-003 R1 create — Restore the retained agent/fork status tree",
-    "crates/norn-tui/src/agents/status_line/retained_tests.rs": "NUI-003 R1 create — Restore the retained agent/fork status tree",
-    "crates/norn-tui/src/app/render/agents.rs": "NUI-003 R1 create — Restore the retained agent/fork status tree",
-    "crates/norn-tui/src/app/render/agents_tests.rs": "NUI-003 R1 create — Restore the retained agent/fork status tree",
-    "crates/norn-tui/src/app/render/transcript_items.rs": "NUI-003 R2 create — Restore readable typed conversation rows"
+    "docs/design/norn-retained-tui/briefs/NUI-003.json": "NUI-003 R0 create \u2014 Register the repair after the frozen validation is released",
+    "docs/design/norn-retained-tui/briefs/NUI-003.md": "NUI-003 R0 create \u2014 Register the repair after the frozen validation is released",
+    "crates/norn-tui/src/agents/status_line/retained.rs": "NUI-003 R1 create \u2014 Restore the retained agent/fork status tree",
+    "crates/norn-tui/src/agents/status_line/retained_tests.rs": "NUI-003 R1 create \u2014 Restore the retained agent/fork status tree",
+    "crates/norn-tui/src/app/render/agents.rs": "NUI-003 R1 create \u2014 Restore the retained agent/fork status tree",
+    "crates/norn-tui/src/app/render/agents_tests.rs": "NUI-003 R1 create \u2014 Restore the retained agent/fork status tree",
+    "crates/norn-tui/src/app/render/transcript_items.rs": "NUI-003 R2 create \u2014 Restore readable typed conversation rows / NUI-004 R4 modify; exact shared owner in brief",
+    "crates/norn-tui/src/app/display_selection.rs": "NUI-004 R2 create; explicit shared ownership in brief",
+    "crates/norn-tui/src/app/display_selection_tests.rs": "NUI-004 R2 create; explicit shared ownership in brief",
+    "crates/norn-tui/src/frontend_preferences.rs": "NUI-004 R3 modify; explicit shared ownership in brief",
+    "crates/norn-tui/src/frontend_preferences_tests.rs": "NUI-004 R3 modify; explicit shared ownership in brief",
+    "crates/norn-tui/src/input/composer_keys_tests.rs": "NUI-004 R3 modify; explicit shared ownership in brief",
+    "crates/norn-tui/src/app/frontend_preferences_tests.rs": "NUI-004 R3 modify; explicit shared ownership in brief",
+    "crates/norn-tui/tests/iridium_composer.rs": "NUI-004 R3 modify; explicit shared ownership in brief",
+    "crates/norn-cli/tests/composer_preferences.rs": "NUI-004 R3 modify; explicit shared ownership in brief",
+    "crates/norn-cli/tests/support/composer_preferences.rs": "NUI-004 R3 modify; explicit shared ownership in brief",
+    "docs/design/norn-retained-tui/briefs/NUI-004.json": "NUI-004 docs registration only",
+    "docs/design/norn-retained-tui/briefs/NUI-004.md": "NUI-004 docs registration only",
+    "crates/norn-tui/src/app/render/navigation.rs": "NUI-004 R4 create; exact shared owner in brief",
+    "crates/norn-tui/src/app/render/navigation_tests.rs": "NUI-004 R4 create; exact shared owner in brief",
+    "crates/norn-tui/src/app/view_actions/latest.rs": "NUI-004 R4 create; exact shared owner in brief",
+    "crates/norn-tui/src/app/view_actions/latest_tests.rs": "NUI-004 R4 create; exact shared owner in brief"
   },
   "topics": [
     {
@@ -501,7 +552,7 @@
     },
     {
       "name": "Read-only call Changes",
-      "content": "- The initial title is Changes with a scope label such as Tool call <call_id>. Group by evidenced path and exact call; preserve source/agent identity. There is no implicit session-start baseline, current-file preview, Git HEAD comparison, rename detection or external-writer attribution.\n- edit: show old_string → new_string as an edit fragment, not a whole-file diff. Preserve committed and after_hash independently of diagnostics/error. Missing/ill-typed strings are evidence unavailable, never empty strings. A blocked edit is a proposed fragment labelled not committed.\n- write: show submitted content and committed/bytes_written/path facts when available. There is no captured before-content in current write output, so before comparison is unavailable; an empty before-file is not inferred. Post-write diagnostic failure may follow a committed write.\n- apply_patch: show the supplied patch tied to the call and the result's evidenced outcome. A submitted patch alone is intent, not proof all hunks committed. Never regenerate the old patch against current disk contents.\n- Unknown/Bash/MCP tools retain description, call identity, raw detail and evidenced result. Their arbitrary filesystem writes are outside structured receipt coverage; a nearby shell/tool invocation does not supply authorship or before/after hashes. No action-log-only filter, because its successful-only mutation entries omit committed-with-error cases.\n- Every known and unknown tool starts compact. The collapsed row prioritizes the original tool-use description and evidenced lifecycle state, with concise duration when recorded. If the description is absent, show the tool name and explicitly unavailable description; never invent one. Exact call ID, commitment, duration availability and description parse errors remain visible in expanded detail or the selected Changes view, rather than adding repeated technical bookkeeping to collapsed rows. All original arguments, metadata, availability and evidenced results remain retained; a separately identified argument summary may be shown in detail only when existing semantics supply it. Body collapse and individual historical expansion apply to unknown tools too.\n- Per-item expand/collapse survives new activity and history paging. Ctrl+O changes the global expansion default; explicit per-item overrides remain until the user resets them through the view controls. This policy is settled by root D-F3.\n- Changes is read-only in this checkpoint, with no save/editor mutation capability. This does not remove the wanted guarded human editor, immutable mutation receipts, session baselines, rich inline-diff preference or Work/Session tabs from NWP-08."
+      "content": "- The initial title is Changes with a scope label such as Tool call <call_id>. Group by evidenced path and exact call; preserve source/agent identity. There is no implicit session-start baseline, current-file preview, Git HEAD comparison, rename detection or external-writer attribution.\n- edit: show old_string \u2192 new_string as an edit fragment, not a whole-file diff. Preserve committed and after_hash independently of diagnostics/error. Missing/ill-typed strings are evidence unavailable, never empty strings. A blocked edit is a proposed fragment labelled not committed.\n- write: show submitted content and committed/bytes_written/path facts when available. There is no captured before-content in current write output, so before comparison is unavailable; an empty before-file is not inferred. Post-write diagnostic failure may follow a committed write.\n- apply_patch: show the supplied patch tied to the call and the result's evidenced outcome. A submitted patch alone is intent, not proof all hunks committed. Never regenerate the old patch against current disk contents.\n- Unknown/Bash/MCP tools retain description, call identity, raw detail and evidenced result. Their arbitrary filesystem writes are outside structured receipt coverage; a nearby shell/tool invocation does not supply authorship or before/after hashes. No action-log-only filter, because its successful-only mutation entries omit committed-with-error cases.\n- Every known and unknown tool starts compact. The collapsed row prioritizes the original tool-use description and evidenced lifecycle state, with concise duration when recorded. If the description is absent, show the tool name and explicitly unavailable description; never invent one. Exact call ID, commitment, duration availability and description parse errors remain visible in expanded detail or the selected Changes view, rather than adding repeated technical bookkeeping to collapsed rows. All original arguments, metadata, availability and evidenced results remain retained; a separately identified argument summary may be shown in detail only when existing semantics supply it. Body collapse and individual historical expansion apply to unknown tools too.\n- Per-item expand/collapse survives new activity and history paging. Ctrl+O changes the global expansion default; explicit per-item overrides remain until the user resets them through the view controls. This policy is settled by root D-F3.\n- Changes is read-only in this checkpoint, with no save/editor mutation capability. This does not remove the wanted guarded human editor, immutable mutation receipts, session baselines, rich inline-diff preference or Work/Session tabs from NWP-08."
     },
     {
       "name": "Declared UI defaults and override owner",
@@ -556,7 +607,7 @@
       "content": "Hit testing and mouse dispatch validate the current frame source, body revision and rendered source-map identity. A logical placeholder anchor may preserve a requested item/offset while content is unavailable, but it is not the identity of a painted source map and cannot authorize selection, copy or an unrelated hit. Keep those identities distinct; stale/missing mappings are explicit and never rebound through a placeholder fallback.\n\nParallel authoring exception: app/search.rs and app/search_tests.rs may be authored independently as a pure literal-query search module over source-bound original text prefixes, with grapheme-safe match/selection boundaries. Every result retains exact source/body revision and original-byte coordinates and declares loaded-transcript, selected-body or explicitly requested older-history scope, including partial/unavailable coverage. An unsearched suffix or older range is never reported as no match. No I/O, provider work, module wiring or runtime mutation belongs in this slice. R5 remains prerequisite for R6 integration, validation and completion.\n\nParallel authoring exception: app/export.rs and app/export_tests.rs may be authored independently for exporting explicitly scoped, source/revision-bound original text to an explicit operator path. Default writes create a new file; replacement requires an explicit overwrite choice. Preserve original hard newlines and report missing/partial source coverage and path-specific errors; no hidden transcript persistence. Filesystem work must run off the terminal event loop when integrated. This authoring slice does not wire modules, dispatch runtime work or mutate session/provider state. R5 remains prerequisite for R6 integration, validation and completion.\n\nSplit reading-action orchestration into app/view_actions/reading.rs and reading_tests.rs: typed search state, navigation to an exact source/body-revision hit, and supervised explicit-path export I/O workers. Existing commands.rs owns command grammar. Preserve current-frame source/map identity independently of logical placeholder anchors, source-scoped partial/unavailable search/export status, create-new by default and explicit overwrite choice. Export filesystem work stays off the terminal event loop; worker completion/errors remain supervised and source-bound. This adds no provider, persistence or session-control capability. R5 remains prerequisite for R6 integration, validation and completion."
     },
     {
-      "name": "Exact publication binding repair — NRT-002",
+      "name": "Exact publication binding repair \u2014 NRT-002",
       "content": "One common owner owns observation schema, sender derivation, caller/setup wiring, shared append helpers, delivery_inputs caller, typed SessionError propagation and all producer regression fixtures. Use private OnceLock resolution cells and one coalescing execution Notify. Complete successful receipts synchronously in the actual append-owning closure before cancellable hooks or outer continuations; cloned tickets cannot publish. Validate source/sender identity; child senders drop parent scope.\n\nThe second owner alone owns indexed store history lookup, projection input/assistant reconciliation and retired-attempt fences, plus the ActiveInputDelivery leaf type. The common owner retains delivery_inputs/setup/shared append helpers and the single producer regression file. Fix the observation/index/input seam with both owners before parallel authoring; coordinate any schema change before dependent edits.\n\nR3/R5 completion requires the NRT-002 exact producer publication-binding repair and its required proof. Existing implementation/integration authoring may continue under exclusive coordinated ownership; duplication, guessed association or an unverified repair cannot be reported complete. NRT-001 and NRT-002 form one final checkpoint; completion gates do not add circular source-authoring prerequisites.\n\nFor one exact admitted execution, normal End and TurnCompleted facts share one compact completed-execution presentation row. Selection or expansion exposes every original completion fact, source, model, usage, timing and availability field. Errors, cancellation and coverage gaps remain explicit. Never drop metadata, invent success or associate records by text, time or proximity. Implement presentation only through existing TUI file walls.\n\nParallel fixture-authoring exception: after the current source freeze ends, channels_fixture alone may update the existing canonical pty_smoke.rs, model_selection.rs, mcp_channels.rs and support/mcp_channels_tui.rs. The already-declared retained_workspace.rs and support/retained_workspace.rs may be authored by a separate explicitly assigned owner. Preserve every semantic assertion and PTY acceptance. This permits authoring only: R7 validation/completion still requires R6 and the NRT-002 publication-binding repair. No source collision, early acceptance or extra path is authorized.\n\n**api**\n- scope_constructor: AgentEventSender::observe_execution(&self, store: &EventStore, source: &ViewSource, execution: Uuid) -> Result<(AgentEventSender, ExecutionObservation), ObservationError>\n- constructor_rules: Validate the exact source through the actual store, validate source.agent_id against sender identity, reject an already scoped sender's rebind, and return an immutable scope. The original sender remains unscoped. for_child drops the parent's observation scope. No AgentStepRequest fields are added.\n- execution_observation: Opaque cloneable handle: source(), execution(), opening_input() -> Option<&InputResolution>, and notification() supporting an await on a coalescing Notify. One opening-input resolution slot exists because one run_agent_step admission has at most one opening prompt. AgentMessages/McpChannelWake have no opening prompt and do not mint a human acceptance.\n- producer_response_scope: Crate-private for_response(actual zero-based request iteration) creates one response owner. It is derived at StepMachine::call_provider from the producer's checked iteration counter, never from received Done events.\n- producer_attempt_scope: Crate-private for_attempt(actual positive retry number) creates a unique immutable AttemptObservation ticket. The retry owner supplies its actual counter. Counter overflow must be a typed refusal, never a saturated reused key.\n- attempt_observation: Opaque Arc-backed ticket with source(), attempt() -> &AttemptKey, and resolution() -> Option<&AttemptResolution>. Fields and successful-resolution constructors are private to the runtime observation owner. Every scoped provider envelope carries the same ticket for that actual attempt.\n- attempt_resolution: Single-assignment Accepted(HistoryRecord), NotAccepted(reason category), or AcceptedButUnavailable { event_id, safe typed observation error }. AcceptedButUnavailable reports an accepted event whose view could not be projected; it must never be labelled a failed append or alias arbitrary content.\n- winning_attempt: A response owner has exactly one private single-assignment winning-attempt slot. The retry closure fills it only after complete successful response assembly. This avoids public AssembledResponse schema changes, universal request fields, or inferring the winning attempt from received events. Failed attempts are not retained by this response owner.\n- live_envelope: One AgentEventKind::Observed(ObservedAgentEvent) carries a private ObservationScope (Execution, Response or Attempt) and the boxed original AgentEventKind, without cloning its body. Nested wrapping is refused. Every scope shares the opaque execution-owner identity. Provider envelopes carry exact attempt tickets; auxiliary tool-result/compaction/message envelopes carry execution provenance so an old turn cannot acquire a new turn identity.\n- exact_record_read: EventStore::history_record(&self, source: &ViewSource, event_id: &EventId) -> Result<HistoryRecord, HistoryReadError>. Validate the bound source and managed writer generation; use the actual event-ID index to check ordinal and EventId; clone only that selected event under the lock; release the lock and call project_committed. No whole events() clone or raw payload crosses the public seam.\n- input_reconciliation: SessionProjection::reconcile_input_record(local: &ItemId, record: &HistoryRecord) -> Result<(), ViewError>. Validate same source, existing Local Input, exact committed UserContent target, and conflict/idempotence rules; retain one canonical committed body and alias the old local item. Never infer local identity from text.\n- assistant_reconciliation: Consumer invokes existing reconcile_history_record only with an Accepted record from the matching opaque attempt ticket, after source/execution checks. Shared projection records an exact retired-attempt fence so later buffered envelopes cannot recreate the live copy.\n- consumer_split: New app/transcript/publication.rs owns the admitted execution handle, observed unresolved attempt tickets, resolution processing and late-event fences. New publication_tests.rs tests the real runtime receipt path. Transcript remains the integration owner; no second retained history-record cache is needed.\n- resolution_cell: Private OnceLock cells, one coalescing execution Notify, immutable read tickets and one producer resolution guard.\n- accept_history: Borrow &HistoryPage; no second retained record cache.\n\n**ownership_and_boundedness**\n- There is no queue of receipts. Each opening admission has one outcome cell; each actual provider attempt has one outcome cell; each response owner retains at most one winning attempt.\n- Outcome cells are single-assignment immutable receipts. A producer guard owns the only resolution right. Cloned tickets are read handles, not additional publishers.\n- The already bounded broadcast holds live-envelope ticket Arcs. Failed attempts are not accumulated in a producer ledger. The frontend retains tickets only for attempts it actually displayed and removes resolved tickets after processing.\n- An entirely missed attempt produces no provisional row. Its ordinary committed HistoryRecord is sufficient and receives no invented live alias.\n- One execution Notify stores a coalesced wake, not one message per publication. It never blocks the producer. Consumers also inspect ticket resolution on initial envelope admission, so a notification that preceded ticket delivery cannot lose the receipt.\n- The pending ticket set is tied to currently owned live/provisional work, not elapsed time or total historical events. It must be drained on notification, turn completion and source replacement. Closed scopes reject late admission.\n- Compact HistoryRecord data contains metadata and approved lazy body references only. It is moved into one cell once. Original provider bodies remain in the store; no per-frame or per-delta copies are introduced.\n\n**publication_lifecycle**\n- Before running a turn, retain begin_execution's exact UUID/model snapshot and create the store-validated execution sender/observation handle. Associate the exact submitted Local ItemId with the human opening admission in this same frontend owner.\n- At each producer request boundary, create a response owner with the actual response index. Each retry creates an attempt ticket before streaming and sends that ticket on every live provider envelope. Do not depend on a separate start notification being received.\n- A failed streaming attempt resolves NotAccepted before retry waiting; cancellation drops its producer guard and resolves NotAccepted. The resolution notifies the frontend so a lost retry broadcast cannot leave a failed provisional copy active.\n- On successful assembly, transfer the winning ticket to the response publication owner; success at this stage is not acceptance and resolves no Accepted cell.\n- Move the publication-resolution guard into the same owner closure that performs append or append_batch. On successful append, mint the exact indexed compact record, fill Accepted and notify synchronously before returning or awaiting hooks. On a failed append fill NotAccepted. Never move a successful receipt back to the outer future for later publication.\n- If append later moves to spawn_blocking, the owning closure retains the resolution guard: dropping the outer future cannot prematurely resolve NotAccepted while that worker can still commit. The worker reports the final actual outcome.\n- A post-append view-projection failure is AcceptedButUnavailable with the exact EventId and safe error category; it is neither a false successful display association nor a false claim that storage rolled back.\n- On turn completion, process all currently resolved known tickets and the opening receipt before final history display. Ordinary history and ticket records are idempotent in either order. Then close admission to that execution and preserve exact retired-key fences for late buffered envelopes.\n- For human steers, preserve the existing ActiveInputDelivery transport, add the actual accepted EventId, and emit its acknowledgement inside the same actual append-owner closure before hooks. The TUI obtains the owner-minted exact record off the input/paint path and calls the same input reconciliation API. Do not create a second steer route.\n\n**lag_and_ordering**\n- A scoped live event names its actual source, execution, response and retry; the reducer never assigns it to a counter inferred from another received event.\n- Broadcast lag marks the affected current live attempt incomplete. Further unproven deltas must not be concatenated across the missing interval. A later actual attempt starts under its own explicit producer key.\n- The ticket cell survives missing publication/retry notifications whenever any provisional fragment was displayed. On the Notify wake, reconcile Accepted or retire NotAccepted using that exact ticket.\n- Publication before buffered live delivery: inspect ticket first, accept its record, set the retired fence, and do not apply stale deltas. Publication after live delivery: replace only that ticket's provisional rows.\n- History before receipt and receipt before history both call idempotent apply_history_record through exact reconciliation; neither requires a FIFO or event-window guess.\n- Generic text without canonical response-item identities is retired, but does not gain a fabricated body-offset alias. Canonical item/part and exact tool call identity aliases retain existing R1 validation. Old body revisions stay explicitly stale and locally pinned copy bytes remain governed by existing copy rules.\n- Source replacement rejects old generation tickets even if session names, event contents or execution UUIDs look similar. A late old execution cannot acquire the new execution's accepted-model stamp.\n\n**acceptance**\n- store: [\"Exact indexed read returns the same compact identity as the corresponding page.\", \"Wrong source generation, absent EventId, index/ordinal conflict and changed managed writer are typed refusals.\", \"Only the selected raw event is cloned under lock; projection happens after releasing it.\"]\n- producer: [\"Generic MockProvider TextDelta + Done(None) yields one exact Accepted assistant receipt after actual append.\", \"Canonical response items and a multi-response tool loop produce distinct exact response/attempt/event bindings.\", \"A failed retry resolves its ticket NotAccepted; only the actual winning attempt obtains the published record.\", \"No Accepted receipt after pre-append validation or sink failure.\", \"Cancellation before append resolves NotAccepted; cancellation while a hook waits preserves the already Accepted receipt.\", \"Use a controlled append owner fixture to prove the resolution occurs in the owner closure: stopping the outside waiter cannot mark NotAccepted before the owner reports success.\", \"Opening input receipt names the precise accepted UserMessage; child-result and external-wake paths never claim an operator opening input.\", \"Human steer acknowledgement carries its exact accepted EventId and survives cancellation while hooks await.\", \"Repeated identical text in separate turns remains two distinct accepted inputs and responses.\"]\n- projection_and_consumer: [\"History-first and receipt-first each retain one assistant row set and one canonical human body.\", \"A receipt seen before queued live deltas fences those deltas from recreating the provisional copy.\", \"Broadcast lag with a retained ticket still reconciles from its cell; no receipt queue is required.\", \"Losing every live event for an attempt leaves ordinary committed history without an invented alias.\", \"Retry/cancel/stale-source/old-execution envelopes cannot rebind another attempt or model snapshot.\", \"Generic fragment retirement does not invent canonical body-offset aliases; real item/part aliases continue to validate.\", \"Notify coalescing and publication-before-notification-registration cannot lose an observable resolution.\", \"Many failed retries retain no producer receipt ledger and impose no frontend backpressure; actual retained ticket ownership is asserted.\"]\n- actual_pty: [\"Version a new external PTY oracle attempt; preserve attempt01 and its report unchanged.\", \"For actual run_app with existing MockProvider, assert exactly one rendered prompt body and one final assistant body after commit and lazy body loading, not merely substring presence.\", \"Repeat the current geometry/resize/paging/restoration checks against the newly compiled exact source. No real provider request is needed.\"]\n\nValidate the managed current registered spool owner before acquiring the store lock and off the paint/input path, using the existing registered-entry guard in session/spool/range.rs. Cached store ID/generation alone cannot prove that a deleted/recreated session still owns the registered writer. Reuse existing authority; no new capability, filesystem work under the store lock or whole-history/body read.\n\nAdd a transparent boxed ObservationError variant in provider/channel_event.rs so checked scoped-envelope failures retain their actual typed source. Never relabel an observation/source failure as NoObservers or another delivery outcome; no payload duplication, new event route or observer authority.\n\nLiveReduction exposes completion_item: Option<ItemId> from the actual Done reduction; the core retains its compact Done label without adding a duplicate local metadata body. The TUI retains typed Done stop_reason, response_id and Usage under the exact active-execution identity, then moves those facts into the one final completion-details body. It uses exact returned routine notice IDs for compact presentation, never order/text/label guesses, and does not duplicate retained metadata or transcript caches. Every original fact remains inspectable; stale source/execution fences and existing source walls remain unchanged.\n\nThe already-registered R7 new_retained_workspace parallel-authoring partition is assigned to review_tui, exclusively for tests/retained_workspace.rs and tests/support/retained_workspace.rs. Author persistent actual-App PTY-04 reading-control/resize fixtures using the shared retained_screen oracle API and the existing 33-check external R6 evidence as a source of scenarios, not a substitute for executing these fixtures. channels_fixture remains the exclusive canonical-fixture/shared-oracle owner. No source paths or acceptance scope are added, and R6/NRT-002 prerequisites still gate R7 validation/completion.\n\n**Exhaustive fixture match repair:** The actual core-check02 exhaustive-match failures authorize only an explicit AgentEventKind::Observed arm in the named existing test fixture. Preserve the current unscoped event route, unexpected-event refusal and every original semantic assertion. Do not add a wildcard, todo, ignore, lint bypass or new source/behavior access. Apply only after the active source owner thaws the current compile. Paths: crates/norn/src/loop/runner/tests/streaming_nudge.rs, crates/norn/src/session_view/projection_tests.rs.\n\nAt finalise_turn, reconcile the actual root turn's final input/output usage against the already-accounted live_root_usage for that same turn. Add only that turn's missing deltas to the cumulative ledger and publish the actual current counters. The final result is authoritative. Reset/associate per-turn live accounting with exact root execution identity: a second turn with numerically equal usage must count again, not be mistaken for a duplicate. A duplicate Done fence has no UI usage side effect. Preserve all existing usage/model/budget controls and assertions; this is exact-turn reconciliation, not a new feature or a cross-turn numeric high-water mark.\n\n**Shared future allocation boundary:** Box::pin the sole inner orchestrate_run(...).await at the existing shared wrapper in crates/norn-cli/src/print/orchestrator.rs (inspection anchor line250). Preserve that wrapper's existing signal ownership, output sink, typed error envelope, cancellation and drop behavior. This is only an allocation boundary for the inner future to address the three observed >16KiB outer-future Clippy failures; it spawns no task and changes no protocol, configuration or runtime policy. driven.rs and additional speculative call sites are outside this amendment. Verify the composed call sites before claiming the diagnostic is resolved."
     },
     {
@@ -735,7 +786,7 @@
   ],
   "change_evidence_rules": [
     "The initial title is Changes with a scope label such as Tool call <call_id>. Group by evidenced path and exact call; preserve source/agent identity. There is no implicit session-start baseline, current-file preview, Git HEAD comparison, rename detection or external-writer attribution.",
-    "edit: show old_string → new_string as an edit fragment, not a whole-file diff. Preserve committed and after_hash independently of diagnostics/error. Missing/ill-typed strings are evidence unavailable, never empty strings. A blocked edit is a proposed fragment labelled not committed.",
+    "edit: show old_string \u2192 new_string as an edit fragment, not a whole-file diff. Preserve committed and after_hash independently of diagnostics/error. Missing/ill-typed strings are evidence unavailable, never empty strings. A blocked edit is a proposed fragment labelled not committed.",
     "write: show submitted content and committed/bytes_written/path facts when available. There is no captured before-content in current write output, so before comparison is unavailable; an empty before-file is not inferred. Post-write diagnostic failure may follow a committed write.",
     "apply_patch: show the supplied patch tied to the call and the result's evidenced outcome. A submitted patch alone is intent, not proof all hunks committed. Never regenerate the old patch against current disk contents.",
     "Unknown/Bash/MCP tools retain description, call identity, raw detail and evidenced result. Their arbitrary filesystem writes are outside structured receipt coverage; a nearby shell/tool invocation does not supply authorship or before/after hashes. No action-log-only filter, because its successful-only mutation entries omit committed-with-error cases.",
@@ -1988,7 +2039,7 @@
     ]
   },
   "urgent_agent_readability_repair": {
-    "status": "registered_urgent_repairs_dispatched_agent_interaction_pending",
+    "status": "local_restoration_installed;R4_R6_pending;main_205_Fable_pending",
     "brief": "briefs/NUI-003.json",
     "baseline": "04bcc9a77aa6f815669ee18e591a52a2520c9bb5",
     "remaining_user_requirement": {
@@ -2005,7 +2056,7 @@
     "current_frozen_validation_unchanged": false,
     "registered_at_melbourne": "2026-09-06T15:24:33.006139+10:00",
     "prior_validation_records_preserved": true,
-    "final_repaired_source_validation_required": true,
+    "final_repaired_source_validation_required": false,
     "pane_amended_at_melbourne": "2026-09-06T15:32:52.650033+10:00",
     "agent_snapshot_contract": "One AgentFrame snapshot carries both the existing compact five-row-plus-overflow strip and the full admitted agent listing, including the root, for the explicitly selected Agents pane. agents::paint_pane(&AgentFrame, &mut Frame, area, scroll) clips the full list to the current pane rectangle and uses its explicit scroll; it does not reuse the compact truncation as a data cap. No second status read or second state owner. Compact root-only state still adds zero agent chrome; an explicitly opened Agents pane can show its actual root. Root integrates the chosen rectangle and sole frame writer. Preserve exact identity/order/hold/recovery and explicit unavailable facts. Listing grants no target selection/history/message authority, fabricated transcript, history read or provider activation.",
     "pane_narrow_visibility": "Explicit /pane diff|agents and /view pane diff|agents also set UpperPane::Changes, so the selected auxiliary content is immediately visible when narrow geometry can show only one upper pane. /pane with no arguments and /view pane toggle preserve the selected auxiliary content and focus, apart from existing visibility normalization; do not switch targets or alter transcript identity.",
@@ -2017,7 +2068,220 @@
         "crates/norn-tui/tests/mcp_channels.rs"
       ],
       "evidence": "/private/tmp/ncp-001-proof/assembly/frontend-repairs-1.log",
-      "status": "registered_pending_execution"
+      "status": "implemented_locally_verified"
+    },
+    "local_checkpoint": {
+      "at_melbourne": "2026-09-06T16:55:55.268481+10:00",
+      "commit": "05109e6f6294c9af6f58657722dc7e968857b721",
+      "summary": "norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed.",
+      "install_receipt": {
+        "path": "/Users/tom/.local/state/norn/install-backups/20260906-164905-composer-preview/receipt.json",
+        "sha256": "77ba8ac7fb725895a54c70c0c801f61babe6f968abd6f4dd6f43a0284ee781bb"
+      },
+      "validation": [
+        {
+          "role": "workspace",
+          "path": "/private/tmp/ncp-001-proof/assembly/workspace-4.json",
+          "sha256": "7e8419e4ea6e250d21970895b70b1b3f9925267a2e4faaf0ce65afd80a9e90b5",
+          "log": "/private/tmp/ncp-001-proof/assembly/workspace-4.log",
+          "log_sha256": "5b056ee1fa249226bde8a3483500c61322b1fd210d5ecc3bf8eda3339b331a06"
+        },
+        {
+          "role": "doctests",
+          "path": "/private/tmp/ncp-001-proof/assembly/docs-3.json",
+          "sha256": "9fbd4f650d1087b976728378c3f3472ee5462bc59160090a24b0ca1201c2eab7",
+          "log": "/private/tmp/ncp-001-proof/assembly/docs-3.log",
+          "log_sha256": "cc609cdc488c2812e3afce61dd7368efe503899d3bee2a7358dcd27fdaa11c0e"
+        },
+        {
+          "role": "clippy",
+          "path": "/private/tmp/ncp-001-proof/assembly/clippy-11.json",
+          "sha256": "b6088e10905476c1c08e3a5f8e32296adb9941e190edafae7acb301bf0d05c44",
+          "log": "/private/tmp/ncp-001-proof/assembly/clippy-11.log",
+          "log_sha256": "3b7bf058aa92bfa1c3bdc5d827b5526b0c942f4fb18cdcfdaa19955910f95747"
+        },
+        {
+          "role": "fmt",
+          "path": "/private/tmp/ncp-001-proof/assembly/fmt-8.json",
+          "sha256": "c74f89aa9e9799bee6ab2582e3a1a77a4902e5b09e50c852196e4440eaad62c3",
+          "log": "/private/tmp/ncp-001-proof/assembly/fmt-8.log",
+          "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "role": "release",
+          "path": "/private/tmp/ncp-001-proof/assembly/release-4.json",
+          "sha256": "5168871cb3f37e807058fdd62179347e2aea6afa043dd28dc12a7efa9d5f6bab",
+          "log": "/private/tmp/ncp-001-proof/assembly/release-4.log",
+          "log_sha256": "aa43f4a04c505a8a9c2967e06d281bfa039e489554357c069b44d45101deb2c5"
+        }
+      ],
+      "workspace": {
+        "passed": 6378,
+        "failed": 0,
+        "ignored": 0,
+        "suites": 39
+      },
+      "doctests": {
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0,
+        "suites": 5
+      },
+      "actual_required_tests": [
+        "process::manager::tests::a_late_attached_watch_catches_up_over_a_large_region_without_wedging",
+        "tests::descriptor_retention::active_process_permits_release_on_terminal_paths",
+        "app::render::transcript::tests::mixed_frame_restores_spacing_typed_colours_and_full_width_composer",
+        "app::render::transcript::tests::one_row_navigation_crosses_distinct_spacers_in_both_directions",
+        "tools::summary::tests::supplied_name_always_accompanies_original_description_in_both_views",
+        "actual_idle_and_active_pane_commands_preserve_original_composer_and_admission"
+      ],
+      "boundaries": {
+        "main_landing": false,
+        "venue205": false,
+        "Fable": false,
+        "public_release": false,
+        "live_provider_execution": false
+      },
+      "NUI003_implemented_rows": [
+        "R1",
+        "R2",
+        "R3",
+        "R5"
+      ],
+      "NUI003_pending_rows": [
+        "R4",
+        "R6"
+      ]
     }
+  },
+  "pane_interaction_checkpoint": {
+    "status": "preview6_candidate_R1_R3_review_repairs_unverified_R4_pending",
+    "brief": "briefs/NUI-004.json",
+    "baseline": "05109e6f6294c9af6f58657722dc7e968857b721",
+    "branch": "codex/norn-pane-interaction",
+    "worktree": "/private/tmp/norn-pane-interaction",
+    "registered_at_melbourne": "2026-09-06T16:50:49.229245+10:00",
+    "source_proposals": [
+      {
+        "path": "/private/tmp/nui-004-proof/drag-selection-proposal.json",
+        "sha256": "e0d6b0320bcc8dc29c5687566af3ba8f4b064e11e92441842f92093ad537eef2",
+        "scope": "Root-approved contract and exact proposed wall; no new execution proof."
+      },
+      {
+        "path": "/private/tmp/ncp-001-proof/shift-enter-plan/proposal.json",
+        "sha256": "2bbfe8e1e51cd3fa185c432f574dfbfe4496b730d6d7ca7fb3b2c02cbcda6cef",
+        "scope": "Root-approved contract and exact proposed wall; no new execution proof."
+      }
+    ],
+    "no_new_test_build_install_claim": true,
+    "r4_registered_at_melbourne": "2026-09-06T17:00:18.425654+10:00",
+    "r4_proposal_sha256": "28db063432436903fc1d27dd2517e3f1a3b811417566f08f26485c547f3275c2",
+    "implementation_checkpoint": {
+      "recorded_at_melbourne": "2026-09-06T17:11:03.000166+10:00",
+      "authority": "Root reports R1-R3 authored but unverified; R4 source implementation remains pending.",
+      "installed_baseline_commit": "05109e6f6294c9af6f58657722dc7e968857b721",
+      "installed_baseline_version": "0.1.0-preview.5",
+      "postinstall_docs_commit": "2aa2d9c0f01216716a8b298841af3ee53308b8a7",
+      "interaction_test_build_install_claim": false,
+      "source_authority": "All registered files/specifications/acceptance and exclusive owners remain unchanged."
+    },
+    "preview_candidate": {
+      "version": "0.1.0-preview.6",
+      "scope": [
+        "R1",
+        "R2",
+        "R3"
+      ],
+      "excluded_pending": [
+        "R4"
+      ],
+      "installed": false,
+      "new_verification_claim": false,
+      "registered_at_melbourne": "2026-09-06T17:15:28.419735+10:00"
+    },
+    "review_repair_partition": "For the current R2 review repairs, review_child_context exclusively owns app/display_selection.rs, app/view_actions/mouse.rs and app/view_actions/commands.rs as whole files. norn_tui owns display_selection_tests.rs and existing R2 PTY/oracle tests and the remaining view_actions/reading seams. Root owns the small shared render.rs revocation/publication hook and F2/keys integration. Root HELP and channels send-policy hunks go through review_child_context while this repair partition is active; no concurrent writers."
+  },
+  "ui_restoration_local_checkpoint": {
+    "at_melbourne": "2026-09-06T16:55:55.268481+10:00",
+    "commit": "05109e6f6294c9af6f58657722dc7e968857b721",
+    "summary": "norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed.",
+    "install_receipt": {
+      "path": "/Users/tom/.local/state/norn/install-backups/20260906-164905-composer-preview/receipt.json",
+      "sha256": "77ba8ac7fb725895a54c70c0c801f61babe6f968abd6f4dd6f43a0284ee781bb"
+    },
+    "validation": [
+      {
+        "role": "workspace",
+        "path": "/private/tmp/ncp-001-proof/assembly/workspace-4.json",
+        "sha256": "7e8419e4ea6e250d21970895b70b1b3f9925267a2e4faaf0ce65afd80a9e90b5",
+        "log": "/private/tmp/ncp-001-proof/assembly/workspace-4.log",
+        "log_sha256": "5b056ee1fa249226bde8a3483500c61322b1fd210d5ecc3bf8eda3339b331a06"
+      },
+      {
+        "role": "doctests",
+        "path": "/private/tmp/ncp-001-proof/assembly/docs-3.json",
+        "sha256": "9fbd4f650d1087b976728378c3f3472ee5462bc59160090a24b0ca1201c2eab7",
+        "log": "/private/tmp/ncp-001-proof/assembly/docs-3.log",
+        "log_sha256": "cc609cdc488c2812e3afce61dd7368efe503899d3bee2a7358dcd27fdaa11c0e"
+      },
+      {
+        "role": "clippy",
+        "path": "/private/tmp/ncp-001-proof/assembly/clippy-11.json",
+        "sha256": "b6088e10905476c1c08e3a5f8e32296adb9941e190edafae7acb301bf0d05c44",
+        "log": "/private/tmp/ncp-001-proof/assembly/clippy-11.log",
+        "log_sha256": "3b7bf058aa92bfa1c3bdc5d827b5526b0c942f4fb18cdcfdaa19955910f95747"
+      },
+      {
+        "role": "fmt",
+        "path": "/private/tmp/ncp-001-proof/assembly/fmt-8.json",
+        "sha256": "c74f89aa9e9799bee6ab2582e3a1a77a4902e5b09e50c852196e4440eaad62c3",
+        "log": "/private/tmp/ncp-001-proof/assembly/fmt-8.log",
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "role": "release",
+        "path": "/private/tmp/ncp-001-proof/assembly/release-4.json",
+        "sha256": "5168871cb3f37e807058fdd62179347e2aea6afa043dd28dc12a7efa9d5f6bab",
+        "log": "/private/tmp/ncp-001-proof/assembly/release-4.log",
+        "log_sha256": "aa43f4a04c505a8a9c2967e06d281bfa039e489554357c069b44d45101deb2c5"
+      }
+    ],
+    "workspace": {
+      "passed": 6378,
+      "failed": 0,
+      "ignored": 0,
+      "suites": 39
+    },
+    "doctests": {
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0,
+      "suites": 5
+    },
+    "actual_required_tests": [
+      "process::manager::tests::a_late_attached_watch_catches_up_over_a_large_region_without_wedging",
+      "tests::descriptor_retention::active_process_permits_release_on_terminal_paths",
+      "app::render::transcript::tests::mixed_frame_restores_spacing_typed_colours_and_full_width_composer",
+      "app::render::transcript::tests::one_row_navigation_crosses_distinct_spacers_in_both_directions",
+      "tools::summary::tests::supplied_name_always_accompanies_original_description_in_both_views",
+      "actual_idle_and_active_pane_commands_preserve_original_composer_and_admission"
+    ],
+    "boundaries": {
+      "main_landing": false,
+      "venue205": false,
+      "Fable": false,
+      "public_release": false,
+      "live_provider_execution": false
+    },
+    "NUI003_implemented_rows": [
+      "R1",
+      "R2",
+      "R3",
+      "R5"
+    ],
+    "NUI003_pending_rows": [
+      "R4",
+      "R6"
+    ]
   }
 }

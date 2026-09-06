@@ -6,6 +6,12 @@ title: Truthful diagnostics and declared venue verification
 
 # Truthful diagnostics and declared venue verification
 
+## Recorded local preview checkpoint
+
+norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed.
+
+NUI-003 R4: selected main/fork/subagent history and acknowledged messaging; NUI-003 R6: persistence of selected auxiliary content. Both remain pending. Status and an Agents listing do not grant target messaging authority.
+
 ## Intention
 
 Make diagnostic failures truthful and declare the venue legs without treating diagnostics as landing authority.

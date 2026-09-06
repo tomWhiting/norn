@@ -9,7 +9,7 @@ pub mod workspace_support;
 
 use serde_json::json;
 use support::{draft, edit, newline, paste, plain, submit};
-use workspace_support::{TestResult, with_composer};
+use workspace_support::{TestResult, Workspace, with_composer, with_composer_keyboard};
 
 #[test]
 fn retained_workspace_child_entrypoint() -> TestResult {
@@ -24,6 +24,11 @@ fn enter_send_runs_idle_and_active_kernel_edits_without_duplicate_admission() ->
 #[test]
 fn alt_enter_launch_preserves_bare_newline_and_exact_original_admission() -> TestResult {
     editing("alt-enter")
+}
+
+#[test]
+fn shift_enter_launch_preserves_bare_newline_and_exact_original_admission() -> TestResult {
+    editing("shift-enter")
 }
 
 fn editing(send_key: &str) -> TestResult {
@@ -178,4 +183,101 @@ fn actual_composer_mouse_hit_edits_the_displayed_wide_cluster_boundary() -> Test
         submit(app, "a界Xb")?;
         Ok("a界Xb".to_owned())
     })
+}
+
+#[test]
+fn shift_send_recovery_preserves_idle_and_active_drafts_with_confirmed_reporting() -> TestResult {
+    shift_recovery(true)
+}
+
+#[test]
+fn shift_send_recovery_preserves_idle_and_active_drafts_when_reporting_is_unconfirmed() -> TestResult
+{
+    shift_recovery(false)
+}
+
+fn shift_label(confirmed: bool) -> &'static str {
+    if confirmed {
+        "[Shift+Enter sends]"
+    } else {
+        "[Shift+Enter unconfirmed]"
+    }
+}
+
+fn shift_recovery(confirmed: bool) -> TestResult {
+    with_composer_keyboard("shift-enter", confirmed, |app| {
+        let initial = app.screen()?;
+        assert!(initial.contains(shift_label(confirmed)));
+        assert!(initial.contains("Enter newline"));
+        assert!(initial.contains("F10 send key"));
+        let idle = app.snapshot()?;
+        let original = recover_draft(app, "idle", confirmed)?;
+        assert_eq!(
+            app.snapshot()?,
+            idle,
+            "recovery/newline gestures submitted idle input"
+        );
+        submit(app, &original)?;
+        let admitted = app.snapshot()?;
+        recover_draft(app, "active", confirmed)?;
+        assert_eq!(
+            app.snapshot()?,
+            admitted,
+            "recovery/newline gestures submitted active input"
+        );
+        edit(app, b"\x1b", &[""])?;
+        paste(app, "/view status", &["/view status"])?;
+        let status = app.input(b"\x1b[13;2u", |screen| {
+            draft(screen) == [""] && screen.contains("Composer send key: shift-enter")
+        })?;
+        plain(&status, &[""])?;
+        assert_eq!(
+            app.snapshot()?,
+            admitted,
+            "active local Shift submission admitted provider input"
+        );
+        Ok(original)
+    })
+}
+
+fn recover_draft(app: &mut Workspace, prefix: &str, confirmed: bool) -> TestResult<String> {
+    let original = format!("{prefix}🙂");
+    paste(app, &original, &[&original])?;
+    let selected = app.input(b"\x1b[D", |screen| screen.cursor.0 == prefix.len())?;
+    let cursor = selected.cursor;
+    let alternate = app.input(b"\x1b[21~", |screen| screen.contains("[Alt+Enter sends]"))?;
+    plain(&alternate, &[&original])?;
+    assert_eq!(alternate.cursor, cursor, "F10 moved the kernel caret");
+    let button_row = alternate
+        .lines()
+        .iter()
+        .position(|line| line.starts_with("[Alt+Enter sends]"))
+        .ok_or("actual send button missing")?
+        + 1;
+    let entered = app.input(
+        format!("\x1b[<0;1;{button_row}M\x1b[<0;1;{button_row}m").as_bytes(),
+        |screen| screen.contains("[Enter sends]"),
+    )?;
+    plain(&entered, &[&original])?;
+    assert_eq!(
+        entered.cursor, cursor,
+        "send-policy click moved the kernel caret"
+    );
+    let restored = app.input(b"\x1b[21~", |screen| {
+        screen.contains(shift_label(confirmed))
+    })?;
+    plain(&restored, &[&original])?;
+    assert_eq!(restored.cursor, cursor);
+    // The original paste remains the preceding undo transaction after both controls.
+    edit(app, b"\x1a", &[""])?;
+    edit(app, b"\x19", &[&original])?;
+    app.input(b"\x1b[D", |screen| screen.cursor.0 == prefix.len())?;
+    let edited = format!("{prefix}X🙂");
+    edit(app, b"X", &[&edited])?;
+    edit(app, b"\x1a", &[&original])?;
+    edit(app, b"\x19", &[&edited])?;
+    let first_line = format!("{prefix}X");
+    edit(app, b"\r", &[&first_line, "🙂"])?;
+    edit(app, b"\x1a", &[&edited])?;
+    Ok(edited)
 }

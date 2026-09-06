@@ -212,6 +212,7 @@ fn repeated_readline_and_mac_motion_keep_their_press_semantics() {
 fn send_policy_and_host_toggles_never_repeat_or_leak_to_the_kernel() {
     for (send_key, modifiers) in [
         (ComposerSendKey::Enter, Modifiers::NONE),
+        (ComposerSendKey::ShiftEnter, Modifiers::SHIFT),
         (ComposerSendKey::AltEnter, Modifiers::ALT),
     ] {
         let mut event = KeyEvent::new(KeyCode::Enter, modifiers);
@@ -252,6 +253,39 @@ fn modified_vertical_keys_do_not_accidentally_recall_history() {
                 Some(InputAction::KernelKey(event))
             );
             assert_eq!(map_key_event(event, ComposerSendKey::Enter, true), None);
+        }
+    }
+}
+
+#[test]
+fn shift_send_accepts_only_exact_delivered_shift_press() {
+    for modifiers in [
+        Modifiers::NONE,
+        Modifiers::SHIFT,
+        Modifiers::ALT,
+        Modifiers::CONTROL,
+        Modifiers::META,
+        Modifiers::SUPER,
+        Modifiers::SHIFT | Modifiers::ALT,
+        Modifiers::SHIFT | Modifiers::CONTROL,
+        Modifiers::SHIFT | Modifiers::META,
+        Modifiers::SHIFT | Modifiers::SUPER,
+    ] {
+        let mut event = KeyEvent::new(KeyCode::Enter, modifiers);
+        assert_eq!(
+            map_key_event(event, ComposerSendKey::ShiftEnter, false),
+            Some(if modifiers == Modifiers::SHIFT {
+                InputAction::Submit
+            } else {
+                InputAction::InsertNewline
+            }),
+        );
+        for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+            event.kind = kind;
+            assert_eq!(
+                map_key_event(event, ComposerSendKey::ShiftEnter, false),
+                None
+            );
         }
     }
 }

@@ -59,13 +59,21 @@ pub(super) fn paint_chrome(
     }
     let button = match state.composer_send_key {
         crate::frontend_preferences::ComposerSendKey::Enter => "[Enter sends]",
+        crate::frontend_preferences::ComposerSendKey::ShiftEnter => {
+            if state.terminal_caps.kitty_keyboard {
+                "[Shift+Enter sends]"
+            } else {
+                "[Shift+Enter unconfirmed]"
+            }
+        }
         crate::frontend_preferences::ComposerSendKey::AltEnter => "[Alt+Enter sends]",
     };
     let newline = match state.composer_send_key {
         crate::frontend_preferences::ComposerSendKey::Enter => {
             crate::render::style::newline_key_hint(&state.terminal_caps)
         }
-        crate::frontend_preferences::ComposerSendKey::AltEnter => "Enter",
+        crate::frontend_preferences::ComposerSendKey::ShiftEnter
+        | crate::frontend_preferences::ComposerSendKey::AltEnter => "Enter",
     };
     let last_row = panel.row + panel.height - 1;
     let button_width =
@@ -74,7 +82,7 @@ pub(super) fn paint_chrome(
             source,
         })?;
     let hints = format!(
-        "{button}  {}  ^O verbose  ^E thinking  ^T {}  {newline} newline",
+        "{button}  F10 send key  {newline} newline  {}  ^O verbose  ^E thinking  ^T {}",
         status.key_hints,
         if mode == "steer" { "queue" } else { "steer" }
     );

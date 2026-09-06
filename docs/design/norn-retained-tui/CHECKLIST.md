@@ -24,9 +24,17 @@
 
 ## Urgent agent status and readability repair
 
-- [ ] **C16** — Restore existing typed agent/fork status without claiming target interaction
-- [ ] **C17** — Readable tool name/description, one item spacer and preserved source/style facts
-- [ ] **C18** — Actual retained-screen repair proof with full agent view/message request still visible
+- [x] **C16** — Restore existing typed agent/fork status without claiming target interaction
+- [x] **C17** — Readable tool name/description, one item spacer and preserved source/style facts
+- [x] **C18** — Actual retained-screen repair proof with full agent view/message request still visible
 - [ ] **C19** — Required selected main/fork/subagent view and acknowledged messaging, pending exact design/wall
-- [ ] **C20** — Direct /pane toggle/diff/agents with actual side listing and preserved active local routing
+- [x] **C20** — Direct /pane toggle/diff/agents with actual side listing and preserved active local routing
 - [ ] **C21** — Remember new auxiliary content through the shared frontend preference owner and actual restart proof
+
+## Pane interaction checkpoint
+
+- [ ] **C22** — Thin divider and direct pane/send-policy shortcuts
+- [ ] **C23** — Select displayed conversation and Diff text without false source authority
+- [ ] **C24** — Persist exact Shift+Enter policy with explicit keyboard/button recovery
+- [ ] **C25** — Preserve ordered scroll batches and provide a source-bound Latest action
+- [ ] **C26** — Version and verify the R1-R3 local preview checkpoint

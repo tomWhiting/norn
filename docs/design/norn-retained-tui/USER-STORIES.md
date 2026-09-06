@@ -17,3 +17,13 @@
 **S7.** As a participant I can select the main session, a fork or a subagent, read its actual conversation and send to that exact target with an acknowledged result. This remains pending beyond passive status restoration.
 
 **S8.** As a participant I can use /pane to toggle the side area and /pane diff or /pane agents to select its actual content. Existing /view commands remain supported. Remembering the new content choice and selecting/viewing/messaging individual agents are explicitly tracked until implemented.
+
+**S9.** I can toggle and choose panes directly with visible shortcuts and a thin divider, without losing my draft or sending a request.
+
+**S10.** I can visibly select conversation/tool headers, entries and Diff text, and understand whether copied bytes are original source or a captured display snapshot.
+
+**S11.** I can persist Shift+Enter sending, keep bare Enter as newline and explicitly recover with the same keyboard/button policy cycle when terminal reporting is unconfirmed.
+
+**S12.** I can keep a stable reading position while work continues, preserve every delivered scroll step and explicitly return to the selected conversation’s latest admitted item. NUI-004 R4 now registers the implementation; actual source-bound App and measurement proof remains pending.
+
+**S13.** I can distinguish a candidate from my verified installed preview, see its actual feature scope, recover the prior binary and hear Norn updated only after a successful checked local update.
