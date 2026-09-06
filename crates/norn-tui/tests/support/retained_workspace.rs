@@ -500,6 +500,10 @@ impl Workspace {
 
     /// Submit the same local view command as a person; no direct frontend-method calls.
     pub fn command(&mut self, command: &str, expected: &str) -> io::Result<Screen> {
+        let name = command
+            .split_whitespace()
+            .next()
+            .ok_or_else(|| io::Error::other("local command is empty"))?;
         let after = self.output.bytes()?.len();
         self.send(format!("\x15{command}").as_bytes())?;
         // Observe a nonempty local draft before Enter. Otherwise an old feedback
@@ -509,7 +513,7 @@ impl Workspace {
             screen
                 .composer_rows()
                 .iter()
-                .any(|row| lines.get(*row).is_some_and(|line| line.contains("/view")))
+                .any(|row| lines.get(*row).is_some_and(|line| line.contains(name)))
         })?;
         let after = self.output.bytes()?.len();
         self.send(self.submit_key())?;

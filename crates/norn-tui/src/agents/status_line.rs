@@ -45,6 +45,12 @@ use crate::terminal::caps::TerminalCaps;
 
 use super::tree::{self, CandidateEntry, CollapsedView};
 
+mod retained;
+pub use retained::{RetainedAgentRow, RetainedAgentRowKind, RetainedAgentSnapshot};
+
+#[cfg(test)]
+mod retained_tests;
+
 /// Duration a terminal agent's status line stays visible
 /// before the row is reclaimed.
 pub const HOLD_DURATION: Duration = Duration::from_secs(3);
@@ -300,18 +306,22 @@ fn row_colour(
     activity: Option<&AgentActivity>,
     caps: &TerminalCaps,
 ) -> Option<String> {
+    row_foreground(status, activity).map(|colour| colour_for(colour, caps))
+}
+
+fn row_foreground(status: AgentStatus, activity: Option<&AgentActivity>) -> Option<RgbColor> {
     match status {
-        AgentStatus::Spawning => Some(colour_for(YELLOW_SPAWNING, caps)),
+        AgentStatus::Spawning => Some(YELLOW_SPAWNING),
         AgentStatus::Active | AgentStatus::Completing => {
             if matches!(activity, Some(AgentActivity::Idle)) {
                 None
             } else {
-                Some(colour_for(GREEN_RUNNING, caps))
+                Some(GREEN_RUNNING)
             }
         }
         AgentStatus::Idle => None,
-        AgentStatus::Completed | AgentStatus::Closed => Some(colour_for(GREEN_RUNNING, caps)),
-        AgentStatus::Failed => Some(colour_for(RED_FAILED, caps)),
+        AgentStatus::Completed | AgentStatus::Closed => Some(GREEN_RUNNING),
+        AgentStatus::Failed => Some(RED_FAILED),
     }
 }
 
@@ -363,10 +373,10 @@ impl AgentStatusPanel {
     /// Record live activity for an agent. NT-011 calls this from its
     /// event loop; the value is read on the next [`Self::render`] pass.
     pub fn set_activity(&mut self, id: Uuid, activity: AgentActivity) {
-        self.set_activity_at(id, activity, Instant::now());
+        self.set_activity_at(id, activity);
     }
 
-    fn set_activity_at(&mut self, id: Uuid, activity: AgentActivity, _now: Instant) {
+    fn set_activity_at(&mut self, id: Uuid, activity: AgentActivity) {
         self.activity.insert(id, ActivityEntry::live(activity));
     }
 
@@ -401,10 +411,10 @@ impl AgentStatusPanel {
     /// tool calls from flashing in the tree and disappearing before a
     /// reader can parse them.
     pub fn mark_idle(&mut self, id: Uuid) {
-        self.mark_idle_at(id, Instant::now());
+        self.mark_idle_at(id);
     }
 
-    fn mark_idle_at(&mut self, id: Uuid, _now: Instant) {
+    fn mark_idle_at(&mut self, id: Uuid) {
         match self.activity.get_mut(&id) {
             Some(entry) if !matches!(entry.activity, AgentActivity::Idle) => {}
             _ => {
@@ -488,7 +498,7 @@ impl AgentStatusPanel {
     /// back-to-back calls with the same `now` can disagree on what is
     /// visible.
     pub fn height(&mut self, now: Instant) -> u16 {
-        let (view, _entries) = self.snapshot(now);
+        let (view, _) = self.snapshot(now);
         height_from_view(&view)
     }
 
@@ -727,19 +737,12 @@ impl AgentStatusPanel {
 mod recovery_tests;
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::clone_on_ref_ptr,
-    clippy::missing_const_for_fn,
-    clippy::similar_names,
-    clippy::too_many_arguments
-)]
 mod tests {
     use super::*;
 
     use norn::agent::registry::AgentRegistry;
+
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
     fn fresh_registry() -> Arc<RwLock<AgentRegistry>> {
         AgentRegistry::shared()
@@ -766,7 +769,7 @@ mod tests {
         assert!(!can_replace_with_transient(Some(&tool)));
     }
 
-    fn confirm_root(registry: &Arc<RwLock<AgentRegistry>>) -> Uuid {
+    fn confirm_root(registry: &Arc<RwLock<AgentRegistry>>) -> TestResult<Uuid> {
         let guard = AgentRegistry::reserve(
             registry,
             "/root".to_string(),
@@ -784,13 +787,19 @@ mod tests {
             },
             None,
         )
-        .expect("reserve root");
+        .map_err(|error| format!("reserve root: {error}"))?;
         let id = guard.id();
-        guard.confirm().expect("confirm root");
-        id
+        guard
+            .confirm()
+            .map_err(|error| format!("confirm root: {error}"))?;
+        Ok(id)
     }
 
-    fn confirm_child(registry: &Arc<RwLock<AgentRegistry>>, path: &str, parent: Uuid) -> Uuid {
+    fn confirm_child(
+        registry: &Arc<RwLock<AgentRegistry>>,
+        path: &str,
+        parent: Uuid,
+    ) -> TestResult<Uuid> {
         confirm_child_with_depth(registry, path, parent, 4)
     }
 
@@ -802,7 +811,7 @@ mod tests {
         path: &str,
         parent: Uuid,
         depth: u32,
-    ) -> Uuid {
+    ) -> TestResult<Uuid> {
         let guard = AgentRegistry::reserve(
             registry,
             path.to_string(),
@@ -820,10 +829,12 @@ mod tests {
             },
             None,
         )
-        .expect("reserve child");
+        .map_err(|error| format!("reserve child: {error}"))?;
         let id = guard.id();
-        guard.confirm().expect("confirm child");
-        id
+        guard
+            .confirm()
+            .map_err(|error| format!("confirm child: {error}"))?;
+        Ok(id)
     }
 
     #[test]
@@ -887,25 +898,27 @@ mod tests {
     }
 
     #[test]
-    fn height_zero_for_single_root_agent() {
+    fn height_zero_for_single_root_agent() -> TestResult {
         let registry = fresh_registry();
-        let _root = confirm_root(&registry);
+        confirm_root(&registry)?;
         let mut panel = AgentStatusPanel::new(registry);
         assert_eq!(panel.height(Instant::now()), 0);
+        Ok(())
     }
 
     #[test]
-    fn height_increases_when_child_registered() {
+    fn height_increases_when_child_registered() -> TestResult {
         let registry = fresh_registry();
-        let root = confirm_root(&registry);
+        let root = confirm_root(&registry)?;
         let mut panel = AgentStatusPanel::new(Arc::clone(&registry));
         assert_eq!(panel.height(Instant::now()), 0);
 
-        let _child = confirm_child(&registry, "/root/child", root);
+        confirm_child(&registry, "/root/child", root)?;
         assert!(
             panel.height(Instant::now()) > 0,
             "panel height must grow when a child is registered"
         );
+        Ok(())
     }
 
     #[test]
@@ -972,10 +985,10 @@ mod tests {
     }
 
     #[test]
-    fn completed_agent_visible_for_three_seconds_then_reclaimed() {
+    fn completed_agent_visible_for_three_seconds_then_reclaimed() -> TestResult {
         let registry = fresh_registry();
-        let root = confirm_root(&registry);
-        let child_id = confirm_child(&registry, "/root/child", root);
+        let root = confirm_root(&registry)?;
+        let child_id = confirm_child(&registry, "/root/child", root)?;
         let mut panel = AgentStatusPanel::new(Arc::clone(&registry));
 
         let t0 = Instant::now();
@@ -985,7 +998,10 @@ mod tests {
             "active child must be visible before completion"
         );
 
-        registry.write().mark_completed(child_id).expect("complete");
+        registry
+            .write()
+            .mark_completed(child_id)
+            .map_err(|error| format!("complete: {error}"))?;
 
         let (view, _) = panel.snapshot(t0);
         assert!(
@@ -998,80 +1014,88 @@ mod tests {
             !view.visible.iter().any(|e| e.id == child_id),
             "completed child must be reclaimed after hold expires"
         );
+        Ok(())
     }
 
     #[test]
-    fn failed_agent_held_then_reclaimed() {
+    fn failed_agent_held_then_reclaimed() -> TestResult {
         let registry = fresh_registry();
-        let root = confirm_root(&registry);
-        let child_id = confirm_child(&registry, "/root/failer", root);
+        let root = confirm_root(&registry)?;
+        let child_id = confirm_child(&registry, "/root/failer", root)?;
         let mut panel = AgentStatusPanel::new(Arc::clone(&registry));
 
         let t0 = Instant::now();
         let (_, _) = panel.snapshot(t0);
-        registry.write().mark_failed(child_id).expect("fail");
+        registry
+            .write()
+            .mark_failed(child_id)
+            .map_err(|error| format!("fail: {error}"))?;
 
         let (view, _) = panel.snapshot(t0);
         assert!(view.visible.iter().any(|e| e.id == child_id));
 
         let (view, _) = panel.snapshot(t0 + Duration::from_millis(3_100));
         assert!(!view.visible.iter().any(|e| e.id == child_id));
+        Ok(())
     }
 
     #[test]
-    fn snapshot_idempotent_for_constant_now() {
+    fn snapshot_idempotent_for_constant_now() -> TestResult {
         let registry = fresh_registry();
-        let root = confirm_root(&registry);
-        let _child = confirm_child(&registry, "/root/child", root);
+        let root = confirm_root(&registry)?;
+        confirm_child(&registry, "/root/child", root)?;
         let mut panel = AgentStatusPanel::new(registry);
         let now = Instant::now();
         let (first, _) = panel.snapshot(now);
         let (second, _) = panel.snapshot(now);
         assert_eq!(first.visible.len(), second.visible.len());
+        Ok(())
     }
 
     #[test]
-    fn render_writes_one_row_per_visible_agent_and_overflow_summary() {
+    fn render_writes_one_row_per_visible_agent_and_overflow_summary() -> TestResult {
         let registry = fresh_registry();
-        let root = confirm_root(&registry);
+        let root = confirm_root(&registry)?;
         for i in 0..7 {
-            let _ = confirm_child(&registry, &format!("/root/child-{i}"), root);
+            confirm_child(&registry, &format!("/root/child-{i}"), root)?;
         }
         let mut panel = AgentStatusPanel::new(registry);
         let mut buf: Vec<u8> = Vec::new();
         let caps = TerminalCaps::baseline();
         panel
             .render(10, &mut buf, &caps, Instant::now(), Utc::now(), 120)
-            .expect("render");
-        let out = String::from_utf8(buf).expect("utf8");
+            .map_err(|error| format!("render: {error}"))?;
+        let out = String::from_utf8(buf).map_err(|error| format!("utf8: {error}"))?;
         assert!(
             out.contains("more active agents"),
             "overflow row must appear, got: {out:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn render_paints_no_rows_when_only_root_present() {
+    fn render_paints_no_rows_when_only_root_present() -> TestResult {
         let registry = fresh_registry();
-        let _root = confirm_root(&registry);
+        confirm_root(&registry)?;
         let mut panel = AgentStatusPanel::new(registry);
         let mut buf: Vec<u8> = Vec::new();
         let caps = TerminalCaps::baseline();
         panel
             .render(10, &mut buf, &caps, Instant::now(), Utc::now(), 120)
-            .expect("render");
+            .map_err(|error| format!("render: {error}"))?;
         assert!(
             buf.is_empty(),
             "single-agent case must produce zero paint, got {} bytes",
             buf.len()
         );
+        Ok(())
     }
 
     #[test]
-    fn idle_activity_swaps_filled_to_dotted_circle_in_paint() {
+    fn idle_activity_swaps_filled_to_dotted_circle_in_paint() -> TestResult {
         let registry = fresh_registry();
-        let root = confirm_root(&registry);
-        let child = confirm_child(&registry, "/root/idle-child", root);
+        let root = confirm_root(&registry)?;
+        let child = confirm_child(&registry, "/root/idle-child", root)?;
         let mut panel = AgentStatusPanel::new(Arc::clone(&registry));
         panel.set_activity(child, AgentActivity::Idle);
 
@@ -1079,8 +1103,8 @@ mod tests {
         let caps = TerminalCaps::baseline();
         panel
             .render(0, &mut buf, &caps, Instant::now(), Utc::now(), 120)
-            .expect("render");
-        let out = String::from_utf8(buf).expect("utf8");
+            .map_err(|error| format!("render: {error}"))?;
+        let out = String::from_utf8(buf).map_err(|error| format!("utf8: {error}"))?;
         assert!(
             out.contains('◌'),
             "idle child must render with ◌, got: {out:?}"
@@ -1089,21 +1113,21 @@ mod tests {
             out.contains("idle-child"),
             "child name must appear, got: {out:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn mark_idle_keeps_last_activity_until_replaced() {
+    fn mark_idle_keeps_last_activity_until_replaced() -> TestResult {
         let registry = fresh_registry();
-        let root = confirm_root(&registry);
-        let child = confirm_child(&registry, "/root/tool-child", root);
+        let root = confirm_root(&registry)?;
+        let child = confirm_child(&registry, "/root/tool-child", root)?;
         let mut panel = AgentStatusPanel::new(Arc::clone(&registry));
         let t0 = Instant::now();
         panel.set_activity_at(
             child,
             AgentActivity::Running("bash: checking status".to_string()),
-            t0,
         );
-        panel.mark_idle_at(child, t0 + Duration::from_secs(1));
+        panel.mark_idle_at(child);
 
         let (view, entries) = panel.snapshot(t0 + Duration::from_secs(2));
         let mut buf: Vec<u8> = Vec::new();
@@ -1120,8 +1144,8 @@ mod tests {
                     terminal_cols: 120,
                 },
             )
-            .expect("render held activity");
-        let out = String::from_utf8(buf).expect("utf8");
+            .map_err(|error| format!("render held activity: {error}"))?;
+        let out = String::from_utf8(buf).map_err(|error| format!("utf8: {error}"))?;
         assert!(
             out.contains("bash: checking status"),
             "tool activity should stay readable after idle mark: {out:?}"
@@ -1141,18 +1165,14 @@ mod tests {
                     terminal_cols: 120,
                 },
             )
-            .expect("render persisted activity");
-        let out = String::from_utf8(buf).expect("utf8");
+            .map_err(|error| format!("render persisted activity: {error}"))?;
+        let out = String::from_utf8(buf).map_err(|error| format!("utf8: {error}"))?;
         assert!(
             out.contains("bash: checking status"),
             "tool activity should persist until replaced: {out:?}"
         );
 
-        panel.set_activity_at(
-            child,
-            AgentActivity::Running("read: next file".to_string()),
-            t0,
-        );
+        panel.set_activity_at(child, AgentActivity::Running("read: next file".to_string()));
         let (view, entries) = panel.snapshot(t0 + Duration::from_secs(121));
         let mut buf: Vec<u8> = Vec::new();
         panel
@@ -1167,8 +1187,8 @@ mod tests {
                     terminal_cols: 120,
                 },
             )
-            .expect("render replacement activity");
-        let out = String::from_utf8(buf).expect("utf8");
+            .map_err(|error| format!("render replacement activity: {error}"))?;
+        let out = String::from_utf8(buf).map_err(|error| format!("utf8: {error}"))?;
         assert!(
             out.contains("read: next file"),
             "replacement tool activity should appear: {out:?}"
@@ -1177,32 +1197,32 @@ mod tests {
             !out.contains("bash: checking status"),
             "old tool activity should be replaced: {out:?}"
         );
+        Ok(())
     }
 
     /// A depth-2 tree (W3.4 recursion) paints in genealogical preorder
     /// with one indent level per hop, even though the auto-path shapes
     /// contain literal `spawn` namespace segments.
     #[test]
-    fn render_paints_deep_tree_in_preorder_with_genealogical_indent() {
+    fn render_paints_deep_tree_in_preorder_with_genealogical_indent() -> TestResult {
         let registry = fresh_registry();
-        let root = confirm_root(&registry);
-        let child = confirm_child(&registry, "/root/spawn/mid", root);
-        let _grandchild =
-            confirm_child_with_depth(&registry, "/root/spawn/mid/spawn/leaf", child, 3);
+        let root = confirm_root(&registry)?;
+        let child = confirm_child(&registry, "/root/spawn/mid", root)?;
+        confirm_child_with_depth(&registry, "/root/spawn/mid/spawn/leaf", child, 3)?;
 
         let mut panel = AgentStatusPanel::new(registry);
         let mut buf: Vec<u8> = Vec::new();
         let caps = TerminalCaps::baseline();
         panel
             .render(0, &mut buf, &caps, Instant::now(), Utc::now(), 120)
-            .expect("render");
-        let out = String::from_utf8(buf).expect("utf8");
+            .map_err(|error| format!("render: {error}"))?;
+        let out = String::from_utf8(buf).map_err(|error| format!("utf8: {error}"))?;
 
-        let root_pos = out.find("root  ").expect("root row");
-        let mid_pos = out.find("╰─ ● mid").expect("child row one level down");
+        let root_pos = out.find("root  ").ok_or("root row")?;
+        let mid_pos = out.find("╰─ ● mid").ok_or("child row one level down")?;
         let leaf_pos = out
             .find("  ╰─ ● leaf")
-            .expect("grandchild row two levels down");
+            .ok_or("grandchild row two levels down")?;
         assert!(
             root_pos < mid_pos && mid_pos < leaf_pos,
             "rows must paint in preorder: {out:?}"
@@ -1211,19 +1231,21 @@ mod tests {
             !out.contains("      ╰─ ● "),
             "no row may over-indent from path-segment counting: {out:?}"
         );
+        Ok(())
     }
 
     /// A reclaimed mid-tree parent (tombstone genealogy) still anchors
     /// its live child under the root instead of dropping or floating it.
     #[test]
-    fn render_anchors_child_of_reclaimed_parent_under_root() {
+    fn render_anchors_child_of_reclaimed_parent_under_root() -> TestResult {
         let registry = fresh_registry();
-        let root = confirm_root(&registry);
-        let mid = confirm_child(&registry, "/root/spawn/mid", root);
-        let _leaf = confirm_child_with_depth(&registry, "/root/spawn/mid/spawn/leaf", mid, 3);
+        let root = confirm_root(&registry)?;
+        let mid = confirm_child(&registry, "/root/spawn/mid", root)?;
+        confirm_child_with_depth(&registry, "/root/spawn/mid/spawn/leaf", mid, 3)?;
         {
             let mut reg = registry.write();
-            reg.mark_completed(mid).expect("complete mid");
+            reg.mark_completed(mid)
+                .map_err(|error| format!("complete mid: {error}"))?;
             assert!(reg.remove_terminal(mid), "reclaim mid");
         }
 
@@ -1232,23 +1254,24 @@ mod tests {
         let caps = TerminalCaps::baseline();
         panel
             .render(0, &mut buf, &caps, Instant::now(), Utc::now(), 120)
-            .expect("render");
-        let out = String::from_utf8(buf).expect("utf8");
+            .map_err(|error| format!("render: {error}"))?;
+        let out = String::from_utf8(buf).map_err(|error| format!("utf8: {error}"))?;
         assert!(
             out.contains("╰─ ● leaf"),
             "leaf anchors one level under the root (its visible \
              ancestor) via the tombstone's parent link: {out:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn set_tokens_is_cumulative_across_calls() {
+    fn set_tokens_is_cumulative_across_calls() -> TestResult {
         // Sandra grill fix: set_tokens must saturating_add to existing
         // values, not replace. Multi-turn usage from successive Done
         // events must accumulate into a session total.
         let registry = fresh_registry();
-        let root = confirm_root(&registry);
-        let child = confirm_child(&registry, "/root/multi-turn", root);
+        let root = confirm_root(&registry)?;
+        let child = confirm_child(&registry, "/root/multi-turn", root)?;
         let mut panel = AgentStatusPanel::new(Arc::clone(&registry));
         panel.set_tokens(child, 3_000, 2_000);
         panel.set_tokens(child, 4_000, 1_000);
@@ -1260,34 +1283,36 @@ mod tests {
         let caps = TerminalCaps::baseline();
         panel
             .render(0, &mut buf, &caps, Instant::now(), Utc::now(), 120)
-            .expect("render");
-        let out = String::from_utf8(buf).expect("utf8");
+            .map_err(|error| format!("render: {error}"))?;
+        let out = String::from_utf8(buf).map_err(|error| format!("utf8: {error}"))?;
         // 7_000 in + 3_000 out = 10_000 total → format_tokens → "10k"
         assert!(
             out.contains("10k"),
             "cumulative tokens (7k in + 3k out = 10k total) must surface: {out:?}",
         );
+        Ok(())
     }
 
     #[test]
-    fn set_tokens_saturates_on_overflow() {
+    fn set_tokens_saturates_on_overflow() -> TestResult {
         // Cumulative addition must not panic when the running total
         // would overflow u64. Saturating_add caps at u64::MAX.
         let registry = fresh_registry();
-        let root = confirm_root(&registry);
-        let child = confirm_child(&registry, "/root/overflow", root);
+        let root = confirm_root(&registry)?;
+        let child = confirm_child(&registry, "/root/overflow", root)?;
         let mut panel = AgentStatusPanel::new(Arc::clone(&registry));
         panel.set_tokens(child, u64::MAX, u64::MAX);
         panel.set_tokens(child, 1, 1);
-        let view_tokens = panel.tokens.get(&child).copied().expect("token entry");
+        let view_tokens = panel.tokens.get(&child).copied().ok_or("token entry")?;
         assert_eq!(view_tokens, (u64::MAX, u64::MAX), "must saturate, not wrap");
+        Ok(())
     }
 
     #[test]
-    fn set_tokens_feed_into_rendered_line() {
+    fn set_tokens_feed_into_rendered_line() -> TestResult {
         let registry = fresh_registry();
-        let root = confirm_root(&registry);
-        let child = confirm_child(&registry, "/root/busy", root);
+        let root = confirm_root(&registry)?;
+        let child = confirm_child(&registry, "/root/busy", root)?;
         let mut panel = AgentStatusPanel::new(Arc::clone(&registry));
         panel.set_tokens(child, 8_000, 4_000);
         panel.set_activity(child, AgentActivity::Running("bash".to_string()));
@@ -1296,21 +1321,22 @@ mod tests {
         let caps = TerminalCaps::baseline();
         panel
             .render(0, &mut buf, &caps, Instant::now(), Utc::now(), 120)
-            .expect("render");
-        let out = String::from_utf8(buf).expect("utf8");
+            .map_err(|error| format!("render: {error}"))?;
+        let out = String::from_utf8(buf).map_err(|error| format!("utf8: {error}"))?;
         assert!(out.contains("bash"), "activity must surface: {out:?}");
         assert!(out.contains("12k"), "combined tokens must surface: {out:?}");
+        Ok(())
     }
 
     #[test]
-    fn reset_tokens_drops_the_running_tally() {
+    fn reset_tokens_drops_the_running_tally() -> TestResult {
         // /clear's contract: after the event-store swap the agent
         // panel's session-cumulative tally must go back to zero so the
         // next turn's saturating_add starts from a clean baseline
         // instead of inheriting the pre-clear running totals.
         let registry = fresh_registry();
-        let root = confirm_root(&registry);
-        let child = confirm_child(&registry, "/root/reset-target", root);
+        let root = confirm_root(&registry)?;
+        let child = confirm_child(&registry, "/root/reset-target", root)?;
         let mut panel = AgentStatusPanel::new(Arc::clone(&registry));
         panel.set_tokens(child, 5_000, 2_000);
         assert_eq!(panel.tokens.get(&child).copied(), Some((5_000, 2_000)));
@@ -1321,5 +1347,6 @@ mod tests {
         // not a panic — /clear runs unconditionally on submission.
         let stranger = Uuid::new_v4();
         panel.reset_tokens(stranger);
+        Ok(())
     }
 }

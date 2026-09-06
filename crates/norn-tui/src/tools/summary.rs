@@ -51,17 +51,15 @@ impl ToolSummary<'_> {
         if self.expanded {
             return self.details_header();
         }
+        let name = self.name_label();
         let description = self.description.map_or_else(
-            || {
-                let name = self.name.map_or_else(
-                    || "tool name unavailable".to_owned(),
-                    |name| single_line(name.as_str()),
-                );
-                format!("{name}: description unavailable")
-            },
+            || "description unavailable".to_owned(),
             |description| single_line(description.as_str()),
         );
-        let mut parts = vec![description, state_label(self.state).to_owned()];
+        let mut parts = vec![
+            format!("{name}: {description}"),
+            state_label(self.state).to_owned(),
+        ];
         if let Some(result) = self.result_state
             && result != self.state
         {
@@ -73,6 +71,15 @@ impl ToolSummary<'_> {
         parts.join(" · ")
     }
 
+    /// Exact terminal-safe name used as the first field in either header form.
+    #[must_use]
+    pub fn name_label(&self) -> String {
+        self.name.map_or_else(
+            || "tool name unavailable".to_owned(),
+            |name| single_line(name.as_str()),
+        )
+    }
+
     /// Full exact metadata for expanded or selected-call details.
     ///
     /// Missing evidence remains explicit here without repeating technical
@@ -80,10 +87,7 @@ impl ToolSummary<'_> {
     /// the caller's individual expansion preference.
     #[must_use]
     pub fn details_header(&self) -> String {
-        let name = self.name.map_or_else(
-            || "tool name unavailable".to_owned(),
-            |name| single_line(name.as_str()),
-        );
+        let name = self.name_label();
         let description = self.description.map_or_else(
             || "description unavailable".to_owned(),
             |description| single_line(description.as_str()),

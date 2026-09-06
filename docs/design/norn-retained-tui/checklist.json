@@ -78,6 +78,41 @@
           "status": "local_preview_verified_installed;venue_review_pending"
         }
       ]
+    },
+    {
+      "name": "Urgent agent status and readability repair",
+      "items": [
+        {
+          "id": "C16",
+          "text": "Restore existing typed agent/fork status without claiming target interaction",
+          "status": "registered_pending_execution"
+        },
+        {
+          "id": "C17",
+          "text": "Readable tool name/description, one item spacer and preserved source/style facts",
+          "status": "registered_pending_execution"
+        },
+        {
+          "id": "C18",
+          "text": "Actual retained-screen repair proof with full agent view/message request still visible",
+          "status": "registered_pending_execution"
+        },
+        {
+          "id": "C19",
+          "text": "Required selected main/fork/subagent view and acknowledged messaging, pending exact design/wall",
+          "status": "required_next_stage_pending_design_and_exact_source_wall"
+        },
+        {
+          "id": "C20",
+          "text": "Direct /pane toggle/diff/agents with actual side listing and preserved active local routing",
+          "status": "registered_pending_execution"
+        },
+        {
+          "id": "C21",
+          "text": "Remember new auxiliary content through the shared frontend preference owner and actual restart proof",
+          "status": "required_next_stage_pending_exact_source_wall"
+        }
+      ]
     }
   ],
   "ui_polish_local_checkpoint": {

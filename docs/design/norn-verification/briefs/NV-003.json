@@ -1,0 +1,86 @@
+{
+  "id": "NV-003",
+  "cluster": "norn-verification",
+  "title": "Prove large late-watch catch-up through committed output and test-owned release",
+  "status": "registered_pending_implementation",
+  "baseline": "04bcc9a77aa6f815669ee18e591a52a2520c9bb5",
+  "branch": "codex/norn-frontend-preferences-integrated",
+  "worktree": "/private/tmp/norn-frontend-preferences",
+  "written_at_melbourne": "2026-09-06T15:44:38.575824+10:00",
+  "depends_on": [],
+  "checklist": [
+    "C10"
+  ],
+  "stories": [
+    "S5"
+  ],
+  "design": "../design.json",
+  "purpose": "The unchanged large-region process fixture repeatedly failed before attach_watch: its fixed from-zero polling precondition did not observe the final seq marker. Replace unrelated timing assumptions while retaining the actual pipe-deadlock regression and byte-exact proof.",
+  "task": "review_child_context owns R1 after registration; root owns verification and release. Preserve failed original logs and do not infer a production watch defect or whole-file policy clearance.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Establish committed large output and receive its alert without fixture timing assumptions",
+      "owner": "review_child_context",
+      "status": "registered_pending_implementation",
+      "spec": "Change only a_late_attached_watch_catches_up_over_a_large_region_without_wedging and minimal cfg(test) helpers in process/manager.rs. Establish committed spool bytes via the existing ProcessHandle subscription and incremental SpoolReader, then attach the real cat watch while a test-owned release handshake keeps the child Running. Observe the stored alert via push notification; retain the equally large catch-up region, >64KiB precondition and full byte-for-byte equality. No runtime process/spool/watch changes, new timing promise, polling/sleeps/retries, ignored checks or success caps.",
+      "files": {
+        "modify": [
+          "crates/norn/src/process/manager.rs"
+        ],
+        "create": [],
+        "delete": []
+      },
+      "acceptance": [
+        "Change only a_late_attached_watch_catches_up_over_a_large_region_without_wedging and minimal cfg(test) helpers in process/manager.rs. Establish committed spool bytes via the existing ProcessHandle subscription and incremental SpoolReader, then attach the real cat watch while a test-owned release handshake keeps the child Running. Observe the stored alert via push notification; retain the equally large catch-up region, >64KiB precondition and full byte-for-byte equality. No runtime process/spool/watch changes, new timing promise, polling/sleeps/retries, ignored checks or success caps.",
+        "Capture/mark the current committed-length watch generation before reading and await changed() when more data is needed; read only new bytes and preserve marker overlap across chunks. Register alert wake interest before inspecting, and publish notification only after storing the alert, preserving RecordingNotifier arrival/content facts. No lost-wake window or complete-spool reread loop.",
+        "Use a large newline-terminated payload and unambiguous final marker representing a region at least as large as the prior fixture; the original tagged 200,000-record region was 2,088,895 bytes. The regression needs the large committed region and equally large cat stdout, not 200,000 separate flushes. Retain explicit full.len()>64*1024 and full byte equality; no prefix-only assertion, truncation or reduced body.",
+        "Use a fixture-owned child release protocol (such as a bound Unix socket in its temporary directory), not sleep 30. Keep the actual child Running until committed body is observed, real watch attached and full stored alert received. Release through the owned protocol and preserve lifecycle cleanup. Process exit alone does not prove spool drain completion.",
+        "Use ProcessManagerGuard to tear down only fixture-owned children on early failure. Propagate setup/read/channel/filter errors with process/path/context. Newly modified test/helper code must not add allow/expect/ignore, unwrap/expect/panic variants, swallowed Results or ignored outcome.",
+        "Limit legacy cleanup to this target and necessary helper seams. Preserve unrelated manager tests, existing assertions, runtime bytes and production policy. The surrounding historical test module contains inherited suppressions and forbidden operations; this narrow repair is explicitly not whole-file policy clearance. Do not expand into those tests silently.",
+        "Root runs the actual repaired regression and shared helpers affected by notifier changes, then final source-bound workspace/strict lint/format checks and required landing gates. Current diagnostic Clippy/build output after mutation is not final acceptance; original workspace-1 and unchanged-binary rerun stay red history."
+      ],
+      "checklist": [
+        "C10"
+      ],
+      "stories": [
+        "S5"
+      ],
+      "design_refs": [
+        "V6"
+      ]
+    }
+  ],
+  "documentation_wall": [
+    "docs/design/norn-verification/design.json",
+    "docs/design/norn-verification/DESIGN.md",
+    "docs/design/norn-verification/checklist.json",
+    "docs/design/norn-verification/CHECKLIST.md",
+    "docs/design/norn-verification/stories.json",
+    "docs/design/norn-verification/USER-STORIES.md",
+    "docs/design/norn-verification/briefs/NV-003.json",
+    "docs/design/norn-verification/briefs/NV-003.md"
+  ],
+  "evidence": [
+    {
+      "path": "/private/tmp/ncp-001-proof/assembly/process-late-watch-diagnosis/result.json",
+      "sha256": "6fcc132d057f89184c438fa27d551b15f7895e028a2c21b192ac95f9d6bd9284",
+      "scope": "Read-only source diagnosis; fixture precondition failed before watch attach, precise underlying progress cause not established."
+    },
+    {
+      "path": "/private/tmp/ncp-001-proof/assembly/process-late-watch-diagnosis/isolated-rerun.json",
+      "sha256": "106f475be35262288113dcc005484a039a17564929e7b528ce0faf3c8f215e2d",
+      "scope": "Same workspace-1 binary rerun exit101, 0passed/1failed,55.49s, same pre-attach spool marker failure; concurrent release build active, not isolation-with-no-load proof."
+    }
+  ],
+  "boundaries": [
+    "No production Rust changes outside cfg(test), source/gates/AWL/timeout-policy changes, or claim that a watch had already attached in either failed run.",
+    "No NUI source/doc wall changes or overlapping owners; only this separate verification cluster is edited.",
+    "Local checked preview authority does not waive Fable or exact-commit205 main-landing requirements."
+  ],
+  "verification": [
+    "Registration/render/coverage before source edits.",
+    "Production byte comparison and bounded fixture/helper policy audit.",
+    "Actual late-watch and affected notifier regression execution, followed by root final shared checks on final bytes."
+  ]
+}

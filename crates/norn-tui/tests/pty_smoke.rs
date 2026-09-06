@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use futures_util::stream;
+use futures_util::{StreamExt as _, stream};
 use norn::agent::child_policy::{ChildPolicy, DelegationBudget, MessagingScope};
 use norn::agent::output::AgentStopReason;
 use norn::agent::registry::AgentRegistry;
@@ -828,18 +828,7 @@ fn scenario_runtime(scenario: &str) -> Result<ScenarioRuntime, Box<dyn std::erro
             let mut loop_context = LoopContext::default();
             loop_context.child_result_rx.replace(rx);
             Ok((
-                Arc::new(DelayedProvider {
-                    events: vec![
-                        ProviderEvent::TextDelta {
-                            text: "root turn still streaming\n".to_string(),
-                        },
-                        ProviderEvent::TextDelta {
-                            text: "root turn finishing after child result\n".to_string(),
-                        },
-                        done_event(),
-                    ],
-                    delay: Duration::from_millis(120),
-                }),
+                Arc::new(ChildResultProvider),
                 Some("child result prompt from pty harness".to_string()),
                 loop_context,
                 Some(tx),
@@ -960,6 +949,25 @@ fn done_event() -> ProviderEvent {
 struct DelayedProvider {
     events: Vec<ProviderEvent>,
     delay: Duration,
+}
+
+/// Each child-result fixture invocation stays active until its explicit cancel gesture.
+struct ChildResultProvider;
+
+impl Provider for ChildResultProvider {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::default()
+    }
+
+    fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+        drop(request);
+        let initial = stream::iter([Ok(ProviderEvent::TextDelta {
+            text: "root turn still streaming\n".to_owned(),
+        })]);
+        // Both the original turn and queued child-result follow-up must remain
+        // cancellable while the parent observes their complete retained frames.
+        Ok(Box::pin(initial.chain(stream::pending())))
+    }
 }
 
 impl Provider for DelayedProvider {

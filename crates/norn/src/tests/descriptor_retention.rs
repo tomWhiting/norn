@@ -94,9 +94,13 @@ async fn active_process_permits_release_on_terminal_paths() -> Result<(), Box<dy
     }
     lower_nofile_limit()?;
     let home = child_home()?;
+    // Account for the single fixture descriptor before fixing the governor's
+    // baseline. No per-child parent descriptor is retained by the release gate.
+    let (release_path, mut release) = active_process_release_gate(&home)?;
     let governor = crate::resource::DescriptorGovernor::global()?;
     let baseline = governor.available();
     let manager = Arc::new(ProcessManager::new(Some("fd-active".to_owned()), None));
+    let manager_guard = crate::process::ProcessManagerGuard::new(Arc::clone(&manager));
 
     let missing = home.join("missing-working-directory");
     let failure = manager.spawn("printf never", &missing, None).await;
@@ -104,28 +108,171 @@ async fn active_process_permits_release_on_terminal_paths() -> Result<(), Box<dy
         failure.is_err(),
         "missing working directory must fail spawn"
     );
-    wait_for_available(&governor, baseline).await?;
+    active_process_permits_returned(&governor, baseline, "failed working-directory spawn").await?;
 
+    let environment = crate::tool::context::ProcessEnv::new([(
+        "NORN_TEST_ACTIVE_PROCESS_RELEASE",
+        release_path.as_os_str(),
+    )]);
+    let command = r#"exec python3 -I -S -c '
+import os, sys
+with open(os.environ["NORN_TEST_ACTIVE_PROCESS_RELEASE"], "rb", buffering=0) as gate:
+    if gate.read(1) != b"R":
+        raise RuntimeError("active-process fixture did not receive its release byte")
+sys.stdout.write("x")
+'"#;
     let mut handles = Vec::with_capacity(20);
     let mut denied = 0usize;
-    for _ in 0..20 {
-        match manager.spawn("printf x; sleep 0.1", &home, None).await {
+    for attempt in 0..20 {
+        match manager.spawn(command, &home, Some(&environment)).await {
             Ok(handle) => handles.push(handle),
             Err(crate::process::ProcessError::DescriptorAdmission(_)) => denied += 1,
-            Err(error) => return Err(error.into()),
+            Err(error) => {
+                return Err(io::Error::other(format!(
+                    "held-process admission attempt {attempt} using {} failed: {error}",
+                    release_path.display(),
+                ))
+                .into());
+            }
         }
     }
     assert!(!handles.is_empty(), "low-limit child must admit some work");
+    assert!(
+        handles
+            .iter()
+            .all(crate::process::ProcessHandle::is_running),
+        "every admitted child remains held before release",
+    );
     assert!(denied > 0, "low-limit child must reach typed admission");
-    wait_for_available(&governor, baseline).await?;
+    // Each unbuffered child consumes exactly one byte. Pending child startup
+    // cannot lose a release: the parent keeps both FIFO endpoints open.
+    std::io::Write::write_all(&mut release, &vec![b'R'; handles.len()]).map_err(|error| {
+        io::Error::other(format!(
+            "releasing {} held processes through {}: {error}",
+            handles.len(),
+            release_path.display(),
+        ))
+    })?;
+    active_processes_exited(&handles).await?;
+    active_process_permits_returned(&governor, baseline, "naturally released children").await?;
     assert_eq!(manager.list().len(), handles.len());
     assert!(handles.iter().all(|handle| !handle.is_running()));
+    for handle in &handles {
+        let (output, committed) = handle.spool().read_from(0).await?;
+        assert_eq!(
+            output,
+            b"out x\n",
+            "released child {} ran its workload",
+            handle.label()
+        );
+        assert_eq!(committed, 6);
+    }
 
-    let killed = manager.spawn("sleep 30", &home, None).await?;
-    wait_for_available(&governor, baseline.saturating_sub(3)).await?;
-    let _status = killed.kill().await;
-    wait_for_available(&governor, baseline).await?;
-    manager.shutdown();
+    // No bytes remain in the shared gate after every admitted child exits.
+    // This new child can leave only through the explicit kill path.
+    let killed = manager.spawn(command, &home, Some(&environment)).await?;
+    let held = baseline.checked_sub(3).ok_or_else(|| {
+        io::Error::other(format!(
+            "descriptor baseline {baseline} cannot retain three process permits"
+        ))
+    })?;
+    assert_eq!(governor.available(), held);
+    assert!(
+        killed.is_running(),
+        "the kill fixture remains held at its gate"
+    );
+    assert_eq!(killed.kill().await, crate::process::ProcessStatus::Killed);
+    active_process_permits_returned(&governor, baseline, "explicitly killed child").await?;
+    drop(manager_guard);
+    Ok(())
+}
+
+/// Observe natural child exit through its retained exit watch.
+async fn active_processes_exited(handles: &[crate::process::ProcessHandle]) -> io::Result<()> {
+    for handle in handles {
+        let mut exited = handle.exit_receiver();
+        tokio::time::timeout(Duration::from_secs(10), exited.wait_for(|done| *done))
+            .await
+            .map_err(|elapsed| {
+                io::Error::other(format!(
+                    "released process {} did not exit within the fixture deadline; status {:?}: {elapsed}",
+                    handle.label(),
+                    handle.status(),
+                ))
+            })?
+            .map_err(|error| {
+                io::Error::other(format!(
+                    "waiting for released process {}: {error}",
+                    handle.label(),
+                ))
+            })?;
+        assert_eq!(
+            handle.status(),
+            crate::process::ProcessStatus::Exited { code: 0 }
+        );
+    }
+    Ok(())
+}
+
+/// One fixed descriptor holds a shared release FIFO for this low-limit case.
+fn active_process_release_gate(home: &std::path::Path) -> io::Result<(PathBuf, std::fs::File)> {
+    let path = home.join("active-process-release.fifo");
+    // rustix's mkfifoat is unavailable on Apple; the existing Unix fixture
+    // platforms provide the POSIX utility without adding unsafe test code.
+    let created = Command::new("mkfifo")
+        .args(["-m", "600"])
+        .arg(&path)
+        .output()
+        .map_err(|error| {
+            io::Error::other(format!("creating release FIFO {}: {error}", path.display()))
+        })?;
+    if !created.status.success() {
+        return Err(io::Error::other(format!(
+            "creating release FIFO {} failed with {}: {}",
+            path.display(),
+            created.status,
+            String::from_utf8_lossy(&created.stderr),
+        )));
+    }
+    let descriptor = rustix::fs::openat(
+        rustix::fs::CWD,
+        &path,
+        rustix::fs::OFlags::RDWR | rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::NONBLOCK,
+        rustix::fs::Mode::empty(),
+    )
+    .map_err(|error| {
+        io::Error::other(format!("opening release FIFO {}: {error}", path.display()))
+    })?;
+    Ok((path, std::fs::File::from(descriptor)))
+}
+
+/// Acquiring the whole original budget proves return through semaphore push.
+async fn active_process_permits_returned(
+    governor: &crate::resource::DescriptorGovernor,
+    baseline: usize,
+    stage: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Retain the original helper's ten-second fixture deadline; the wait
+    // itself is still driven by permit release, without periodic inspection.
+    let returned = tokio::time::timeout(
+        Duration::from_secs(10),
+        governor.acquire(u32::try_from(baseline)?),
+    )
+    .await
+    .map_err(|elapsed| {
+        io::Error::other(format!(
+            "descriptor capacity did not return to {baseline} after {stage}; observed {}: {elapsed}",
+            governor.available(),
+        ))
+    })?
+    .map_err(|error| {
+        io::Error::other(format!(
+            "reclaiming {baseline} process permits after {stage}: {error}"
+        ))
+    })?;
+    assert_eq!(governor.available(), 0);
+    drop(returned);
+    assert_eq!(governor.available(), baseline);
     Ok(())
 }
 
@@ -339,26 +486,4 @@ fn assert_bounded_growth(
         "retained objects grew open descriptors from {baseline} to {observed}; allowance {allowance}"
     ))
     .into())
-}
-
-async fn wait_for_available(
-    governor: &crate::resource::DescriptorGovernor,
-    expected: usize,
-) -> Result<(), Box<dyn std::error::Error>> {
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            if governor.available() == expected {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .map_err(|elapsed| {
-        io::Error::other(format!(
-            "descriptor capacity did not return to {expected}; observed {}: {elapsed}",
-            governor.available(),
-        ))
-    })?;
-    Ok(())
 }

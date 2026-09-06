@@ -19,6 +19,14 @@
         {
           "id": "S4",
           "text": "Cancellation verification proves cleanup and absence of credential writes without turning unrelated machine scheduling into an undeclared product latency requirement."
+        },
+        {
+          "id": "S5",
+          "text": "I can verify that attaching a watch to a large already-committed region drains its equally large filter output without confusing fixture scheduling with a process-watch regression."
+        },
+        {
+          "id": "S6",
+          "text": "I can distinguish resource-admission defects from children that finish before the fixture establishes overlapping ownership, and verify every terminal path returns permits."
         }
       ]
     }

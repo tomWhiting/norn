@@ -98,6 +98,9 @@ pub fn handle_popup_key(
         }
         _ => PopupKeyOutcome::NotConsumed,
     };
+    if outcome == PopupKeyOutcome::Consumed {
+        state.screen.dirty = true;
+    }
     Ok(outcome)
 }
 
@@ -690,6 +693,7 @@ mod tests {
         refresh_autocomplete(&mut state, tmp.path())?;
         type_into(&mut state, "hel")?;
         refresh_autocomplete(&mut state, tmp.path())?;
+        state.screen.dirty = false;
         assert_eq!(
             handle_popup_key(
                 KeyEvent::new(KeyCode::Tab, Modifiers::NONE),
@@ -701,6 +705,7 @@ mod tests {
         );
         assert_eq!(state.input_editor.text(), "/help");
         assert!(state.autocomplete.is_none());
+        assert!(state.screen.dirty, "accepted completion must repaint");
         let options = state.composer_geometry.input_options();
         state.input_editor.run_cell_command(
             "history.undo",
@@ -816,13 +821,56 @@ mod tests {
         type_into(&mut state, "/he")?;
         refresh_autocomplete(&mut state, tmp.path())?;
         for modifiers in [Modifiers::ALT, Modifiers::SHIFT] {
+            state.screen.dirty = false;
             assert_eq!(
                 handle_popup_key(KeyEvent::new(KeyCode::Enter, modifiers), &mut state, 80, 24)?,
                 PopupKeyOutcome::NotConsumed
             );
             assert_eq!(state.input_editor.text(), "/he");
             assert!(state.autocomplete.is_some());
+            assert!(!state.screen.dirty);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn popup_navigation_and_dismissal_repaint_without_editing_the_draft() -> TestResult {
+        let mut state = fresh_state()?;
+        let tmp = tempfile::tempdir()?;
+        type_into(&mut state, "/")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
+        let snapshot = state.input_editor.snapshot()?;
+        for (code, selected) in [(KeyCode::Down, 1), (KeyCode::Up, 0)] {
+            state.screen.dirty = false;
+            assert_eq!(
+                handle_popup_key(KeyEvent::new(code, Modifiers::NONE), &mut state, 80, 24)?,
+                PopupKeyOutcome::Consumed
+            );
+            assert_eq!(
+                state
+                    .autocomplete
+                    .as_ref()
+                    .ok_or("navigated popup disappeared")?
+                    .selected_index,
+                selected
+            );
+            assert!(state.screen.dirty, "popup selection must repaint");
+            state.input_editor.validate_snapshot(&snapshot)?;
+        }
+        state.screen.dirty = false;
+        assert_eq!(
+            handle_popup_key(
+                KeyEvent::new(KeyCode::Escape, Modifiers::NONE),
+                &mut state,
+                80,
+                24
+            )?,
+            PopupKeyOutcome::Consumed
+        );
+        assert!(state.autocomplete.is_none());
+        assert_eq!(state.fixed_panel.autocomplete_popup_rows(), 0);
+        assert!(state.screen.dirty, "popup dismissal must repaint");
+        state.input_editor.validate_snapshot(&snapshot)?;
         Ok(())
     }
 

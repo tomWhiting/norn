@@ -125,7 +125,7 @@ fn keyboard_model_switch_updates_next_turn_budget_policy_and_history() -> TestRe
 #[test]
 fn keyboard_model_refusal_preserves_explicit_budget_and_all_policy() -> TestResult {
     let observations = run_scenario("explicit", |session| {
-        session.command("/model fast", "/model failed:")?;
+        session.refusal("/model fast", "/model failed:")?;
         session.assert_recent_contains("272000")?;
         session.assert_recent_contains("128000")?;
         session.assert_status("gpt-5.6-sol", Some("max"), Some("fast"))?;
@@ -148,7 +148,7 @@ fn keyboard_model_refusal_preserves_explicit_budget_and_all_policy() -> TestResu
 #[test]
 fn keyboard_model_switch_cannot_disable_bound_compaction() -> TestResult {
     let observations = run_scenario("reserve", |session| {
-        session.command("/model fast", "/model failed:")?;
+        session.refusal("/model fast", "/model failed:")?;
         session.assert_recent_contains("auto_compact_reserve_tokens=150000")?;
         session.assert_recent_contains("disable automatic compaction")?;
         session.assert_status("gpt-5.6-sol", Some("max"), Some("fast"))?;
@@ -201,7 +201,8 @@ fn keyboard_alias_route_and_unknown_model_refusals_leave_session_unchanged() -> 
         .iter()
         .enumerate()
         {
-            session.command(command, "/model failed:")?;
+            session.refusal(command, reason)?;
+            session.assert_recent_contains("/model failed:")?;
             session.assert_recent_contains(reason)?;
             session.assert_status("gpt-5.6-sol", Some("max"), Some("fast"))?;
             session.probe(index + 1)?;
@@ -226,19 +227,19 @@ fn keyboard_alias_route_and_unknown_model_refusals_leave_session_unchanged() -> 
 #[test]
 fn keyboard_effort_and_tier_refusals_are_atomic_and_identify_the_command() -> TestResult {
     let observations = run_scenario("derived", |session| {
-        session.command(
+        session.refusal(
             "/effort typo",
             "expected low, medium, high, xhigh, max, ultra, or default",
         )?;
         session.command("/model luna", "Switched model to gpt-5.6-luna")?;
         session.command("/effort high", "Reasoning effort: high")?;
-        session.command("/effort ultra", "/effort failed:")?;
+        session.refusal("/effort ultra", "/effort failed:")?;
         session.assert_recent_contains("ultra")?;
         session.assert_recent_contains("gpt-5.6-luna")?;
         session.assert_status("gpt-5.6-luna", Some("high"), Some("fast"))?;
         session.probe(1)?;
         session.command("/model fast", "Switched model to gpt-5.3-codex-spark")?;
-        session.command("/service-tier fast", "/service-tier failed:")?;
+        session.refusal("/service-tier fast", "/service-tier failed:")?;
         session.assert_recent_contains("gpt-5.3-codex-spark")?;
         session.assert_status("gpt-5.3-codex-spark", Some("high"), None)?;
         session.probe(2)?;
@@ -550,6 +551,53 @@ impl PtySession {
         }
         self.writer.flush()?;
         self.wait_frame(self.recent_start, |screen| screen.contains(confirmation))?;
+        Ok(())
+    }
+
+    fn refusal(&mut self, command: &str, reason: &str) -> TestResult {
+        self.recent_start = self.output.len();
+        self.writer.write_all(command.as_bytes())?;
+        // Keep slash completion closed without changing the rejected command.
+        self.writer.write_all(b" ")?;
+        self.writer.flush()?;
+        self.wait_frame(self.recent_start, |screen| {
+            let lines = screen.lines();
+            screen
+                .composer_rows()
+                .iter()
+                .any(|row| lines[*row].trim_end() == command)
+        })?;
+        // The refusal witness must be newer than the fully painted draft;
+        // a prior error plus a merely typed next command is not admission.
+        let submitted_after = self.output.len();
+        // Typing pins the current viewport. Browse toward the appended refusal
+        // without changing the draft; a full earlier status page may hide it.
+        self.writer.write_all(b"\r\x1b[6~")?;
+        self.writer.flush()?;
+        let screen = self.wait_frame(submitted_after, |screen| screen.contains(reason))?;
+        let lines = screen.lines();
+        let draft = screen
+            .composer_rows()
+            .iter()
+            .map(|row| lines[*row].trim_end())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            draft, command,
+            "a rejected command must retain its exact draft"
+        );
+        // An operator chooses to discard that retained draft before typing a
+        // different local command. The frontend must not clear it on refusal.
+        let clear_start = self.output.len();
+        self.writer.write_all(b"\x15")?;
+        self.writer.flush()?;
+        self.wait_frame(clear_start, |screen| {
+            let lines = screen.lines();
+            screen
+                .composer_rows()
+                .iter()
+                .all(|row| lines[*row].trim().is_empty())
+        })?;
         Ok(())
     }
 

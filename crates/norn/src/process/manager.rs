@@ -1412,59 +1412,229 @@ mod tests {
         );
     }
 
+    /// Dedicated push observation for the large-region fixture. The existing
+    /// recording sink remains authoritative for arrival order and content.
+    #[derive(Default)]
+    struct LateWatchNotifier {
+        recording: RecordingNotifier,
+        alert_ready: tokio::sync::Notify,
+    }
+
+    impl ProcessNotifier for LateWatchNotifier {
+        fn deliver_completion(&self, completion: ProcessCompletion) {
+            self.recording.deliver_completion(completion);
+        }
+
+        fn deliver_watch_alert(&self, alert: WatchAlert) {
+            self.recording.deliver_watch_alert(alert);
+            self.alert_ready.notify_one();
+        }
+    }
+
+    async fn late_watch_unexpected_exit(handle: &ProcessHandle) -> std::io::Error {
+        let mut exit = handle.exit_receiver();
+        match exit.wait_for(|exited| *exited).await.map(drop) {
+            Ok(()) => std::io::Error::other(format!(
+                "late-watch fixture {} exited before release: {:?}; spool {}",
+                handle.label(),
+                handle.status(),
+                handle.spool().path().display(),
+            )),
+            Err(error) => std::io::Error::other(format!(
+                "late-watch fixture {} lost its exit notification: {error}",
+                handle.label(),
+            )),
+        }
+    }
+
+    async fn late_watch_committed_body(
+        handle: &ProcessHandle,
+        expected: &[u8],
+    ) -> std::io::Result<Vec<u8>> {
+        let (mut committed, mut reader) = handle.subscribe();
+        let mut body = Vec::with_capacity(expected.len());
+        loop {
+            // Mark before reading: an append during read_new remains an unseen
+            // generation. Retaining the accumulated bytes also preserves a
+            // final marker split across incremental reads.
+            let observed = *committed.borrow_and_update();
+            body.extend(reader.read_new().await.map_err(|error| {
+                std::io::Error::other(format!(
+                    "reading late-watch fixture {} spool {}: {error}",
+                    handle.label(),
+                    handle.spool().path().display(),
+                ))
+            })?);
+            if !expected.starts_with(&body) {
+                return Err(std::io::Error::other(format!(
+                    "late-watch fixture {} spool {} differs from its expected body \
+                     after {} bytes (expected {}); status {:?}",
+                    handle.label(),
+                    handle.spool().path().display(),
+                    body.len(),
+                    expected.len(),
+                    handle.status(),
+                )));
+            }
+            if body.len() == expected.len() {
+                return Ok(body);
+            }
+            tokio::select! {
+                changed = committed.changed() => changed.map_err(|error| {
+                    std::io::Error::other(format!(
+                        "late-watch fixture {} lost spool notification after \
+                         {observed} committed bytes: {error}",
+                        handle.label(),
+                    ))
+                })?,
+                error = late_watch_unexpected_exit(handle) => return Err(error),
+            }
+        }
+    }
+
+    async fn late_watch_alerts(
+        notifier: &LateWatchNotifier,
+        handle: &ProcessHandle,
+    ) -> std::io::Result<Vec<WatchAlert>> {
+        loop {
+            // notify_one retains a permit across the inspect/await boundary.
+            // Publication occurs only after RecordingNotifier stores the alert.
+            let ready = notifier.alert_ready.notified();
+            let alerts = notifier.recording.alerts.lock().clone();
+            if !alerts.is_empty() {
+                return Ok(alerts);
+            }
+            tokio::select! {
+                () = ready => {},
+                error = late_watch_unexpected_exit(handle) => return Err(error),
+            }
+        }
+    }
+
     /// Finding 1 (S3 CI-log shape): a watch attached late to a still-running
-    /// process must, on its initial catch-up, filter the whole already-committed
-    /// region — here far larger than one pipe buffer (~64KB) — through a filter
-    /// whose stdout is equally large (`cat`). Before the stdin write was driven
-    /// concurrently with output collection this wedged forever (the executor
-    /// blocked writing stdin while the filter blocked writing its unread stdout).
+    /// process must filter its whole committed region through an equally large
+    /// `cat` stdout. One large record retains the original pipe-pressure test
+    /// without imposing 200,000 separate spool flushes or a timing promise.
     #[tokio::test]
     #[serial_test::serial]
-    async fn a_late_attached_watch_catches_up_over_a_large_region_without_wedging() {
-        let dir = tempfile::tempdir().unwrap();
-        let _home = HomeGuard::set(dir.path());
-        let (mgr, notifier) = watched_manager("sess");
-        let cwd = std::env::current_dir().unwrap();
+    async fn a_late_attached_watch_catches_up_over_a_large_region_without_wedging()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        // Dump a large body (~1.2MB) then linger so the watch attaches while the
-        // process is still Running and the whole body is already committed.
-        let handle = mgr
-            .spawn("seq 1 200000; sleep 30", &cwd, None)
+        let dir = tempfile::tempdir()?;
+        let home_guard = HomeGuard::set(dir.path());
+        let notifier = Arc::new(LateWatchNotifier::default());
+        let sink: Arc<dyn ProcessNotifier> = Arc::<LateWatchNotifier>::clone(&notifier);
+        let mgr = Arc::new(ProcessManager::new(Some("sess".to_owned()), Some(sink)));
+        let manager_guard = ProcessManagerGuard::new(Arc::clone(&mgr));
+        let cwd = std::env::current_dir()?;
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
             .await
-            .unwrap();
-        wait_spool_contains(&handle, "200000").await;
+            .map_err(|error| {
+                std::io::Error::other(format!("binding late-watch release gate: {error}"))
+            })?;
+        let gate_address = listener.local_addr()?;
+        // The original tagged seq region was 2,088,895 bytes. This terminated
+        // record is larger, and its distinct final marker is compared in full.
+        let body_bytes = 2 * 1024 * 1024;
+        let payload = format!("{}END-LATE-WATCH\n", "x".repeat(body_bytes));
+        let expected = format!("out {payload}").into_bytes();
+        let process_env = ProcessEnv::new([
+            ("NORN_TEST_LATE_WATCH_PORT", gate_address.port().to_string()),
+            ("NORN_TEST_LATE_WATCH_BYTES", body_bytes.to_string()),
+        ]);
+        let command = r#"exec python3 -I -S -c '
+import os, socket, sys
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as gate:
+    gate.connect(("127.0.0.1", int(os.environ["NORN_TEST_LATE_WATCH_PORT"])))
+    gate.sendall(os.getpid().to_bytes(4, "big"))
+    sys.stdout.write("x" * int(os.environ["NORN_TEST_LATE_WATCH_BYTES"]) + "END-LATE-WATCH\n")
+    sys.stdout.flush()
+    if gate.recv(1) != b"R":
+        raise RuntimeError("late-watch fixture release gate closed without release")
+'"#;
+        let handle = mgr.spawn(command, &cwd, Some(&process_env)).await?;
+        let (mut release, peer) = tokio::select! {
+            accepted = listener.accept() => accepted.map_err(|error| {
+                std::io::Error::other(format!(
+                    "accepting late-watch fixture {} at {gate_address}: {error}",
+                    handle.label(),
+                ))
+            })?,
+            error = late_watch_unexpected_exit(&handle) => return Err(error.into()),
+        };
+        assert!(
+            peer.ip().is_loopback(),
+            "release peer belongs to this fixture"
+        );
+        let fixture_pid = release.read_u32().await.map_err(|error| {
+            std::io::Error::other(format!(
+                "reading late-watch fixture identity at {gate_address}: {error}",
+            ))
+        })?;
+        assert_eq!(
+            Some(fixture_pid),
+            handle.pid(),
+            "gate belongs to the managed child"
+        );
+        let full = late_watch_committed_body(&handle, &expected).await?;
         assert!(
             handle.is_running(),
             "the process is still running at attach"
         );
-        let (full, _) = handle.spool().read_from(0).await.unwrap();
         assert!(
             full.len() > 64 * 1024,
             "precondition: the catch-up region exceeds one pipe buffer ({} bytes)",
             full.len(),
         );
+        assert_eq!(full, expected, "the entire generated body is committed");
 
         mgr.attach_watch("p1", "all".into(), "cat".into(), cwd, None)
-            .unwrap();
-        // The initial catch-up completes and delivers the whole region as a
-        // single byte-equal match.
-        wait_alert_count(&notifier, 1).await;
-        let alerts = notifier.alerts.lock().clone();
-        let joined: String = alerts
-            .iter()
-            .map(|a| match &a.kind {
-                WatchAlertKind::Match { excerpt, .. } => excerpt.clone(),
+            .map_err(|error| {
+                std::io::Error::other(format!(
+                    "attaching late-watch fixture {} cat filter to spool {}: {error:?}",
+                    handle.label(),
+                    handle.spool().path().display(),
+                ))
+            })?;
+        let alerts = late_watch_alerts(&notifier, &handle).await?;
+        let mut joined = String::new();
+        for alert in alerts {
+            match alert.kind {
+                WatchAlertKind::Match { excerpt, .. } => joined.push_str(&excerpt),
                 WatchAlertKind::Error { error } => {
-                    panic!("the large-region catch-up should match, got {error}")
+                    return Err(std::io::Error::other(format!(
+                        "late-watch fixture {} filter {} failed: {error}",
+                        handle.label(),
+                        alert.watch_id,
+                    ))
+                    .into());
                 }
-            })
-            .collect();
+            }
+        }
         assert_eq!(
             joined.as_bytes(),
             full.as_slice(),
             "the catch-up excerpt is byte-equal to the full large region",
         );
-        mgr.shutdown();
+        assert!(handle.is_running(), "only the fixture releases the child");
+        release.write_all(b"R").await.map_err(|error| {
+            std::io::Error::other(format!(
+                "releasing late-watch fixture {} at {gate_address}: {error}",
+                handle.label(),
+            ))
+        })?;
+        let mut exit = handle.exit_receiver();
+        exit.wait_for(|exited| *exited).await.map_err(|error| {
+            std::io::Error::other(format!(
+                "waiting for released late-watch fixture {}: {error}",
+                handle.label(),
+            ))
+        })?;
+        assert_eq!(handle.status(), ProcessStatus::Exited { code: 0 });
+        drop(manager_guard);
+        drop(home_guard);
+        Ok(())
     }
 
     /// Finding 2 (phantom watches during finalize): the direct child exits at

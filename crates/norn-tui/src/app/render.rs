@@ -20,21 +20,31 @@ use super::focus::{Focus, FocusAvailability, FocusState};
 use super::state::AppState;
 use super::viewport::{AnchorPosition, ViewAnchor, Viewport};
 
+mod agents;
 pub(in crate::app) mod changes;
 mod composer;
 pub(in crate::app) mod hit;
 pub(in crate::app) mod transcript;
+mod transcript_items;
 use composer::popup;
 use transcript::conversation;
 
 /// Declared terminal tab display width; input bytes stay unchanged.
 const DISPLAY_TAB_WIDTH: usize = 4;
 
+/// Content selected for the auxiliary pane during this frontend session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AuxiliaryPane {
+    Diff,
+    Agents,
+}
+
 /// Geometry/cache state owned by one frontend, independent from the running agent.
 pub struct ScreenState {
     pub(super) viewport: Viewport,
     pub(super) focus: FocusState,
     pub(super) changes_open: bool,
+    pub(super) auxiliary: AuxiliaryPane,
     pub(super) split: SplitPreference,
     pub(super) upper: UpperPane,
     pub(super) tool_overrides: HashMap<ItemId, bool>,
@@ -68,6 +78,7 @@ pub struct ScreenState {
     pub dirty: bool,
     last_revision: Option<u64>,
     last_indicator: Option<String>,
+    next_agent_refresh: Option<Instant>,
     ready_batch_remaining: usize,
 }
 
@@ -93,6 +104,7 @@ impl ScreenState {
             viewport: Viewport::new(source, true),
             focus: FocusState::new(),
             changes_open: false,
+            auxiliary: AuxiliaryPane::Diff,
             split: SplitPreference::default(),
             upper: UpperPane::Conversation,
             tool_overrides: HashMap::new(),
@@ -122,6 +134,7 @@ impl ScreenState {
             dirty: true,
             last_revision: None,
             last_indicator: None,
+            next_agent_refresh: None,
             ready_batch_remaining: 0,
         }
     }
@@ -219,6 +232,13 @@ pub fn redraw_all(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(),
         return Ok(());
     }
     super::view_actions::flush_copy(state, guard)?;
+    if state
+        .screen
+        .next_agent_refresh
+        .is_some_and(|deadline| Instant::now() >= deadline)
+    {
+        state.screen.dirty = true;
+    }
     let revision = state.transcript.projection.revision();
     let indicator = state
         .streaming_indicator
@@ -273,6 +293,15 @@ fn prepare(state: &mut AppState, columns: u16, rows: u16) -> Result<Frame, TuiEr
         },
         LayoutPolicy::default(),
     )?;
+    let agent_frame = agents::prepare(
+        &mut state.agent_panel,
+        layout,
+        Instant::now(),
+        chrono::Utc::now(),
+    )?;
+    let layout = agent_frame.layout;
+    state.screen.next_agent_refresh =
+        agent_frame.refresh_deadline(state.screen.auxiliary == AuxiliaryPane::Agents);
     state.screen.layout = layout;
     state.screen.pane_switch = None;
     state.screen.composer_send_key_area = None;
@@ -298,9 +327,19 @@ fn prepare(state: &mut AppState, columns: u16, rows: u16) -> Result<Frame, TuiEr
                         state.screen.pane_switch = Some(switch);
                         push_text(
                             &mut frame,
-                            match pane {
-                                UpperPane::Conversation => "Conversation  [F2 · Changes]",
-                                UpperPane::Changes => "Changes  [F2 · Conversation]",
+                            match (pane, state.screen.auxiliary) {
+                                (UpperPane::Conversation, AuxiliaryPane::Diff) => {
+                                    "Conversation  [F2 · Changes]"
+                                }
+                                (UpperPane::Conversation, AuxiliaryPane::Agents) => {
+                                    "Conversation  [F2 · Agents]"
+                                }
+                                (UpperPane::Changes, AuxiliaryPane::Diff) => {
+                                    "Changes  [F2 · Conversation]"
+                                }
+                                (UpperPane::Changes, AuxiliaryPane::Agents) => {
+                                    "Agents  [F2 · Conversation]"
+                                }
                             },
                             switch,
                             false,
@@ -316,7 +355,9 @@ fn prepare(state: &mut AppState, columns: u16, rows: u16) -> Result<Frame, TuiEr
                     };
                     match pane {
                         UpperPane::Conversation => conversation(state, &mut frame, area)?,
-                        UpperPane::Changes => changes::paint(state, &mut frame, area)?,
+                        UpperPane::Changes => {
+                            paint_auxiliary(state, &agent_frame, &mut frame, area)?;
+                        }
                     }
                 }
                 UpperLayout::Split {
@@ -325,9 +366,10 @@ fn prepare(state: &mut AppState, columns: u16, rows: u16) -> Result<Frame, TuiEr
                     ..
                 } => {
                     conversation(state, &mut frame, left)?;
-                    changes::paint(state, &mut frame, right)?;
+                    paint_auxiliary(state, &agent_frame, &mut frame, right)?;
                 }
             }
+            agents::paint(&agent_frame, &mut frame)?;
             composer::paint_chrome(state, &mut frame, composer)?;
             let input_area = crate::render::layout::composer_input_area(composer);
             let (cells, cursor) = state
@@ -347,6 +389,18 @@ fn prepare(state: &mut AppState, columns: u16, rows: u16) -> Result<Frame, TuiEr
         }
     }
     Ok(frame)
+}
+
+fn paint_auxiliary(
+    state: &mut AppState,
+    agents: &agents::AgentFrame,
+    frame: &mut Frame,
+    area: Rect,
+) -> Result<(), TuiError> {
+    match state.screen.auxiliary {
+        AuxiliaryPane::Diff => changes::paint(state, frame, area),
+        AuxiliaryPane::Agents => agents::paint_pane(agents, frame, area, state.screen.changes_row),
+    }
 }
 
 fn push_text(
@@ -435,6 +489,7 @@ pub(super) fn load_visible(
     state.screen.allow_body_load = false;
     let mut demands = std::mem::take(&mut state.screen.demands);
     if state.screen.changes_open
+        && state.screen.auxiliary == AuxiliaryPane::Diff
         && let Some(item) = state
             .screen
             .viewport

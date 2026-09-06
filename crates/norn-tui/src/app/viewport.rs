@@ -5,6 +5,8 @@ use norn::session_view::{BodyOrigin, BodyRef, ItemId, SessionProjection, ViewIte
 /// The caller supplies an original-byte position obtained from its current hit map.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum AnchorPosition {
+    /// Generated spacing before an item; never an original-body position.
+    BeforeItem,
     Header,
     Body {
         reference: BodyRef,
@@ -166,7 +168,7 @@ impl Viewport {
             };
             anchor.item.clone_from(&item.id);
             match &anchor.position {
-                AnchorPosition::Header => AnchorState::Current,
+                AnchorPosition::BeforeItem | AnchorPosition::Header => AnchorState::Current,
                 AnchorPosition::Body { reference, .. } if item.bodies.contains(reference) => {
                     AnchorState::Current
                 }

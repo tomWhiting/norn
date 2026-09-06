@@ -21,3 +21,12 @@
 - [ ] **C13** — Uniform multiline user-message styling without source-map changes
 - [ ] **C14** — Native retained-frame flicker repair with exact frame/PTY evidence
 - [ ] **C15** — Versioned checked local preview, rollback and truthful landing boundary
+
+## Urgent agent status and readability repair
+
+- [ ] **C16** — Restore existing typed agent/fork status without claiming target interaction
+- [ ] **C17** — Readable tool name/description, one item spacer and preserved source/style facts
+- [ ] **C18** — Actual retained-screen repair proof with full agent view/message request still visible
+- [ ] **C19** — Required selected main/fork/subagent view and acknowledged messaging, pending exact design/wall
+- [ ] **C20** — Direct /pane toggle/diff/agents with actual side listing and preserved active local routing
+- [ ] **C21** — Remember new auxiliary content through the shared frontend preference owner and actual restart proof

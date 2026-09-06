@@ -1,0 +1,81 @@
+{
+  "id": "NV-004",
+  "cluster": "norn-verification",
+  "title": "Establish overlapping child admissions and push-observed descriptor return",
+  "status": "registered_pending_implementation",
+  "baseline": "04bcc9a77aa6f815669ee18e591a52a2520c9bb5",
+  "branch": "codex/norn-frontend-preferences-integrated",
+  "worktree": "/private/tmp/norn-frontend-preferences",
+  "written_at_melbourne": "2026-09-06T16:27:49.812138+10:00",
+  "depends_on": [],
+  "checklist": [
+    "C11"
+  ],
+  "stories": [
+    "S6"
+  ],
+  "design": "../design.json",
+  "purpose": "The existing twenty short-lived child admissions can return permits before later attempts, so denied>0 did not have a held-overlap precondition. Make the fixture establish that precondition without changing product admission policy.",
+  "task": "review_child_context owns only R1 after registration and root source thaw. Root owns focused/final verification and release.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Hold admitted children until explicit release and observe full permit return",
+      "owner": "review_child_context",
+      "status": "registered_pending_implementation",
+      "spec": "In active_process_permits_release_on_terminal_paths, hold actual admitted children until an explicit fixture-owned release. Retain twenty admission attempts, typed DescriptorAdmission denial, Running before release, successful output/exit, failed-working-directory and killed-child paths. Prove full permit return through the existing cfg(test) semaphore acquire, not a polling deadline. No production or descriptor-governor changes.",
+      "files": {
+        "modify": [
+          "crates/norn/src/tests/descriptor_retention.rs"
+        ],
+        "create": [],
+        "delete": []
+      },
+      "acceptance": [
+        "In active_process_permits_release_on_terminal_paths, hold actual admitted children until an explicit fixture-owned release. Retain twenty admission attempts, typed DescriptorAdmission denial, Running before release, successful output/exit, failed-working-directory and killed-child paths. Prove full permit return through the existing cfg(test) semaphore acquire, not a polling deadline. No production or descriptor-governor changes.",
+        "Create one private mode0600 FIFO under child_home with checked POSIX mkfifo -m600, then open a single parent RDWR|CLOEXEC|NONBLOCK OwnedFd using existing rustix openat before governor initialization/baseline measurement. No per-child parent descriptor, unsafe block or new dependency. rustix mkfifoat excludes Apple; use the checked existing-platform command with path/error context.",
+        "Each actual managed Python standard-library child reads exactly one R byte from the FIFO before producing x and exiting zero. Retain all twenty admission attempts and exact typed denial branch. Assert some admitted work, every admitted child Running and at least one DescriptorAdmission denial before releasing exactly admitted_count bytes; do not invent an expected admission count.",
+        "Observe every released child through existing exit watch and require Exited(0) plus exact spool x. Await existing cfg(test) DescriptorGovernor::acquire(full observed baseline), inspect and drop its permit to establish complete return through semaphore push. Retain failed working-directory admission/error proof. Reuse the same drained FIFO for the killed-child case, preserve the actual three-held-permit contract and require Killed status and full permit return.",
+        "Use ProcessManagerGuard for fixture-owned cleanup on early returns; propagate setup, FIFO, process and read failures with context. No sleeps, polling, retry loops, new deadline, ignored outcomes, suppressions, unwrap/expect/panic variants or underscore bypasses in changed code.",
+        "Only this target and minimal dedicated helpers/imports may change. Preserve other tests, shared polling helpers and runtime/governor code byte-for-byte; surrounding inherited test debt is neither in scope nor certified clear.",
+        "Preserve workspace-3 red evidence: the denied>0 assertion failed after 3.16s with 4685 passed/1 failed. Sequential short-lived children did not establish overlap; this does not demonstrate a production descriptor defect. Root executes the focused fixture, final workspace/strict lint/format and required landing verification on final source. Registration is not a test or installation verdict."
+      ],
+      "checklist": [
+        "C11"
+      ],
+      "stories": [
+        "S6"
+      ],
+      "design_refs": [
+        "V7"
+      ]
+    }
+  ],
+  "documentation_wall": [
+    "docs/design/norn-verification/design.json",
+    "docs/design/norn-verification/DESIGN.md",
+    "docs/design/norn-verification/checklist.json",
+    "docs/design/norn-verification/CHECKLIST.md",
+    "docs/design/norn-verification/stories.json",
+    "docs/design/norn-verification/USER-STORIES.md",
+    "docs/design/norn-verification/briefs/NV-004.json",
+    "docs/design/norn-verification/briefs/NV-004.md"
+  ],
+  "evidence": [
+    {
+      "path": "/private/tmp/ncp-001-proof/assembly/nv004-proposal/proposal.json",
+      "sha256": "de1cf637ff2e8c1ba492ddccf5bd9f20670b9b036d0c3db2282cc05e6cdcd0c6",
+      "scope": "Read-only failure/source diagnosis and root-approved single-FIFO fixture mechanism; no execution verdict."
+    }
+  ],
+  "boundaries": [
+    "No changes to production process/governor behavior, resource limits, gates, runner or dependency versions.",
+    "Only the registered test target and dedicated helpers/imports; no whole-file policy clearance or unrelated fixture edits.",
+    "Local preview authorization does not waive Fable or exact-commit205 main-landing requirements."
+  ],
+  "verification": [
+    "Registration/render/coverage before source edits.",
+    "Exact boundary and surrounding-source preservation proof.",
+    "Root focused actual process fixture then final source-bound required checks."
+  ]
+}

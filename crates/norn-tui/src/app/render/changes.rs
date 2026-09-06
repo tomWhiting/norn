@@ -89,7 +89,7 @@ fn key(id: ItemId, tool: &ToolView, transcript: &Transcript) -> ChangeKey {
 
 /// Schedule only explicit selected-call work after approved body loading, never during paint.
 pub(in crate::app) fn demand(state: &mut AppState) {
-    if !state.screen.changes_open {
+    if !state.screen.changes_open || state.screen.auxiliary != super::AuxiliaryPane::Diff {
         return;
     }
     let Some((id, tool)) = selected(state) else {

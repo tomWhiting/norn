@@ -582,6 +582,7 @@ pub(super) fn sync_input_for_current_geometry(
     state: &mut AppState,
     guard: &TerminalGuard,
 ) -> Result<(), TuiError> {
+    state.screen.dirty = true;
     let rows = sync_input_area(state, guard.terminal_columns(), guard.terminal_rows())?;
     state.fixed_panel.set_input_area(rows);
     Ok(())

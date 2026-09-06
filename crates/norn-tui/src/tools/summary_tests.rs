@@ -72,7 +72,7 @@ fn compact_description_and_failure_keep_zero_duration_and_reveal_commit_in_detai
     let header = summary.header();
     assert_eq!(
         header,
-        "Repair the exact selected expression · failed · 0ms"
+        "edit: Repair the exact selected expression · failed · 0ms"
     );
     assert!(
         summary
@@ -142,7 +142,10 @@ fn long_call_ids_and_unavailable_metadata_do_not_wrap_the_collapsed_description(
     view.call_id = Some("an-actual-long-call-id-".repeat(12));
     view.description_error = Some(DisplayText::new("recorded parse diagnostic"));
     let summary = summarize(&view, false);
-    assert_eq!(summary.header(), "Notify the owner · running");
+    assert_eq!(
+        summary.header(),
+        "mcp__collaboration__send_message: Notify the owner · running"
+    );
     assert_eq!(summary.call_id, view.call_id.as_deref());
     assert_eq!(summary.description, view.description.as_ref());
     let details = summary.details_header();
@@ -164,5 +167,25 @@ fn every_observed_lifecycle_has_its_own_label() {
         (ToolState::Incomplete, "incomplete"),
     ] {
         assert_eq!(state_label(state), label);
+    }
+}
+
+#[test]
+fn supplied_name_always_accompanies_original_description_in_both_views() {
+    for name in ["read", "mcp__custom__query"] {
+        let mut view = tool(name);
+        view.description = Some(DisplayText::new("Read the selected evidence"));
+        let summary = summarize(&view, false);
+        assert_eq!(summary.name_label(), name);
+        assert_eq!(
+            summary.header(),
+            format!("{name}: Read the selected evidence · running")
+        );
+        assert!(
+            summary
+                .details_header()
+                .starts_with(&format!("{name} · Read the selected evidence ·"))
+        );
+        assert_eq!(summary.description, view.description.as_ref());
     }
 }

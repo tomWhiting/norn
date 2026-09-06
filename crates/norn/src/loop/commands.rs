@@ -50,7 +50,7 @@ pub enum BuiltinSlashKind {
     Quit,
     /// `/help`.
     Help,
-    /// `/view` frontend-local retained-screen controls.
+    /// `/view` and `/pane` frontend-local retained-screen controls.
     View,
     /// `/model`.
     Model,
@@ -173,6 +173,16 @@ pub const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         help: "Browse, select, search and configure the retained screen",
         autocomplete: "Screen controls and reading tools",
         cli_description: "Interactive screen controls",
+        cli: false,
+        tui: true,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::View,
+        name: "pane",
+        usage: "/pane [diff|agents]",
+        help: "Toggle the side pane, or open its diff or agents listing",
+        autocomplete: "Toggle side pane or choose diff/agents",
+        cli_description: "Interactive side pane",
         cli: false,
         tui: true,
     },
@@ -420,7 +430,7 @@ impl SlashCommandRegistry {
         self.register(SlashCommand {
             name: "compact".to_owned(),
             handler: SlashCommandHandler::Custom {
-                handler: Arc::new(|_arg| {
+                handler: Arc::new(|_| {
                     Ok(vec![Message {
                         response_items: Vec::new(),
                         role: MessageRole::User,
@@ -443,7 +453,7 @@ impl SlashCommandRegistry {
         self.register(SlashCommand {
             name: "help".to_owned(),
             handler: SlashCommandHandler::Custom {
-                handler: Arc::new(|_arg| {
+                handler: Arc::new(|_| {
                     Ok(vec![Message {
                         response_items: Vec::new(),
                         role: MessageRole::User,
@@ -466,7 +476,7 @@ impl SlashCommandRegistry {
         self.register(SlashCommand {
             name: "status".to_owned(),
             handler: SlashCommandHandler::Custom {
-                handler: Arc::new(|_arg| {
+                handler: Arc::new(|_| {
                     Ok(vec![Message {
                         response_items: Vec::new(),
                         role: MessageRole::User,
@@ -605,6 +615,20 @@ mod tests {
     type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
     use super::*;
+
+    #[test]
+    fn pane_is_a_named_tui_only_view_command() -> TestResult {
+        let command =
+            find_builtin_slash_command(SlashSurface::Tui, "pane").ok_or("missing pane command")?;
+        assert_eq!(command.kind, BuiltinSlashKind::View);
+        assert_eq!(command.name, "pane");
+        assert_eq!(command.usage, "/pane [diff|agents]");
+        assert!(command.help.contains("side pane"));
+        assert!(command.autocomplete.contains("diff/agents"));
+        assert!(find_builtin_slash_command(SlashSurface::Cli, "pane").is_none());
+        assert!(find_builtin_slash_command(SlashSurface::Tui, "view").is_some());
+        Ok(())
+    }
 
     fn registry_with_review() -> SlashCommandRegistry {
         let mut reg = SlashCommandRegistry::new();

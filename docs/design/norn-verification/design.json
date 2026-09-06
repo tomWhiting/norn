@@ -30,10 +30,22 @@
     "crates/norn/src/provider/openai/provider.rs": "NV-001 R8 exact file wall",
     "crates/norn/src/tools/lsp/workspace_backend/stub_tests.rs": "NV-001 R8 exact file wall",
     "crates/norn/src/tools/search/tool.rs": "NV-001 R8 exact file wall",
-    "crates/norn/src/provider/auth/accounts_device_tests.rs": "NV-002 R1 exact test-only wall: await existing cancellation cleanup notifications without a two-second fixture deadline"
+    "crates/norn/src/provider/auth/accounts_device_tests.rs": "NV-002 R1 exact test-only wall: await existing cancellation cleanup notifications without a two-second fixture deadline",
+    "crates/norn/src/process/manager.rs": "NV-003 R1 cfg(test) target late-watch regression and minimal helpers only; no whole-file policy clearance",
+    "docs/design/norn-verification/design.json": "NV-003 documentation registration only / NV-004 documentation registration only",
+    "docs/design/norn-verification/DESIGN.md": "NV-003 documentation registration only / NV-004 documentation registration only",
+    "docs/design/norn-verification/checklist.json": "NV-003 documentation registration only / NV-004 documentation registration only",
+    "docs/design/norn-verification/CHECKLIST.md": "NV-003 documentation registration only / NV-004 documentation registration only",
+    "docs/design/norn-verification/stories.json": "NV-003 documentation registration only / NV-004 documentation registration only",
+    "docs/design/norn-verification/USER-STORIES.md": "NV-003 documentation registration only / NV-004 documentation registration only",
+    "docs/design/norn-verification/briefs/NV-003.json": "NV-003 documentation registration only",
+    "docs/design/norn-verification/briefs/NV-003.md": "NV-003 documentation registration only",
+    "crates/norn/src/tests/descriptor_retention.rs": "NV-004 R1 test target active_process_permits_release_on_terminal_paths plus minimal dedicated helpers/imports only; no whole-file policy clearance",
+    "docs/design/norn-verification/briefs/NV-004.json": "NV-004 documentation registration only",
+    "docs/design/norn-verification/briefs/NV-004.md": "NV-004 documentation registration only"
   },
   "intention": "Make diagnostic failures truthful and declare the venue legs without treating diagnostics as landing authority.",
-  "problem": "The legacy diagnostic script could hide failing legs or reset source, the pinned baseline has four Clippy findings, and a prompt-refresh test assumes a distinct filesystem timestamp, and an account-catalog recovery fixture applies its deliberate lock-failure deadline to successful setup. The live Aion battery checks HEAD without checking source cleanliness around each leg. Two commit-cancellation fixtures also impose a two-second cleanup deadline without a product SLA; NV-002 removes only those wrappers while preserving cleanup assertions.",
+  "problem": "The legacy diagnostic script could hide failing legs or reset source, the pinned baseline has four Clippy findings, and a prompt-refresh test assumes a distinct filesystem timestamp, and an account-catalog recovery fixture applies its deliberate lock-failure deadline to successful setup. The live Aion battery checks HEAD without checking source cleanliness around each leg. Two commit-cancellation fixtures also impose a two-second cleanup deadline without a product SLA; NV-002 removes only those wrappers while preserving cleanup assertions. The large late-watch catch-up fixture also fails before watch attachment while polling for seq output; NV-003 replaces its fixed polling/child-sleep preconditions with committed-output/alert push and test-owned release. NV-004 corrects a descriptor-retention fixture that did not keep earlier admitted children alive before expecting a later denial; one baseline-accounted FIFO holds overlap and semaphore push proves return.",
   "constraints": [
     {
       "id": "P1",
@@ -66,6 +78,14 @@
     {
       "id": "V5",
       "text": "NV-002 changes only two test notification awaits. Existing production timing and the four-hour venue test-activity bound remain unchanged. The 3964799 red receipt retains its unproven failure cause; a historical candidate6 Elapsed report does not establish the current cause."
+    },
+    {
+      "id": "V6",
+      "text": "Change only a_late_attached_watch_catches_up_over_a_large_region_without_wedging and minimal cfg(test) helpers in process/manager.rs. Establish committed spool bytes via the existing ProcessHandle subscription and incremental SpoolReader, then attach the real cat watch while a test-owned release handshake keeps the child Running. Observe the stored alert via push notification; retain the equally large catch-up region, >64KiB precondition and full byte-for-byte equality. No runtime process/spool/watch changes, new timing promise, polling/sleeps/retries, ignored checks or success caps. Preserve original red evidence. The existing shared manager test module has unrelated inherited policy findings; this narrow cfg(test) repair neither authorizes their expansion nor claims whole-file clearance."
+    },
+    {
+      "id": "V7",
+      "text": "In active_process_permits_release_on_terminal_paths, hold actual admitted children until an explicit fixture-owned release. Retain twenty admission attempts, typed DescriptorAdmission denial, Running before release, successful output/exit, failed-working-directory and killed-child paths. Prove full permit return through the existing cfg(test) semaphore acquire, not a polling deadline. No production or descriptor-governor changes. One baseline-accounted FIFO descriptor holds all children, each consumes one explicit release byte; keep exact x/Exited0 and killed/missing-cwd proofs. Root-approved fixture-only repair preserves the original failed evidence and does not establish a production defect or waive landing gates."
     }
   ]
 }

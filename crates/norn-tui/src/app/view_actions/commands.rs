@@ -9,11 +9,44 @@ use crate::app::state::AppState;
 use crate::render::layout::SplitPreference;
 use std::num::{NonZeroU16, NonZeroUsize};
 
-const HELP: &str = "View controls\n/view focus composer|conversation|changes|divider · F6 / Shift+F6 cycles visible regions\n/view pane open|close|toggle · F2 switches upper pane\n/view split <conversation-weight> <changes-weight> · arrows resize focused divider\n/view up|down · PgUp/PgDn browse; Up/Down select rows outside composer\n/view expand|collapse|toggle|reset · Enter toggles selected tool\n/view compact|detailed · Ctrl+O toggles global tool detail\n/view follow|pin · return to live tail or keep current position\n/view older · demand one older history page\n/view more · demand next bytes of selected item's bodies\n/view history <events> · /view body <bytes> · positive demand preferences\n/view select <body-index> [<start-byte> <end-byte>] · select a whole loaded original body or explicit grapheme range\n/view selection [clear] · inspect/reset selection; mouse drag selects text\n/view copy · F4 · /view clipboard unspecified|disabled|osc52\n/view search [loaded|selected|older] <literal> · F3 · older requests one page and configured body prefixes; unavailable suffixes stay explicit\n/view next|previous · select a retained search hit; stale/unloaded revisions are refused\n/view export [--replace] <path> · F5 · original selection, create-new by default; spaces belong to the path\n/view status · current model, session, effort, tier, usage and local reading settings\n/view composer send-key enter|alt-enter · physical send key, independent of steer/queue\n/view preferences status|run|user|local|save · remembered or temporary frontend choices\n/view help · frontend actions never enter steer/queue";
+const HELP: &str = "View controls\n/view focus composer|conversation|changes|divider · F6 / Shift+F6 cycles visible regions\n/pane [diff|agents] · toggle the side pane or select its content\n/view pane open|close|toggle|diff|agents · F2 switches upper pane\n/view split <conversation-weight> <changes-weight> · arrows resize focused divider\n/view up|down · PgUp/PgDn browse; Up/Down select rows outside composer\n/view expand|collapse|toggle|reset · Enter toggles selected tool\n/view compact|detailed · Ctrl+O toggles global tool detail\n/view follow|pin · return to live tail or keep current position\n/view older · demand one older history page\n/view more · demand next bytes of selected item's bodies\n/view history <events> · /view body <bytes> · positive demand preferences\n/view select <body-index> [<start-byte> <end-byte>] · select a whole loaded original body or explicit grapheme range\n/view selection [clear] · inspect/reset selection; mouse drag selects text\n/view copy · F4 · /view clipboard unspecified|disabled|osc52\n/view search [loaded|selected|older] <literal> · F3 · older requests one page and configured body prefixes; unavailable suffixes stay explicit\n/view next|previous · select a retained search hit; stale/unloaded revisions are refused\n/view export [--replace] <path> · F5 · original selection, create-new by default; spaces belong to the path\n/view status · current model, session, effort, tier, usage and local reading settings\n/view composer send-key enter|alt-enter · physical send key, independent of steer/queue\n/view preferences status|run|user|local|save · remembered or temporary frontend choices\n/view help · frontend actions never enter steer/queue";
 
-/// Whether this exact input belongs to the shared TUI-only view command.
-pub(in crate::app) fn is_view(text: &str) -> bool {
-    matches!(crate::app::slash_catalog::classify_slash(text), crate::app::slash_catalog::SlashClass::Recognised { cmd, .. } if cmd.eq_ignore_ascii_case("view"))
+/// Whether this exact input belongs to the shared TUI-only view or pane commands.
+pub(in crate::app) fn is_frontend_command(text: &str) -> bool {
+    matches!(crate::app::slash_catalog::classify_slash(text), crate::app::slash_catalog::SlashClass::Recognised { cmd, .. } if cmd.eq_ignore_ascii_case("view") || cmd.eq_ignore_ascii_case("pane"))
+}
+
+/// Preserve the named command's semantics on both idle and active submission paths.
+pub(in crate::app) fn command_named(
+    name: &str,
+    arguments: &str,
+    state: &mut AppState,
+) -> Result<LocalCommandOutcome, TuiError> {
+    if name.eq_ignore_ascii_case("view") {
+        return command(arguments, state);
+    }
+    if name.eq_ignore_ascii_case("pane") {
+        if !matches!(arguments.trim(), "" | "diff" | "agents") {
+            command_error(state, "Use /pane [diff|agents]")?;
+            state.screen.dirty = true;
+            state.screen.allow_body_load = true;
+            return Ok(LocalCommandOutcome::Rejected);
+        }
+        return command(
+            &format!(
+                "pane {}",
+                if arguments.trim().is_empty() {
+                    "toggle"
+                } else {
+                    arguments
+                }
+            ),
+            state,
+        );
+    }
+    Err(interaction(std::io::Error::other(
+        "frontend command handler received an unrecognized command name",
+    )))
 }
 
 /// Execute a locally submitted command without admitting it to the agent.
@@ -174,11 +207,26 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
         }
         ["focus", target] => focus(state, parse_focus(target)?).map_err(|error| error.to_string()),
         ["pane", action] => {
+            use crate::app::render::AuxiliaryPane;
+            if let Some(content) = match *action {
+                "diff" => Some(AuxiliaryPane::Diff),
+                "agents" => Some(AuxiliaryPane::Agents),
+                _ => None,
+            } {
+                state.screen.auxiliary = content;
+                state.screen.changes_open = true;
+                state.screen.upper = crate::render::layout::UpperPane::Changes;
+                return Ok(());
+            }
             state.screen.changes_open = match *action {
                 "open" => true,
                 "close" => false,
                 "toggle" => !state.screen.changes_open,
-                _ => return Err("Use /view pane open|close|toggle".to_owned()),
+                _ => {
+                    return Err(
+                        "Use /pane [diff|agents] or /view pane open|close|toggle".to_owned()
+                    );
+                }
             };
             Ok(())
         }
@@ -329,6 +377,139 @@ mod admission_tests {
             crate::app::state::test_view_source(uuid::Uuid::new_v4()),
             StatusBar::default(),
         )
+    }
+
+    #[test]
+    fn frontend_command_recognition_is_exact_and_case_insensitive() {
+        for text in [
+            "/pane",
+            " /PANE agents ",
+            "/pane invalid",
+            "/view",
+            "/VIEW pane diff",
+        ] {
+            assert!(is_frontend_command(text), "{text}");
+        }
+        for text in ["/panels", "//pane", "/viewer", "pane", "explain /pane", "/"] {
+            assert!(!is_frontend_command(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn pane_toggle_preserves_content_and_geometry_focus() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::app::render::AuxiliaryPane;
+        use crate::render::layout::UpperPane;
+
+        let mut state = state();
+        state.screen.auxiliary = AuxiliaryPane::Agents;
+        state.screen.upper = UpperPane::Conversation;
+        state.screen.changes_open = false;
+        for expected_open in [true, false, true] {
+            assert!(matches!(
+                command_named("pane", "", &mut state)?,
+                LocalCommandOutcome::Accepted
+            ));
+            assert_eq!(state.screen.changes_open, expected_open);
+            assert_eq!(state.screen.auxiliary, AuxiliaryPane::Agents);
+            assert_eq!(state.screen.upper, UpperPane::Conversation);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn named_pane_and_view_alias_select_visible_content() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::app::render::AuxiliaryPane;
+        use crate::render::layout::UpperPane;
+
+        let mut state = state();
+        for (name, argument, expected) in [
+            ("pane", "agents", AuxiliaryPane::Agents),
+            ("pane", "diff", AuxiliaryPane::Diff),
+            ("view", "pane agents", AuxiliaryPane::Agents),
+            ("view", "pane diff", AuxiliaryPane::Diff),
+        ] {
+            state.screen.changes_open = false;
+            state.screen.upper = UpperPane::Conversation;
+            assert!(matches!(
+                command_named(name, argument, &mut state)?,
+                LocalCommandOutcome::Accepted
+            ));
+            assert!(state.screen.changes_open);
+            assert_eq!(state.screen.auxiliary, expected);
+            assert_eq!(state.screen.upper, UpperPane::Changes);
+        }
+        for (argument, expected_open) in [
+            ("pane close", false),
+            ("pane open", true),
+            ("pane toggle", false),
+        ] {
+            assert!(matches!(
+                command_named("view", argument, &mut state)?,
+                LocalCommandOutcome::Accepted
+            ));
+            assert_eq!(state.screen.changes_open, expected_open);
+            assert_eq!(state.screen.auxiliary, AuxiliaryPane::Diff);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejected_pane_arguments_do_not_change_state_or_draft()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::app::render::AuxiliaryPane;
+        use crate::render::layout::UpperPane;
+
+        let mut state = state();
+        state.input_editor.paste_cells("/pane agents extra")?;
+        state.screen.auxiliary = AuxiliaryPane::Diff;
+        state.screen.changes_open = false;
+        state.screen.upper = UpperPane::Conversation;
+        for arguments in ["agents extra", "unknown", "open", "toggle"] {
+            assert!(matches!(
+                command_named("pane", arguments, &mut state)?,
+                LocalCommandOutcome::Rejected
+            ));
+            assert!(!state.screen.changes_open);
+            assert_eq!(state.screen.auxiliary, AuxiliaryPane::Diff);
+            assert_eq!(state.screen.upper, UpperPane::Conversation);
+            assert_eq!(state.input_editor.text(), "/pane agents extra");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn accepted_pane_survives_missing_save_authority() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::app::render::AuxiliaryPane;
+
+        let mut state = state();
+        assert!(matches!(
+            command_named("view", "preferences local", &mut state)?,
+            LocalCommandOutcome::Accepted
+        ));
+        let previous_items = state.transcript.projection.items().len();
+        assert!(matches!(
+            command_named("pane", "agents", &mut state)?,
+            LocalCommandOutcome::Accepted
+        ));
+        assert!(state.screen.changes_open);
+        assert_eq!(state.screen.auxiliary, AuxiliaryPane::Agents);
+        assert_eq!(
+            state.transcript.projection.items().len(),
+            previous_items + 1
+        );
+        let notice = state
+            .transcript
+            .projection
+            .items()
+            .next_back()
+            .ok_or("missing save failure")?;
+        assert!(matches!(
+            notice.kind,
+            norn::session_view::ViewItemKind::Error
+        ));
+        Ok(())
     }
 
     #[test]

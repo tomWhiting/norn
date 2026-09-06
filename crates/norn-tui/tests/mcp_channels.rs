@@ -307,9 +307,17 @@ async fn interact(
         terminal.write(b"\r")?;
     }
     let completion_start = if case == "retry" {
-        // Failure details remain pinned while the operator types. The accepted
-        // reply can reach the last body row before its completion is visible.
-        terminal.wait_frame(start, |screen| screen.contains("channel-fixture-answer-1"))?;
+        // Failure details remain pinned while the operator types. Observe the
+        // accepted input and retired draft, then explicitly follow before asking
+        // for an answer that may be below those retained failure details.
+        terminal.wait_frame(start, |screen| {
+            let lines = screen.lines();
+            screen.contains(ORDINARY_PROMPT)
+                && screen
+                    .composer_rows()
+                    .iter()
+                    .all(|row| lines[*row].trim().is_empty())
+        })?;
         let followed_after = terminal.output.len();
         terminal.write(b"/view follow \r")?;
         followed_after

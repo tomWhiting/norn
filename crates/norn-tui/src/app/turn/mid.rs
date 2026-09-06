@@ -81,6 +81,8 @@ fn handle_mid_turn_key(
             PopupKeyOutcome::Consumed
         )
     {
+        sync_input_for_current_geometry(state, guard)?;
+        redraw_all(state, guard)?;
         return Ok(());
     }
 
@@ -144,10 +146,10 @@ fn submit_mid_turn_input(
         return Ok(());
     };
     let text = snapshot.text().to_owned();
-    if crate::app::view_actions::is_view(&text) {
-        let (_, arguments) =
+    if crate::app::view_actions::is_frontend_command(&text) {
+        let (name, arguments) =
             crate::app::slash_catalog::split_first_word(text.trim().trim_start_matches('/'));
-        match crate::app::view_actions::command(arguments, state)? {
+        match crate::app::view_actions::command_named(name, arguments, state)? {
             crate::app::slash::LocalCommandOutcome::Accepted => {
                 crate::app::composer_submission::accepted_local(state, &snapshot)?;
             }
@@ -200,4 +202,98 @@ pub(super) fn handle_active_input_delivery(
         .read_delivered_input(store, item, delivery.event_id.clone());
     state.screen.allow_body_load = true;
     Ok(())
+}
+
+#[cfg(test)]
+mod pane_tests {
+    use super::*;
+    use crate::app::render::AuxiliaryPane;
+    use crate::input::history::InputHistory;
+    use crate::render::fixed_panel::StatusBar;
+    use crate::render::layout::UpperPane;
+    use crate::terminal::caps::TerminalCaps;
+    use norn::agent_loop::active_input_channel;
+
+    fn state(mode: InFlightSubmitMode) -> AppState {
+        let mut state = AppState::new(
+            TerminalCaps::baseline(),
+            InputHistory::in_memory(),
+            norn::agent::registry::AgentRegistry::shared(),
+            crate::app::state::test_view_source(uuid::Uuid::new_v4()),
+            StatusBar::default(),
+        );
+        state.in_flight_input.set_mode(mode);
+        state.in_flight_input.set_running(true);
+        state.screen.changes_open = false;
+        state.screen.upper = UpperPane::Conversation;
+        state
+    }
+
+    #[test]
+    fn active_pane_commands_retire_locally_in_both_submit_modes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for mode in [InFlightSubmitMode::Steer, InFlightSubmitMode::Queue] {
+            for (text, content, upper) in [
+                ("/pane", AuxiliaryPane::Diff, UpperPane::Conversation),
+                ("/pane diff", AuxiliaryPane::Diff, UpperPane::Changes),
+                ("/PANE agents", AuxiliaryPane::Agents, UpperPane::Changes),
+                (
+                    "/view pane agents",
+                    AuxiliaryPane::Agents,
+                    UpperPane::Changes,
+                ),
+            ] {
+                let mut state = state(mode);
+                state.input_editor.paste_cells(text)?;
+                let (sender, mut receiver, mut deliveries) = active_input_channel();
+                let cancel = CancellationToken::new();
+                let mut cancel_requested = false;
+                submit_mid_turn_input(&mut state, &sender, &cancel, &mut cancel_requested)?;
+                assert!(state.input_editor.is_empty(), "{text}");
+                assert!(state.screen.changes_open);
+                assert_eq!(state.screen.auxiliary, content);
+                assert_eq!(state.screen.upper, upper);
+                assert!(receiver.drain().is_empty(), "{text} reached steer input");
+                assert!(deliveries.try_recv().is_none());
+                assert!(!state.in_flight_input.has_pending_steers());
+                assert!(state.in_flight_input.pop_queued_followup().is_none());
+                assert!(!cancel_requested);
+                assert!(!cancel.is_cancelled());
+                assert!(state.pending_composer_submission.is_none());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn active_invalid_pane_retains_exact_draft_without_steering_or_queueing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for mode in [InFlightSubmitMode::Steer, InFlightSubmitMode::Queue] {
+            let mut state = state(mode);
+            state.input_editor.paste_cells("/pane agents extra")?;
+            let snapshot = state.input_editor.snapshot()?;
+            let history = serde_json::to_value(state.input_editor.kernel().history_snapshot())?;
+            let (sender, mut receiver, mut deliveries) = active_input_channel();
+            let cancel = CancellationToken::new();
+            let mut cancel_requested = false;
+            submit_mid_turn_input(&mut state, &sender, &cancel, &mut cancel_requested)?;
+            state.input_editor.validate_snapshot(&snapshot)?;
+            assert_eq!(state.input_editor.text(), "/pane agents extra");
+            assert_eq!(
+                serde_json::to_value(state.input_editor.kernel().history_snapshot())?,
+                history
+            );
+            assert!(!state.screen.changes_open);
+            assert_eq!(state.screen.auxiliary, AuxiliaryPane::Diff);
+            assert_eq!(state.screen.upper, UpperPane::Conversation);
+            assert!(receiver.drain().is_empty());
+            assert!(deliveries.try_recv().is_none());
+            assert!(!state.in_flight_input.has_pending_steers());
+            assert!(state.in_flight_input.pop_queued_followup().is_none());
+            assert!(!cancel_requested);
+            assert!(!cancel.is_cancelled());
+            assert!(state.pending_composer_submission.is_none());
+        }
+        Ok(())
+    }
 }

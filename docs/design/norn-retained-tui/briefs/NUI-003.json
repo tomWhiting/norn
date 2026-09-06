@@ -1,0 +1,393 @@
+{
+  "id": "NUI-003",
+  "cluster": "norn-retained-tui",
+  "title": "Restore agent status and readable retained conversation rows",
+  "status": "registered_urgent_repairs_dispatched_agent_interaction_pending",
+  "baseline": "04bcc9a77aa6f815669ee18e591a52a2520c9bb5",
+  "branch": "codex/norn-frontend-preferences-integrated",
+  "worktree": "/private/tmp/norn-frontend-preferences",
+  "written_at_melbourne": "2026-09-06T15:22:52.652060+10:00",
+  "design": "../design.json",
+  "purpose": "Repair the missing populated agent/fork status display and tight unstyled conversation presentation without dropping the larger requested interaction work.",
+  "task": "Implement root-dispatched R1 status restoration and R2 readability after this accepted registration, then prove repaired bytes in R3. R4 explicitly tracks the still-required selected main/fork/subagent view and messaging stage; it has no executable source wall until its target/authority design is settled and registered. Do not close the full user request from passive status restoration. R5 implements direct /pane controls and the actual Agents auxiliary listing. R6 explicitly tracks persistence of the new current-run content selector; neither row closes R4 target interaction.",
+  "depends_on": [
+    "NRT-001",
+    "NRT-002",
+    "NUI-001",
+    "NUI-002",
+    "NCP-001 current composer integration"
+  ],
+  "checklist": [
+    "C16",
+    "C17",
+    "C18",
+    "C19",
+    "C20",
+    "C21"
+  ],
+  "stories": [
+    "S2",
+    "S3",
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+  ],
+  "requirements": [
+    {
+      "id": "R0",
+      "title": "Register the repair after the frozen validation is released",
+      "owner": "review_selection",
+      "status": "registration_complete_root_thaw_authorized",
+      "depends_on": [],
+      "spec": "After root releases candidate validation, apply these exact prepared documentation paths, verify their preimages, render/check coverage and record before-source hashes before source dispatch.",
+      "files": {
+        "modify": [
+          "docs/design/norn-retained-tui/design.json",
+          "docs/design/norn-retained-tui/DESIGN.md",
+          "docs/design/norn-retained-tui/checklist.json",
+          "docs/design/norn-retained-tui/CHECKLIST.md",
+          "docs/design/norn-retained-tui/stories.json",
+          "docs/design/norn-retained-tui/USER-STORIES.md"
+        ],
+        "create": [
+          "docs/design/norn-retained-tui/briefs/NUI-003.json",
+          "docs/design/norn-retained-tui/briefs/NUI-003.md"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "Root released the frozen-candidate documentation boundary and authorized this in-repository registration on04bcc9a. The prior workspace run is red and current runs are diagnostic once bytes change; preserve their original records and rerun final full validation/build on repaired source. No old result is transferred to new bytes.",
+        "Preserve all existing cluster briefs and programme IDs. The new NUI-003 ID was checked unused. Reconcile changed documentation preimages explicitly if other work updates the source cluster.",
+        "Keep the full requested agent view/message requirement explicit and pending; urgent status/readability repair has a narrower completion boundary."
+      ],
+      "checklist": [
+        "C18"
+      ],
+      "stories": [
+        "S2",
+        "S3",
+        "S6"
+      ],
+      "design_refs": [
+        "D-NUI003-BOUNDARY"
+      ]
+    },
+    {
+      "id": "R1",
+      "title": "Restore the retained agent/fork status tree",
+      "owner": "norn_models",
+      "status": "registered_pending_execution",
+      "depends_on": [
+        "R0"
+      ],
+      "spec": "AgentStatusPanel is still populated; restore its missing retained presentation through one typed snapshot per prepared frame. Reuse existing tree::collapse/order_for_display, current five-row-plus-overflow rule, recovery/hold semantics and formatting/activity/token facts. Root-only state adds zero agent chrome. Paint compact agent/fork status rows immediately above the full-width composer within the upper display allocation; preserve tiny geometry and existing pane behavior without changing layout.rs or composer input. Accepted child activity dirties the retained frame even if the root transcript projection revision does not change. Never turn formatted ANSI into typed rows, replay agent history, infer an active agent by text, or start/restart an agent to paint status.",
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/agents/status_line.rs",
+          "crates/norn-tui/src/app/render.rs",
+          "crates/norn-tui/src/app/dispatch.rs"
+        ],
+        "create": [
+          "crates/norn-tui/src/agents/status_line/retained.rs",
+          "crates/norn-tui/src/agents/status_line/retained_tests.rs",
+          "crates/norn-tui/src/app/render/agents.rs",
+          "crates/norn-tui/src/app/render/agents_tests.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "AgentStatusPanel is still populated; restore its missing retained presentation through one typed snapshot per prepared frame. Reuse existing tree::collapse/order_for_display, current five-row-plus-overflow rule, recovery/hold semantics and formatting/activity/token facts. Root-only state adds zero agent chrome. Paint compact agent/fork status rows immediately above the full-width composer within the upper display allocation; preserve tiny geometry and existing pane behavior without changing layout.rs or composer input. Accepted child activity dirties the retained frame even if the root transcript projection revision does not change. Never turn formatted ANSI into typed rows, replay agent history, infer an active agent by text, or start/restart an agent to paint status.",
+        "Preserve the retained typed view, existing frame writer, current full-width composer, original blue user markers and dim dividers, no new global header, and the existing read-only Changes split. Reuse legacy palette values; no ANSI rendering/capture/parsing roundtrip, second terminal writer, polling or provider/session-policy change. Extra files require a named amendment before edits.",
+        "Expose a typed retained projection under agents/status_line without making current activity/tokens/tree formatting a second state owner. Preserve unknown/unavailable values and stable agent/parent identity, collapsed ordering, overflow and existing terminal-control safety.",
+        "Add meaningful typed/frame tests for root-only absence, children/forks, current tree ordering/overflow, hold/recovery and source-independent child activity redraw. Assert full-width composer and upper-area bounds at narrow/tiny sizes. Restored status is observational; selection/view/message remains pending separately.",
+        "app/render.rs is a shared integration file: root sequences R1 tree wiring with R2 transcript_items module declaration, preserving both patches. No simultaneous writers.",
+        "Within already-modified agents/status_line.rs, norn_models removes inherited test-only allow attributes and underlying unwrap/expect/panic/unwrap_err/expect_err uses structurally. Preserve every test and assertion meaning, propagate contextual fallible Result errors, and leave unrelated production behavior unchanged. The user no-bypass instruction overrides the inherited CLAUDE.md test exception; no extra source path is authorized.",
+        "One AgentFrame snapshot carries both the existing compact five-row-plus-overflow strip and the full admitted agent listing, including the root, for the explicitly selected Agents pane. agents::paint_pane(&AgentFrame, &mut Frame, area, scroll) clips the full list to the current pane rectangle and uses its explicit scroll; it does not reuse the compact truncation as a data cap. No second status read or second state owner. Compact root-only state still adds zero agent chrome; an explicitly opened Agents pane can show its actual root. Root integrates the chosen rectangle and sole frame writer. Preserve exact identity/order/hold/recovery and explicit unavailable facts. Listing grants no target selection/history/message authority, fabricated transcript, history read or provider activation."
+      ],
+      "checklist": [
+        "C16"
+      ],
+      "stories": [
+        "S6",
+        "S2"
+      ],
+      "design_refs": [
+        "D-NUI003-AGENTS",
+        "D-NUI003-BOUNDARY"
+      ]
+    },
+    {
+      "id": "R2",
+      "title": "Restore readable typed conversation rows",
+      "owner": "review_tui",
+      "status": "registered_pending_execution",
+      "depends_on": [
+        "R0"
+      ],
+      "spec": "Restore tool name beside its description with current lifecycle/duration and explicit missing-evidence wording. Insert exactly one generated blank between visible semantic items, replacing incidental empty-label gaps; no per-body-line, stream-chunk or token gaps. Use distinct BeforeItem anchors with no BodyRef, body demand or original copy/export authority. Work through indexed visible iteration/lookahead, preserve exact selection/source mappings and pinned scrolling, and reuse styled/wrapped caches without whole-history scans or per-paint reparsing.",
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/tools/summary.rs",
+          "crates/norn-tui/src/tools/summary_tests.rs",
+          "crates/norn-tui/src/app/render.rs",
+          "crates/norn-tui/src/app/render/transcript.rs",
+          "crates/norn-tui/src/app/viewport.rs"
+        ],
+        "create": [
+          "crates/norn-tui/src/app/render/transcript_items.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "Restore tool name beside its description with current lifecycle/duration and explicit missing-evidence wording. Insert exactly one generated blank between visible semantic items, replacing incidental empty-label gaps; no per-body-line, stream-chunk or token gaps. Use distinct BeforeItem anchors with no BodyRef, body demand or original copy/export authority. Work through indexed visible iteration/lookahead, preserve exact selection/source mappings and pinned scrolling, and reuse styled/wrapped caches without whole-history scans or per-paint reparsing.",
+        "Use existing typed role/lifecycle facts: unchanged user blue RGB80/160/220, Error/failed tool red200/80/80, blocked/incomplete tool amber215/175/0, Thinking Dim+Italic merged with Markdown attributes and explicit code colors, Notice/Metadata dim. Do not search model descriptions for state words. Preserve actual source bytes, ranges, Markdown emphasis and code colors; colors supplement existing role/state words rather than being their only cue.",
+        "Preserve the retained typed view, existing frame writer, current full-width composer, original blue user markers and dim dividers, no new global header, and the existing read-only Changes split. Reuse legacy palette values; no ANSI rendering/capture/parsing roundtrip, second terminal writer, polling or provider/session-policy change. Extra files require a named amendment before edits.",
+        "Extract RowGroup/item_groups/local_group into app/render/transcript_items.rs before expanding presentation logic; keep transcript.rs window owner within500 production lines. Inline tests belong with the new pure item-presentation owner; no extra unregistered module.",
+        "Preserve existing tool-name-unavailable and description-unavailable wording; include both name and description whenever present, including unknown tool names. Derive lifecycle style boundaries from constructed typed fields, never arbitrary substring matching in descriptions.",
+        "Test actual prepared/encoded frame styles for mixed assistant/tool/tool/thinking/error/input; exactly one inter-item blank, no duplicate empty-header blank, no extra composer/header/control rows and unchanged source byte selection.",
+        "Test one-row forward/backward navigation across BeforeItem/header/body, pinned-body resize/reflow and no repeated anchors. A generated blank cannot demand, copy or export original body bytes; collapsed calls still make no body demand.",
+        "Thinking Dim+Italic merges with strong/emphasis/code styles; failures/blocked states use actual ToolState/result_state. Cache reuse at unchanged body/width must remain, with no whole-history scan.",
+        "R2 app/render.rs change is only the transcript_items declaration, applied/sequenced by root alongside R1 status wiring. layout.rs and composer appearance remain outside this wall.",
+        "Readability owner may add inline tests in existing render/transcript.rs and new render/transcript_items.rs plus existing summary_tests.rs, within their current file wall. BeforeItem remains generated-only with no original body/copy/export/demand authority. Root alone applies the render.rs module declaration.",
+        "Emit BeforeItem only when an earlier visible semantic item exists: no leading separator and no gap contributed by hidden metadata/thinking. Header remains a virtual navigation start for headerless assistant/input bodies; keep original body-cache construction and exact source/copy mappings unchanged."
+      ],
+      "checklist": [
+        "C17"
+      ],
+      "stories": [
+        "S2",
+        "S3",
+        "S5"
+      ],
+      "design_refs": [
+        "D-NUI003-READABILITY",
+        "D-NUI003-BOUNDARY"
+      ]
+    },
+    {
+      "id": "R3",
+      "title": "Prove the actual restored screen and preserve remaining requests",
+      "owner": "root",
+      "status": "registered_pending_execution",
+      "depends_on": [
+        "R1",
+        "R2",
+        "R5"
+      ],
+      "spec": "Run meaningful actual-App/frame/PTY regression checks on the repaired source and preserve the separate agent interaction requirement; current frozen candidate results cannot verify later repair bytes.",
+      "files": {
+        "modify": [
+          "crates/norn-tui/tests/retained_workspace.rs",
+          "crates/norn-tui/tests/support/retained_workspace.rs",
+          "crates/norn-tui/tests/model_selection.rs",
+          "crates/norn-tui/tests/mcp_channels.rs",
+          "crates/norn-tui/tests/pty_smoke.rs"
+        ],
+        "create": [],
+        "delete": []
+      },
+      "acceptance": [
+        "Use the existing actual-App retained workspace fixture to prove a real child/fork status update appears without root transcript text changing, within visible bounds and with the full-width composer preserved. Keep the canonical stateful decoded-frame oracle; no raw-byte substring substitution, skipped assertions or copied harness.",
+        "Exercise readable mixed item spacing/colors/name+description in actual prepared screen evidence, existing pane split and resize/reflow. Pure helper tests do not substitute for the accepted child-activity redraw path.",
+        "Run changed-scope tests plus required formatter/strict Clippy/source-policy and existing semantic checks on exact repaired bytes before an authorized local preview. Record any remaining failure or unrun scope. Current candidate04bcc9a validation/release remains a separate historical result, never transferred onto NUI-003 edits.",
+        "No next preview version, build, installation, main merge or public release is invented by this draft. Root may register any additionally necessary version/release-note source paths before changing them. Existing successful-local-update speech and rollback/hash/version verification remain required when actually installed.",
+        "Keep the requested selected main/fork/subagent view+message work explicitly pending after restoration; source investigation and status display are not an implementation or approval of target messaging authority.",
+        "Prove /pane toggle, /pane diff and /pane agents through actual idle and active App entry points: correct visible content, one local acceptance, no provider/steer/queue input, preserved split/composer bounds and explicit status-only agent interaction boundary.",
+        "channels_compatibility exclusively owns test-only migrations in tests/model_selection.rs and tests/mcp_channels.rs. Model-selection fixtures must first assert the exact refused draft is retained, then perform an explicit user clear before typing /view follow or another command; never concatenate the next command into the deliberately retained draft. MCP recovery fixture must issue the existing explicit return-to-live/follow action before waiting for an answer hidden below the pinned long-error viewport. Preserve or strengthen original model/effort/tier/budget/compaction and provider/delivery/error assertions, exact request counts and decoded ready-frame checks. Do not change product draft-retention, pinning, automatic-follow policy, runtime source or scenario meaning to satisfy old fixture assumptions.",
+        "The existing frontend-repairs-1 diagnostic is failure history, not proof of these repaired fixture bytes. Root reruns actual model/MCP scenarios and final assembled validation after source freeze; no pass or installation is asserted by this registration.",
+        "The child-result-while-active actual-App PTY fixture owns a provider stream that emits its initial root text and remains pending until the operator cancellation on every invocation, including the queued child-result follow-up. Do not use elapsed sleep or natural Done to race the two explicit cancel gestures. Preserve exact child header/body visibility, one first cancellation while the follow-up is generating, two cancellation outcomes after the second cancel, final explicit exit and terminal restoration assertions. This is a test-only lifetime contract in pty_smoke.rs; production cancellation, provider behavior and timing remain unchanged. The workspace-3 capture contains19 completed frames with the exact child body present, then a natural second-turn completion before the cancel key exits idle; retain that failed historical receipt and rerun the repaired exact source."
+      ],
+      "checklist": [
+        "C18"
+      ],
+      "stories": [
+        "S6",
+        "S2",
+        "S3"
+      ],
+      "design_refs": [
+        "D-NUI003-AGENTS",
+        "D-NUI003-READABILITY",
+        "D-NUI003-BOUNDARY"
+      ]
+    },
+    {
+      "id": "R4",
+      "title": "Select, view and message main/fork/subagent targets",
+      "owner": "root",
+      "status": "required_next_stage_pending_design_and_exact_source_wall",
+      "depends_on": [
+        "R1"
+      ],
+      "spec": "Before claiming the complete user request fulfilled, settle and register then implement selected-target conversation viewing and messaging for main, forks and subagents. A passive status tree is insufficient.",
+      "files": {
+        "modify": [],
+        "create": [],
+        "delete": []
+      },
+      "acceptance": [
+        "This is explicit required follow-up, not a completed capability or an optional product deferral. R1\u2013R3 urgent repair can complete independently while this row remains visibly pending.",
+        "Settle exact selected-target identity, actual source-bound history/view access, operator messaging authority, main/fork/subagent routes, stale/unavailable/retired target behavior and acknowledged delivery outcomes. Existing core handles and signal_agent are evidence to investigate, not implicit authority or completed TUI integration.",
+        "Register the necessary exact source/test walls before implementing this row. An empty planned wall authorizes no speculative source edits, guessed transcript reconstruction, fallback target selection or message dispatch.",
+        "Acceptance requires actual target selection, correct target conversation and acknowledged input reaching the selected main/fork/subagent, with preserved source identity and explicit refusal/failure cases; status-only tests do not satisfy it.",
+        "Keep existing read-only Changes split available (/view pane open; /view split 2 1). Editable Iridium/Work/Session and target-view layouts require their own implemented contracts; do not label those shipped by the urgent repair."
+      ],
+      "checklist": [
+        "C19"
+      ],
+      "stories": [
+        "S7"
+      ],
+      "design_refs": [
+        "D-NUI003-BOUNDARY"
+      ]
+    },
+    {
+      "id": "R5",
+      "title": "Provide direct pane commands and the actual Agents side listing",
+      "owner": "root; channels_compatibility command-only partition; norn_models existing Agents painter",
+      "status": "registered_pending_execution",
+      "depends_on": [
+        "R0"
+      ],
+      "spec": "Recognize /pane as a TUI-only named entry using the existing View handler kind. /pane with no arguments toggles the existing auxiliary open state without changing selected content; /pane diff and /pane agents select the exact typed content and open it. Preserve all existing /view commands as supported aliases, help and autocomplete. Reject unknown arguments locally with LocalCommandOutcome::Rejected and preserve the draft. Both idle and active-turn paths dispatch the actual command name plus arguments through command_named; no /pane command enters provider input, steer or queue.",
+      "files": {
+        "modify": [
+          "crates/norn/src/loop/commands.rs",
+          "crates/norn-tui/src/app/slash.rs",
+          "crates/norn-tui/src/app/view_actions.rs",
+          "crates/norn-tui/src/app/view_actions/commands.rs",
+          "crates/norn-tui/src/app/turn/mid.rs",
+          "crates/norn-tui/src/app/render.rs",
+          "crates/norn-tui/src/app/render/changes.rs"
+        ],
+        "create": [],
+        "delete": []
+      },
+      "acceptance": [
+        "Recognize /pane as a TUI-only named entry using the existing View handler kind. /pane with no arguments toggles the existing auxiliary open state without changing selected content; /pane diff and /pane agents select the exact typed content and open it. Preserve all existing /view commands as supported aliases, help and autocomplete. Reject unknown arguments locally with LocalCommandOutcome::Rejected and preserve the draft. Both idle and active-turn paths dispatch the actual command name plus arguments through command_named; no /pane command enters provider input, steer or queue.",
+        "Root adds AuxiliaryPane { Diff, Agents } and ScreenState.auxiliary in app/render.rs, defaulting to Diff to preserve the existing Changes view. Keep this content selector distinct from UpperPane, which controls conversation/auxiliary geometry focus. Root paints the selected content in the existing auxiliary rectangle and gates Changes evidence demand when Agents is selected; no new Changes body demand for agent listing. Preserve full-width composer, existing open/split/focus, narrow-terminal pane switching and current frame publication.",
+        "This checkpoint keeps selected auxiliary content in current-run state. Existing saved open/split preferences remain unchanged. Persisting the new content selector through the existing frontend settings owner is required next work R6, not silently claimed here; /pane agents does not complete R4 target view/message.",
+        "channels_compatibility exclusively owns the five command paths. The core catalogue uses existing View kind rather than a new public enum variant; no CLI exhaustive-match or surface change is required. app/view_actions.rs changes reexports only. Root exclusively owns render.rs and changes.rs wiring; norn_models owns the already-registered agents.rs/agents_tests.rs painter. No simultaneous writers.",
+        "Accepted settings mutation remains accepted even if later preference save/report fails; preserve typed AcceptedWithError handling, existing autosave owner and exact composer admission. Do not infer outcome from rendered notice text or replay local effects.",
+        "Add inline local command tests in commands.rs and mid.rs plus catalogue assertions in slash.rs/core commands.rs. Prove toggle preserves content, exact diff/agents opens correct content, rejected arguments preserve state/draft, idle and active behavior agree and do not send agent input. Actual App R3 proof must display the Agents listing in the side pane with unchanged composer and no Changes demand.",
+        "The explicit compatibility spellings /view pane diff and /view pane agents select the same typed content as /pane diff and /pane agents; existing open|close|toggle meanings remain unchanged.",
+        "Explicit /pane diff|agents and /view pane diff|agents also set UpperPane::Changes, so the selected auxiliary content is immediately visible when narrow geometry can show only one upper pane. /pane with no arguments and /view pane toggle preserve the selected auxiliary content and focus, apart from existing visibility normalization; do not switch targets or alter transcript identity."
+      ],
+      "checklist": [
+        "C20"
+      ],
+      "stories": [
+        "S8",
+        "S6"
+      ],
+      "design_refs": [
+        "D-NUI003-PANE",
+        "D-NUI003-BOUNDARY"
+      ]
+    },
+    {
+      "id": "R6",
+      "title": "Remember selected auxiliary content through the existing preference owner",
+      "owner": "root",
+      "status": "required_next_stage_pending_exact_source_wall",
+      "depends_on": [
+        "R5"
+      ],
+      "spec": "Extend the single existing frontend preference schema/projection/writer to remember the selected Diff/Agents content; this checkpoint has current-run content only and preserves existing open/split persistence.",
+      "files": {
+        "modify": [],
+        "create": [],
+        "delete": []
+      },
+      "acceptance": [
+        "Register the exact existing preference owner/schema/tests paths before implementation; no parallel preference store or added startup filesystem read.",
+        "Preserve user/run/local semantics, whole-tui-layer precedence, conflicts/unrelated keys and the same atomic writer. Prove actual restart restores selected content and neither save/load starts MCP/providers/agents.",
+        "Remain explicit pending work until source-bound restart proof exists; empty planned wall authorizes no source edits."
+      ],
+      "checklist": [
+        "C21"
+      ],
+      "stories": [
+        "S8"
+      ],
+      "design_refs": [
+        "D-NUI003-PANE"
+      ]
+    }
+  ],
+  "boundaries": [
+    "Preserve the retained typed view, existing frame writer, current full-width composer, original blue user markers and dim dividers, no new global header, and the existing read-only Changes split. Reuse legacy palette values; no ANSI rendering/capture/parsing roundtrip, second terminal writer, polling or provider/session-policy change. Extra files require a named amendment before edits.",
+    "Status-only restoration does not implement selected-agent conversation rendering or messaging. No new messaging authority, live-handle access, provider/session routing or body acquisition is authorized by R1/R2.",
+    "No timing caps/defaults or row limits are invented. Reuse the existing agent display policy; generated inter-item separation is the explicitly reviewed presentation change.",
+    "External preparation is preserved unchanged. Root has now authorized in-repository registration and exact restoration/readability dispatch. Any newly necessary source path stops and is named before edit. Current diagnostic runs do not verify later mutations; full final checks/build must bind final repaired bytes."
+  ],
+  "remaining_user_requirement": {
+    "status": "required_next_stage_pending_design_and_exact_source_wall",
+    "request": "Select and view the main conversation, forks and subagents, then message the selected target. Restoring status alone does not fulfil this requirement.",
+    "current_source_finding": "TabState cycle/switch lack production callers; current root transcript is bound to runtime.store. Existing live AgentHandles.event_store(id)/metadata and scoped routed/pending/audited signal_agent seams are candidate building blocks, not an implemented interactive TUI.",
+    "required_design": "Settle exact selected-target identity, history access, operator send authority, root/fork/subagent targeting, unavailable/stale/retired handling and acknowledged send outcome; register exact source walls before implementation. No inferred authority, fake target transcript or replay of effects.",
+    "completion_rule": "Keep this work visible after NUI-003 restoration ships; neither status rows nor a passing restoration test closes agent view/message.",
+    "split_pane_now": "Existing read-only Changes pane is available with /view pane open and /view split 2 1. Editable Iridium/Work/Session panes and selected-agent panes are separate work, not delivered by this repair.",
+    "tracked_row": "R4",
+    "pane_commands": "R5 implements /pane toggle and explicit diff/agents content; Agents means actual side listing only. Full selected conversation view/message remains R4.",
+    "auxiliary_content_persistence": "Current-run content for this checkpoint, existing open/split persistence retained; R6 required next."
+  },
+  "verification": [
+    "External render and coverage only at preparation.",
+    "Actual repaired-source tests/frame/PTY evidence and strict policy before any new checked local preview.",
+    "Independent review and exact-commit205 remain main-landing gates; local repair does not waive them."
+  ],
+  "source_reviews": [
+    {
+      "path": "/private/tmp/ncp-001-proof/readability-review-01.json",
+      "sha256": "bf4db4bb7aa5fb49cc4215776f6456ef4618df4f0bdf874c9f0f1138a4779319",
+      "scope": "Read-only readability diagnosis and exact wall; no executed implementation proof."
+    }
+  ],
+  "coordination": {
+    "shared_app_render_rs": "Root serializes/applies R1 status snapshot/rows wiring and R2 transcript_items module declaration; no simultaneous edits.",
+    "R3_test_helpers": "Root owns both existing retained_workspace files so R1 and R2 authors do not collide.",
+    "pending_interaction": "Further selected-agent view/message source work needs its own settled contract and exact registration.",
+    "pane_command_partition": {
+      "owner": "channels_compatibility",
+      "paths": [
+        "crates/norn/src/loop/commands.rs",
+        "crates/norn-tui/src/app/slash.rs",
+        "crates/norn-tui/src/app/view_actions.rs",
+        "crates/norn-tui/src/app/view_actions/commands.rs",
+        "crates/norn-tui/src/app/turn/mid.rs"
+      ],
+      "api": "command_named(name, arguments, state); catalogue pane uses existing View kind"
+    },
+    "pane_root_partition": {
+      "owner": "root",
+      "paths": [
+        "crates/norn-tui/src/app/render.rs",
+        "crates/norn-tui/src/app/render/changes.rs"
+      ],
+      "api": "AuxiliaryPane::{Diff,Agents}; ScreenState.auxiliary; root owns selected content paint and Changes demand gating"
+    },
+    "pane_agent_painter": "One AgentFrame snapshot carries both the existing compact five-row-plus-overflow strip and the full admitted agent listing, including the root, for the explicitly selected Agents pane. agents::paint_pane(&AgentFrame, &mut Frame, area, scroll) clips the full list to the current pane rectangle and uses its explicit scroll; it does not reuse the compact truncation as a data cap. No second status read or second state owner. Compact root-only state still adds zero agent chrome; an explicitly opened Agents pane can show its actual root. Root integrates the chosen rectangle and sole frame writer. Preserve exact identity/order/hold/recovery and explicit unavailable facts. Listing grants no target selection/history/message authority, fabricated transcript, history read or provider activation.",
+    "R3_fixture_migration": {
+      "owner": "channels_compatibility",
+      "files": [
+        "crates/norn-tui/tests/model_selection.rs",
+        "crates/norn-tui/tests/mcp_channels.rs"
+      ],
+      "scope": "channels_compatibility exclusively owns test-only migrations in tests/model_selection.rs and tests/mcp_channels.rs. Model-selection fixtures must first assert the exact refused draft is retained, then perform an explicit user clear before typing /view follow or another command; never concatenate the next command into the deliberately retained draft. MCP recovery fixture must issue the existing explicit return-to-live/follow action before waiting for an answer hidden below the pinned long-error viewport. Preserve or strengthen original model/effort/tier/budget/compaction and provider/delivery/error assertions, exact request counts and decoded ready-frame checks. Do not change product draft-retention, pinning, automatic-follow policy, runtime source or scenario meaning to satisfy old fixture assumptions."
+    }
+  },
+  "registered_at_melbourne": "2026-09-06T15:24:33.006139+10:00",
+  "registration_authority": {
+    "at_melbourne": "2026-09-06T15:24:33.006139+10:00",
+    "root_authorized": true,
+    "base": "04bcc9a77aa6f815669ee18e591a52a2520c9bb5",
+    "scope": "Apply exact prepared documentation, urgent restoration/readability source walls; preserve remaining user interaction row.",
+    "prior_validation_boundary": "Prior red workspace and ongoing release outputs are diagnostic; unchanged records retained and final tests/build must rerun."
+  },
+  "pane_amended_at_melbourne": "2026-09-06T15:32:52.650033+10:00",
+  "pane_narrow_visibility_amended_at_melbourne": "2026-09-06T15:46:07.806980+10:00",
+  "r3_fixture_migration_registered_at_melbourne": "2026-09-06T16:00:56.352074+10:00"
+}

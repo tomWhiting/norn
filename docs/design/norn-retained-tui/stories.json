@@ -30,6 +30,21 @@
           "id": "S5",
           "title": "Stable display and consistent user-message styling",
           "text": "As a participant I can read every line of a user message in the same intended style and interact with a stable retained terminal display, without changing the familiar layout."
+        },
+        {
+          "id": "S6",
+          "title": "See the team currently working",
+          "text": "As a participant I can see the existing main/fork/subagent status tree while work proceeds without losing composer width. Selecting a target conversation and messaging it remains a separately tracked requirement until implemented."
+        },
+        {
+          "id": "S7",
+          "title": "Choose whose conversation I view and message",
+          "text": "As a participant I can select the main session, a fork or a subagent, read its actual conversation and send to that exact target with an acknowledged result. This remains pending beyond passive status restoration."
+        },
+        {
+          "id": "S8",
+          "title": "Choose auxiliary content directly",
+          "text": "As a participant I can use /pane to toggle the side area and /pane diff or /pane agents to select its actual content. Existing /view commands remain supported. Remembering the new content choice and selecting/viewing/messaging individual agents are explicitly tracked until implemented."
         }
       ]
     }

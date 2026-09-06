@@ -74,6 +74,8 @@ pub fn handle_agent_event(state: &mut AppState, agent_event: AgentEvent) -> Resu
         super::notices::child_event(state, &agent_event)?;
     }
     state.screen.allow_body_load = true;
+    // Child activity changes the status tree independently of the root projection.
+    state.screen.dirty = true;
     let event = match agent_event.event {
         AgentEventKind::Observed(observed) => {
             let (_, native) = observed.into_parts();

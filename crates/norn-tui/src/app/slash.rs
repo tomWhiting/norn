@@ -127,7 +127,7 @@ pub(super) async fn try_dispatch_slash(
             }
             return Ok(Some(SlashOutcome::Exit));
         }
-        TuiBuiltinKind::View => super::view_actions::command(arg, state)?,
+        TuiBuiltinKind::View => super::view_actions::command_named(command.name, arg, state)?,
         TuiBuiltinKind::Help => {
             handle_help(state)?;
             LocalCommandOutcome::Accepted
@@ -625,6 +625,7 @@ mod tests {
                 ("quit", TuiBuiltinKind::Quit),
                 ("help", TuiBuiltinKind::Help),
                 ("view", TuiBuiltinKind::View),
+                ("pane", TuiBuiltinKind::View),
                 ("model", TuiBuiltinKind::Model),
                 ("effort", TuiBuiltinKind::Effort),
                 ("reasoning-effort", TuiBuiltinKind::Effort),

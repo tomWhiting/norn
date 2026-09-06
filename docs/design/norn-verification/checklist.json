@@ -37,6 +37,16 @@
         {
           "id": "C9",
           "text": "Commit-cancellation fixtures await their cleanup completion signal, preserve no-write/retired-slot/fresh-replacement checks and impose no invented two-second SLA."
+        },
+        {
+          "id": "C10",
+          "text": "Large late-watch catch-up proves a committed region and byte-equal alert with test-owned release and no fixture polling deadline.",
+          "status": "registered_pending_implementation"
+        },
+        {
+          "id": "C11",
+          "text": "Descriptor-retention fixture establishes concurrent admitted-child ownership before denial and proves natural-exit, invalid-cwd and kill permit return through push, without a latency assumption.",
+          "status": "registered_pending_implementation"
         }
       ],
       "name": "Verification"

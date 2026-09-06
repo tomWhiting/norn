@@ -6,23 +6,16 @@ use norn::session_view::{BodyRef, ItemDirection, ItemInclusion, ViewItem, ViewIt
 
 use crate::TuiError;
 use crate::app::state::AppState;
-use crate::app::transcript::Transcript;
 use crate::app::viewport::{AnchorPosition, AnchorState, ViewAnchor};
 use crate::render::frame::{Frame, PaintRow};
 use crate::render::layout::Rect;
-use crate::render::retained_markdown::{RenderedMarkdown, SourceMapping, render_markdown};
+use crate::render::retained_markdown::{RenderedMarkdown, SourceMapping};
 use crate::render::retained_text::TextRow;
 
-use super::{DisplayCache, ScreenState, interaction, layout_rows, push_text, safe_text};
+use super::transcript_items::{RowGroup, item_groups};
+use super::{interaction, push_text};
 
 type LogicalRow = (ViewAnchor, Arc<RenderedMarkdown>, TextRow, Option<BodyRef>);
-
-struct RowGroup {
-    text: Arc<RenderedMarkdown>,
-    rows: Arc<[TextRow]>,
-    reference: Option<BodyRef>,
-    fixed_offset: Option<usize>,
-}
 
 pub(super) fn conversation(
     state: &mut AppState,
@@ -181,20 +174,37 @@ fn window(
     } else {
         Box::new(state.transcript.projection.items())
     };
+    let selected = state.screen.viewport.selected().cloned();
+    let visible = |item: &ViewItem| {
+        !(matches!(item.kind, ViewItemKind::Metadata) && !state.transcript.config.expanded_tools
+            || matches!(item.kind, ViewItemKind::Thinking)
+                && !state.display_toggles.thinking_visible
+            || state.transcript.completion_hidden(&item.id)
+                && selected.as_ref() != Some(&item.id)
+                && anchor.is_none_or(|anchor| anchor.item != item.id))
+    };
+    let mut has_earlier = if let Some(anchor) = anchor {
+        state
+            .transcript
+            .projection
+            .items_from(
+                &anchor.item,
+                ItemDirection::Earlier,
+                ItemInclusion::Exclusive,
+            )?
+            .any(visible)
+    } else {
+        false
+    };
+    let mut items = items.filter(|item| visible(item)).peekable();
     let mut rows = Vec::new();
-    for item in items {
-        if matches!(item.kind, ViewItemKind::Metadata) && !state.transcript.config.expanded_tools {
-            continue;
-        }
-        if state.transcript.completion_hidden(&item.id)
-            && state.screen.viewport.selected() != Some(&item.id)
-            && anchor.is_none_or(|anchor| anchor.item != item.id)
-        {
-            continue;
-        }
-        if matches!(item.kind, ViewItemKind::Thinking) && !state.display_toggles.thinking_visible {
-            continue;
-        }
+    while let Some(item) = items.next() {
+        let separator = if backwards {
+            items.peek().is_some()
+        } else {
+            has_earlier
+        };
+        has_earlier = true;
         let groups = item_groups(
             &state.transcript,
             &mut state.screen,
@@ -205,6 +215,7 @@ fn window(
                 columns
             },
             state.display_toggles.secondary_fields_visible,
+            separator,
         )?;
         let requested = RowWindow {
             anchor: anchor.filter(|anchor| anchor.item == item.id),
@@ -240,6 +251,18 @@ fn collect_rows(
         exclusive,
     } = requested;
     let anchor_position = anchor.and_then(|anchor| locate_anchor(groups, &anchor.position));
+    // A headerless first item has a virtual start before its first original row.
+    if backwards
+        && anchor_position.is_none()
+        && anchor.is_some_and(|anchor| {
+            matches!(
+                anchor.position,
+                AnchorPosition::Header | AnchorPosition::BeforeItem
+            )
+        })
+    {
+        return;
+    }
     let group_order: Box<dyn Iterator<Item = (usize, &RowGroup)> + '_> = if backwards {
         Box::new(groups.iter().enumerate().rev())
     } else {
@@ -302,7 +325,15 @@ fn collect_rows(
 
 fn locate_anchor(groups: &[RowGroup], position: &AnchorPosition) -> Option<(usize, usize)> {
     match position {
-        AnchorPosition::Header => Some((0, 0)),
+        AnchorPosition::BeforeItem => groups
+            .iter()
+            .position(|group| group.before_item)
+            .map(|index| (index, 0)),
+        AnchorPosition::Header => groups
+            .iter()
+            .position(|group| group.reference.is_none() && !group.before_item)
+            .or_else(|| groups.iter().position(|group| group.before_item))
+            .map(|index| (index, 0)),
         AnchorPosition::Body {
             reference,
             original_offset,
@@ -319,6 +350,9 @@ fn locate_anchor(groups: &[RowGroup], position: &AnchorPosition) -> Option<(usiz
 }
 
 fn row_position(group: &RowGroup, row: &TextRow) -> AnchorPosition {
+    if group.before_item {
+        return AnchorPosition::BeforeItem;
+    }
     let Some(reference) = &group.reference else {
         return AnchorPosition::Header;
     };
@@ -373,133 +407,11 @@ fn row_position(group: &RowGroup, row: &TextRow) -> AnchorPosition {
     }
 }
 
-fn item_groups(
-    transcript: &Transcript,
-    screen: &mut ScreenState,
-    item: &ViewItem,
-    columns: u16,
-    secondary_fields: bool,
-) -> Result<Vec<RowGroup>, TuiError> {
-    let expanded = screen
-        .tool_overrides
-        .get(&item.id)
-        .copied()
-        .unwrap_or(transcript.config.expanded_tools);
-    let label = match &item.kind {
-        ViewItemKind::Tool(tool) => crate::app::tool_calls::label(tool, expanded),
-        ViewItemKind::Input | ViewItemKind::Text | ViewItemKind::Structured => String::new(),
-        _ => item.label.as_str().to_owned(),
-    };
-    let mut groups = vec![local_group(&label, columns, None)?];
-    if (matches!(&item.kind, ViewItemKind::Tool(_)) && !expanded)
-        || (transcript.completion_compact(&item.id)
-            && !screen
-                .tool_overrides
-                .get(&item.id)
-                .copied()
-                .unwrap_or(false)
-            && screen.viewport.selected() != Some(&item.id))
-    {
-        return Ok(groups);
-    }
-    for reference in &item.bodies {
-        let Some(body) = transcript.body(reference) else {
-            groups.push(local_group(
-                "[content not loaded]",
-                columns,
-                Some(reference.clone()),
-            )?);
-            continue;
-        };
-        let length = body.original.len();
-        let content =
-            crate::app::streaming::complete_prefix(&body.original, body.next_offset.is_some());
-        let cache = match screen.displayed.entry(reference.clone()) {
-            std::collections::hash_map::Entry::Occupied(entry)
-                if entry.get().original_len == length
-                    && entry.get().secondary_fields == secondary_fields =>
-            {
-                entry.into_mut()
-            }
-            entry => {
-                let text = if matches!(item.kind, ViewItemKind::Text | ViewItemKind::Structured) {
-                    Arc::new(
-                        crate::render::retained_structured::render_structured(
-                            content,
-                            secondary_fields,
-                            &screen.highlighter,
-                        )
-                        .map_err(interaction)?,
-                    )
-                } else if matches!(item.kind, ViewItemKind::Thinking) {
-                    Arc::new(render_markdown(content, &screen.highlighter)?)
-                } else if matches!(item.kind, ViewItemKind::Input) {
-                    super::composer::input_text(content)?
-                } else {
-                    safe_text(content)?
-                };
-                let rows = Arc::from(layout_rows(&text.styled, columns)?);
-                let cache = DisplayCache {
-                    original_len: length,
-                    secondary_fields,
-                    text,
-                    columns,
-                    rows,
-                };
-                match entry {
-                    std::collections::hash_map::Entry::Occupied(mut entry) => {
-                        entry.insert(cache);
-                        entry.into_mut()
-                    }
-                    std::collections::hash_map::Entry::Vacant(entry) => entry.insert(cache),
-                }
-            }
-        };
-        if cache.columns != columns {
-            cache.rows = Arc::from(layout_rows(&cache.text.styled, columns)?);
-            cache.columns = columns;
-        }
-        groups.push(RowGroup {
-            text: Arc::clone(&cache.text),
-            rows: Arc::clone(&cache.rows),
-            reference: Some(reference.clone()),
-            fixed_offset: None,
-        });
-        if body.next_offset.is_some() {
-            let mut more = local_group(
-                "[more content available: /view more]",
-                columns,
-                Some(reference.clone()),
-            )?;
-            more.fixed_offset = Some(body.original.len());
-            groups.push(more);
-        }
-    }
-    Ok(groups)
-}
-
-fn local_group(
-    label: &str,
-    columns: u16,
-    reference: Option<BodyRef>,
-) -> Result<RowGroup, TuiError> {
-    let text = safe_text(label)?;
-    let rows: Vec<_> = layout_rows(&text.styled, columns)?
-        .into_iter()
-        .take(1)
-        .collect();
-    Ok(RowGroup {
-        text,
-        rows: Arc::from(rows),
-        fixed_offset: reference.as_ref().map(|_| 0),
-        reference,
-    })
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::ScreenState;
     use super::*;
-    use crate::app::transcript::LoadedBody;
+    use crate::app::transcript::{LoadedBody, Transcript};
     use norn::provider::request::{ToolCallCaller, ToolCallKind};
     use norn::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
     use norn::session::{EventStore, SessionBinding};
@@ -617,7 +529,7 @@ mod tests {
         let (transcript, item) = tool_fixture()?;
         let mut screen = ScreenState::new(transcript.projection.source().clone());
         screen.tool_overrides.insert(item.id.clone(), true);
-        let groups = item_groups(&transcript, &mut screen, &item, 12, false)?;
+        let groups = item_groups(&transcript, &mut screen, &item, 12, false, false)?;
         let argument_group = groups.get(1).ok_or("argument group absent")?;
         let anchor = ViewAnchor {
             item: item.id.clone(),
@@ -662,13 +574,13 @@ mod tests {
         let (transcript, item) = tool_fixture()?;
         let mut screen = ScreenState::new(transcript.projection.source().clone());
         screen.tool_overrides.insert(item.id.clone(), true);
-        let narrow = item_groups(&transcript, &mut screen, &item, 8, false)?;
+        let narrow = item_groups(&transcript, &mut screen, &item, 8, false, false)?;
         assert_eq!(narrow[0].rows.len(), 1);
         let anchor = row_position(
             &narrow[1],
             narrow[1].rows.get(3).ok_or("narrow row absent")?,
         );
-        let wide = item_groups(&transcript, &mut screen, &item, 18, false)?;
+        let wide = item_groups(&transcript, &mut screen, &item, 18, false, false)?;
         assert_eq!(wide[0].rows.len(), 1);
         let (group, row) = locate_anchor(&wide, &anchor).ok_or("reflow anchor absent")?;
         assert_eq!(group, 1);
@@ -696,8 +608,8 @@ mod tests {
         let (transcript, item) = tool_fixture()?;
         let mut screen = ScreenState::new(transcript.projection.source().clone());
         screen.tool_overrides.insert(item.id.clone(), true);
-        let first = item_groups(&transcript, &mut screen, &item, 40, false)?;
-        let second = item_groups(&transcript, &mut screen, &item, 40, false)?;
+        let first = item_groups(&transcript, &mut screen, &item, 40, false, false)?;
+        let second = item_groups(&transcript, &mut screen, &item, 40, false, false)?;
         assert!(Arc::ptr_eq(&first[1].text, &second[1].text));
         assert!(Arc::ptr_eq(&first[1].rows, &second[1].rows));
         let mut visible = Vec::new();
@@ -722,7 +634,7 @@ mod tests {
         let (transcript, item) = tool_fixture()?;
         let mut screen = ScreenState::new(transcript.projection.source().clone());
         screen.tool_overrides.insert(item.id.clone(), true);
-        let groups = item_groups(&transcript, &mut screen, &item, 8, false)?;
+        let groups = item_groups(&transcript, &mut screen, &item, 8, false, false)?;
         let mut anchor = ViewAnchor {
             item: item.id.clone(),
             position: AnchorPosition::Header,
@@ -749,6 +661,196 @@ mod tests {
             positions.push(next.clone());
             anchor = next.clone();
         }
+        Ok(())
+    }
+
+    fn readable_state() -> TestResult<AppState> {
+        let (mut transcript, tool) = tool_fixture()?;
+        transcript.config.expanded_tools = false;
+        let mut failed = tool.kind;
+        if let ViewItemKind::Tool(tool) = &mut failed {
+            tool.state = norn::session_view::ToolState::Failed;
+            tool.result_state = Some(norn::session_view::ToolState::Failed);
+        }
+        transcript.notice(failed, "", None)?;
+        for (kind, label, body) in [
+            (ViewItemKind::Text, "Assistant", "Answer in ordinary prose"),
+            (
+                ViewItemKind::Thinking,
+                "Thinking",
+                "Consider **carefully** and `code`",
+            ),
+            (ViewItemKind::Error, "Error", "Visible failure detail"),
+            (ViewItemKind::Input, "You", "Original α input"),
+        ] {
+            let id = transcript.notice(kind, label, Some(body))?;
+            let reference = transcript
+                .projection
+                .item(&id)
+                .and_then(|item| item.bodies.first())
+                .ok_or("readability body absent")?
+                .clone();
+            let demand = transcript
+                .demand_body(&id, &reference, false)?
+                .ok_or("local demand absent")?;
+            let page = transcript.read_local_body(&demand)?;
+            assert!(transcript.accept_body(&demand, page)?);
+        }
+        let mut caps = crate::terminal::caps::TerminalCaps::baseline();
+        caps.true_colour = true;
+        caps.italic_support = true;
+        let mut state = AppState::new(
+            caps,
+            crate::input::history::InputHistory::in_memory(),
+            norn::agent::registry::AgentRegistry::shared(),
+            transcript.projection.source().clone(),
+            crate::render::fixed_panel::StatusBar::default(),
+        );
+        state.transcript = transcript;
+        Ok(state)
+    }
+
+    #[test]
+    fn mixed_frame_restores_spacing_typed_colours_and_full_width_composer() -> TestResult {
+        let mut state = readable_state()?;
+        let frame = super::super::prepare(&mut state, 100, 40)?;
+        let crate::render::layout::Layout::Ready { composer, .. } = frame.layout else {
+            return Err("readability fixture has no composer".into());
+        };
+        assert_eq!(composer.column, 0);
+        assert_eq!(composer.width, 100);
+        let items = state.transcript.projection.items().count();
+        let separators: Vec<_> = state
+            .screen
+            .hit_rows
+            .iter()
+            .filter(|row| row.anchor.position == AnchorPosition::BeforeItem)
+            .collect();
+        assert_eq!(separators.len(), items - 1);
+        assert!(separators.iter().all(|row| row.body.is_none()
+            && row.text.spans.is_empty()
+            && row.geometry.bytes().is_empty()));
+        let first = state
+            .screen
+            .hit_rows
+            .first()
+            .ok_or("first visible row absent")?;
+        assert_ne!(first.anchor.position, AnchorPosition::BeforeItem);
+        assert!(state.screen.demands.iter().all(|(id, _)| {
+            state
+                .transcript
+                .projection
+                .item(id)
+                .is_some_and(|item| !matches!(item.kind, ViewItemKind::Tool(_)))
+        }));
+        let painted = String::from_utf8(frame.encode(&state.terminal_caps)?)?;
+        for control in [
+            "\x1b[38;2;80;160;220m",
+            "\x1b[38;2;200;80;80m",
+            "\x1b[2m",
+            "\x1b[3m",
+        ] {
+            assert!(
+                painted.contains(control),
+                "actual frame omitted {control:?}"
+            );
+        }
+        assert!(state.screen.hit_rows.iter().any(|row| {
+            row.text
+                .styled
+                .text()
+                .starts_with("edit: A deliberately long descriptive tool header")
+        }));
+        assert!(
+            !state
+                .screen
+                .hit_rows
+                .iter()
+                .any(|row| row.text.styled.text() == "Assistant")
+        );
+        assert!(state.screen.hit_rows.iter().any(|row| {
+            row.text.styled.text() == "Original α input"
+                && row
+                    .text
+                    .styled
+                    .spans()
+                    .iter()
+                    .all(|span| span.style.foreground == Some([80, 160, 220]))
+        }));
+        assert!(state.transcript.body_tasks.is_empty());
+        assert!(state.transcript.history_tasks.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn one_row_navigation_crosses_distinct_spacers_in_both_directions() -> TestResult {
+        let mut state = readable_state()?;
+        let all = window(&mut state, 100, None, false, 100, false)?;
+        assert!(!all.is_empty());
+        for pair in all.windows(2) {
+            let first = &pair[0].0;
+            let second = &pair[1].0;
+            assert_ne!(first, second);
+            let forward = window(&mut state, 100, Some(first), false, 1, true)?;
+            assert_eq!(forward.first().map(|row| &row.0), Some(second));
+            let backward = window(&mut state, 100, Some(second), true, 1, true)?;
+            assert_eq!(backward.first().map(|row| &row.0), Some(first));
+        }
+        let body = all
+            .iter()
+            .find(|row| {
+                row.3.is_some()
+                    && state
+                        .transcript
+                        .projection
+                        .item(&row.0.item)
+                        .is_some_and(|item| matches!(item.kind, ViewItemKind::Input))
+            })
+            .ok_or("body row absent")?;
+        let anchor = body.0.clone();
+        let reference = body.3.as_ref().ok_or("body ref absent")?.clone();
+        let original = state
+            .transcript
+            .body(&reference)
+            .ok_or("loaded body absent")?
+            .original
+            .clone();
+        let source = state.transcript.projection.source().clone();
+        let selection = crate::app::selection::Selection::from_original(
+            &source,
+            crate::app::selection::OriginalBody::new(&reference, &original, true),
+            0..original.len(),
+        )?;
+        state
+            .screen
+            .viewport
+            .scroll_to(anchor.clone(), &state.transcript.projection)?;
+        let narrow = window(&mut state, 12, Some(&anchor), false, 5, false)?;
+        assert!(!narrow.is_empty());
+        assert_eq!(state.screen.viewport.anchor(), Some(&anchor));
+        assert_eq!(
+            selection.read(
+                &source,
+                Some(crate::app::selection::OriginalBody::new(
+                    &reference,
+                    &state
+                        .transcript
+                        .body(&reference)
+                        .ok_or("selected original lost during reflow")?
+                        .original,
+                    true,
+                ))
+            )?,
+            original
+        );
+        assert_eq!(
+            state
+                .transcript
+                .body(&reference)
+                .ok_or("reflow lost body")?
+                .original,
+            original
+        );
         Ok(())
     }
 }

@@ -11,7 +11,9 @@ mod commands;
 mod keys;
 mod mouse;
 pub(in crate::app) mod reading;
-pub(super) use commands::{command, is_view};
+#[cfg(test)]
+pub(super) use commands::command;
+pub(super) use commands::{command_named, is_frontend_command};
 pub(super) use keys::key;
 pub(super) use mouse::mouse;
 
