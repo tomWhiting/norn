@@ -18,12 +18,14 @@
 
 **S8.** As a participant I can use /pane to toggle the side area and /pane diff or /pane agents to select its actual content. Existing /view commands remain supported. Remembering the new content choice and selecting/viewing/messaging individual agents are explicitly tracked until implemented.
 
-**S9.** I can toggle and choose panes directly with visible shortcuts and a thin divider, without losing my draft or sending a request.
+**S9.** I can toggle and choose panes directly with visible shortcuts and a thin divider, without losing my draft or sending a request. Implemented and locally verified in preview.6; recorded source d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8. Main landing and review remain separate.
 
-**S10.** I can visibly select conversation/tool headers, entries and Diff text, and understand whether copied bytes are original source or a captured display snapshot.
+**S10.** I can visibly select conversation/tool headers, entries and Diff text, and understand whether copied bytes are original source or a captured display snapshot. Implemented and locally verified in preview.6; recorded source d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8. Main landing and review remain separate.
 
-**S11.** I can persist Shift+Enter sending, keep bare Enter as newline and explicitly recover with the same keyboard/button policy cycle when terminal reporting is unconfirmed.
+**S11.** I can persist Shift+Enter sending, keep bare Enter as newline and explicitly recover with the same keyboard/button policy cycle when terminal reporting is unconfirmed. Implemented and locally verified in preview.6; recorded source d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8. Main landing and review remain separate.
 
-**S12.** I can keep a stable reading position while work continues, preserve every delivered scroll step and explicitly return to the selected conversation’s latest admitted item. NUI-004 R4 now registers the implementation; actual source-bound App and measurement proof remains pending.
+**S12.** I can keep a stable reading position while work continues, preserve every delivered scroll step and explicitly return to the selected conversation’s latest admitted item. R4 is resumed in its separate scrolling tree for an authorized focused local preview; no new passing runtime, measurement or installation proof is claimed. Scrolling the pane under my pointer preserves my keyboard focus and composer cursor/draft; an explicit click can still change focus.
 
-**S13.** I can distinguish a candidate from my verified installed preview, see its actual feature scope, recover the prior binary and hear Norn updated only after a successful checked local update.
+**S13.** I can distinguish a candidate from my verified installed preview, see its actual feature scope, recover the prior binary and hear Norn updated only after a successful checked local update. Implemented and locally verified in preview.6; recorded source d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8. Main landing and review remain separate. Preview.7 is a separately authorized focused local candidate; its exact checks, omissions, rollback and installation receipt must be recorded without treating it as a full release.
+
+**S14.** I can use Option or Control combinations for pane/view actions, edit and remember those bindings, disable unwanted bindings, and trust the displayed hints without losing ordinary typing, draft, popup or send behavior.

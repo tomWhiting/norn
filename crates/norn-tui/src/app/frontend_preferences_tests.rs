@@ -293,3 +293,33 @@ async fn task_failure_is_unknown_publication_and_cannot_be_blindly_retried() -> 
     assert!(state.preferences.pending.is_none());
     Ok(())
 }
+
+#[tokio::test]
+async fn shortcut_edits_publish_and_restore_without_changing_draft_or_unowned_data() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().canonicalize()?;
+    let mut active = state();
+    install(&mut active, local_launch(&root)?);
+    super::super::event_loop::insert_paste_text(&mut active, "kept🙂")?;
+    let draft = active.input_editor.snapshot()?;
+    super::super::view_actions::command("keys set pane_toggle alt+q f7", &mut active)?;
+    active.input_editor.validate_snapshot(&draft)?;
+    drain(&mut active).await?;
+    let saved: Value =
+        serde_json::from_slice(&std::fs::read(root.join(".norn/settings.local.json"))?)?;
+    assert_eq!(
+        saved["tui"]["input"]["bindings"]["pane_toggle"],
+        json!(["alt+q", "f7"])
+    );
+    let mut restored = state();
+    let mut launch = FrontendPreferencesLaunch::run_only();
+    launch.initial = FrontendPreferences::decode(saved.get("tui"))?;
+    install(&mut restored, launch);
+    assert_eq!(restored.view_shortcuts, active.view_shortcuts);
+    let original = Arc::clone(&active.view_shortcuts);
+    super::super::view_actions::command("keys set pane_toggle ctrl+z", &mut active)?;
+    assert!(Arc::ptr_eq(&original, &active.view_shortcuts));
+    active.input_editor.validate_snapshot(&draft)?;
+    assert!(active.preferences.pending.is_none());
+    Ok(())
+}

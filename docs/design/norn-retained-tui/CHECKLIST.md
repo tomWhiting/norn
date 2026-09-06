@@ -33,8 +33,9 @@
 
 ## Pane interaction checkpoint
 
-- [ ] **C22** — Thin divider and direct pane/send-policy shortcuts
-- [ ] **C23** — Select displayed conversation and Diff text without false source authority
-- [ ] **C24** — Persist exact Shift+Enter policy with explicit keyboard/button recovery
-- [ ] **C25** — Preserve ordered scroll batches and provide a source-bound Latest action
-- [ ] **C26** — Version and verify the R1-R3 local preview checkpoint
+- [x] **C22** — Thin divider and direct pane/send-policy shortcuts
+- [x] **C23** — Select displayed conversation and Diff text without false source authority
+- [x] **C24** — Persist exact Shift+Enter policy with explicit keyboard/button recovery
+- [ ] **C25** — Ordered scroll/Latest interaction after mandatory isolated ScreenState extraction; inherited R1-R3 preserved
+- [ ] **C26** — Record the installed preview.6 and focused local preview.7 checkpoint accurately
+- [ ] **C27** — Editable exact view shortcuts persist through the existing settings owner and keep hints/input semantics truthful

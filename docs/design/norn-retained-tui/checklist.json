@@ -484,27 +484,132 @@
         {
           "id": "C22",
           "text": "Thin divider and direct pane/send-policy shortcuts",
-          "status": "written_unverified"
+          "status": "locally_verified_installed_preview6_main_205_Fable_pending",
+          "historical_status_records": [
+            {
+              "superseded_at_melbourne": "2026-09-06T18:14:59.621023+10:00",
+              "status": "written_unverified",
+              "done": null
+            }
+          ],
+          "done": true,
+          "local_checkpoint": {
+            "commit": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+            "receipt": "/Users/tom/.local/state/norn/install-backups/20260906-181146-interaction-preview/receipt.json"
+          }
         },
         {
           "id": "C23",
           "text": "Select displayed conversation and Diff text without false source authority",
-          "status": "written_review_fixes_required_unverified"
+          "status": "locally_verified_installed_preview6_main_205_Fable_pending",
+          "historical_status_records": [
+            {
+              "superseded_at_melbourne": "2026-09-06T18:14:59.621023+10:00",
+              "status": "written_review_fixes_required_unverified",
+              "done": null
+            }
+          ],
+          "done": true,
+          "local_checkpoint": {
+            "commit": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+            "receipt": "/Users/tom/.local/state/norn/install-backups/20260906-181146-interaction-preview/receipt.json"
+          }
         },
         {
           "id": "C24",
           "text": "Persist exact Shift+Enter policy with explicit keyboard/button recovery",
-          "status": "written_unverified"
+          "status": "locally_verified_installed_preview6_main_205_Fable_pending",
+          "historical_status_records": [
+            {
+              "superseded_at_melbourne": "2026-09-06T18:14:59.621023+10:00",
+              "status": "written_unverified",
+              "done": null
+            }
+          ],
+          "done": true,
+          "local_checkpoint": {
+            "commit": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+            "receipt": "/Users/tom/.local/state/norn/install-backups/20260906-181146-interaction-preview/receipt.json"
+          }
         },
         {
           "id": "C25",
-          "text": "Preserve ordered scroll batches and provide a source-bound Latest action",
-          "status": "registered_implementation_pending_next_session"
+          "text": "Ordered scroll/Latest interaction after mandatory isolated ScreenState extraction; inherited R1-R3 preserved",
+          "status": "written_resumed_under_local_validation_no_new_pass",
+          "historical_status_records": [
+            {
+              "superseded_at_melbourne": "2026-09-06T18:14:59.621023+10:00",
+              "status": "registered_implementation_pending_next_session",
+              "done": null
+            }
+          ],
+          "done": false,
+          "local_checkpoint": {
+            "status": "written_saved_paused_uncompiled_not_in_preview6",
+            "checkpoint": "/private/tmp/nui-004-proof/r4-paused-checkpoint-01/CHECKPOINT.json",
+            "worktree": "/private/tmp/norn-scroll-latest"
+          },
+          "current_execution_checkpoint": {
+            "at_melbourne": "2026-09-06T18:35:05.719118+10:00",
+            "status": "resumed_under_local_validation_no_new_pass_or_install",
+            "authority": "Parent relays explicit user authorization to resume and install scrolling for hands-on local testing after compile, focused scrolling and code-quality checks, preserving rollback. This does not waive full release/main, venue205 or Fable requirements.",
+            "worktree": "/private/tmp/norn-scroll-latest",
+            "branch": "codex/norn-scroll-latest",
+            "base_commit": "f3c8309d3fd6ff0e39ef3b5aadd525f52fa2d9f8",
+            "installed_source": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+            "installed_version": "0.1.0-preview.6",
+            "source_owner": "root exclusively; earlier source-owner partition is historical",
+            "docs_incoming_commit": "89506a4e1dfff19f9f2430dfa2a75c7f5975d601",
+            "docs_merge_base": "f3c8309d3fd6ff0e39ef3b5aadd525f52fa2d9f8",
+            "configurable_shortcuts": "Proposal pending; no additional source wall or behavior registered."
+          }
         },
         {
           "id": "C26",
-          "text": "Version and verify the R1-R3 local preview checkpoint",
-          "status": "registered_candidate_uninstalled"
+          "text": "Record the installed preview.6 and focused local preview.7 checkpoint accurately",
+          "status": "preview6_installed_preview7_metadata_registered_uninstalled",
+          "historical_status_records": [
+            {
+              "superseded_at_melbourne": "2026-09-06T18:14:59.621023+10:00",
+              "status": "registered_candidate_uninstalled",
+              "done": null
+            },
+            {
+              "id": "C26",
+              "text": "Version and verify the R1-R3 local preview checkpoint",
+              "status": "locally_verified_installed_preview6_main_205_Fable_pending",
+              "done": true,
+              "local_checkpoint": {
+                "commit": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+                "receipt": "/Users/tom/.local/state/norn/install-backups/20260906-181146-interaction-preview/receipt.json"
+              }
+            }
+          ],
+          "done": false,
+          "local_checkpoint": {
+            "commit": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+            "receipt": "/Users/tom/.local/state/norn/install-backups/20260906-181146-interaction-preview/receipt.json"
+          },
+          "current_execution_checkpoint": {
+            "at_melbourne": "2026-09-06T18:35:05.719118+10:00",
+            "status": "resumed_under_local_validation_no_new_pass_or_install",
+            "authority": "Parent relays explicit user authorization to resume and install scrolling for hands-on local testing after compile, focused scrolling and code-quality checks, preserving rollback. This does not waive full release/main, venue205 or Fable requirements.",
+            "worktree": "/private/tmp/norn-scroll-latest",
+            "branch": "codex/norn-scroll-latest",
+            "base_commit": "f3c8309d3fd6ff0e39ef3b5aadd525f52fa2d9f8",
+            "installed_source": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+            "installed_version": "0.1.0-preview.6",
+            "source_owner": "root exclusively; earlier source-owner partition is historical",
+            "docs_incoming_commit": "89506a4e1dfff19f9f2430dfa2a75c7f5975d601",
+            "docs_merge_base": "f3c8309d3fd6ff0e39ef3b5aadd525f52fa2d9f8",
+            "configurable_shortcuts": "Proposal pending; no additional source wall or behavior registered."
+          }
+        },
+        {
+          "id": "C27",
+          "text": "Editable exact view shortcuts persist through the existing settings owner and keep hints/input semantics truthful",
+          "status": "registered_implementation_pending_no_new_verification",
+          "done": false
         }
       ]
     }
@@ -513,5 +618,91 @@
     "state": "installed_local_preview_pending_venue_review",
     "version": "norn 0.1.0-preview.2",
     "proof": "/private/tmp/nui-001-proof/installed-preview-status.json"
+  },
+  "pane_interaction_local_checkpoint": {
+    "recorded_at_melbourne": "2026-09-06T18:14:59.621023+10:00",
+    "installed_at_melbourne": "2026-09-06T18:11:46.211489+10:00",
+    "status": "R1_R3_locally_verified_installed_preview6_R4_paused_uncompiled_main_205_Fable_pending",
+    "version": "norn 0.1.0-preview.6",
+    "commit": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+    "binary_sha256": "14f7acae36de6125a9e3993c7d826e3cebd8bc3b2eadc29f8d652b1d1c04dd62",
+    "summary": "norn 0.1.0-preview.6 was installed locally at 2026-09-06T18:11:46.211489+10:00 from d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8; executable SHA256 14f7acae36de6125a9e3993c7d826e3cebd8bc3b2eadc29f8d652b1d1c04dd62. NUI-004 R1-R3 provide the one-cell divider, F7/F8/F9 pane controls, displayed-text drag/copy and persisted exact Shift+Enter with F10/button cycling. Final matching-manifest local checks passed: 6,393 standard workspace/all-target tests across 39 suites, zero failed/ignored; harnessless channel stdio 14 and channel TUI 4; eight doctests; strict workspace/all-target/live-feature Clippy, fmt and release build. Bounded composed source policy06/07 is bound by install-policy-preflight.json. The prior binary is retained for rollback; root confirms macOS say Norn updated succeeded. R4 scrolling/Latest is written, saved and paused uncompiled in /private/tmp/norn-scroll-latest, excluded from preview.6. Agent target viewing/messaging, remembered auxiliary content, editable Work/Session panels and hosted attach remain pending. No main landing, exact-commit 205, Fable or public release is claimed.",
+    "install_receipt": {
+      "path": "/Users/tom/.local/state/norn/install-backups/20260906-181146-interaction-preview/receipt.json",
+      "sha256": "4aa8154dbcc923a06e24cfd515b21aa047b89a47600af7223c8c274736860a40"
+    },
+    "validation": [
+      {
+        "path": "/private/tmp/nui-004-proof/validation/workspace-4.json",
+        "sha256": "7b4b347275e4affce5a8c4b0a6e29fe4225a9c0846fb50587276094cbce97dd4",
+        "log": "/private/tmp/nui-004-proof/validation/workspace-4.log",
+        "log_sha256": "3d65e168940f25eb6f5861a747e22e4c3b3685041341391236a40d724971eae6",
+        "source_unchanged": true
+      },
+      {
+        "path": "/private/tmp/nui-004-proof/validation/docs-2.json",
+        "sha256": "c9df503500a54ba0c77803dd0bbf8fd353011f66dbae0ea8425b2c142ad9fcc2",
+        "log": "/private/tmp/nui-004-proof/validation/docs-2.log",
+        "log_sha256": "1210086a6e2e0f4c459e0c2a7a07b045a8d2d3b7d9d7fcdd996b456b99ad913a",
+        "source_unchanged": true
+      },
+      {
+        "path": "/private/tmp/nui-004-proof/validation/clippy-5.json",
+        "sha256": "69af6f60a381607d96fc1ef8bf6a75d4374e369032d96f39771b463e827d5320",
+        "log": "/private/tmp/nui-004-proof/validation/clippy-5.log",
+        "log_sha256": "a6223a1e627fdb33347ae6490512e2c779d5c6d1f64bdbf28cf52994ec213256",
+        "source_unchanged": true
+      },
+      {
+        "path": "/private/tmp/nui-004-proof/validation/fmt-5.json",
+        "sha256": "1a73f212d69c90d838d260d873374bfad88f1254cdea1b4d392d3f39d9966b78",
+        "log": "/private/tmp/nui-004-proof/validation/fmt-5.log",
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "source_unchanged": true
+      },
+      {
+        "path": "/private/tmp/nui-004-proof/validation/release-2.json",
+        "sha256": "1ec897d815909ed85ba1f590e594cbed35d593692dff774cbe094955c56a1a84",
+        "log": "/private/tmp/nui-004-proof/validation/release-2.log",
+        "log_sha256": "76fbfa86484970745e720341c5140a1e5f4fab65b73b0853c076a8ffcd5dbe79",
+        "source_unchanged": true
+      }
+    ],
+    "workspace": {
+      "suites": 39,
+      "passed": 6393,
+      "failed": 0,
+      "ignored": 0
+    },
+    "harnessless": {
+      "channel_stdio": 14,
+      "channel_TUI": 4
+    },
+    "doctests": {
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0
+    },
+    "matching_manifest_files": 2393,
+    "policy_preflight": {
+      "path": "/private/tmp/nui-004-proof/validation/install-policy-preflight.json",
+      "sha256": "eff0a2f5c6e30051aba2fd1cdd0d39d26c53fd6f05a8be23f40b93744fb919f6",
+      "scope": "Final composed bounded policy; unchanged25files from06 and one freshly scanned test file from07. Not a venue verdict."
+    },
+    "speech": {
+      "status": "succeeded",
+      "evidence": "Parent installation completion confirmation; installer receipt records binary/version/rollback."
+    },
+    "R4": {
+      "status": "written_saved_paused_uncompiled_not_in_preview6",
+      "checkpoint": "/private/tmp/nui-004-proof/r4-paused-checkpoint-01/CHECKPOINT.json",
+      "worktree": "/private/tmp/norn-scroll-latest"
+    },
+    "boundaries": {
+      "main_landing": false,
+      "venue205": false,
+      "Fable": false,
+      "public_release": false
+    }
   }
 }

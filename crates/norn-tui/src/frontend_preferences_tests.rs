@@ -16,7 +16,10 @@ fn absent_fields_use_the_existing_declared_defaults() -> TestResult {
         owned["display"],
         json!({"thinking_visible":true,"secondary_fields_visible":false})
     );
-    assert_eq!(owned["input"], json!({"submit_mode":"steer"}));
+    assert_eq!(
+        owned["input"],
+        json!({"submit_mode":"steer", "bindings":ViewShortcuts::default().projection()})
+    );
     assert_eq!(owned["composer"], json!({"send_key":"enter"}));
     assert_eq!(
         FrontendPreferences::decode(Some(
@@ -39,7 +42,11 @@ fn complete_preferences_round_trip_without_transient_state() -> TestResult {
     let owned = preferences.projection()?;
     assert_eq!(owned["view"], value["view"]);
     assert_eq!(owned["display"], value["display"]);
-    assert_eq!(owned["input"], value["input"]);
+    assert_eq!(owned["input"]["submit_mode"], value["input"]["submit_mode"]);
+    assert_eq!(
+        owned["input"]["bindings"],
+        ViewShortcuts::default().projection()
+    );
     assert_eq!(owned["composer"], value["composer"]);
     assert!(!owned.contains_key("extension_data"));
     assert_eq!(
@@ -145,6 +152,39 @@ fn send_key_labels_and_cycle_preserve_the_three_declared_policies() -> TestResul
         assert_eq!(decoded.composer_send_key, policy);
         assert_eq!(decoded.submit_mode, InFlightSubmitMode::Steer);
         assert_eq!(decoded.projection()?["composer"], json!({"send_key":label}));
+    }
+    Ok(())
+}
+
+#[test]
+fn shortcut_preferences_project_all_effective_bindings_and_refuse_invalid_objects() -> TestResult {
+    let preferences = FrontendPreferences::decode(Some(
+        &json!({"input":{"bindings":{"pane_toggle":["option+q"],"copy":[]}}}),
+    ))?;
+    let projection = preferences.projection()?;
+    assert_eq!(
+        projection["input"]["bindings"]["pane_toggle"],
+        json!(["alt+q"])
+    );
+    assert_eq!(projection["input"]["bindings"]["copy"], json!([]));
+    assert_eq!(
+        projection["input"]["bindings"]["pane_diff"],
+        json!(["alt+d", "f8"])
+    );
+    assert_eq!(
+        FrontendPreferences::decode(Some(&Value::Object(projection)))?,
+        preferences
+    );
+    for value in [
+        json!({"input":{"bindings":null}}),
+        json!({"input":{"bindings":{"future":[]}}}),
+        json!({"input":{"bindings":{"pane_toggle":["ctrl+z"]}}}),
+    ] {
+        let message = FrontendPreferences::decode(Some(&value))
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        assert!(message.contains("tui.input.bindings"));
     }
     Ok(())
 }

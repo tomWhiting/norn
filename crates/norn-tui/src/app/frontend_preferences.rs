@@ -175,6 +175,7 @@ fn capture(state: &AppState) -> FrontendPreferences {
         display: state.display_toggles,
         submit_mode: state.in_flight_input.mode(),
         composer_send_key: state.composer_send_key,
+        view_shortcuts: Arc::clone(&state.view_shortcuts),
     }
 }
 
@@ -187,6 +188,7 @@ pub(super) fn install(state: &mut AppState, launch: FrontendPreferencesLaunch) {
     state.display_toggles = initial.display;
     state.in_flight_input.set_mode(initial.submit_mode);
     state.composer_send_key = initial.composer_send_key;
+    state.view_shortcuts = Arc::clone(&initial.view_shortcuts);
     state.preferences = PreferenceOwner::new(launch);
 }
 

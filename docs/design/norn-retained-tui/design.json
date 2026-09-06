@@ -307,14 +307,32 @@
     {
       "id": "D-NUI004-SCROLL",
       "title": "Ordered logical navigation and explicit source-bound Latest",
-      "status": "registered_root_authorized",
-      "body": "Preserve every terminal-delivered wheel step through ordered adjacent-compatible motion segments in the existing finite ready batch, advancing from the evolving source/width-bound logical anchor. Add a current-published-frame Latest button in the existing hint row, sharing an explicit selected-source follow/catch-up action with /view follow; no automatic repin, second writer, new timer or pixel-delta claim. Replace the single overwriteable ScrollRequest with a source-bound pending navigation plan. Capture the actual logical/published starting anchor only on the first movement; subsequent motion advances from that evolving logical position, never resets from visible.first. Compress adjacent same-direction movements for the same source/pane/geometry with checked count arithmetic. Keep direction changes and pane/source/resize/explicit-anchor changes as semantic barriers. Do not sum an entire burst into one signed net value: at the top, Up then Down must still move down, whereas a zero net sum would incorrectly leave the viewport at the top. Consume each ordered segment before final frame construction through a geometry-only cached-row advance that returns a final ViewAnchor. Count/skip cached row groups rather than allocating one LogicalRow/PaintRow per travelled row. Visible paint remains bounded by actual viewport height; body/style maps remain source/width/revision-bound. No new timer, delay, frame rate, velocity multiplier, inertia or queue cap. The plan lives only for the existing finite ready frontier and coalesces runs; it is not a persistent input queue. Preserve every reported terminal wheel step. Current one-row-per-report behavior remains the factual baseline until Tom chooses a separate explicit sensitivity setting. Non-wheel actions keep original arrival semantics. Explicit follow/anchor replacement clears or resolves earlier pending motion as part of that action, so old scroll work cannot repin the viewport after Latest. Resize keeps logical body/byte anchors, invalidates old row geometry and establishes a new geometry barrier. Source replacement cancels old motion explicitly. Wheel targets stay independent: Conversation changes its logical anchor; Diff/Agents changes its own list offset; popup selection remains popup-owned; composer wheel behavior remains existing behavior. A mixed-pane burst never merges two targets. Keep unknown history/body boundaries honest. This row does not pretend unloaded bytes are known rows or add eager whole-history/body reads. Existing explicit older/more requests remain available; any future automatic boundary demand requires its own precise registered behavior. Display the exact label \u2193 Latest when the conversation viewport is pinned/not following, demonstrably away from tail, or an explicit latest catch-up is pending. Normal following tail has no button. A pin at the visible bottom may still offer resuming follow; this is deliberate. Place it right-aligned in the existing final composer hint row, with normal measured terminal-cell widths. Reserve its rectangle before clipping remaining hints. No header/footer/new row, reduced composer width or overlay over transcript text. At widths that cannot show the complete label, omit it and its hit region; /view follow remains available. When it fits, show the whole label and prevent overlap with send-key toggle, upcoming target label and other active hit regions. Never leave a clipped or hidden clickable region. The button is generated chrome with no original-body copy capability. Its hit region carries current selected source/publication identity and becomes authoritative only after terminal write+flush succeeds. Clear it on failed publication, no-paint, resize or source replacement; queued clicks cannot activate an old target. Click invokes the shared typed follow-latest action used by /view follow. It does not send text, change agent execution, steal composer focus, submit/clear the draft or silently replace selected agent. Preserve original selected-body capability for copy/export according to existing follow behavior. Integrate with NUI004 drag selection through one owner of published hit regions; button hits take precedence only inside their exact non-overlapping rectangle. Extract one follow_latest action: clear earlier pending navigation, call existing Viewport::follow_tail, mark the frame dirty, and request a source-bound catch-up outside paint. /view follow and mouse use the same path. Reuse configured history_demand and newer_history from the highest observed page cursor. One active history job at a time; if an older read is pending, retain one explicit latest request until completion rather than swallowing the click. Capture the first actual read snapshot\u2019s accepted event frontier and catch up to it using bounded pages, with each completion yielding to the event loop. No eager whole-history clone or invented page count. When no prior history cursor exists, reuse the existing bounded initial tail demand. Preserve explicit unloaded-body continuation notices; Latest means the latest admitted conversation item, not secretly downloading every byte of a large body. An empty After result for a nonempty store must correctly prove the requested frontier has been reached; do not rely only on accept_history\u2019s current empty-store arm. Keep sparse/unavailable coverage explicit and never label merely loaded old history as current. If the operator scrolls or changes target while catch-up is pending, accepted records may populate their valid source projection, but completion must not restore follow, steal focus, clear a newer draft or paint another source. User navigation cancels only the follow intent; normal canonical observation remains valid. Attempt dirty frame publication on history/body/input completion in the active turn loop as well as the idle loop; do not make new navigation wait for the120fps status tick. Keep the existing status cadence unchanged in this row. A later idle-timer redesign is not needed to fix the lost steps. Bind the action to the selected view/read handle when target switching is integrated. Never hardcode the root store for a button displayed over a child view. First reproduce the old failure using actual App input batching: N same-direction SGR wheel reports in one ready batch must move exactly N available rows, matching individually published reports. Run idle and during MockProvider streaming. After the semantic repair, compare fixed identical bursts and isolated steps on the same terminal size/source. Capture input receipt to successful frame publication latency, total bytes/write/flush counts, elapsed/CPU and final top anchor or numbered visible row. Report median/tail measurements without inventing a performance threshold or claiming pixel fidelity. Separate warm loaded/cache-hit scrolling, first-entry body demand, reverse movement after existing cache eviction, large tool/Markdown body and width change. Preserve actual body-map Arc identity on warm same-width steps in unit tests; show no parser/layout rebuild or body/store I/O was requested by a cache hit. Keep retained changed-cell output and one writer. Full frame preparation/changed-cell scanning and cold body reparse are candidates to measure, not established dominant costs. Do not add terminal scroll-region commands, a second writer, arbitrary overscan memory or an animation subsystem without fresh evidence. Native trackpad feel still needs a human terminal check because SGR PTY reports model terminal-delivered wheel steps, not the OS\u2019s fractional gesture data. Preserve current API limitations honestly. Root alone integrates app/render.rs and app/turn/run.rs; norn_tui alone integrates view_actions.rs, mouse.rs, reading.rs and shared retained_workspace test/support. channels_compatibility alone integrates commands.rs and composer.rs/composer_tests.rs. norn_models owns the remaining navigation/latest/transcript/viewport-test paths. Shared integration is serialized by the named whole-file owner; send API/hunks instead of writing competing changes. Before either app/render.rs or app/turn/run.rs would exceed500 production lines, stop that edit and propose the exact extraction file and responsibility to root/docs owner; register the named create/module-declaration wall before creation. No unspecified extraction or source path is authorized. Existing new navigation/latest modules may own their registered pure responsibilities; they cannot become unrelated catch-all modules."
+      "status": "registered_ready_for_root_dispatch_not_verified",
+      "body": "Preserve every terminal-delivered wheel step through ordered adjacent-compatible motion segments in the existing finite ready batch, advancing from the evolving source/width-bound logical anchor. Add a current-published-frame Latest button in the existing hint row, sharing an explicit selected-source follow/catch-up action with /view follow; no automatic repin, second writer, new timer or pixel-delta claim. Replace the single overwriteable ScrollRequest with a source-bound pending navigation plan. Capture the actual logical/published starting anchor only on the first movement; subsequent motion advances from that evolving logical position, never resets from visible.first. Compress adjacent same-direction movements for the same source/pane/geometry with checked count arithmetic. Keep direction changes and pane/source/resize/explicit-anchor changes as semantic barriers. Do not sum an entire burst into one signed net value: at the top, Up then Down must still move down, whereas a zero net sum would incorrectly leave the viewport at the top. Consume each ordered segment before final frame construction through a geometry-only cached-row advance that returns a final ViewAnchor. Count/skip cached row groups rather than allocating one LogicalRow/PaintRow per travelled row. Visible paint remains bounded by actual viewport height; body/style maps remain source/width/revision-bound. No new timer, delay, frame rate, velocity multiplier, inertia or queue cap. The plan lives only for the existing finite ready frontier and coalesces runs; it is not a persistent input queue. Preserve every reported terminal wheel step. Current one-row-per-report behavior remains the factual baseline until Tom chooses a separate explicit sensitivity setting. Non-wheel actions keep original arrival semantics. Explicit follow/anchor replacement clears or resolves earlier pending motion as part of that action, so old scroll work cannot repin the viewport after Latest. Resize keeps logical body/byte anchors, invalidates old row geometry and establishes a new geometry barrier. Source replacement cancels old motion explicitly. Wheel targets stay independent: Conversation changes its logical anchor; Diff/Agents changes its own list offset; popup selection remains popup-owned; composer wheel behavior remains existing behavior. A mixed-pane burst never merges two targets. Keep unknown history/body boundaries honest. This row does not pretend unloaded bytes are known rows or add eager whole-history/body reads. Existing explicit older/more requests remain available; any future automatic boundary demand requires its own precise registered behavior. Display the exact label \u2193 Latest when the conversation viewport is pinned/not following, demonstrably away from tail, or an explicit latest catch-up is pending. Normal following tail has no button. A pin at the visible bottom may still offer resuming follow; this is deliberate. Place it right-aligned in the existing final composer hint row, with normal measured terminal-cell widths. Reserve its rectangle before clipping remaining hints. No header/footer/new row, reduced composer width or overlay over transcript text. At widths that cannot show the complete label, omit it and its hit region; /view follow remains available. When it fits, show the whole label and prevent overlap with send-key toggle, upcoming target label and other active hit regions. Never leave a clipped or hidden clickable region. The button is generated chrome with no original-body copy capability. Its hit region carries current selected source/publication identity and becomes authoritative only after terminal write+flush succeeds. Clear it on failed publication, no-paint, resize or source replacement; queued clicks cannot activate an old target. Click invokes the shared typed follow-latest action used by /view follow. It does not send text, change agent execution, steal composer focus, submit/clear the draft or silently replace selected agent. Preserve original selected-body capability for copy/export according to existing follow behavior. Integrate with NUI004 drag selection through one owner of published hit regions; button hits take precedence only inside their exact non-overlapping rectangle. Extract one follow_latest action: clear earlier pending navigation, call existing Viewport::follow_tail, mark the frame dirty, and request a source-bound catch-up outside paint. /view follow and mouse use the same path. Reuse configured history_demand and newer_history from the highest observed page cursor. One active history job at a time; if an older read is pending, retain one explicit latest request until completion rather than swallowing the click. Capture the first actual read snapshot\u2019s accepted event frontier and catch up to it using bounded pages, with each completion yielding to the event loop. No eager whole-history clone or invented page count. When no prior history cursor exists, reuse the existing bounded initial tail demand. Preserve explicit unloaded-body continuation notices; Latest means the latest admitted conversation item, not secretly downloading every byte of a large body. An empty After result for a nonempty store must correctly prove the requested frontier has been reached; do not rely only on accept_history\u2019s current empty-store arm. Keep sparse/unavailable coverage explicit and never label merely loaded old history as current. If the operator scrolls or changes target while catch-up is pending, accepted records may populate their valid source projection, but completion must not restore follow, steal focus, clear a newer draft or paint another source. User navigation cancels only the follow intent; normal canonical observation remains valid. Attempt dirty frame publication on history/body/input completion in the active turn loop as well as the idle loop; do not make new navigation wait for the120fps status tick. Keep the existing status cadence unchanged in this row. A later idle-timer redesign is not needed to fix the lost steps. Bind the action to the selected view/read handle when target switching is integrated. Never hardcode the root store for a button displayed over a child view. First reproduce the old failure using actual App input batching: N same-direction SGR wheel reports in one ready batch must move exactly N available rows, matching individually published reports. Run idle and during MockProvider streaming. After the semantic repair, compare fixed identical bursts and isolated steps on the same terminal size/source. Capture input receipt to successful frame publication latency, total bytes/write/flush counts, elapsed/CPU and final top anchor or numbered visible row. Report median/tail measurements without inventing a performance threshold or claiming pixel fidelity. Separate warm loaded/cache-hit scrolling, first-entry body demand, reverse movement after existing cache eviction, large tool/Markdown body and width change. Preserve actual body-map Arc identity on warm same-width steps in unit tests; show no parser/layout rebuild or body/store I/O was requested by a cache hit. Keep retained changed-cell output and one writer. Full frame preparation/changed-cell scanning and cold body reparse are candidates to measure, not established dominant costs. Do not add terminal scroll-region commands, a second writer, arbitrary overscan memory or an animation subsystem without fresh evidence. Native trackpad feel still needs a human terminal check because SGR PTY reports model terminal-delivered wheel steps, not the OS\u2019s fractional gesture data. Preserve current API limitations honestly. R4 is isolated in /private/tmp/norn-scroll-latest on codex/norn-scroll-latest, based on f3c8309d3fd6ff0e39ef3b5aadd525f52fa2d9f8. norn_models is the sole whole-file source owner for every R4 modify/create path, including render.rs, turn/run.rs and formerly shared command/mouse/composer/test files. Root reviews and integrates after handoff; no shared writers. Historical R1-R3 ownership remains provenance and grants no concurrent editing authority in this R4 worktree. Do not touch /private/tmp/norn-pane-interaction while its full tests run. Before either app/render.rs or app/turn/run.rs would exceed500 production lines, stop that edit and propose the exact extraction file and responsibility to root/docs owner; register the named create/module-declaration wall before creation. No unspecified extraction or source path is authorized. Existing new navigation/latest modules may own their registered pure responsibilities; they cannot become unrelated catch-all modules. Before adding R4 logic, extract ScreenState definition/impl, DisplayCache, AuxiliaryPane and ScrollRequest owning state/types from app/render.rs into the registered named child app/render/screen_state.rs. render.rs retains the module declaration and type reexports at their existing paths. Preserve exact effective visibility: existing app-visible fields/types remain pub(in crate::app) from the child; render-only fields may be pub(super) there; existing public API remains public. Do not accidentally narrow app access or widen private state. Preserve state initialization, defaults, source replacement/cancellation, publication/selection revocation, cache ownership and all R1-R3 behavior. This is a structural prerequisite, not an alternate ScreenState owner or duplicated cache. Keep render.rs and every extracted production file at or below500 nonblank/noncomment lines. turn/run.rs is already near the limit: if its R4 integration would exceed500, stop and name the exact extraction path/responsibility before editing; no additional guessed file is authorized. Existing registered navigation/latest modules own only their stated responsibilities. Wheel reports target the hovered Conversation, Diff or Agents pane directly without assigning keyboard focus. Preserve the existing focused control, composer cursor visibility, draft and undo state while scrolling another pane. Explicit pointer clicks still change focus through their existing typed owner; wheel over the composer retains its existing behavior. The hover target is routing context, not keyboard focus or new source authority. Verify this distinction in actual App PTY coverage; no provider/input admission is caused by wheel routing."
     },
     {
       "id": "D-NUI004-PREVIEW",
       "title": "Truthful preview.6 metadata for verified R1-R3 only",
       "status": "registered_candidate_uninstalled",
-      "body": "Reserve 0.1.0-preview.6 as the candidate for R1-R3 pane controls, reviewed drag selection and Shift+Enter policy. Root updates only the registered manifests and release note, then verifies and installs only after actual candidate checks. R4 scrolling/latest remains pending and is not part of this checkpoint claim. Root alone updates workspace.package.version in Cargo.toml and only the four Norn workspace package version records in Cargo.lock to0.1.0-preview.6. No third-party dependency version, source, checksum, feature or lock resolution changes are authorized by this row. Update docs/release-notes/UNRELEASED.md to distinguish preview.6 candidate R1-R3 from the actually installed preview.5 source05109e6f6294c9af6f58657722dc7e968857b721. Use its recorded install/hash and local-check evidence when correcting stale preview.5 wording. Preserve historical failed/interrupted attempts with their own scope; baseline6378 tests and prior installation do not verify the new candidate. Keep candidate explicitly uninstalled/unverified until actual final checks and installation receipt exist. R4 scroll/latest and selected-agent view/message remain pending; do not imply those ship with R1-R3. No tag, public release, main merge, exact205 or Fable pass follows from a prerelease version or local preview. Root runs final fmt, strict workspace/all-target/live-feature Clippy, AST and500 production-line checks, relevant unit and actual idle/active/resize/restart tests on the composed final bytes. Preserve all required source/selection/grapheme/keyboard/draft and publication assertions and record actual failures; no bypasses or borrowed verdicts. For an authorized successful local update, verify build source identity, installed --version and binary SHA, preserve and verify rollback binary/receipt, then invoke macOS say with exact text Norn updated and record its exit. Record the actual source/binary/check hashes and install time only after completion. Local preview authority remains separate from main-landing exact-commit205 and Fable requirements."
+      "body": "Reserve 0.1.0-preview.6 as the candidate for R1-R3 pane controls, reviewed drag selection and Shift+Enter policy. Root updates only the registered manifests and release note, then verifies and installs only after actual candidate checks. R4 scrolling/latest remains pending and is not part of this checkpoint claim. Root alone updates workspace.package.version in Cargo.toml and only the four Norn workspace package version records in Cargo.lock to0.1.0-preview.6. No third-party dependency version, source, checksum, feature or lock resolution changes are authorized by this row. Update docs/release-notes/UNRELEASED.md to distinguish preview.6 candidate R1-R3 from the actually installed preview.5 source05109e6f6294c9af6f58657722dc7e968857b721. Use its recorded install/hash and local-check evidence when correcting stale preview.5 wording. Preserve historical failed/interrupted attempts with their own scope; baseline6378 tests and prior installation do not verify the new candidate. Keep candidate explicitly uninstalled/unverified until actual final checks and installation receipt exist. R4 scroll/latest and selected-agent view/message remain pending; do not imply those ship with R1-R3. No tag, public release, main merge, exact205 or Fable pass follows from a prerelease version or local preview. Root runs final fmt, strict workspace/all-target/live-feature Clippy, AST and500 production-line checks, relevant unit and actual idle/active/resize/restart tests on the composed final bytes. Preserve all required source/selection/grapheme/keyboard/draft and publication assertions and record actual failures; no bypasses or borrowed verdicts. For an authorized successful local update, verify build source identity, installed --version and binary SHA, preserve and verify rollback binary/receipt, then invoke macOS say with exact text Norn updated and record its exit. Record the actual source/binary/check hashes and install time only after completion. Local preview authority remains separate from main-landing exact-commit 205 and Fable requirements."
+    },
+    {
+      "id": "D-NUI004-INSTALLED-PREVIEW6",
+      "title": "Recorded local preview.6 installation",
+      "status": "locally_verified_installed_main_205_Fable_pending",
+      "body": "norn 0.1.0-preview.6 was installed locally at 2026-09-06T18:11:46.211489+10:00 from d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8; executable SHA256 14f7acae36de6125a9e3993c7d826e3cebd8bc3b2eadc29f8d652b1d1c04dd62. NUI-004 R1-R3 provide the one-cell divider, F7/F8/F9 pane controls, displayed-text drag/copy and persisted exact Shift+Enter with F10/button cycling. Final matching-manifest local checks passed: 6,393 standard workspace/all-target tests across 39 suites, zero failed/ignored; harnessless channel stdio 14 and channel TUI 4; eight doctests; strict workspace/all-target/live-feature Clippy, fmt and release build. Bounded composed source policy06/07 is bound by install-policy-preflight.json. The prior binary is retained for rollback; root confirms macOS say Norn updated succeeded. R4 scrolling/Latest is written, saved and paused uncompiled in /private/tmp/norn-scroll-latest, excluded from preview.6. Agent target viewing/messaging, remembered auxiliary content, editable Work/Session panels and hosted attach remain pending. No main landing, exact-commit 205, Fable or public release is claimed. Final bounded policy07 receipt: /private/tmp/nui-004-proof/source-policy-07/final-summary.json (SHA256 85fc083d9db85df43c48b7d97d4dbba741e4188c9fdaf7d43115eab99cf9d028); all 23 Rust and three metadata files match installed d4913e6."
+    },
+    {
+      "id": "D-NUI004-PREVIEW7-LOCAL",
+      "title": "Resumed scrolling as a focused local preview",
+      "status": "registered_no_new_verification_or_install",
+      "body": "Parent relays explicit user authorization to resume and install scrolling for hands-on local testing after compile, focused scrolling and code-quality checks, preserving rollback. This does not waive full release/main, venue205 or Fable requirements. Preview.7 remains uninstalled. Root alone owns source/Cargo and the existing R5 metadata wall; all R4 acceptance, 14 modify paths and five create paths including screen_state.rs are preserved. Installed preview.6 d4913e6 and its final checks are not transferred to R4. Configurable shortcuts await their own named proposal."
+    },
+    {
+      "id": "D-NUI004-VIEW-SHORTCUTS",
+      "title": "Editable exact view bindings through one frontend settings owner",
+      "status": "registered_implementation_pending",
+      "body": "Provide editable exact view bindings at tui.input.bindings, defaulting to Option+P/D/A/S plus existing function-key aliases. Use one validated registry for dispatch, commands, persistence and hints; preserve existing input/selection/popup/provider semantics. The user accepts Option or Control shortcuts and requires editable settings. Declared defaults are Option+P pane toggle, Option+D Diff, Option+A Agents and Option+S send-policy cycle, retaining F7/F8/F9/F10 aliases. Existing F2-F6 actions become configurable through the same registry; preserve Shift+F6 reverse focus. Option is the delivered ALT modifier. Do not change global composer Enter/ShiftEnter/AltEnter send-policy defaults. Use tui.input.bindings as action -> array of exact stroke strings. An absent action inherits its declared defaults; an explicit [] unbinds that action including its aliases. Validate the complete effective registry atomically before publishing it. Unknown action/field names, wrong types, invalid strokes and conflicts are refused with named action/settings paths; never partially mutate live settings or silently discard a binding. Reuse the existing Iridium StrokePattern parser without new dependencies or Iridium/core changes. Restrict accepted bindings to one exact Char or F1..F12 stroke with explicit Ctrl/Alt/Shift modifiers where present. Reject wildcards/Any patterns, sequences/multi-stroke input, ambiguous Meta aliases and unsupported modifier forms, bare typing and reserved host/editor conflicts. Do not reinterpret SUPER as Control using the editor bridge. Compare exact delivered Termina code/modifier facts; modifiers not in a binding do not match it. After parser normalization reject duplicate effective strokes, including collisions with inherited defaults, and identify both action paths. Reject reserved cancellation, submit/newline, popup/editor and host-control conflicts rather than stealing their ownership. Cancellation/submission/paste/selection/delivery and popup routing remain unchanged. One Press may dispatch; Repeat and Release do not mutate or submit. Compile the validated effective bindings once when settings load or change. Dispatch uses an exact-key lookup without per-key allocation, reparsing or scanning the full keymap. Reuse existing startup raw settings; add no filesystem reads, locks or file creation merely to initialize shortcuts. Persist overrides inside the existing input-owned frontend preference projection and shared settings/CAS writer. Preserve the current User automatic-save working assumption, temporary run scope, explicit local scope, whole-tui-layer precedence, conflicts and durability outcomes. Reuse the single pending save owner; no parallel writer, polling, new queue or extra startup/service/MCP activation. Provide /view keys (and /view keys list) for the actual effective registry, /view keys set <action> <stroke>... to replace one action array, and /view keys clear <action> to publish [] for that action. Build and validate a complete candidate before applying any change. On rejection preserve the previous effective map and preferences. Accepted settings edits and later persistence errors remain distinct and visible through the existing error/status surface. Render help and composer hints from the effective validated registry, so Option/Control replacements and unbound actions are truthful. Preserve current chrome row count, composer width, clickable send-policy control, reserved Latest geometry and clipping/hit bounds. Do not retain a hardcoded F10 send-key hint after its binding changes. Existing commands keep their semantics and aliases. channels_compatibility owns the R6 implementation. Only the three newly created, unreferenced files may be authored after registration; root retains all existing/shared R4 source files until the initial TUI test run completes and root explicitly transfers them. No concurrent writers. Preserve root R4 Latest geometry tests in composer_tests.rs and scrolling/selection tests in retained_workspace.rs. Root alone owns Cargo, dependencies, builds and installation."
     }
   ],
   "goals": [
@@ -326,7 +344,7 @@
     "These are checkpoint boundaries, not permanent feature cuts: independent host/attach, Iridium composer, editable/guarded file workspace, Work/Session panels, Liminal modules and request-local structured output remain wanted as recorded below."
   ],
   "structure": {
-    "Cargo.lock": "NRT-001 R4 norn-tui unicode-segmentation dependency membership only; NUI-001 R3 modify wall, owner root. / NUI-004 R5 root-only preview metadata/release notes; no dependency updates",
+    "Cargo.lock": "NRT-001 R4 norn-tui unicode-segmentation dependency membership only; NUI-001 R3 modify wall, owner root. / NUI-004 R5 root-only preview metadata/release notes; no dependency updates / NUI-004 R5 root-only preview.7 metadata, four workspace versions only; focused local scope, no full-suite/main waiver.",
     "crates/norn-cli/src/commands/slash/registry.rs": "NRT-001 R6 exact wall",
     "crates/norn-cli/src/tui/driver.rs": "NRT-001 R3 actual binding/error wiring only",
     "crates/norn-tui/Cargo.toml": "NRT-001 R4 exact wall",
@@ -349,7 +367,7 @@
     "crates/norn-tui/src/app/mod.rs": "NRT-001 R3, R4, R5, R6 exact wall / NUI-004 R2 modify; explicit shared ownership in brief",
     "crates/norn-tui/src/app/model_selection.rs": "NRT-001 R3 exact wall",
     "crates/norn-tui/src/app/notices.rs": "NRT-001 R3 exact wall; NRT-002 R3 exact modify wall; owner norn_tui",
-    "crates/norn-tui/src/app/render.rs": "NRT-001 R3, R4 exact wall; NRT-002 R3 exact modify wall; owner norn_tui; NUI-001 R2 native frame publication/capability repair, owner norn_tui.; NUI-003 R1 modify \u2014 Restore the retained agent/fork status tree; NUI-003 R2 modify \u2014 Restore readable typed conversation rows; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
+    "crates/norn-tui/src/app/render.rs": "NRT-001 R3, R4 exact wall; NRT-002 R3 exact modify wall; owner norn_tui; NUI-001 R2 native frame publication/capability repair, owner norn_tui.; NUI-003 R1 modify \u2014 Restore the retained agent/fork status tree; NUI-003 R2 modify \u2014 Restore readable typed conversation rows; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief / NUI-004 R4 isolated-tree module declaration/type reexports and retained frame integration; sole owner norn_models",
     "crates/norn-tui/src/app/rotation.rs": "NRT-001 R3 exact wall",
     "crates/norn-tui/src/app/search.rs": "NRT-001 R6 exact wall",
     "crates/norn-tui/src/app/search_tests.rs": "NRT-001 R6 exact wall",
@@ -358,14 +376,14 @@
     "crates/norn-tui/src/app/session_replay.rs": "NRT-001 R3 exact wall",
     "crates/norn-tui/src/app/slash.rs": "NRT-001 R3, R6 exact wall; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing",
     "crates/norn-tui/src/app/slash_catalog.rs": "NRT-001 R6 exact wall",
-    "crates/norn-tui/src/app/state.rs": "NRT-001 R3, R4, R5 exact wall; NRT-002 R3 exact modify: root-turn usage reconciliation; norn_tui owner.",
+    "crates/norn-tui/src/app/state.rs": "NRT-001 R3, R4, R5 exact wall; NRT-002 R3 exact modify: root-turn usage reconciliation; norn_tui owner. / NUI-004 R6 modify configurable view shortcuts; channels_compatibility after explicit shared-file handoff.",
     "crates/norn-tui/src/app/streaming.rs": "NRT-001 R3 exact wall",
     "crates/norn-tui/src/app/tool_calls.rs": "NRT-001 R3, R5 exact wall",
     "crates/norn-tui/src/app/transcript.rs": "NRT-001 R3 exact wall; NRT-002 R3 exact modify wall; owner norn_tui / NUI-004 R4 modify; exact shared owner in brief",
     "crates/norn-tui/src/app/transcript_tests.rs": "NRT-001 R3 exact wall; NRT-002 R3 exact modify wall; owner norn_tui",
     "crates/norn-tui/src/app/turn/mid.rs": "NRT-001 R3, R4, R6 exact wall; NRT-002 R3 exact modify wall; owner norn_tui; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing",
     "crates/norn-tui/src/app/turn/run.rs": "NRT-001 R3 exact wall; NRT-002 R3 exact modify wall; owner norn_tui / NUI-004 R4 modify; exact shared owner in brief",
-    "crates/norn-tui/src/app/view_actions.rs": "NRT-001 R6 exact wall; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
+    "crates/norn-tui/src/app/view_actions.rs": "NRT-001 R6 exact wall; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief / NUI-004 R6 modify configurable view shortcuts; channels_compatibility after explicit shared-file handoff.",
     "crates/norn-tui/src/app/view_config.rs": "NRT-001 R3, R6 exact wall",
     "crates/norn-tui/src/app/view_config_tests.rs": "NRT-001 R3, R6 exact wall",
     "crates/norn-tui/src/app/viewport.rs": "NRT-001 R4 exact wall; NUI-003 R2 modify \u2014 Restore readable typed conversation rows",
@@ -416,7 +434,7 @@
     "crates/norn-tui/tests/mcp_channels.rs": "NRT-001 R7 exact wall; NRT-002 R4 exact modify wall; owner channels_fixture owns canonical source; parent owns execution; NUI-003 R3 test-only fixture migration, exclusive channels_compatibility",
     "crates/norn-tui/tests/model_selection.rs": "NRT-001 R3 actual binding/error wiring only; R7 subsequent fixture acceptance; NRT-002 R4 exact modify wall; owner channels_fixture owns canonical source; parent owns execution; NUI-003 R3 test-only fixture migration, exclusive channels_compatibility",
     "crates/norn-tui/tests/pty_smoke.rs": "NRT-001 R3 actual binding/error wiring only; R7 subsequent fixture acceptance; NRT-002 R4 exact modify wall; owner channels_fixture owns canonical source; parent owns execution; NUI-001 R2 channels_fixture: decoded-screen rendered-text observations; raw protocol/OSC and all semantic assertions preserved.",
-    "crates/norn-tui/tests/retained_workspace.rs": "NRT-001 R7 exact wall; exclusive R7 new-workspace fixture author: review_tui.; NUI-003 R3 modify \u2014 Prove the actual restored screen and preserve remaining requests / NUI-004 R1 modify; explicit shared ownership in brief / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
+    "crates/norn-tui/tests/retained_workspace.rs": "NRT-001 R7 exact wall; exclusive R7 new-workspace fixture author: review_tui.; NUI-003 R3 modify \u2014 Prove the actual restored screen and preserve remaining requests / NUI-004 R1 modify; explicit shared ownership in brief / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief / NUI-004 R6 modify configurable view shortcuts; channels_compatibility after explicit shared-file handoff.",
     "crates/norn-tui/tests/support/mcp_channels_tui.rs": "NRT-001 R3 actual binding/error wiring only; R7 subsequent fixture acceptance; NRT-002 R4 exact modify wall; owner channels_fixture owns canonical source; parent owns execution",
     "crates/norn-tui/tests/support/retained_workspace.rs": "NRT-001 R7 exact wall; exclusive R7 new-workspace fixture author: review_tui.; NUI-001 R2 channels_fixture: preserve repeated nonconsecutive requested resize geometry and all existing bounds assertions.; NUI-003 R3 modify \u2014 Prove the actual restored screen and preserve remaining requests / NUI-004 R1 modify; explicit shared ownership in brief / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
     "crates/norn/src/lib.rs": "NRT-001 R1 exact wall",
@@ -466,11 +484,11 @@
     "crates/norn-tui/src/render/retained_markdown.rs": "NRT-001 R4 exact wall",
     "crates/norn-tui/src/render/retained_markdown_tests.rs": "NRT-001 R4 exact wall",
     "crates/norn-tui/src/app/render/transcript.rs": "NRT-001 R4 exact wall; NRT-002 R3 exact modify wall; owner norn_tui; NUI-003 R2 modify \u2014 Restore readable typed conversation rows / NUI-004 R4 modify; exact shared owner in brief",
-    "crates/norn-tui/src/app/render/composer.rs": "NRT-001 R4 exact wall; NUI-001 R1 modify wall, owner root. / NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
+    "crates/norn-tui/src/app/render/composer.rs": "NRT-001 R4 exact wall; NUI-001 R1 modify wall, owner root. / NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief / NUI-004 R6 modify configurable view shortcuts; channels_compatibility after explicit shared-file handoff.",
     "crates/norn-tui/src/render/retained_markdown/mapping.rs": "NRT-001 R4 exact wall",
     "crates/norn-tui/src/app/render/changes.rs": "NRT-001 R5 exact wall; selected-call parsing/cache and direct read-only Changes preparation from complete approved exact BodyRefs supplied by caller; no filesystem reads, source relabelling or session-wide diff inference; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing",
-    "crates/norn-tui/src/app/view_actions/commands.rs": "NRT-001 R6: local view command routing and explicit controls; existing provider/runtime ownership unchanged.; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing / NUI-004 R1 modify; explicit shared ownership in brief / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
-    "crates/norn-tui/src/app/view_actions/keys.rs": "NRT-001 R6: focus-aware view keys preserving composer, popup and cancellation precedence. / NUI-004 R1 modify; explicit shared ownership in brief / NUI-004 R3 modify; explicit shared ownership in brief",
+    "crates/norn-tui/src/app/view_actions/commands.rs": "NRT-001 R6: local view command routing and explicit controls; existing provider/runtime ownership unchanged.; NUI-003 R5 modify \u2014 Provide direct pane commands and the actual Agents side listing / NUI-004 R1 modify; explicit shared ownership in brief / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief / NUI-004 R6 modify configurable view shortcuts; channels_compatibility after explicit shared-file handoff.",
+    "crates/norn-tui/src/app/view_actions/keys.rs": "NRT-001 R6: focus-aware view keys preserving composer, popup and cancellation precedence. / NUI-004 R1 modify; explicit shared ownership in brief / NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R6 modify configurable view shortcuts; channels_compatibility after explicit shared-file handoff.",
     "crates/norn-tui/src/app/view_actions/mouse.rs": "NRT-001 R6: mouse actions checked against current frame source/map identity and explicit focus. / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
     "crates/norn-tui/src/app/render/hit.rs": "NRT-001 R6: current-frame hit mapping, distinct from logical unloaded-placeholder anchors; no source identity fallback.",
     "crates/norn-tui/src/app/view_actions/reading.rs": "NRT-001 R6: typed search state and exact-revision hit navigation; supervised explicit export I/O off the terminal event loop. / NUI-004 R2 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
@@ -507,10 +525,10 @@
     "crates/norn-cli/src/print/orchestrator.rs": "NRT-002 R1 exact modify: box sole inner orchestrate_run future; preserve signal/sink/error/cancellation wrapper; norn_models owner.",
     "crates/norn/src/session_view/chronology.rs": "NRT-002 R2 private source-bound order/counter and exact completion membership; ItemIndex retains sole row ownership.",
     "crates/norn/src/integration/mcp_channel_startup_tests.rs": "NRT-002 R4 root-owned test-only canonical temporary-root correction; no no-follow policy change.",
-    "Cargo.toml": "NRT-001 R7 root-owned checked preview version metadata; no dependency updates or public release.; NUI-001 R3 modify wall, owner root. / NUI-004 R5 root-only preview metadata/release notes; no dependency updates",
+    "Cargo.toml": "NRT-001 R7 root-owned checked preview version metadata; no dependency updates or public release.; NUI-001 R3 modify wall, owner root. / NUI-004 R5 root-only preview metadata/release notes; no dependency updates / NUI-004 R5 root-only preview.7 metadata, four workspace versions only; focused local scope, no full-suite/main waiver.",
     "docs/release-notes/0.1.0-preview.1.md": "NRT-001 R7 root-owned checked preview version metadata; no dependency updates or public release.",
-    "crates/norn-tui/src/app/render/composer_tests.rs": "; NUI-001 R1 create wall, owner root. / NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief",
-    "docs/release-notes/UNRELEASED.md": "; NUI-001 R3 modify wall, owner root. / NUI-004 R5 root-only preview metadata/release notes; no dependency updates",
+    "crates/norn-tui/src/app/render/composer_tests.rs": "; NUI-001 R1 create wall, owner root. / NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R4 modify; exact shared owner in brief / NUI-004 R6 modify configurable view shortcuts; channels_compatibility after explicit shared-file handoff.",
+    "docs/release-notes/UNRELEASED.md": "; NUI-001 R3 modify wall, owner root. / NUI-004 R5 root-only preview metadata/release notes; no dependency updates / NUI-004 R5 root-only preview.7 metadata, four workspace versions only; focused local scope, no full-suite/main waiver.",
     "crates/norn-tui/src/render/frame/diff.rs": "; NUI-001 R2 native frame publication/capability repair, owner norn_tui.",
     "crates/norn-tui/src/render/frame/diff_tests.rs": "; NUI-001 R2 native frame publication/capability repair, owner norn_tui.",
     "crates/norn-tui/tests/retained_screen_delta.rs": "; NUI-001 R2 channels_fixture verification partition: stateful same-dimension deltas and fully painted resize epochs with original assertions preserved.",
@@ -523,10 +541,10 @@
     "crates/norn-tui/src/app/render/transcript_items.rs": "NUI-003 R2 create \u2014 Restore readable typed conversation rows / NUI-004 R4 modify; exact shared owner in brief",
     "crates/norn-tui/src/app/display_selection.rs": "NUI-004 R2 create; explicit shared ownership in brief",
     "crates/norn-tui/src/app/display_selection_tests.rs": "NUI-004 R2 create; explicit shared ownership in brief",
-    "crates/norn-tui/src/frontend_preferences.rs": "NUI-004 R3 modify; explicit shared ownership in brief",
-    "crates/norn-tui/src/frontend_preferences_tests.rs": "NUI-004 R3 modify; explicit shared ownership in brief",
+    "crates/norn-tui/src/frontend_preferences.rs": "NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R6 modify configurable view shortcuts; channels_compatibility after explicit shared-file handoff.",
+    "crates/norn-tui/src/frontend_preferences_tests.rs": "NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R6 modify configurable view shortcuts; channels_compatibility after explicit shared-file handoff.",
     "crates/norn-tui/src/input/composer_keys_tests.rs": "NUI-004 R3 modify; explicit shared ownership in brief",
-    "crates/norn-tui/src/app/frontend_preferences_tests.rs": "NUI-004 R3 modify; explicit shared ownership in brief",
+    "crates/norn-tui/src/app/frontend_preferences_tests.rs": "NUI-004 R3 modify; explicit shared ownership in brief / NUI-004 R6 modify configurable view shortcuts; channels_compatibility after explicit shared-file handoff.",
     "crates/norn-tui/tests/iridium_composer.rs": "NUI-004 R3 modify; explicit shared ownership in brief",
     "crates/norn-cli/tests/composer_preferences.rs": "NUI-004 R3 modify; explicit shared ownership in brief",
     "crates/norn-cli/tests/support/composer_preferences.rs": "NUI-004 R3 modify; explicit shared ownership in brief",
@@ -535,7 +553,14 @@
     "crates/norn-tui/src/app/render/navigation.rs": "NUI-004 R4 create; exact shared owner in brief",
     "crates/norn-tui/src/app/render/navigation_tests.rs": "NUI-004 R4 create; exact shared owner in brief",
     "crates/norn-tui/src/app/view_actions/latest.rs": "NUI-004 R4 create; exact shared owner in brief",
-    "crates/norn-tui/src/app/view_actions/latest_tests.rs": "NUI-004 R4 create; exact shared owner in brief"
+    "crates/norn-tui/src/app/view_actions/latest_tests.rs": "NUI-004 R4 create; exact shared owner in brief",
+    "crates/norn-tui/src/app/render/screen_state.rs": "NUI-004 R4 CREATE mandatory ScreenState/DisplayCache/AuxiliaryPane/ScrollRequest extraction; sole owner norn_models in isolated R4 tree",
+    "crates/norn-tui/src/input/view_shortcuts.rs": " / NUI-004 R6 create configurable view shortcuts; channels_compatibility after explicit shared-file handoff.",
+    "crates/norn-tui/src/input/view_shortcuts_tests.rs": " / NUI-004 R6 create configurable view shortcuts; channels_compatibility after explicit shared-file handoff.",
+    "crates/norn-tui/src/app/view_actions/shortcut_commands.rs": " / NUI-004 R6 create configurable view shortcuts; channels_compatibility after explicit shared-file handoff.",
+    "crates/norn-tui/src/input/mod.rs": " / NUI-004 R6 modify configurable view shortcuts; channels_compatibility after explicit shared-file handoff.",
+    "crates/norn-tui/src/app/frontend_preferences.rs": " / NUI-004 R6 modify configurable view shortcuts; channels_compatibility after explicit shared-file handoff.",
+    "crates/norn-cli/tests/frontend_preferences_restart.rs": " / NUI-004 R6 modify configurable view shortcuts; channels_compatibility after explicit shared-file handoff."
   },
   "topics": [
     {
@@ -2155,11 +2180,11 @@
     }
   },
   "pane_interaction_checkpoint": {
-    "status": "preview6_candidate_R1_R3_review_repairs_unverified_R4_pending",
+    "status": "preview7_R4_local_validation_pending_installed_preview6_unchanged",
     "brief": "briefs/NUI-004.json",
-    "baseline": "05109e6f6294c9af6f58657722dc7e968857b721",
-    "branch": "codex/norn-pane-interaction",
-    "worktree": "/private/tmp/norn-pane-interaction",
+    "baseline": "f3c8309d3fd6ff0e39ef3b5aadd525f52fa2d9f8",
+    "branch": "codex/norn-scroll-latest",
+    "worktree": "/private/tmp/norn-scroll-latest",
     "registered_at_melbourne": "2026-09-06T16:50:49.229245+10:00",
     "source_proposals": [
       {
@@ -2173,33 +2198,218 @@
         "scope": "Root-approved contract and exact proposed wall; no new execution proof."
       }
     ],
-    "no_new_test_build_install_claim": true,
+    "no_new_test_build_install_claim": false,
     "r4_registered_at_melbourne": "2026-09-06T17:00:18.425654+10:00",
     "r4_proposal_sha256": "28db063432436903fc1d27dd2517e3f1a3b811417566f08f26485c547f3275c2",
     "implementation_checkpoint": {
-      "recorded_at_melbourne": "2026-09-06T17:11:03.000166+10:00",
-      "authority": "Root reports R1-R3 authored but unverified; R4 source implementation remains pending.",
-      "installed_baseline_commit": "05109e6f6294c9af6f58657722dc7e968857b721",
-      "installed_baseline_version": "0.1.0-preview.5",
-      "postinstall_docs_commit": "2aa2d9c0f01216716a8b298841af3ee53308b8a7",
-      "interaction_test_build_install_claim": false,
-      "source_authority": "All registered files/specifications/acceptance and exclusive owners remain unchanged."
+      "recorded_at_melbourne": "2026-09-06T18:14:59.621023+10:00",
+      "installed_at_melbourne": "2026-09-06T18:11:46.211489+10:00",
+      "status": "R1_R3_locally_verified_installed_preview6_R4_paused_uncompiled_main_205_Fable_pending",
+      "version": "norn 0.1.0-preview.6",
+      "commit": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+      "binary_sha256": "14f7acae36de6125a9e3993c7d826e3cebd8bc3b2eadc29f8d652b1d1c04dd62",
+      "summary": "norn 0.1.0-preview.6 was installed locally at 2026-09-06T18:11:46.211489+10:00 from d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8; executable SHA256 14f7acae36de6125a9e3993c7d826e3cebd8bc3b2eadc29f8d652b1d1c04dd62. NUI-004 R1-R3 provide the one-cell divider, F7/F8/F9 pane controls, displayed-text drag/copy and persisted exact Shift+Enter with F10/button cycling. Final matching-manifest local checks passed: 6,393 standard workspace/all-target tests across 39 suites, zero failed/ignored; harnessless channel stdio 14 and channel TUI 4; eight doctests; strict workspace/all-target/live-feature Clippy, fmt and release build. Bounded composed source policy06/07 is bound by install-policy-preflight.json. The prior binary is retained for rollback; root confirms macOS say Norn updated succeeded. R4 scrolling/Latest is written, saved and paused uncompiled in /private/tmp/norn-scroll-latest, excluded from preview.6. Agent target viewing/messaging, remembered auxiliary content, editable Work/Session panels and hosted attach remain pending. No main landing, exact-commit 205, Fable or public release is claimed.",
+      "install_receipt": {
+        "path": "/Users/tom/.local/state/norn/install-backups/20260906-181146-interaction-preview/receipt.json",
+        "sha256": "4aa8154dbcc923a06e24cfd515b21aa047b89a47600af7223c8c274736860a40"
+      },
+      "validation": [
+        {
+          "path": "/private/tmp/nui-004-proof/validation/workspace-4.json",
+          "sha256": "7b4b347275e4affce5a8c4b0a6e29fe4225a9c0846fb50587276094cbce97dd4",
+          "log": "/private/tmp/nui-004-proof/validation/workspace-4.log",
+          "log_sha256": "3d65e168940f25eb6f5861a747e22e4c3b3685041341391236a40d724971eae6",
+          "source_unchanged": true
+        },
+        {
+          "path": "/private/tmp/nui-004-proof/validation/docs-2.json",
+          "sha256": "c9df503500a54ba0c77803dd0bbf8fd353011f66dbae0ea8425b2c142ad9fcc2",
+          "log": "/private/tmp/nui-004-proof/validation/docs-2.log",
+          "log_sha256": "1210086a6e2e0f4c459e0c2a7a07b045a8d2d3b7d9d7fcdd996b456b99ad913a",
+          "source_unchanged": true
+        },
+        {
+          "path": "/private/tmp/nui-004-proof/validation/clippy-5.json",
+          "sha256": "69af6f60a381607d96fc1ef8bf6a75d4374e369032d96f39771b463e827d5320",
+          "log": "/private/tmp/nui-004-proof/validation/clippy-5.log",
+          "log_sha256": "a6223a1e627fdb33347ae6490512e2c779d5c6d1f64bdbf28cf52994ec213256",
+          "source_unchanged": true
+        },
+        {
+          "path": "/private/tmp/nui-004-proof/validation/fmt-5.json",
+          "sha256": "1a73f212d69c90d838d260d873374bfad88f1254cdea1b4d392d3f39d9966b78",
+          "log": "/private/tmp/nui-004-proof/validation/fmt-5.log",
+          "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "source_unchanged": true
+        },
+        {
+          "path": "/private/tmp/nui-004-proof/validation/release-2.json",
+          "sha256": "1ec897d815909ed85ba1f590e594cbed35d593692dff774cbe094955c56a1a84",
+          "log": "/private/tmp/nui-004-proof/validation/release-2.log",
+          "log_sha256": "76fbfa86484970745e720341c5140a1e5f4fab65b73b0853c076a8ffcd5dbe79",
+          "source_unchanged": true
+        }
+      ],
+      "workspace": {
+        "suites": 39,
+        "passed": 6393,
+        "failed": 0,
+        "ignored": 0
+      },
+      "harnessless": {
+        "channel_stdio": 14,
+        "channel_TUI": 4
+      },
+      "doctests": {
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0
+      },
+      "matching_manifest_files": 2393,
+      "policy_preflight": {
+        "path": "/private/tmp/nui-004-proof/validation/install-policy-preflight.json",
+        "sha256": "eff0a2f5c6e30051aba2fd1cdd0d39d26c53fd6f05a8be23f40b93744fb919f6",
+        "scope": "Final composed bounded policy; unchanged25files from06 and one freshly scanned test file from07. Not a venue verdict."
+      },
+      "speech": {
+        "status": "succeeded",
+        "evidence": "Parent installation completion confirmation; installer receipt records binary/version/rollback."
+      },
+      "R4": {
+        "status": "written_saved_paused_uncompiled_not_in_preview6",
+        "checkpoint": "/private/tmp/nui-004-proof/r4-paused-checkpoint-01/CHECKPOINT.json",
+        "worktree": "/private/tmp/norn-scroll-latest"
+      },
+      "boundaries": {
+        "main_landing": false,
+        "venue205": false,
+        "Fable": false,
+        "public_release": false
+      },
+      "final_policy07": {
+        "path": "/private/tmp/nui-004-proof/source-policy-07/final-summary.json",
+        "sha256": "85fc083d9db85df43c48b7d97d4dbba741e4188c9fdaf7d43115eab99cf9d028",
+        "scope": "Final bounded policy07: 23 Rust files and three metadata files matched installed source d4913e6; no whole-repository or venue verdict."
+      }
     },
     "preview_candidate": {
-      "version": "0.1.0-preview.6",
+      "version": "0.1.0-preview.7",
       "scope": [
-        "R1",
-        "R2",
-        "R3"
-      ],
-      "excluded_pending": [
-        "R4"
+        "R4",
+        "R5 local preview metadata/update",
+        "R6 configurable shortcuts only after composed implementation/focused checks"
       ],
       "installed": false,
-      "new_verification_claim": false,
-      "registered_at_melbourne": "2026-09-06T17:15:28.419735+10:00"
+      "verification": "compile, focused scrolling/Latest runtime checks and code-quality checks pending",
+      "full_suite_claim": false,
+      "installed_baseline_version": "0.1.0-preview.6",
+      "installed_baseline_commit": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+      "registered_at_melbourne": "2026-09-06T18:35:05.719118+10:00"
     },
-    "review_repair_partition": "For the current R2 review repairs, review_child_context exclusively owns app/display_selection.rs, app/view_actions/mouse.rs and app/view_actions/commands.rs as whole files. norn_tui owns display_selection_tests.rs and existing R2 PTY/oracle tests and the remaining view_actions/reading seams. Root owns the small shared render.rs revocation/publication hook and F2/keys integration. Root HELP and channels send-policy hunks go through review_child_context while this repair partition is active; no concurrent writers."
+    "review_repair_partition": "For the current R2 review repairs, review_child_context exclusively owns app/display_selection.rs, app/view_actions/mouse.rs and app/view_actions/commands.rs as whole files. norn_tui owns display_selection_tests.rs and existing R2 PTY/oracle tests and the remaining view_actions/reading seams. Root owns the small shared render.rs revocation/publication hook and F2/keys integration. Root HELP and channels send-policy hunks go through review_child_context while this repair partition is active; no concurrent writers.",
+    "R4_execution_context": {
+      "at_melbourne": "2026-09-06T18:35:05.719118+10:00",
+      "status": "resumed_under_local_validation_no_new_pass_or_install",
+      "authority": "Parent relays explicit user authorization to resume and install scrolling for hands-on local testing after compile, focused scrolling and code-quality checks, preserving rollback. This does not waive full release/main, venue205 or Fable requirements.",
+      "worktree": "/private/tmp/norn-scroll-latest",
+      "branch": "codex/norn-scroll-latest",
+      "base_commit": "f3c8309d3fd6ff0e39ef3b5aadd525f52fa2d9f8",
+      "installed_source": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+      "installed_version": "0.1.0-preview.6",
+      "source_owner": "root exclusively; earlier source-owner partition is historical",
+      "docs_incoming_commit": "89506a4e1dfff19f9f2430dfa2a75c7f5975d601",
+      "docs_merge_base": "f3c8309d3fd6ff0e39ef3b5aadd525f52fa2d9f8",
+      "configurable_shortcuts": "Proposal pending; no additional source wall or behavior registered."
+    },
+    "R4_worktree": "/private/tmp/norn-scroll-latest",
+    "R4_branch": "codex/norn-scroll-latest",
+    "historical_status_records": [
+      {
+        "superseded_at_melbourne": "2026-09-06T18:14:59.621023+10:00",
+        "status": "preview6_candidate_R1_R3_review_repairs_unverified_R4_pending",
+        "implementation_checkpoint": {
+          "recorded_at_melbourne": "2026-09-06T17:11:03.000166+10:00",
+          "authority": "Root reports R1-R3 authored but unverified; R4 source implementation remains pending.",
+          "installed_baseline_commit": "05109e6f6294c9af6f58657722dc7e968857b721",
+          "installed_baseline_version": "0.1.0-preview.5",
+          "postinstall_docs_commit": "2aa2d9c0f01216716a8b298841af3ee53308b8a7",
+          "interaction_test_build_install_claim": false,
+          "source_authority": "All registered files/specifications/acceptance and exclusive owners remain unchanged."
+        },
+        "preview_candidate": {
+          "version": "0.1.0-preview.6",
+          "scope": [
+            "R1",
+            "R2",
+            "R3"
+          ],
+          "excluded_pending": [
+            "R4"
+          ],
+          "installed": false,
+          "new_verification_claim": false,
+          "registered_at_melbourne": "2026-09-06T17:15:28.419735+10:00"
+        },
+        "no_new_test_build_install_claim": true
+      }
+    ],
+    "current_execution_checkpoint": {
+      "at_melbourne": "2026-09-06T18:35:05.719118+10:00",
+      "status": "resumed_under_local_validation_no_new_pass_or_install",
+      "authority": "Parent relays explicit user authorization to resume and install scrolling for hands-on local testing after compile, focused scrolling and code-quality checks, preserving rollback. This does not waive full release/main, venue205 or Fable requirements.",
+      "worktree": "/private/tmp/norn-scroll-latest",
+      "branch": "codex/norn-scroll-latest",
+      "base_commit": "f3c8309d3fd6ff0e39ef3b5aadd525f52fa2d9f8",
+      "installed_source": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+      "installed_version": "0.1.0-preview.6",
+      "source_owner": "Root R4 and all Cargo; channels_compatibility R6 after registered handoff.",
+      "docs_incoming_commit": "89506a4e1dfff19f9f2430dfa2a75c7f5975d601",
+      "docs_merge_base": "f3c8309d3fd6ff0e39ef3b5aadd525f52fa2d9f8",
+      "configurable_shortcuts": "NUI-004 R6 registered with exact 16-file wall; implementation and focused verification pending. New files may be authored independently; shared existing source awaits root handoff."
+    },
+    "R6_view_shortcuts": {
+      "status": "registered_implementation_pending_no_new_verification",
+      "owner": "channels_compatibility after registered ownership handoff; root Cargo/shared R4 until initial TUI tests complete",
+      "defaults": {
+        "pane_toggle": [
+          "alt+p",
+          "f7"
+        ],
+        "pane_diff": [
+          "alt+d",
+          "f8"
+        ],
+        "pane_agents": [
+          "alt+a",
+          "f9"
+        ],
+        "send_key_cycle": [
+          "alt+s",
+          "f10"
+        ],
+        "upper_switch": [
+          "f2"
+        ],
+        "search": [
+          "f3"
+        ],
+        "copy": [
+          "f4"
+        ],
+        "export": [
+          "f5"
+        ],
+        "focus_next": [
+          "f6"
+        ],
+        "focus_previous": [
+          "shift+f6"
+        ]
+      },
+      "settings": "tui.input.bindings",
+      "files_count": 16,
+      "registration_at_melbourne": "2026-09-06T18:39:26.234471+10:00"
+    }
   },
   "ui_restoration_local_checkpoint": {
     "at_melbourne": "2026-09-06T16:55:55.268481+10:00",

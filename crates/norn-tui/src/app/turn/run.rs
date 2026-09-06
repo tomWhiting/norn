@@ -368,6 +368,9 @@ async fn run_turn(
         };
         tokio::pin!(step_future);
         while step_result.is_none() {
+            redraw_all(state, guard)?;
+            load_visible(state, &runtime.store)?;
+            redraw_all(state, guard)?;
             tokio::select! {
                 biased;
                 res = &mut step_future => {

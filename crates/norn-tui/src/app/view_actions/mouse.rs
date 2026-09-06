@@ -11,7 +11,7 @@ use crate::app::render::interaction;
 use crate::app::state::AppState;
 use crate::render::layout::{Layout, Rect, SplitPreference, UpperLayout, UpperPane};
 
-use super::{browse_rows, expand, pin_visible, select_hit};
+use super::{browse_target_rows, expand, pin_visible, select_hit};
 
 pub(in crate::app) fn mouse(event: MouseEvent, state: &mut AppState) -> bool {
     let result = apply_mouse(event, state).and_then(|handled| {
@@ -42,6 +42,17 @@ fn apply_mouse(event: MouseEvent, state: &mut AppState) -> Result<bool, TuiError
     };
     if popup(event, state, composer)? {
         return Ok(true);
+    }
+    if matches!(event.kind, MouseEventKind::Down(MouseButton::Left))
+        && super::latest::activate(state, event.column, event.row)
+    {
+        return Ok(true);
+    }
+    if !matches!(
+        event.kind,
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+    ) {
+        crate::app::render::navigation::apply(state)?;
     }
     if matches!(event.kind, MouseEventKind::Down(MouseButton::Left))
         && state
@@ -133,12 +144,7 @@ fn apply_mouse(event: MouseEvent, state: &mut AppState) -> Result<bool, TuiError
     };
     match event.kind {
         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if target != Focus::Composer => {
-            state
-                .screen
-                .focus
-                .focus(target, state.screen.availability())
-                .map_err(interaction)?;
-            browse_rows(state, event.kind == MouseEventKind::ScrollUp, 1)?;
+            browse_target_rows(state, target, event.kind == MouseEventKind::ScrollUp, 1)?;
             Ok(true)
         }
         MouseEventKind::Down(MouseButton::Left) => {

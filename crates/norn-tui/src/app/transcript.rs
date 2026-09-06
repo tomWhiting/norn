@@ -84,6 +84,7 @@ pub struct Transcript {
     /// Explicit history-page work, observed through a completion event.
     pub history_tasks: tokio::task::JoinSet<(HistoryRead, Result<HistoryPage, TuiError>)>,
     pending_history: bool,
+    latest: super::view_actions::latest::LatestHistory,
     publication: publication::PublicationState,
     /// Exact accepted steer lookups owned through completion.
     pub(crate) input_tasks: tokio::task::JoinSet<publication::InputRead>,
@@ -108,6 +109,7 @@ impl Transcript {
             body_tasks: tokio::task::JoinSet::new(),
             history_tasks: tokio::task::JoinSet::new(),
             pending_history: false,
+            latest: super::view_actions::latest::LatestHistory::default(),
             publication: publication::PublicationState::default(),
             input_tasks: tokio::task::JoinSet::new(),
         }
@@ -241,22 +243,77 @@ impl Transcript {
         Ok(true)
     }
 
+    /// Request current accepted history without changing provider/runtime ownership.
+    pub(super) fn request_latest(&mut self) {
+        self.latest.begin(self.projection.source());
+    }
+
+    /// Navigation cancels follow intent; an admitted history job may still complete.
+    pub(super) fn cancel_latest(&mut self) {
+        self.latest.cancel();
+    }
+
+    pub(super) fn latest_pending(&self) -> bool {
+        self.latest.pending()
+    }
+
+    /// Schedule one configured page; completion, not a timer, advances the captured frontier.
+    pub(super) fn load_latest(&mut self, store: &Arc<EventStore>) -> Result<bool, TuiError> {
+        if self.pending_history || !self.latest.pending() {
+            return Ok(false);
+        }
+        let request = if self.newest.is_none() {
+            self.initial_history()?
+        } else {
+            self.newer_history()?
+        };
+        if !self.latest.start() {
+            return Ok(false);
+        }
+        self.pending_history = true;
+        let store = Arc::clone(store);
+        self.history_tasks.spawn(async move {
+            let result = read_history(store, request.clone()).await;
+            (request, result)
+        });
+        Ok(true)
+    }
+
     /// Accept one explicit history completion without asserting a durable live watermark.
     pub fn finish_history(
         &mut self,
         result: Result<(HistoryRead, Result<HistoryPage, TuiError>), tokio::task::JoinError>,
     ) -> Result<bool, TuiError> {
-        let (request, page) = result.map_err(|source| TuiError::ViewTask {
-            operation: "history completion",
-            source,
-        })?;
+        let (request, page) = match result {
+            Ok(result) => result,
+            Err(source) => {
+                self.pending_history = false;
+                self.latest.failed();
+                return Err(TuiError::ViewTask {
+                    operation: "history completion",
+                    source,
+                });
+            }
+        };
         if &request.source != self.projection.source() {
             return Ok(false);
         }
         self.pending_history = false;
         match page {
-            Ok(page) => self.accept_history(&page),
+            Ok(page) => {
+                let coverage = self.latest.observe(&request, &page);
+                if request.direction == HistoryDirection::After
+                    && page.records.is_empty()
+                    && matches!(&request.anchor, HistoryAnchor::At(cursor) if self.newest.as_ref().is_some_and(|newest| ordinal(cursor) == ordinal(newest)))
+                {
+                    self.has_newer = page.has_after;
+                }
+                let accepted = self.accept_history(&page)?;
+                coverage?;
+                Ok(accepted)
+            }
             Err(error) => {
+                self.latest.failed();
                 self.notice(
                     ViewItemKind::Unavailable,
                     "Requested history page unavailable",

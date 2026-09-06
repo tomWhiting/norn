@@ -2,6 +2,9 @@
 
 use std::num::{NonZeroU16, NonZeroUsize};
 use std::path::Path;
+use std::sync::Arc;
+
+use crate::input::view_shortcuts::ViewShortcuts;
 
 use norn::config::{
     TuiPreferenceLayer, TuiPreferenceScope, TuiPreferencesLayers, TuiPreferencesSnapshot,
@@ -58,6 +61,7 @@ pub struct FrontendPreferences {
     pub(crate) display: DisplayToggles,
     pub(crate) submit_mode: InFlightSubmitMode,
     pub(crate) composer_send_key: ComposerSendKey,
+    pub(crate) view_shortcuts: Arc<ViewShortcuts>,
 }
 
 impl Default for FrontendPreferences {
@@ -70,6 +74,7 @@ impl Default for FrontendPreferences {
             display: DisplayToggles::default(),
             submit_mode: InFlightSubmitMode::Steer,
             composer_send_key: ComposerSendKey::default(),
+            view_shortcuts: Arc::new(ViewShortcuts::default()),
         }
     }
 }
@@ -191,6 +196,12 @@ pub enum FrontendPreferenceError {
         #[source]
         source: Box<FrontendPreferenceError>,
     },
+    /// A binding could not be admitted; its action and settings path remain named.
+    #[error("invalid frontend shortcuts: {reason}")]
+    Bindings {
+        /// Typed binding refusal rendered without losing its action referents.
+        reason: String,
+    },
     /// The save target could not be captured from the existing launch context.
     #[error(transparent)]
     Target(#[from] norn::config::TuiPreferencesError),
@@ -300,7 +311,14 @@ impl FrontendPreferences {
         }
         if let Some(value) = root.get("input") {
             let input = object(value, "tui.input")?;
-            known(input, "tui.input", &["submit_mode"])?;
+            known(input, "tui.input", &["submit_mode", "bindings"])?;
+            result.view_shortcuts = Arc::new(
+                ViewShortcuts::decode(input.get("bindings")).map_err(|error| {
+                    FrontendPreferenceError::Bindings {
+                        reason: error.to_string(),
+                    }
+                })?,
+            );
             if let Some(value) = input.get("submit_mode") {
                 result.submit_mode = match value.as_str() {
                     Some("steer") => InFlightSubmitMode::Steer,
@@ -343,7 +361,7 @@ impl FrontendPreferences {
         result.insert("display".to_owned(), serde_json::json!({"thinking_visible":self.display.thinking_visible,"secondary_fields_visible":self.display.secondary_fields_visible}));
         result.insert(
             "input".to_owned(),
-            serde_json::json!({"submit_mode":self.submit_mode.label()}),
+            serde_json::json!({"submit_mode":self.submit_mode.label(),"bindings":self.view_shortcuts.projection()}),
         );
         result.insert(
             "composer".to_owned(),

@@ -227,7 +227,7 @@ fn send_key_control_reuses_the_last_hint_row_and_never_claims_a_clipped_hit_area
             .find(|row| row.area.row == button.row)
             .ok_or("hint row missing")?;
         assert!(hint.text.styled.text().starts_with(label));
-        assert!(hint.text.styled.text().contains("F10 send key"));
+        assert!(hint.text.styled.text().contains("Option+s / F10 send key"));
         if policy == crate::frontend_preferences::ComposerSendKey::ShiftEnter {
             assert!(hint.text.styled.text().contains("Enter newline"));
         }
@@ -249,5 +249,118 @@ fn send_key_control_reuses_the_last_hint_row_and_never_claims_a_clipped_hit_area
     assert!(state.screen.composer_send_key_area.is_none());
     super::super::prepare(&mut state, 0, 0)?;
     assert!(state.screen.composer_send_key_area.is_none());
+    Ok(())
+}
+
+#[test]
+fn latest_uses_existing_hint_row_without_overlap_or_clipped_click_area() -> TestResult {
+    let mut state = AppState::new(
+        TerminalCaps::baseline(),
+        crate::input::history::InputHistory::in_memory(),
+        norn::agent::registry::AgentRegistry::shared(),
+        crate::app::state::test_view_source(uuid::Uuid::new_v4()),
+        crate::render::fixed_panel::StatusBar::default(),
+    );
+    state.input_editor.paste_cells("draft")?;
+    let following = super::super::prepare(&mut state, 80, 24)?;
+    let Layout::Ready {
+        composer: original, ..
+    } = following.layout
+    else {
+        return Err("following composer absent".into());
+    };
+    assert!(state.screen.prepared_latest.is_none());
+    state.screen.viewport.pin();
+    for columns in [80, 24, 8, 7, 1] {
+        let frame = super::super::prepare(&mut state, columns, 24)?;
+        let Layout::Ready { composer, .. } = frame.layout else {
+            return Err("pinned composer absent".into());
+        };
+        if columns == 80 {
+            assert_eq!(
+                composer, original,
+                "Latest must allocate no additional chrome row"
+            );
+        }
+        if let Some(area) = state.screen.prepared_latest {
+            assert_eq!(area.row, composer.row + composer.height - 1);
+            assert_eq!(area.column + area.width, columns);
+            assert_eq!(area.width, 8);
+            let painted = frame
+                .rows
+                .iter()
+                .find(|row| row.area == area)
+                .ok_or("Latest hit has no painted label")?;
+            assert_eq!(
+                painted.text.styled.text(),
+                crate::app::view_actions::latest::LABEL
+            );
+            if let Some(send) = state.screen.composer_send_key_area {
+                assert!(send.column + send.width < area.column);
+            }
+        } else {
+            assert!(
+                columns < 8 || crate::render::layout::composer_input_area(composer) == composer
+            );
+        }
+        assert!(
+            state.screen.latest_hit.is_none(),
+            "prepared geometry is not published click authority"
+        );
+        assert_eq!(state.input_editor.text(), "draft");
+    }
+    state.screen.viewport.follow_tail();
+    state.transcript.request_latest();
+    super::super::prepare(&mut state, 80, 24)?;
+    assert!(
+        state.screen.prepared_latest.is_some(),
+        "pending coverage keeps Latest visible"
+    );
+    state.transcript.cancel_latest();
+    super::super::prepare(&mut state, 80, 24)?;
+    assert!(state.screen.prepared_latest.is_none());
+    Ok(())
+}
+
+#[test]
+fn send_key_hint_uses_the_current_cached_bindings_and_shows_explicit_unbinding() -> TestResult {
+    let mut state = AppState::new(
+        TerminalCaps::baseline(),
+        crate::input::history::InputHistory::in_memory(),
+        norn::agent::registry::AgentRegistry::shared(),
+        crate::app::state::test_view_source(uuid::Uuid::new_v4()),
+        crate::render::fixed_panel::StatusBar::default(),
+    );
+    state.view_shortcuts = std::sync::Arc::new(
+        state
+            .view_shortcuts
+            .replacement("send_key_cycle", &["alt+q"])?,
+    );
+    let frame = super::super::prepare(&mut state, 100, 24)?;
+    assert!(
+        frame
+            .rows
+            .iter()
+            .any(|row| row.text.styled.text().contains("Option+q send key"))
+    );
+    assert!(
+        !frame
+            .rows
+            .iter()
+            .any(|row| row.text.styled.text().contains("F10 send key"))
+    );
+    state.view_shortcuts =
+        std::sync::Arc::new(state.view_shortcuts.replacement("send_key_cycle", &[])?);
+    let frame = super::super::prepare(&mut state, 100, 24)?;
+    assert!(
+        frame
+            .rows
+            .iter()
+            .any(|row| row.text.styled.text().contains("unbound send key"))
+    );
+    assert!(
+        state.screen.composer_send_key_area.is_some(),
+        "click recovery remains available"
+    );
     Ok(())
 }

@@ -22,7 +22,11 @@ fn main() -> TestResult {
         return mcp_fixture::run_mcp(&arguments[1..]);
     }
     let options = mcp_fixture::HarnessOptions::parse(&arguments)?;
-    let scenarios: [Scenario; 4] = [
+    let scenarios: [Scenario; 5] = [
+        (
+            "view_shortcuts_restart_scopes_and_actual_custom_key",
+            shortcut_restart,
+        ),
         (
             "automatic_user_restart_and_temporary_run_preserve_original_settings",
             automatic_user_restart,
@@ -113,7 +117,11 @@ fn automatic_user_restart() -> TestResult {
         json!({"conversation":3,"changes":2})
     );
     assert_eq!(saved["tui"]["display"]["thinking_visible"], false);
-    assert_eq!(saved["tui"]["input"], json!({"submit_mode":"queue"}));
+    assert_eq!(saved["tui"]["input"]["submit_mode"], "queue");
+    assert_eq!(
+        saved["tui"]["input"]["bindings"]["pane_toggle"],
+        json!(["alt+p", "f7"])
+    );
     assert_eq!(environment.requests()?.len(), 1);
     let saved_bytes = std::fs::read(&environment.user)?;
     environment.session(0, true, |app| {
@@ -203,6 +211,21 @@ fn local_and_shadowing() -> TestResult {
 
 fn malformed_layers() -> TestResult {
     for (layer, invalid, field) in [
+        (
+            0,
+            json!({"input":{"bindings":{"pane_toggle":["alt+d"]}}}),
+            "tui.input.bindings.pane_toggle",
+        ),
+        (
+            1,
+            json!({"input":{"bindings":{"pane_toggle":["ctrl+z"]}}}),
+            "tui.input.bindings.pane_toggle",
+        ),
+        (
+            2,
+            json!({"input":{"bindings":{"future":[]}}}),
+            "tui.input.bindings.future",
+        ),
         (0, json!({"view":{"body_bytes":0}}), "tui.view.body_bytes"),
         (
             1,
@@ -259,5 +282,83 @@ fn stale_save() -> TestResult {
     assert_eq!(document(&environment.user)?, external);
     assert!(environment.requests()?.is_empty());
     environment.assert_mcp_launches(1)?;
+    environment.finish()
+}
+
+fn shortcut_restart() -> TestResult {
+    let mut environment = Environment::new()?;
+    let original = original_document();
+    write_document(&environment.user, &original)?;
+    environment.session(0, true, |app| {
+        app.observe("/view keys", "pane_toggle: alt+p, f7")?;
+        app.observe(
+            "/view keys set pane_toggle alt+q f7",
+            "View shortcuts updated: pane_toggle",
+        )?;
+        app.observe("/view keys", "pane_toggle: alt+q, f7")?;
+        let frame = app.frame(0, |_| true)?;
+        app.press(b"\x1bq")?;
+        let opened = app.frame(frame.end_offset, |screen| {
+            screen.contains("Changes · select a tool call")
+        })?;
+        opened.assert_composer(1)?;
+        Ok(())
+    })?;
+    let saved = document(&environment.user)?;
+    assert_unowned(&saved, &original);
+    assert_eq!(
+        saved["tui"]["input"]["bindings"]["pane_toggle"],
+        json!(["alt+q", "f7"])
+    );
+    let bytes = std::fs::read(&environment.user)?;
+    environment.session(0, true, |app| {
+        app.observe("/view keys", "pane_toggle: alt+q, f7")?;
+        app.observe("/view preferences run", "Preference scope: Run")?;
+        app.observe(
+            "/view keys set pane_toggle alt+r",
+            "View shortcuts updated: pane_toggle",
+        )?;
+        app.observe("/view keys", "pane_toggle: alt+r")?;
+        Ok(())
+    })?;
+    assert_eq!(std::fs::read(&environment.user)?, bytes);
+    environment.session(0, true, |app| {
+        app.observe("/view keys", "pane_toggle: alt+q, f7")?;
+        Ok(())
+    })?;
+    let local = environment.local(0);
+    write_document(
+        &local,
+        &json!({"tui":{"extension_data":{"preserve":"local"}}}),
+    )?;
+    environment.session(0, true, |app| {
+        app.observe("/view keys", "pane_toggle: alt+p, f7")?;
+        app.observe("/view preferences local", "Preference scope: Local")?;
+        app.observe(
+            "/view keys set pane_toggle alt+b",
+            "View shortcuts updated: pane_toggle",
+        )?;
+        Ok(())
+    })?;
+    let saved_local = document(&local)?;
+    assert_eq!(
+        saved_local["tui"]["input"]["bindings"]["pane_toggle"],
+        json!(["alt+b"])
+    );
+    assert_eq!(saved_local["tui"]["extension_data"]["preserve"], "local");
+    environment.session(0, true, |app| {
+        app.observe("/view keys", "pane_toggle: alt+b")?;
+        Ok(())
+    })?;
+    environment.session(1, true, |app| {
+        app.observe("/view keys", "pane_toggle: alt+q, f7")?;
+        Ok(())
+    })?;
+    assert_eq!(std::fs::read(&environment.user)?, bytes);
+    assert!(
+        environment.requests()?.is_empty(),
+        "shortcut commands admitted provider work"
+    );
+    environment.assert_mcp_launches(6)?;
     environment.finish()
 }

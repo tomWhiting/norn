@@ -49,27 +49,38 @@
         {
           "id": "S9",
           "title": "Control panes without leaving the draft",
-          "text": "I can toggle and choose panes directly with visible shortcuts and a thin divider, without losing my draft or sending a request."
+          "text": "I can toggle and choose panes directly with visible shortcuts and a thin divider, without losing my draft or sending a request. Implemented and locally verified in preview.6; recorded source d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8. Main landing and review remain separate.",
+          "status": "locally_verified_installed_preview6"
         },
         {
           "id": "S10",
           "title": "Copy the displayed text I drag across",
-          "text": "I can visibly select conversation/tool headers, entries and Diff text, and understand whether copied bytes are original source or a captured display snapshot."
+          "text": "I can visibly select conversation/tool headers, entries and Diff text, and understand whether copied bytes are original source or a captured display snapshot. Implemented and locally verified in preview.6; recorded source d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8. Main landing and review remain separate.",
+          "status": "locally_verified_installed_preview6"
         },
         {
           "id": "S11",
           "title": "Choose and recover my exact send gesture",
-          "text": "I can persist Shift+Enter sending, keep bare Enter as newline and explicitly recover with the same keyboard/button policy cycle when terminal reporting is unconfirmed."
+          "text": "I can persist Shift+Enter sending, keep bare Enter as newline and explicitly recover with the same keyboard/button policy cycle when terminal reporting is unconfirmed. Implemented and locally verified in preview.6; recorded source d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8. Main landing and review remain separate.",
+          "status": "locally_verified_installed_preview6"
         },
         {
           "id": "S12",
           "title": "Scroll and return to the latest message explicitly",
-          "text": "I can keep a stable reading position while work continues, preserve every delivered scroll step and explicitly return to the selected conversation\u2019s latest admitted item. NUI-004 R4 now registers the implementation; actual source-bound App and measurement proof remains pending."
+          "text": "I can keep a stable reading position while work continues, preserve every delivered scroll step and explicitly return to the selected conversation\u2019s latest admitted item. R4 is resumed in its separate scrolling tree for an authorized focused local preview; no new passing runtime, measurement or installation proof is claimed. Scrolling the pane under my pointer preserves my keyboard focus and composer cursor/draft; an explicit click can still change focus.",
+          "status": "R4_resumed_under_local_validation"
         },
         {
           "id": "S13",
           "title": "Know which local preview I can actually use",
-          "text": "I can distinguish a candidate from my verified installed preview, see its actual feature scope, recover the prior binary and hear Norn updated only after a successful checked local update."
+          "text": "I can distinguish a candidate from my verified installed preview, see its actual feature scope, recover the prior binary and hear Norn updated only after a successful checked local update. Implemented and locally verified in preview.6; recorded source d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8. Main landing and review remain separate. Preview.7 is a separately authorized focused local candidate; its exact checks, omissions, rollback and installation receipt must be recorded without treating it as a full release.",
+          "status": "locally_verified_installed_preview6"
+        },
+        {
+          "id": "S14",
+          "title": "Choose shortcuts that work on my keyboard",
+          "text": "I can use Option or Control combinations for pane/view actions, edit and remember those bindings, disable unwanted bindings, and trust the displayed hints without losing ordinary typing, draft, popup or send behavior.",
+          "status": "registered_implementation_pending"
         }
       ]
     }

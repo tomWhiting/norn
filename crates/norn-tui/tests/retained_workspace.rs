@@ -6,6 +6,8 @@ pub mod retained_screen;
 #[path = "support/retained_workspace.rs"]
 pub mod support;
 
+use std::fmt::Write;
+
 use support::{TestResult, Workspace, with_composer, with_workspace};
 
 #[test]
@@ -64,27 +66,19 @@ fn exercise_panes(app: &mut Workspace) -> TestResult {
     let edited = app.input(format!("\x1b[200~{draft}\x1b[201~").as_bytes(), |screen| {
         screen.cursor.0 == draft.len()
     })?;
-    edited.assert_composer(1)?;
-    let input_row = edited.composer_rows()[0];
-    for (column, character) in draft.chars().enumerate() {
-        assert_eq!(
-            edited.cell(column, input_row),
-            Some(character.to_string().as_str())
-        );
-        assert_eq!(edited.foreground_at(column, input_row), None);
-    }
+    assert_draft_cells(&edited, &draft)?;
     // Physical function keys preserve the same draft and never admit a turn.
     let hidden = app.input(b"\x1b[18~", |screen| screen.cell(50, 0) != Some("│"))?;
     assert_no_split(&hidden)?;
-    assert_eq!(hidden.lines()[hidden.cursor.1], draft);
+    assert_draft_cells(&hidden, &draft)?;
     let diff = app.input(b"\x1b[19~", |screen| {
         screen.contains("Changes · select a tool call")
     })?;
     assert_eq!(diff.cell(50, 0), Some("│"));
-    assert_eq!(diff.lines()[diff.cursor.1], draft);
+    assert_draft_cells(&diff, &draft)?;
     let agents = app.input(b"\x1b[20~", |screen| screen.contains(" root  "))?;
     assert_eq!(agents.cell(50, 0), Some("│"));
-    assert_eq!(agents.lines()[agents.cursor.1], draft);
+    assert_draft_cells(&agents, &draft)?;
     agents.assert_composer(1)?;
     app.input(b"\x1b", |screen| {
         screen.cursor.0 == 0 && screen.lines()[screen.cursor.1].is_empty()
@@ -120,6 +114,25 @@ fn exercise_panes(app: &mut Workspace) -> TestResult {
     assert_wide_pane(&restored, " root  ")?;
     let closed = app.command("/pane ", "")?;
     assert_no_split(&closed)?;
+    Ok(())
+}
+
+/// This fixture's ASCII draft includes an intentional final blank, unlike `Screen::lines()`.
+fn assert_draft_cells(screen: &retained_screen::Screen, draft: &str) -> TestResult {
+    screen.assert_composer(1)?;
+    assert!(draft.is_ascii());
+    let input_row = screen.composer_rows()[0];
+    assert_eq!(screen.cursor, (draft.len(), input_row));
+    for (column, character) in draft.chars().enumerate() {
+        assert_eq!(
+            screen.cell(column, input_row),
+            Some(character.to_string().as_str())
+        );
+        assert_eq!(screen.foreground_at(column, input_row), None);
+    }
+    for column in draft.len()..usize::from(screen.cols) {
+        assert_eq!(screen.cell(column, input_row), Some(" "));
+    }
     Ok(())
 }
 
@@ -267,9 +280,31 @@ fn generated_diff_drag_copies_display_scope_and_keeps_snapshot_after_resize() ->
         );
         assert_eq!(app.copy_payloads()?, [b"Q2hhbmdlcw==".to_vec()]);
         app.resize(36, 10)?;
-        app.key(b"\x1bOS", "Sent 7 selected bytes")?;
-        assert_eq!(app.copy_payloads()?.last(), Some(&b"Q2hhbmdlcw==".to_vec()));
+        // Narrow Changes hides Conversation's feedback, but F4 still copies.
+        let copied = app.copy_with_hidden_feedback()?;
+        assert_eq!((copied.cols, copied.rows), (36, 10));
+        assert!(copied.lines()[0].starts_with("Changes"));
+        assert_eq!(
+            app.copy_payloads()?,
+            [b"Q2hhbmdlcw==".to_vec(), b"Q2hhbmdlcw==".to_vec()]
+        );
+        // F2 clears transient feedback; first assert its actual pane transition.
+        let conversation = app.input(b"\x1bOQ", |screen| {
+            screen.lines()[0].starts_with("Conversation")
+        })?;
+        assert_eq!((conversation.cols, conversation.rows), (36, 10));
         app.resize(100, 24)?;
+        // A fresh copy now shows its scope without narrow-pane clipping.
+        let copied = app.key(b"\x1bOS", "Sent 7 selected bytes")?;
+        assert!(copied.contains("displayed-text"));
+        assert_eq!(
+            app.copy_payloads()?,
+            [
+                b"Q2hhbmdlcw==".to_vec(),
+                b"Q2hhbmdlcw==".to_vec(),
+                b"Q2hhbmdlcw==".to_vec(),
+            ]
+        );
         app.command("/view focus composer", "Changes")?;
         assert_eq!(app.snapshot()?, before, "display selection admitted work");
         Ok(())
@@ -408,7 +443,9 @@ fn collapsed_recorded_tool_header_and_real_diff_rows_are_selectable_without_expa
         );
         app.assert_last_copy(support::TOOL_DESCRIPTION)?;
         app.command("/view focus composer", support::TOOL_DESCRIPTION)?;
-        let diff = app.command("/pane diff", "Requested edit fragment")?;
+        // The heading exists before approved argument bytes finish loading.
+        let diff = app.command("/pane diff", "old fixture text")?;
+        assert!(diff.contains("Requested edit fragment"));
         assert!(diff.contains("Changes · recorded call only"));
         let start = locate(&diff, "old fixture text")?;
         let end = (start.0 + 16, start.1);
@@ -479,4 +516,168 @@ fn provider_publication_during_drag_keeps_bytes_then_release_reveals_current_con
         );
         Ok(())
     })
+}
+
+#[test]
+fn actual_idle_and_streaming_wheel_batches_and_latest_preserve_draft_and_admission() -> TestResult {
+    with_composer("enter", |app| {
+        let mut history = String::new();
+        for row in 0..60 {
+            writeln!(history, "scroll row {row:03}")?;
+        }
+        app.append_history(&history)?;
+        app.command("/view follow", "scroll row 059")?;
+        exercise_scroll_and_latest(app)?;
+        let prompt = "scroll fixture active prompt";
+        app.input(prompt.as_bytes(), |screen| {
+            screen.lines()[screen.cursor.1] == prompt
+        })?;
+        app.input(app.submit_key(), |screen| {
+            screen.contains("generating")
+                && screen
+                    .composer_rows()
+                    .iter()
+                    .all(|row| screen.lines()[*row].is_empty())
+        })?;
+        let active = app.snapshot()?;
+        assert_eq!(active["provider_calls"], 1);
+        assert_eq!(active["user_events"], serde_json::json!([prompt]));
+        app.command("/view follow", "workspace provider held")?;
+        exercise_scroll_and_latest(app)?;
+        Ok(prompt.to_owned())
+    })
+}
+
+fn first_scroll_row(screen: &retained_screen::Screen) -> Option<usize> {
+    screen
+        .lines()
+        .iter()
+        .find_map(|line| line.trim().strip_prefix("scroll row ")?.parse().ok())
+}
+
+fn exercise_scroll_and_latest(app: &mut Workspace) -> TestResult {
+    let before = app.snapshot()?;
+    let tail = app.screen()?;
+    let initial = first_scroll_row(&tail).ok_or("recorded scroll rows absent at tail")?;
+    let target = initial
+        .checked_sub(7)
+        .ok_or("fixture tail lacks seven earlier rows")?;
+    // One PTY write models an already-ready wheel burst. Every one-row delta matters.
+    let started = std::time::Instant::now();
+    let up = b"\x1b[<64;2;2M".repeat(7);
+    let moved = app.input(&up, |screen| {
+        first_scroll_row(screen) == Some(target) && screen.contains("↓ Latest")
+    })?;
+    eprintln!(
+        "{}",
+        serde_json::json!({"scope":"actual App seven wheel events through exact final published row", "elapsed_ns":started.elapsed().as_nanos(), "rows":7})
+    );
+    moved.assert_composer(1)?;
+    // Saturation is ordered: reaching the top then moving down is not a net delta.
+    let mut reversal = b"\x1b[<64;2;2M".repeat(100);
+    reversal.extend(b"\x1b[<65;2;2M".repeat(3));
+    app.input(&reversal, |screen| first_scroll_row(screen) == Some(3))?;
+    app.input(b"draft kept", |screen| {
+        screen.lines()[screen.cursor.1] == "draft kept"
+    })?;
+    let focus_before = app.screen()?.cursor;
+    let narrow = app.resize(48, 10)?;
+    assert!(narrow.contains("↓ Latest"));
+    let restored = app.resize(100, 24)?;
+    let lines = restored.lines();
+    let row = lines
+        .iter()
+        .position(|line| line.contains("↓ Latest"))
+        .ok_or("Latest label absent after resize")?;
+    assert_eq!(
+        row,
+        usize::from(restored.rows) - 1,
+        "Latest must reuse the existing final hint row"
+    );
+    let bytes = format!("\x1b[<0;94;{}M\x1b[<0;94;{}m", row + 1, row + 1);
+    let latest = app.input(bytes.as_bytes(), |screen| {
+        !screen.contains("↓ Latest") && first_scroll_row(screen) == Some(initial)
+    })?;
+    assert_eq!(latest.lines()[latest.cursor.1], "draft kept");
+    assert_eq!(latest.cursor, focus_before);
+    assert_eq!(
+        app.snapshot()?,
+        before,
+        "navigation admitted provider work or changed accepted history"
+    );
+    app.input(b"\x1b", |screen| {
+        screen.cursor.0 == 0 && screen.lines()[screen.cursor.1].is_empty()
+    })?;
+    Ok(())
+}
+
+#[test]
+fn configured_option_shortcuts_preserve_idle_active_drafts_and_provider_admission() -> TestResult {
+    with_composer("enter", |app| {
+        app.command(
+            "/view keys set pane_toggle alt+q f7",
+            "View shortcuts updated: pane_toggle",
+        )?;
+        app.command("/view keys", "pane_toggle: alt+q, f7")?;
+        let idle = app.snapshot()?;
+        exercise_option_shortcuts(app)?;
+        assert_eq!(app.snapshot()?, idle, "idle shortcuts admitted work");
+        let prompt = "one original shortcut fixture input";
+        app.input(prompt.as_bytes(), |screen| {
+            screen.lines()[screen.cursor.1] == prompt
+        })?;
+        app.input(b"\r", |screen| {
+            screen.contains("generating") && screen.cursor.0 == 0
+        })?;
+        app.command("/view follow", "workspace provider held")?;
+        let active = app.snapshot()?;
+        assert_eq!(active["provider_calls"], 1);
+        assert_eq!(active["user_events"], serde_json::json!([prompt]));
+        exercise_option_shortcuts(app)?;
+        assert_eq!(
+            app.snapshot()?,
+            active,
+            "active shortcuts changed accepted history"
+        );
+        app.command(
+            "/view keys set pane_toggle alt+q f7",
+            "View shortcuts updated: pane_toggle",
+        )?;
+        Ok(prompt.to_owned())
+    })
+}
+
+fn exercise_option_shortcuts(app: &mut Workspace) -> TestResult {
+    let draft = "shortcut draft";
+    app.input(format!("\x1b[200~{draft}\x1b[201~").as_bytes(), |screen| {
+        screen.lines()[screen.cursor.1] == draft
+    })?;
+    let initial = app.input(b"\x1b[D", |screen| screen.cursor.0 == draft.len() - 1)?;
+    let cursor = initial.cursor;
+    let diff = app.input(b"\x1bd", |screen| {
+        screen.contains("Changes · select a tool call")
+    })?;
+    assert_eq!(diff.cursor, cursor);
+    assert_eq!(diff.lines()[diff.cursor.1], draft);
+    let agents = app.input(b"\x1ba", |screen| screen.contains(" root  "))?;
+    assert_eq!(agents.cursor, cursor);
+    assert_eq!(agents.lines()[agents.cursor.1], draft);
+    let hidden = app.input(b"\x1bq", |screen| !screen.contains(" root  "))?;
+    assert_no_split(&hidden)?;
+    assert_eq!(hidden.cursor, cursor);
+    // Three exact presses restore Enter without touching the draft or undo.
+    for label in [
+        "[Shift+Enter unconfirmed]",
+        "[Alt+Enter sends]",
+        "[Enter sends]",
+    ] {
+        let changed = app.input(b"\x1bs", |screen| screen.contains(label))?;
+        assert_eq!(changed.cursor, cursor);
+        assert_eq!(changed.lines()[changed.cursor.1], draft);
+    }
+    let undone = app.input(b"\x1a", |screen| screen.lines()[screen.cursor.1].is_empty())?;
+    assert_eq!(undone.cursor.0, 0);
+    app.input(b"\x19", |screen| screen.lines()[screen.cursor.1] == draft)?;
+    app.input(b"\x1b", |screen| screen.lines()[screen.cursor.1].is_empty())?;
+    Ok(())
 }

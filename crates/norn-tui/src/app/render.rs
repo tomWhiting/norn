@@ -1,26 +1,29 @@
 //! Retained-screen preparation and frame caching; terminal paint never reads history or bodies.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Instant;
 
-use norn::session_view::{BodyRef, ItemId, ViewSource};
+use norn::session_view::BodyRef;
 
 use crate::TuiError;
-use crate::render::frame::{Frame, PaintRow, PreparedFrame};
-use crate::render::layout::{
-    Layout, LayoutPolicy, LayoutRequest, Rect, SplitPreference, UpperLayout, UpperPane,
-};
+use crate::render::frame::{Frame, PaintRow};
+use crate::render::layout::{Layout, LayoutPolicy, LayoutRequest, Rect, UpperLayout, UpperPane};
 use crate::render::retained_markdown::{RenderedMarkdown, render_plain};
 use crate::render::retained_text::{StyledText, TextLayout, TextRow};
 use crate::terminal::setup::TerminalGuard;
 
-use super::focus::{Focus, FocusAvailability, FocusState};
+use super::focus::Focus;
 use super::state::AppState;
-use super::viewport::{AnchorPosition, ViewAnchor, Viewport};
+use super::viewport::{AnchorPosition, ViewAnchor};
 
 mod agents;
+pub(in crate::app) mod navigation;
+mod screen_state;
+pub(super) use screen_state::AuxiliaryPane;
+use screen_state::DisplayCache;
+pub use screen_state::ScreenState;
 pub(in crate::app) mod changes;
 mod composer;
 pub(in crate::app) mod hit;
@@ -32,194 +35,47 @@ use transcript::conversation;
 /// Declared terminal tab display width; input bytes stay unchanged.
 const DISPLAY_TAB_WIDTH: usize = 4;
 
-/// Content selected for the auxiliary pane during this frontend session.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum AuxiliaryPane {
-    Diff,
-    Agents,
-}
-
-/// Geometry/cache state owned by one frontend, independent from the running agent.
-pub struct ScreenState {
-    pub(super) viewport: Viewport,
-    pub(super) focus: FocusState,
-    pub(super) changes_open: bool,
-    pub(super) auxiliary: AuxiliaryPane,
-    pub(super) split: SplitPreference,
-    pub(super) upper: UpperPane,
-    pub(super) tool_overrides: HashMap<ItemId, bool>,
-    pub(super) selection: Option<super::selection::Selection>,
-    pub(super) selection_item: Option<ItemId>,
-    pub(super) display_frame: Option<Arc<Frame>>,
-    pub(super) display_selection: Option<super::display_selection::DisplaySelection>,
-    pub(super) feedback: Option<String>,
-    pub(super) request_copy: bool,
-    pub(super) search: super::view_actions::reading::SearchState,
-    /// Explicit visible body requests to be scheduled by the event owner.
-    pub demands: Vec<(ItemId, BodyRef)>,
-    /// Most recently rendered logical rows for keyboard/mouse hit testing.
-    pub(super) visible: Vec<ViewAnchor>,
-    pub(super) hit_rows: Vec<hit::HitRow>,
-    pub(super) dragging_selection: bool,
-    pub(super) dragging_composer: bool,
-    pub(super) dragging_divider: bool,
-    pub(super) layout: Layout,
-    pub(super) pane_switch: Option<Rect>,
-    pub(super) composer_send_key_area: Option<Rect>,
-    pub(super) navigation: Option<ScrollRequest>,
-    pub(super) changes_row: usize,
-    pub(in crate::app) changes: changes::ChangesState,
-    pub(super) request_older: bool,
-    pub(super) request_more: bool,
-    /// A semantic update permits new visible-body demand; resize alone does not.
-    pub allow_body_load: bool,
-    displayed: HashMap<BodyRef, DisplayCache>,
-    highlighter: crate::render::syntax::SyntaxHighlighter,
-    last_frame: Option<PreparedFrame>,
-    /// Input/navigation/body completion marks the next ready frame dirty.
-    pub dirty: bool,
-    last_revision: Option<u64>,
-    last_indicator: Option<String>,
-    next_agent_refresh: Option<Instant>,
-    ready_batch_remaining: usize,
-}
-
-/// An explicit logical-row movement, consumed before the next visible window is painted.
-pub(super) struct ScrollRequest {
-    pub backwards: bool,
-    pub rows: usize,
-}
-
-/// One approved original revision, parsed once and laid out once per current width.
-struct DisplayCache {
-    original_len: usize,
-    secondary_fields: bool,
-    text: Arc<RenderedMarkdown>,
-    columns: u16,
-    rows: Arc<[TextRow]>,
-}
-
-impl ScreenState {
-    /// Bind frontend navigation to the actual session/store identity.
-    pub fn new(source: ViewSource) -> Self {
-        Self {
-            viewport: Viewport::new(source, true),
-            focus: FocusState::new(),
-            changes_open: false,
-            auxiliary: AuxiliaryPane::Diff,
-            split: SplitPreference::default(),
-            upper: UpperPane::Conversation,
-            tool_overrides: HashMap::new(),
-            selection: None,
-            selection_item: None,
-            display_frame: None,
-            display_selection: None,
-            feedback: None,
-            request_copy: false,
-            search: super::view_actions::reading::SearchState::new(),
-            demands: Vec::new(),
-            visible: Vec::new(),
-            hit_rows: Vec::new(),
-            dragging_selection: false,
-            dragging_composer: false,
-            dragging_divider: false,
-            layout: Layout::NoPaint,
-            pane_switch: None,
-            composer_send_key_area: None,
-            navigation: None,
-            changes_row: 0,
-            changes: changes::ChangesState::new(),
-            request_older: false,
-            request_more: false,
-            allow_body_load: true,
-            displayed: HashMap::new(),
-            highlighter: crate::render::syntax::SyntaxHighlighter::new(),
-            last_frame: None,
-            dirty: true,
-            last_revision: None,
-            last_indicator: None,
-            next_agent_refresh: None,
-            ready_batch_remaining: 0,
-        }
-    }
-
-    /// Capture a finite frontier of already-ready terminal events. Later arrivals
-    /// cannot extend this batch or postpone its completed frame indefinitely.
-    pub(in crate::app) fn terminal_event(&mut self, already_queued: usize) {
-        if self.ready_batch_remaining == 0 {
-            self.ready_batch_remaining = already_queued;
-        } else {
-            self.ready_batch_remaining -= 1;
-        }
-    }
-
-    /// Retire source-bound caches and anchors while preserving frontend preferences.
-    pub fn replace_source(&mut self, source: &ViewSource) {
-        if self.viewport.replace_source(source.clone()) {
-            self.viewport.follow_tail();
-            self.tool_overrides.clear();
-            self.selection = None;
-            self.selection_item = None;
-            self.display_frame = None;
-            self.display_selection = None;
-            self.feedback = None;
-            self.request_copy = false;
-            self.search = super::view_actions::reading::SearchState::new();
-            self.demands.clear();
-            self.visible.clear();
-            self.hit_rows.clear();
-            self.dragging_selection = false;
-            self.dragging_composer = false;
-            self.dragging_divider = false;
-            self.displayed.clear();
-            self.last_frame = None;
-            self.navigation = None;
-            self.changes_row = 0;
-            self.changes.clear();
-            self.request_older = false;
-            self.request_more = false;
-        }
-        self.allow_body_load = true;
-        self.dirty = true;
-    }
-
-    /// Visible focus regions are derived only from the last calculated rectangles.
-    pub(super) fn availability(&self) -> FocusAvailability {
-        let mut availability = FocusAvailability {
-            composer: false,
-            conversation: false,
-            changes: false,
-            divider: false,
-        };
-        if let Layout::Ready { upper, .. } = self.layout {
-            availability.composer = true;
-            match upper {
-                UpperLayout::Split { .. } => {
-                    availability.conversation = true;
-                    availability.changes = true;
-                    availability.divider = true;
-                }
-                UpperLayout::Single { pane, .. } => match pane {
-                    UpperPane::Conversation => availability.conversation = true,
-                    UpperPane::Changes => availability.changes = true,
-                },
-            }
-        }
-        availability
-    }
-}
-
 /// Keep cell input and parent height synchronized without mutating the editor document.
 pub(crate) fn sync_input_area(
     state: &mut AppState,
     cols: u16,
     terminal_rows: u16,
 ) -> Result<u16, TuiError> {
+    let geometry_changed = match state.screen.layout {
+        Layout::Ready { composer, .. } => {
+            composer.width != cols || composer.row + composer.height != terminal_rows
+        }
+        Layout::NoPaint => cols != 0 && terminal_rows != 0,
+        Layout::ResizeRequired { area } => area.width != cols || area.height != terminal_rows,
+    };
+    if geometry_changed {
+        navigation::apply(state)?;
+        state.screen.row_cursor = None;
+    }
     super::display_selection::sync_geometry(&mut state.screen, cols, terminal_rows);
+    if state.screen.display_frame.is_none() {
+        state.screen.latest_hit = None;
+        state.screen.prepared_latest = None;
+    }
     let height = state
         .composer_geometry
         .measure(&state.input_editor, cols, terminal_rows)?;
     state.fixed_panel.set_input_area(height);
+    if geometry_changed {
+        // Input routing needs the new geometry even when this finite batch has not
+        // published yet. Pointer/copy authority remains revoked until publication.
+        state.screen.layout = Layout::calculate(
+            LayoutRequest {
+                columns: cols,
+                rows: terminal_rows,
+                requested_composer_rows: height,
+                changes_open: state.screen.changes_open,
+                split: state.screen.split,
+                active_upper_pane: state.screen.upper,
+            },
+            LayoutPolicy::default(),
+        )?;
+    }
     Ok(height)
 }
 
@@ -269,10 +125,16 @@ pub fn redraw_all(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(),
         state.screen.composer_send_key_area = None;
         state.screen.dragging_composer = false;
         state.screen.display_frame = None;
+        state.screen.latest_hit = None;
+        state.screen.prepared_latest = None;
         state.screen.dragging_selection = false;
     }
-    state.composer_geometry.finish_publication(publication)?;
-    state.screen.display_frame = Some(Arc::new(frame));
+    let publication = state.composer_geometry.finish_publication(publication);
+    super::view_actions::latest::finish_publication(
+        &mut state.screen,
+        Arc::new(frame),
+        publication,
+    )?;
     // Publication and flush must succeed before either baseline is advanced.
     state.screen.dirty = false;
     state.screen.last_revision = Some(revision);
@@ -315,6 +177,7 @@ fn prepare(state: &mut AppState, columns: u16, rows: u16) -> Result<Frame, TuiEr
         agent_frame.refresh_deadline(state.screen.auxiliary == AuxiliaryPane::Agents);
     state.screen.layout = layout;
     state.screen.pane_switch = None;
+    state.screen.prepared_latest = None;
     state.screen.composer_send_key_area = None;
     state.screen.visible.clear();
     state.screen.hit_rows.clear();
@@ -478,8 +341,14 @@ pub(super) fn load_visible(
     if state.screen.ready_batch_remaining > 0 {
         return Ok(());
     }
-    if std::mem::take(&mut state.screen.request_older) {
-        state.transcript.load_older(store)?;
+    if !state.screen.viewport.follows_tail() {
+        state.transcript.cancel_latest();
+    }
+    state.transcript.load_latest(store)?;
+    if state.screen.request_older
+        && (!state.transcript.has_older || state.transcript.load_older(store)?)
+    {
+        state.screen.request_older = false;
     }
     if std::mem::take(&mut state.screen.request_more)
         && let Some(item) = state

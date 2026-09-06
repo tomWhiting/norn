@@ -142,6 +142,8 @@ pub struct AppState {
     pub in_flight_input: InFlightInputState,
     /// Physical send-key policy; steer/queue delivery remains independently selected.
     pub composer_send_key: crate::frontend_preferences::ComposerSendKey,
+    /// Immutable validated shortcuts shared with the sole preference owner.
+    pub(crate) view_shortcuts: Arc<crate::input::view_shortcuts::ViewShortcuts>,
 }
 
 impl AppState {
@@ -185,6 +187,7 @@ impl AppState {
             live_root_usage: (0, 0),
             in_flight_input: InFlightInputState::default(),
             composer_send_key: crate::frontend_preferences::ComposerSendKey::default(),
+            view_shortcuts: Arc::new(crate::input::view_shortcuts::ViewShortcuts::default()),
         }
     }
 

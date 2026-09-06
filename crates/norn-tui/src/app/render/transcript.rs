@@ -50,25 +50,7 @@ pub(super) fn conversation(
         )?;
         return Ok(());
     }
-    if let Some(navigation) = state.screen.navigation.take() {
-        let anchor = state.screen.viewport.anchor().cloned();
-        let moved = window(
-            state,
-            area.width,
-            anchor.as_ref(),
-            navigation.backwards,
-            navigation.rows,
-            true,
-        )?;
-        if let Some((anchor, _, _, _)) = moved.last() {
-            state
-                .screen
-                .viewport
-                .scroll_to(anchor.clone(), &state.transcript.projection)
-                .map_err(interaction)?;
-        }
-        state.screen.demands.clear();
-    }
+    super::navigation::apply(state)?;
     let anchor = state.screen.viewport.anchor().cloned();
     let follows = state.screen.viewport.follows_tail();
     let mut visible = window(
@@ -146,6 +128,7 @@ pub(super) fn conversation(
 #[derive(Clone, Copy)]
 struct RowWindow<'a> {
     anchor: Option<&'a ViewAnchor>,
+    cached_position: Option<(usize, usize)>,
     backwards: bool,
     limit: usize,
     exclusive: bool,
@@ -219,6 +202,12 @@ fn window(
         )?;
         let requested = RowWindow {
             anchor: anchor.filter(|anchor| anchor.item == item.id),
+            cached_position: super::navigation::locate_cursor(
+                &state.screen,
+                item,
+                &groups,
+                columns,
+            ),
             backwards,
             limit: limit.saturating_sub(rows.len()),
             exclusive,
@@ -246,11 +235,13 @@ fn collect_rows(
 ) {
     let RowWindow {
         anchor,
+        cached_position,
         backwards,
         limit,
         exclusive,
     } = requested;
-    let anchor_position = anchor.and_then(|anchor| locate_anchor(groups, &anchor.position));
+    let anchor_position = cached_position
+        .or_else(|| anchor.and_then(|anchor| locate_anchor(groups, &anchor.position)));
     // A headerless first item has a virtual start before its first original row.
     if backwards
         && anchor_position.is_none()
@@ -323,7 +314,10 @@ fn collect_rows(
     }
 }
 
-fn locate_anchor(groups: &[RowGroup], position: &AnchorPosition) -> Option<(usize, usize)> {
+pub(super) fn locate_anchor(
+    groups: &[RowGroup],
+    position: &AnchorPosition,
+) -> Option<(usize, usize)> {
     match position {
         AnchorPosition::BeforeItem => groups
             .iter()
@@ -349,7 +343,7 @@ fn locate_anchor(groups: &[RowGroup], position: &AnchorPosition) -> Option<(usiz
     }
 }
 
-fn row_position(group: &RowGroup, row: &TextRow) -> AnchorPosition {
+pub(super) fn row_position(group: &RowGroup, row: &TextRow) -> AnchorPosition {
     if group.before_item {
         return AnchorPosition::BeforeItem;
     }
@@ -547,6 +541,7 @@ mod tests {
             &groups,
             &item,
             RowWindow {
+                cached_position: None,
                 anchor: Some(&anchor),
                 backwards: true,
                 limit: 4,
@@ -618,6 +613,7 @@ mod tests {
             &second,
             &item,
             RowWindow {
+                cached_position: None,
                 anchor: None,
                 backwards: true,
                 limit: 2,
@@ -647,6 +643,7 @@ mod tests {
                 &groups,
                 &item,
                 RowWindow {
+                    cached_position: None,
                     anchor: Some(&anchor),
                     backwards: false,
                     limit: 1,

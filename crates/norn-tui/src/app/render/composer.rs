@@ -81,24 +81,51 @@ pub(super) fn paint_chrome(
             value: button.width(),
             source,
         })?;
+    let send_shortcut = state
+        .view_shortcuts
+        .hint(crate::input::view_shortcuts::ViewAction::SendKeyCycle);
     let hints = format!(
-        "{button}  F10 send key  {newline} newline  {}  ^O verbose  ^E thinking  ^T {}",
+        "{button}  {send_shortcut} send key  {newline} newline  {}  ^O verbose  ^E thinking  ^T {}",
         status.key_hints,
         if mode == "steer" { "queue" } else { "steer" }
     );
-    let hints = crate::render::text::truncate_with_ellipsis(&hints, panel.width);
+    let latest = crate::app::view_actions::latest::LABEL;
+    let latest_width =
+        u16::try_from(latest.width()).map_err(|source| TuiError::FrameCoordinate {
+            value: latest.width(),
+            source,
+        })?;
+    let show_latest = (!state.screen.viewport.follows_tail() || state.transcript.latest_pending())
+        && latest_width <= panel.width;
+    let hints_width = if show_latest {
+        panel.width.saturating_sub(latest_width).saturating_sub(1)
+    } else {
+        panel.width
+    };
+    let hints = crate::render::text::truncate_with_ellipsis(&hints, hints_width);
     state.screen.composer_send_key_area = hints.starts_with(button).then_some(Rect {
         column: panel.column,
         row: last_row,
         width: button_width,
         height: 1,
     });
+    if show_latest {
+        let area = Rect {
+            column: panel.column + panel.width - latest_width,
+            row: last_row,
+            width: latest_width,
+            height: 1,
+        };
+        chrome_line(frame, latest, area)?;
+        state.screen.prepared_latest = Some(area);
+    }
     chrome_line(
         frame,
         &hints,
         Rect {
             row: last_row,
             height: 1,
+            width: hints_width,
             ..panel
         },
     )
@@ -106,6 +133,9 @@ pub(super) fn paint_chrome(
 
 fn chrome_line(frame: &mut Frame, line: &str, area: Rect) -> Result<(), TuiError> {
     let line = crate::render::text::truncate_with_ellipsis(line, area.width);
+    if line.is_empty() {
+        return Ok(());
+    }
     let mut text = crate::render::retained_markdown::render_plain(&line)?;
     let displayed = text.styled.text().to_owned();
     let span = crate::render::retained_text::StyleSpan {

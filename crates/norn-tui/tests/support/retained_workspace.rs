@@ -282,6 +282,28 @@ fn serve_control(
         let operation = request.get("operation").and_then(Value::as_str);
         let response = match operation {
             Some("snapshot") => census(store, provider),
+            Some("append_history") => {
+                let content = request
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| io::Error::other("append_history fixture content missing"))?;
+                let event = SessionEvent::AssistantMessage {
+                    base: EventBase::new(None),
+                    response_items: Vec::new(),
+                    content: content.to_owned(),
+                    thinking: String::new(),
+                    reasoning: Vec::new(),
+                    tool_calls: Vec::new(),
+                    usage: EventUsage::default(),
+                    stop_reason: "end_turn".to_owned(),
+                    response_id: None,
+                };
+                let event_id = event.base().id.clone();
+                store.append(event).map_err(|error| {
+                    io::Error::other(format!("append_history fixture: {error}"))
+                })?;
+                json!({"event_id": event_id})
+            }
             Some("release") => {
                 gate.notify_one();
                 json!({"released": true})
@@ -313,6 +335,7 @@ pub struct Workspace {
     final_report: PathBuf,
     send_key: Option<String>,
     recorded_tool: bool,
+    injected_history: Vec<String>,
     finished: bool,
 }
 
@@ -448,6 +471,7 @@ impl Workspace {
             final_report,
             send_key: send_key.map(str::to_owned),
             recorded_tool,
+            injected_history: Vec::new(),
             finished: false,
         };
         app.reader = Some(std::thread::spawn(move || read_output(read, &output)));
@@ -514,12 +538,28 @@ impl Workspace {
         self.control("snapshot")
     }
 
+    /// Append actual accepted store history without a provider call or a fabricated UI row.
+    pub fn append_history(&mut self, content: &str) -> io::Result<Value> {
+        let response =
+            self.control_request(&json!({"operation": "append_history", "content":content}))?;
+        self.injected_history.push(content.to_owned());
+        Ok(response)
+    }
+
     fn control(&mut self, operation: &str) -> io::Result<Value> {
+        self.control_request(&json!({"operation": operation}))
+    }
+
+    fn control_request(&mut self, request: &Value) -> io::Result<Value> {
+        let operation = request
+            .get("operation")
+            .and_then(Value::as_str)
+            .ok_or_else(|| io::Error::other("fixture control operation missing"))?;
         let stream = self
             .control
             .as_mut()
             .ok_or_else(|| io::Error::other("fixture control connection absent"))?;
-        serde_json::to_writer(stream.get_mut(), &json!({"operation": operation}))?;
+        serde_json::to_writer(stream.get_mut(), request)?;
         stream.get_mut().write_all(b"\n")?;
         stream.get_mut().flush()?;
         let mut response = String::new();
@@ -661,6 +701,30 @@ impl Workspace {
         copies(&self.output.bytes()?)
     }
 
+    /// Exercise F4 while its Conversation feedback is hidden by another narrow pane.
+    /// Require one new clipboard payload and a valid current-geometry frame; no repaint is implied.
+    pub fn copy_with_hidden_feedback(&mut self) -> io::Result<Screen> {
+        let previous = self.copy_payloads()?.len();
+        let current = self.screen()?;
+        self.send(b"\x1bOS")?;
+        self.output.wait(
+            "one clipboard payload with retained pane geometry",
+            |bytes| {
+                let count = copies(bytes)?.len();
+                if count > previous + 1 {
+                    return Err(io::Error::other(
+                        "one F4 press emitted multiple clipboard payloads",
+                    ));
+                }
+                if count != previous + 1 {
+                    return Ok(None);
+                }
+                Ok(retained_screen::latest(bytes, &self.geometries)?
+                    .filter(|screen| screen.rows == current.rows && screen.cols == current.cols))
+            },
+        )
+    }
+
     /// Complete the already-running provider and observe its real usage update outside the dragged pane.
     pub fn release_provider(&mut self) -> io::Result<Screen> {
         let after = self.output.bytes()?.len();
@@ -701,6 +765,7 @@ impl Workspace {
         if self.recorded_tool {
             expected_assistant.push(RECORDED_ASSISTANT.to_owned());
         }
+        expected_assistant.extend(self.injected_history.iter().cloned());
         expected_assistant.push(format!("{INITIAL}\n{RELEASED}"));
         if completed["assistant_events"] != json!(expected_assistant) {
             return Err(io::Error::other(format!(

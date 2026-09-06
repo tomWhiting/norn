@@ -9,8 +9,10 @@ use std::num::NonZeroU16;
 
 mod commands;
 mod keys;
+pub(in crate::app) mod latest;
 mod mouse;
 pub(in crate::app) mod reading;
+mod shortcut_commands;
 #[cfg(test)]
 pub(super) use commands::command;
 pub(super) use commands::{command_named, is_frontend_command};
@@ -18,6 +20,7 @@ pub(super) use keys::key;
 pub(super) use mouse::mouse;
 
 fn focus(state: &mut AppState, target: Focus) -> Result<(), TuiError> {
+    super::render::navigation::apply(state)?;
     state
         .screen
         .focus
@@ -30,6 +33,8 @@ fn focus(state: &mut AppState, target: Focus) -> Result<(), TuiError> {
 }
 
 pub(super) fn pin_visible(state: &mut AppState) -> Result<(), TuiError> {
+    super::render::navigation::apply(state)?;
+    state.transcript.cancel_latest();
     if state.screen.viewport.anchor().is_none() {
         if let Some(anchor) = state.screen.visible.first().cloned() {
             state
@@ -61,9 +66,22 @@ fn browse(state: &mut AppState, upwards: bool) -> Result<(), TuiError> {
 
 fn browse_rows(state: &mut AppState, upwards: bool, rows: usize) -> Result<(), TuiError> {
     let available = state.screen.availability();
-    if available.composer
-        && state.screen.focus.visible(available).map_err(interaction)? == Focus::Changes
-    {
+    let target = if available.composer {
+        state.screen.focus.visible(available).map_err(interaction)?
+    } else {
+        Focus::Conversation
+    };
+    browse_target_rows(state, target, upwards, rows)
+}
+
+fn browse_target_rows(
+    state: &mut AppState,
+    target: Focus,
+    upwards: bool,
+    rows: usize,
+) -> Result<(), TuiError> {
+    if target == Focus::Changes {
+        super::render::navigation::apply(state)?;
         state.screen.changes_row = if upwards {
             state.screen.changes_row.saturating_sub(rows)
         } else {
@@ -71,18 +89,7 @@ fn browse_rows(state: &mut AppState, upwards: bool, rows: usize) -> Result<(), T
         };
         return Ok(());
     }
-    if let Some(anchor) = state.screen.visible.first().cloned() {
-        state
-            .screen
-            .viewport
-            .scroll_to(anchor, &state.transcript.projection)
-            .map_err(interaction)?;
-    }
-    state.screen.navigation = Some(super::render::ScrollRequest {
-        backwards: upwards,
-        rows,
-    });
-    Ok(())
+    super::render::navigation::queue(state, upwards, rows)
 }
 
 fn ensure_selected(state: &mut AppState) -> Result<(), TuiError> {

@@ -9,7 +9,7 @@ use crate::app::state::AppState;
 use crate::render::layout::SplitPreference;
 use std::num::{NonZeroU16, NonZeroUsize};
 
-const HELP: &str = "View controls\n/view focus composer|conversation|changes|divider · F6 / Shift+F6 cycles visible regions\n/pane [diff|agents] · F7 toggle pane · F8 Diff · F9 Agents\n/view pane open|close|toggle|diff|agents · F2 switches upper pane\n/view split <conversation-weight> <changes-weight> · arrows resize focused divider\n/view up|down · PgUp/PgDn browse; Up/Down select rows outside composer\n/view expand|collapse|toggle|reset · Enter toggles selected tool\n/view compact|detailed · Ctrl+O toggles global tool detail\n/view follow|pin · return to live tail or keep current position\n/view older · demand one older history page\n/view more · demand next bytes of selected item's bodies\n/view history <events> · /view body <bytes> · positive demand preferences\n/view select <body-index> [<start-byte> <end-byte>] · select a whole loaded original body or explicit grapheme range\n/view selection [clear] · inspect/reset selection; mouse drag selects text\n/view copy · F4 · /view clipboard unspecified|disabled|osc52\n/view search [loaded|selected|older] <literal> · F3 · older requests one page and configured body prefixes; unavailable suffixes stay explicit\n/view next|previous · select a retained search hit; stale/unloaded revisions are refused\n/view export [--replace] <path> · F5 · original selection, create-new by default; spaces belong to the path\n/view status · current model, session, effort, tier, usage and local reading settings\n/view composer send-key enter|shift-enter|alt-enter · F10 cycles send key, independent of steer/queue\n/view preferences status|run|user|local|save · remembered or temporary frontend choices\n/view help · frontend actions never enter steer/queue";
+const HELP: &str = "View controls\n/view focus composer|conversation|changes|divider\n/pane [diff|agents] · toggle or select pane content\n/view pane open|close|toggle|diff|agents\n/view split <conversation-weight> <changes-weight> · arrows resize focused divider\n/view up|down · PgUp/PgDn browse; Up/Down select rows outside composer\n/view expand|collapse|toggle|reset · Enter toggles selected tool\n/view compact|detailed · Ctrl+O toggles global tool detail\n/view follow|pin · return to live tail or keep current position\n/view older · demand one older history page\n/view more · demand next bytes of selected item's bodies\n/view history <events> · /view body <bytes> · positive demand preferences\n/view select <body-index> [<start-byte> <end-byte>] · select a whole loaded original body or explicit grapheme range\n/view selection [clear] · inspect/reset selection; mouse drag selects text\n/view copy · /view clipboard unspecified|disabled|osc52\n/view search [loaded|selected|older] <literal> · older requests one page and configured body prefixes; unavailable suffixes stay explicit\n/view next|previous · select a retained search hit; stale/unloaded revisions are refused\n/view export [--replace] <path> · original selection, create-new by default; spaces belong to the path\n/view status · current model, session, effort, tier, usage and local reading settings\n/view composer send-key enter|shift-enter|alt-enter · physical send key, independent of steer/queue\n/view preferences status|run|user|local|save · remembered or temporary frontend choices\n/view keys · current bindings · set <action> <stroke>... · clear <action>\n/view help · frontend actions never enter steer/queue";
 
 /// Whether this exact input belongs to the shared TUI-only view or pane commands.
 pub(in crate::app) fn is_frontend_command(text: &str) -> bool {
@@ -54,6 +54,9 @@ pub(in crate::app) fn command(
     text: &str,
     state: &mut AppState,
 ) -> Result<LocalCommandOutcome, TuiError> {
+    if text.trim() != "follow" {
+        crate::app::render::navigation::apply(state)?;
+    }
     let mut outcome = if text == "preferences" || text.starts_with("preferences ") {
         crate::app::frontend_preferences::command(
             text.strip_prefix("preferences").unwrap_or(text),
@@ -122,6 +125,7 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
     }
     let words: Vec<_> = text.split_whitespace().collect();
     match words.as_slice() {
+        ["keys", arguments @ ..] => super::shortcut_commands::command(arguments, state),
         ["composer", "send-key", key] => {
             use crate::frontend_preferences::ComposerSendKey;
             state.composer_send_key = match *key {
@@ -197,7 +201,11 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
         }
 
         [] | ["help"] => {
-            let item = crate::app::notices::notice(state, "View", Some(HELP))
+            let help = format!(
+                "{HELP}\n\nCurrent shortcuts\n{}",
+                state.view_shortcuts.summary()
+            );
+            let item = crate::app::notices::notice(state, "View", Some(&help))
                 .map_err(|error| error.to_string())?;
             state
                 .screen
@@ -251,7 +259,7 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
         ["up"] => browse(state, true).map_err(|error| error.to_string()),
         ["down"] => browse(state, false).map_err(|error| error.to_string()),
         ["follow"] => {
-            state.screen.viewport.follow_tail();
+            super::latest::follow_latest(state);
             Ok(())
         }
         ["pin"] => pin_visible(state).map_err(|error| error.to_string()),

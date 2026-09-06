@@ -7,6 +7,7 @@ pub mod composer_transactions;
 pub mod editor;
 pub mod history;
 pub mod keybindings;
+pub(crate) mod view_shortcuts;
 
 pub use autocomplete::{
     Acceptance, AutocompletePopup, AutocompleteTrigger, CandidateRow, FileCandidate,
