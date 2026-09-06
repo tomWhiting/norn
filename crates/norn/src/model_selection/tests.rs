@@ -147,7 +147,7 @@ fn identical_model_ids_resolve_within_fixture_backend() -> Result<(), Box<dyn st
         description: "Fixture policy",
         context_window: 128_000,
         max_context_window: 128_000,
-        default_reasoning_effort: "low",
+        default_reasoning_effort: Some("low"),
         supported_reasoning_efforts: &["low"],
         default_reasoning_summary: "auto",
         supports_reasoning_summaries: false,

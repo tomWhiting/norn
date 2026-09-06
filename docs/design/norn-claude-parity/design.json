@@ -1,0 +1,81 @@
+{
+  "cluster": "norn-claude-parity",
+  "title": "Reconcile preserved Claude SDK parity into current Norn",
+  "status": "Draft development-branch checkpoint only. Local focused tests, strict workspace/all-targets Clippy and fmt passed; merge and release blocked by NSP-LIFECYCLE-1 and NSP-UNDERSCORE-1.",
+  "intention": "Integrate real unmerged Claude SDK work without regressing current Norn model, channel, retained-view or session fixes.",
+  "problem": "Nine parity commits diverge from current Norn; a cleanup merge would conflict with selected-route model validation and later Claude error handling.",
+  "provenance": [
+    "Tom, 6 September 2026 Melbourne: merge outstanding branches and clean worktrees/builds.",
+    "Parent source-owner dispatch, 6 September 2026 Melbourne: isolated integration from d27259cc1c218a44be0ce624d103b04d799dcf21 of codex/claude-sdk-parity 8faa4c36ff35a5e75276479b4463f63c33aa7751.",
+    "docs/design/norn/briefs/N-016.json R1/R2/R4 and original parity handoff",
+    "Read-only reconciliation /private/tmp/nrt-001-proof/claude-sdk-parity-reconciliation-20260906/RECONCILIATION.json SHA256 2d48a3ba348e16298bb756d327b1a26579de56849dc3ece746622a3060238b92",
+    "Parent authorization, 6 September 2026 Melbourne: commit and push a clearly draft development checkpoint preserving main and the original parity branch. This preserves work only; it is not landing approval or a repository-visibility change."
+  ],
+  "constraints": [
+    {
+      "id": "P1",
+      "text": "No source outside row walls; add exact paths before extending scope."
+    },
+    {
+      "id": "P2",
+      "text": "Preserve current NMS/NCS/NRT/NFP semantics; no main merge, release or install from this worktree."
+    },
+    {
+      "id": "P3",
+      "text": "No Cargo until parent releases the build lane. Direct formatting/static checks are allowed."
+    },
+    {
+      "id": "P4",
+      "text": "No arbitrary limits, compatibility shims, bypass attributes, library unwrap/expect/panic or ignored tests."
+    },
+    {
+      "id": "P5",
+      "text": "The persistent Claude SDK wrapper is not proof of a Norn session daemon, live attach/detach or Liminal host integration."
+    },
+    {
+      "id": "P6",
+      "text": "This checkpoint preserves unfinished work on a development branch; it grants no main merge, release, installation, original-branch deletion or visibility-change approval."
+    }
+  ],
+  "decisions": [
+    "Use one isolated integration worktree from the exact pushed integrated base.",
+    "Keep current typed model authority and validated budgets; Claude capability metadata must identify its actual subscription backend.",
+    "An inherited 128-character tool-name cap without protocol authority is removed rather than replaced with an invented value.",
+    "Main Norn driver ownership and Liminal host responsibilities remain explicit; persistent SDK library functionality alone does not assert they are wired.",
+    "Draft development-branch checkpoint only. Local focused tests, strict workspace/all-targets Clippy and fmt passed; merge and release blocked by NSP-LIFECYCLE-1 and NSP-UNDERSCORE-1.",
+    "NSP-LIFECYCLE-1 \u2014 BLOCKED: Runner 3231faadbecd7cddaeb4c9c4e00c206341c73456 Query::wait removes the sole live child controller before a blocking wait. Cancelling the Norn wait can detach that owner and release descriptor admission before actual teardown. The SDK also aborts an unfinished blocking reader without joining it. Fix and deterministically prove child/reader ownership before landing; no safe complete fix through the existing wrapper API was identified.",
+    "NSP-UNDERSCORE-1 \u2014 BLOCKED: ten inherited underscore operations remain in changed source: build.rs:399 and adapter.rs:156,161,164,172,186,196,207,226,334. Seven discard channel-send Results; two adapter bindings retain descriptor permits and one build binding discards an error. Replace silent result handling and resolve the bindings structurally while preserving resource lifetimes. Passing Clippy and no newly introduced AST violation do not close this policy finding.",
+    "Local proof: /private/tmp/norn-claude-parity-integration-proof/INTEGRATION-HANDOFF.json; checked source freeze SHA256 540cc75d5459346d5bc4aa386544c06c95da70418748d14826fd852afec74ba4. Focused tests: 38 Claude, 13 model-selection, 3 catalogue, 187 config, 16 runtime resolution and 15 CLI/child cases. After the sole test-only Clippy repair, strict workspace/all-targets Clippy including compile-only live-smoke, the exact repaired adapter test, and workspace fmt passed. Full workspace runtime tests were deferred to release the shared build lane; no live provider, current Fable acceptance or exact-commit venue receipt."
+  ],
+  "structure": {
+    "Cargo.lock": "NSP-001 R1 exact file wall",
+    "Cargo.toml": "NSP-001 R1 exact file wall",
+    "assets/models.json": "NSP-001 R1 exact file wall",
+    "crates/norn-cli/src/config/model_aliases.rs": "NSP-001 R1 exact file wall",
+    "crates/norn-cli/src/config/provider_selection.rs": "NSP-001 R1 exact file wall",
+    "crates/norn-cli/src/runtime/resolve.rs": "NSP-001 R1 exact file wall",
+    "crates/norn/build.rs": "NSP-001 R1 exact file wall",
+    "crates/norn/src/loop/command_options.rs": "NSP-001 R1 exact file wall",
+    "crates/norn/src/model_catalog.rs": "NSP-001 R1 exact file wall",
+    "crates/norn/src/integration/claude/adapter.rs": "NSP-001 R2 exact file wall",
+    "crates/norn/src/integration/claude/adapter/effort_tests.rs": "NSP-001 R2 exact file wall",
+    "crates/norn/src/integration/claude/adapter/validation.rs": "NSP-001 R2 exact file wall",
+    "crates/norn/src/integration/claude/mod.rs": "NSP-001 R2 exact file wall",
+    "crates/norn/src/integration/claude/wrapped.rs": "NSP-001 R2 exact file wall",
+    "crates/norn/src/integration/claude/wrapped/command_line.rs": "NSP-001 R2 exact file wall",
+    "crates/norn/src/integration/claude/wrapped/config.rs": "NSP-001 R2 exact file wall",
+    "crates/norn/src/integration/claude/wrapped/control.rs": "NSP-001 R2 exact file wall",
+    "crates/norn/src/integration/claude/wrapped/error.rs": "NSP-001 R2 exact file wall",
+    "crates/norn/src/integration/claude/wrapped/events.rs": "NSP-001 R2 exact file wall",
+    "crates/norn/src/integration/claude/wrapped/legacy.rs": "NSP-001 R2 exact file wall",
+    "crates/norn/src/integration/claude/wrapped/session.rs": "NSP-001 R2 exact file wall",
+    "crates/norn/src/integration/claude/wrapped/tests.rs": "NSP-001 R2 exact file wall",
+    "crates/norn/src/integration/mod.rs": "NSP-001 R2 exact file wall",
+    "docs/CLAUDE-SDK-INTEGRATION-IMPACT-2026-07-25.md": "NSP-001 R3 exact file wall",
+    "docs/reviews/2026-07-25-claude-sdk-parity-implementation-handoff.md": "NSP-001 R3 exact file wall",
+    "crates/norn/src/model_selection.rs": "NSP-001 R1 named before-edit integration amendment",
+    "crates/norn/src/model_selection/tests.rs": "NSP-001 R1 named before-edit integration amendment",
+    "crates/norn/tests/codex_catalogue_snapshot.rs": "NSP-001 R1 named before-edit integration amendment",
+    "crates/norn/src/integration/claude/wrapped/execution.rs": "NSP-001 R2 pre-edit execution-mode module rename"
+  }
+}

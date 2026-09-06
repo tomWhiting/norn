@@ -79,7 +79,8 @@ fn assert_snapshot_fields(actual: &ModelEntry, expected: &SnapshotModel) {
         actual.id
     );
     assert_eq!(
-        actual.default_reasoning_effort, expected.default_reasoning_level,
+        actual.default_reasoning_effort,
+        Some(expected.default_reasoning_level.as_str()),
         "{}",
         actual.id
     );

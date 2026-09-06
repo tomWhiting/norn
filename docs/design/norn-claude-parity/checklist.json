@@ -1,0 +1,25 @@
+{
+  "cluster": "norn-claude-parity",
+  "sections": [
+    {
+      "name": "Integration",
+      "items": [
+        {
+          "id": "C1",
+          "text": "Dependency/catalogue/route reconciliation has local checks; final review and venue acceptance pending.",
+          "done": false
+        },
+        {
+          "id": "C2",
+          "text": "Persistent SDK integration is blocked by NSP-LIFECYCLE-1 and NSP-UNDERSCORE-1; close both before landing.",
+          "done": false
+        },
+        {
+          "id": "C3",
+          "text": "Draft checkpoint documents current source and evidence; no merge-ready or release verdict.",
+          "done": false
+        }
+      ]
+    }
+  ]
+}

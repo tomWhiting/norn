@@ -6,6 +6,69 @@
     "model": "gpt-6-astra"
   },
   "providers": {
+    "anthropic": {
+      "display_name": "Anthropic",
+      "backends": {
+        "claude_code_subscription": {
+          "display_name": "Claude Code subscription",
+          "auth": "claude_cli_session",
+          "api_surface": "claude_agent_sdk",
+          "models": {
+            "claude-opus-5": {
+              "display_name": "Claude Opus 5",
+              "alias": "claude-opus-5",
+              "description": "Claude Opus 5 through a Claude Code subscription.",
+              "context_window": 1000000,
+              "max_context_window": 1000000,
+              "supported_reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+              "default_reasoning_summary": "none",
+              "supports_reasoning_summaries": false,
+              "service_tiers": [],
+              "web_search_tool_type": "text",
+              "input_modalities": ["text", "image"],
+              "supports_image_detail_original": false,
+              "supports_search_tool": true,
+              "supports_parallel_tool_calls": true,
+              "apply_patch_tool_type": "none"
+            },
+            "claude-opus-5[1m]": {
+              "display_name": "Claude Opus 5 (1M context)",
+              "alias": "claude-opus-5[1m]",
+              "description": "Claude Opus 5 with the explicit 1M Claude Code selector.",
+              "context_window": 1000000,
+              "max_context_window": 1000000,
+              "supported_reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+              "default_reasoning_summary": "none",
+              "supports_reasoning_summaries": false,
+              "service_tiers": [],
+              "web_search_tool_type": "text",
+              "input_modalities": ["text", "image"],
+              "supports_image_detail_original": false,
+              "supports_search_tool": true,
+              "supports_parallel_tool_calls": true,
+              "apply_patch_tool_type": "none"
+            },
+            "claude-sonnet-5": {
+              "display_name": "Claude Sonnet 5",
+              "alias": "claude-sonnet-5",
+              "description": "Claude Sonnet 5 through a Claude Code subscription.",
+              "context_window": 1000000,
+              "max_context_window": 1000000,
+              "supported_reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+              "default_reasoning_summary": "none",
+              "supports_reasoning_summaries": false,
+              "service_tiers": [],
+              "web_search_tool_type": "text",
+              "input_modalities": ["text", "image"],
+              "supports_image_detail_original": false,
+              "supports_search_tool": true,
+              "supports_parallel_tool_calls": true,
+              "apply_patch_tool_type": "none"
+            }
+          }
+        }
+      }
+    },
     "openai": {
       "display_name": "OpenAI",
       "backends": {

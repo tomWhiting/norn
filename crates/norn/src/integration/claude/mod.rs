@@ -9,13 +9,22 @@
 //!   with [`StepOutcome`], the structured return value produced by a single
 //!   step.
 //!
-//! - [`NornWrappedClaudeCode`] — launches Claude Code stripped to bare metal
-//!   (no native tools, replaced system prompt), exposes Norn's tools via an
-//!   MCP config, and captures every stream-json event back into Norn's
-//!   session-event format.
+//! - [`NornWrappedClaudeCode`] and [`NornWrappedClaudeSession`] — launch
+//!   Claude Code with its nonessential subsystems and native tools disabled,
+//!   expose Norn's tools through strict MCP configuration, and provide a
+//!   persistent bidirectional Agent SDK session.
 
 mod adapter;
 mod wrapped;
 
 pub use adapter::{ClaudeRunnerAdapter, ClaudeRunnerConfig, StepOutcome};
-pub use wrapped::{NornWrappedClaudeCode, NornWrappedClaudeConfig};
+/// Exact Claude Runner SDK dependency used by this Norn build.
+///
+/// Downstream users of the wrapper can name its event, control, and query
+/// types through this re-export without adding a second potentially
+/// incompatible `claude_runner` revision.
+pub use claude_runner as sdk;
+pub use wrapped::{
+    NornWrappedClaudeCode, NornWrappedClaudeConfig, NornWrappedClaudeControl,
+    NornWrappedClaudeError, NornWrappedClaudeSession,
+};

@@ -24,6 +24,11 @@ pub struct CatalogBackend {
 }
 
 impl CatalogBackend {
+    /// Claude Code subscription route implemented by the Claude Runner adapter.
+    pub const CLAUDE: Self = Self {
+        provider: "anthropic",
+        backend: "claude_code_subscription",
+    };
     /// Codex subscription route; also explicitly selected by Codex test fixtures.
     pub const CODEX: Self = Self {
         provider: "openai",

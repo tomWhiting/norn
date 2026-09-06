@@ -1,0 +1,23 @@
+{
+  "cluster": "norn-claude-parity",
+  "personas": [
+    {
+      "name": "Norn operator",
+      "role": "operator",
+      "stories": [
+        {
+          "id": "S1",
+          "text": "I can select a Claude subscription model without changing authority on other provider routes."
+        },
+        {
+          "id": "S2",
+          "text": "I can use a persistent Claude SDK session with truthful control and lifecycle semantics."
+        },
+        {
+          "id": "S3",
+          "text": "I can tell which integration evidence is current before landing."
+        }
+      ]
+    }
+  ]
+}

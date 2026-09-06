@@ -206,7 +206,7 @@ fn generate_catalog(root: &Value) -> Result<String, String> {
                     &mut out,
                     format_args!(
                         "                            default_reasoning_effort: {},\n",
-                        rust_str(required_str(model_obj, "default_reasoning_effort")?)
+                        rust_option_str(optional_str(model_obj, "default_reasoning_effort")?)
                     ),
                 )?;
                 out.push_str("                            supported_reasoning_efforts: ");
@@ -433,6 +433,19 @@ fn required_str<'a>(
         .ok_or_else(|| format!("{field} must be a string"))
 }
 
+fn optional_str<'a>(
+    value: &'a serde_json::Map<String, Value>,
+    field: &str,
+) -> Result<Option<&'a str>, String> {
+    value
+        .get(field)
+        .map(|item| {
+            item.as_str()
+                .ok_or_else(|| format!("{field} must be a string when present"))
+        })
+        .transpose()
+}
+
 fn required_array<'a>(
     value: &'a serde_json::Map<String, Value>,
     field: &str,
@@ -459,6 +472,10 @@ fn required_str_array<'a>(
 
 fn rust_str(value: &str) -> String {
     format!("{value:?}")
+}
+
+fn rust_option_str(value: Option<&str>) -> String {
+    value.map_or_else(|| "None".to_string(), |value| format!("Some({value:?})"))
 }
 
 fn rust_u64(value: u64) -> String {
@@ -494,36 +511,33 @@ fn rust_str_slice(values: Vec<&str>) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use serde_json::json;
 
     use super::*;
 
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
     fn providers(backends: &Value) -> serde_json::Map<String, Value> {
-        json!({
-            "provider": {
-                "backends": backends,
-            }
-        })
-        .as_object()
-        .unwrap()
-        .clone()
+        serde_json::Map::from_iter([("provider".to_owned(), json!({"backends": backends}))])
     }
 
     #[test]
-    fn aliases_are_required() {
+    fn aliases_are_required() -> TestResult {
         let providers = providers(&json!({
             "backend": {"models": {"model-a": {}}},
         }));
 
-        let error = validate_model_aliases(&providers).unwrap_err();
+        let error = validate_model_aliases(&providers)
+            .err()
+            .ok_or("invalid alias metadata unexpectedly passed")?;
         assert!(error.contains("model-a"));
         assert!(error.contains("alias must be a string"));
+        Ok(())
     }
 
     #[test]
-    fn invalid_alias_characters_are_rejected() {
+    fn invalid_alias_characters_are_rejected() -> TestResult {
         for (alias, expected) in [
             ("", "must not be empty"),
             ("two words", "must not contain whitespace"),
@@ -535,16 +549,19 @@ mod tests {
                 "backend": {"models": {"model-a": {"alias": alias}}},
             }));
 
-            let error = validate_model_aliases(&providers).unwrap_err();
+            let error = validate_model_aliases(&providers)
+                .err()
+                .ok_or("invalid alias metadata unexpectedly passed")?;
             assert!(
                 error.contains(expected),
                 "alias {alias:?}: expected {expected:?}, got {error:?}",
             );
         }
+        Ok(())
     }
 
     #[test]
-    fn duplicate_aliases_for_different_models_are_rejected() {
+    fn duplicate_aliases_for_different_models_are_rejected() -> TestResult {
         let providers = providers(&json!({
             "backend": {
                 "models": {
@@ -554,14 +571,17 @@ mod tests {
             },
         }));
 
-        let error = validate_model_aliases(&providers).unwrap_err();
+        let error = validate_model_aliases(&providers)
+            .err()
+            .ok_or("invalid alias metadata unexpectedly passed")?;
         assert!(error.contains("maps to both canonical model IDs"));
         assert!(error.contains("model-a"));
         assert!(error.contains("model-b"));
+        Ok(())
     }
 
     #[test]
-    fn alias_colliding_with_another_canonical_id_is_rejected() {
+    fn alias_colliding_with_another_canonical_id_is_rejected() -> TestResult {
         let providers = providers(&json!({
             "backend": {
                 "models": {
@@ -571,10 +591,13 @@ mod tests {
             },
         }));
 
-        let error = validate_model_aliases(&providers).unwrap_err();
+        let error = validate_model_aliases(&providers)
+            .err()
+            .ok_or("invalid alias metadata unexpectedly passed")?;
         assert!(error.contains("collides with another canonical model ID"));
         assert!(error.contains("model-a"));
         assert!(error.contains("model-b"));
+        Ok(())
     }
 
     #[test]
@@ -594,5 +617,39 @@ mod tests {
         }));
 
         assert!(validate_model_aliases(&providers).is_ok());
+    }
+
+    #[test]
+    fn optional_strings_distinguish_absence_from_invalid_values() -> TestResult {
+        let absent = json!({})
+            .as_object()
+            .ok_or("object fixture was not a JSON object")?
+            .clone();
+        assert_eq!(optional_str(&absent, "default_reasoning_effort"), Ok(None));
+
+        let present = json!({"default_reasoning_effort": "medium"})
+            .as_object()
+            .ok_or("object fixture was not a JSON object")?
+            .clone();
+        assert_eq!(
+            optional_str(&present, "default_reasoning_effort"),
+            Ok(Some("medium")),
+        );
+
+        let invalid = json!({"default_reasoning_effort": null})
+            .as_object()
+            .ok_or("object fixture was not a JSON object")?
+            .clone();
+        assert_eq!(
+            optional_str(&invalid, "default_reasoning_effort"),
+            Err("default_reasoning_effort must be a string when present".to_string()),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rust_optional_strings_render_explicitly() {
+        assert_eq!(rust_option_str(None), "None");
+        assert_eq!(rust_option_str(Some("high")), "Some(\"high\")");
     }
 }

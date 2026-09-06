@@ -11,7 +11,7 @@ use std::pin::Pin;
 use claude_runner::events::{
     ClaudeMessage, ContentItem, StreamEvent, ToolData, Usage as ClaudeUsage,
 };
-use claude_runner::types::{Model, OutputFormat};
+use claude_runner::types::{InputFormat, Model, OutputFormat};
 use claude_runner::{ClaudeCommand, ClaudeEvent, ClaudeProcess};
 use futures_util::Stream;
 use serde_json::Value;
@@ -56,12 +56,16 @@ pub struct StepOutcome {
     pub stop_reason: StopReason,
 }
 
-/// Provider implementation that routes requests through the Claude CLI.
+/// Provider implementation that routes model-only requests through the Claude CLI.
 ///
 /// `ClaudeRunnerAdapter::stream` builds a [`ClaudeCommand`] with
 /// `--output-format stream-json --include-partial-messages`, spawns a
 /// [`ClaudeProcess`], and forwards each line-delimited [`ClaudeEvent`] as a
-/// [`ProviderEvent`].
+/// [`ProviderEvent`]. Native Claude tools and ambient settings are disabled.
+/// Requests containing Norn tool schemas are rejected because the provider
+/// adapter cannot safely bind those schemas to Norn's governed tool runtime;
+/// use [`NornWrappedClaudeSession`](super::NornWrappedClaudeSession) with its
+/// strict MCP bridge for agentic execution.
 pub struct ClaudeRunnerAdapter {
     config: ClaudeRunnerConfig,
 }
@@ -87,16 +91,16 @@ impl ClaudeRunnerAdapter {
         request: &ProviderRequest,
     ) -> Result<ClaudeCommand, ProviderError> {
         validation::reject_canonical_response_items(request)?;
+        validation::reject_unbound_tools(request)?;
         let prompt = render_prompt(&request.messages);
         let system = render_system_prompt(&request.messages);
 
-        let mut cmd = ClaudeCommand::new()
+        let mut cmd = ClaudeCommand::minimal_subscription()
             .binary(self.config.runner_path.to_string_lossy().into_owned())
             .prompt(prompt)
-            .print_mode()
+            .input_format(InputFormat::Text)
             .output_format(OutputFormat::StreamJson)
-            .include_partial_messages()
-            .dangerously_skip_permissions();
+            .include_partial_messages();
         if !system.is_empty() {
             cmd = cmd.system_prompt(system);
         }
@@ -106,6 +110,9 @@ impl ClaudeRunnerAdapter {
             request.model.clone()
         };
         cmd = cmd.model(Model::full(model_name));
+        if let Some(effort) = validation::claude_effort(request)? {
+            cmd = cmd.effort(effort);
+        }
         Ok(cmd)
     }
 
@@ -134,6 +141,10 @@ impl ClaudeRunnerAdapter {
 }
 
 impl Provider for ClaudeRunnerAdapter {
+    fn model_catalog_backend(&self) -> Option<crate::model_selection::CatalogBackend> {
+        Some(crate::model_selection::CatalogBackend::CLAUDE)
+    }
+
     fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         let cmd = self.build_command(&request)?;
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<ProviderEvent, ProviderError>>(64);
@@ -615,28 +626,12 @@ pub(super) fn tool_data_pair(data: &ToolData) -> Result<(String, Value), Provide
 }
 
 #[cfg(test)]
+mod effort_tests;
+
+#[cfg(test)]
 mod role_authority_tests;
 
 #[cfg(test)]
-#[allow(
-    clippy::clone_on_ref_ptr,
-    clippy::no_effect_underscore_binding,
-    clippy::useless_vec,
-    clippy::missing_const_for_fn,
-    clippy::needless_pass_by_value,
-    clippy::similar_names,
-    clippy::redundant_closure_for_method_calls,
-    clippy::used_underscore_items,
-    clippy::unnecessary_literal_bound,
-    clippy::items_after_statements,
-    clippy::err_expect,
-    clippy::get_unwrap,
-    clippy::doc_markdown,
-    clippy::uninlined_format_args,
-    clippy::wildcard_enum_match_arm,
-    clippy::collapsible_if,
-    clippy::match_wildcard_for_single_variants
-)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
@@ -715,7 +710,11 @@ mod tests {
     #[test]
     fn adapter_implements_provider() {
         let adapter = ClaudeRunnerAdapter::new(config());
-        let _provider: &dyn Provider = &adapter;
+        let provider: &dyn Provider = &adapter;
+        assert_eq!(
+            provider.model_catalog_backend(),
+            Some(crate::model_selection::CatalogBackend::CLAUDE),
+        );
     }
 
     // R1 acceptance: built command carries prompt, stream-json format, model.
@@ -1258,6 +1257,7 @@ mod tests {
                     output_tokens: Some(7),
                     ..Default::default()
                 }),
+                sdk_metadata: Box::default(),
             },
         ];
         let outcome = consolidate_outcome(&events)?;
@@ -1284,6 +1284,7 @@ mod tests {
             stop_reason: None,
             total_cost_usd: None,
             usage: None,
+            sdk_metadata: Box::default(),
         }];
         let Err(err) = consolidate_outcome(&events) else {
             return Err("an error result event must fail outcome consolidation".into());

@@ -45,13 +45,33 @@ pub fn resolve_provider_selection(
         });
     }
 
+    if let Some(catalog) = model_selection.catalog
+        && cli.provider_profile.is_none()
+        && cli.api_shape.is_none()
+    {
+        return Ok(ProviderSelection {
+            kind: provider_kind_for_catalog(catalog)?,
+            profile_name: None,
+        });
+    }
+
     let profile_name = selected_provider_profile_name(cli, model_selection)?;
     let profile = selected_provider_profile(profile_name.as_deref(), settings)?;
     let shape = resolve_api_shape(cli, model_selection, profile)?;
-    Ok(ProviderSelection {
-        kind: provider_kind_for_shape(shape)?,
-        profile_name,
-    })
+    let kind = provider_kind_for_shape(shape)?;
+    Ok(ProviderSelection { kind, profile_name })
+}
+
+fn provider_kind_for_catalog(
+    selection: norn::model_catalog::CatalogModelSelection,
+) -> Result<ProviderKind, BuildError> {
+    match (selection.provider, selection.backend) {
+        ("anthropic", "claude_code_subscription") => Ok(ProviderKind::ClaudeRunner),
+        ("openai", "codex_subscription") => Ok(ProviderKind::Openai),
+        (provider, backend) => Err(BuildError::Argument(format!(
+            "catalog provider/backend '{provider}/{backend}' has no runtime provider mapping",
+        ))),
+    }
 }
 
 fn selected_provider_profile_name(
@@ -167,7 +187,6 @@ fn unimplemented_shape(shape: &str) -> BuildError {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use std::collections::BTreeMap;
 
@@ -175,41 +194,46 @@ mod tests {
 
     use super::*;
 
-    fn cli(args: &[&str]) -> Cli {
-        <Cli as clap::Parser>::try_parse_from(args).unwrap()
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn cli(args: &[&str]) -> Result<Cli, clap::Error> {
+        <Cli as clap::Parser>::try_parse_from(args)
     }
 
     #[test]
-    fn default_selection_is_openai_responses() {
+    fn default_selection_is_openai_responses() -> TestResult {
         let model = ResolvedModelSelection {
             model: "gpt-5.5".to_owned(),
             provider_profile: None,
             api_shape: None,
+            catalog: None,
         };
         let selection =
-            resolve_provider_selection(&cli(&["norn"]), &NornSettings::default(), &model).unwrap();
+            resolve_provider_selection(&cli(&["norn"])?, &NornSettings::default(), &model)?;
         assert_eq!(selection.kind, ProviderKind::Openai);
         assert!(selection.profile_name.is_none());
+        Ok(())
     }
 
     #[test]
-    fn api_shape_selects_chat_completions_provider() {
+    fn api_shape_selects_chat_completions_provider() -> TestResult {
         let model = ResolvedModelSelection {
             model: "local".to_owned(),
             provider_profile: None,
             api_shape: None,
+            catalog: None,
         };
         let selection = resolve_provider_selection(
-            &cli(&["norn", "--api-shape", "openai-chat-completions"]),
+            &cli(&["norn", "--api-shape", "openai-chat-completions"])?,
             &NornSettings::default(),
             &model,
-        )
-        .unwrap();
+        )?;
         assert_eq!(selection.kind, ProviderKind::OpenaiCompatible);
+        Ok(())
     }
 
     #[test]
-    fn provider_profile_uses_profile_api_shape() {
+    fn provider_profile_uses_profile_api_shape() -> TestResult {
         let mut profiles = BTreeMap::new();
         profiles.insert(
             "lmstudio".to_owned(),
@@ -226,19 +250,20 @@ mod tests {
             model: "google/gemma-4-e4b".to_owned(),
             provider_profile: None,
             api_shape: None,
+            catalog: None,
         };
         let selection = resolve_provider_selection(
-            &cli(&["norn", "--provider-profile", "lmstudio"]),
+            &cli(&["norn", "--provider-profile", "lmstudio"])?,
             &settings,
             &model,
-        )
-        .unwrap();
+        )?;
         assert_eq!(selection.kind, ProviderKind::OpenaiCompatible);
         assert_eq!(selection.profile_name.as_deref(), Some("lmstudio"));
+        Ok(())
     }
 
     #[test]
-    fn model_alias_backend_selection_is_used() {
+    fn model_alias_backend_selection_is_used() -> TestResult {
         let mut profiles = BTreeMap::new();
         profiles.insert(
             "lmstudio".to_owned(),
@@ -255,25 +280,106 @@ mod tests {
             model: "google/gemma-4-e4b".to_owned(),
             provider_profile: Some("lmstudio".to_owned()),
             api_shape: None,
+            catalog: None,
         };
-        let selection = resolve_provider_selection(&cli(&["norn"]), &settings, &model).unwrap();
+        let selection = resolve_provider_selection(&cli(&["norn"])?, &settings, &model)?;
         assert_eq!(selection.kind, ProviderKind::OpenaiCompatible);
         assert_eq!(selection.profile_name.as_deref(), Some("lmstudio"));
+        Ok(())
     }
 
     #[test]
-    fn reserved_api_shape_errors_loudly() {
+    fn reserved_api_shape_errors_loudly() -> TestResult {
         let model = ResolvedModelSelection {
             model: "gpt-5.5".to_owned(),
             provider_profile: None,
             api_shape: None,
+            catalog: None,
         };
         let err = resolve_provider_selection(
-            &cli(&["norn", "--api-shape", "anthropic-messages"]),
+            &cli(&["norn", "--api-shape", "anthropic-messages"])?,
             &NornSettings::default(),
             &model,
         )
-        .unwrap_err();
+        .err()
+        .ok_or("reserved API shape unexpectedly resolved")?;
         assert!(matches!(err, BuildError::Argument(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn claude_catalog_model_selects_claude_runner() -> TestResult {
+        let model =
+            crate::config::resolve_model_selection("claude-opus-5", &NornSettings::default())?;
+        let selection =
+            resolve_provider_selection(&cli(&["norn"])?, &NornSettings::default(), &model)?;
+        assert_eq!(selection.kind, ProviderKind::ClaudeRunner);
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_provider_keeps_authority_over_catalog_hint() -> TestResult {
+        for name in ["claude-sonnet-5", "gpt-6-astra"] {
+            let model = crate::config::resolve_model_selection(name, &NornSettings::default())?;
+            let selection = resolve_provider_selection(
+                &cli(&["norn", "--provider", "openai-compatible"])?,
+                &NornSettings::default(),
+                &model,
+            )?;
+            assert_eq!(selection.kind, ProviderKind::OpenaiCompatible, "{name}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_api_shape_keeps_authority_over_catalog_hint() -> TestResult {
+        for name in ["claude-sonnet-5", "gpt-6-astra"] {
+            let model = crate::config::resolve_model_selection(name, &NornSettings::default())?;
+            let selection = resolve_provider_selection(
+                &cli(&["norn", "--api-shape", "openai-chat-completions"])?,
+                &NornSettings::default(),
+                &model,
+            )?;
+            assert_eq!(selection.kind, ProviderKind::OpenaiCompatible, "{name}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_provider_profile_keeps_authority_over_catalog_hint() -> TestResult {
+        let mut profiles = BTreeMap::new();
+        profiles.insert(
+            "openai".to_owned(),
+            ProviderProfileSettings {
+                api_shape: Some("openai_responses".to_owned()),
+                provider: ProviderSettings::default(),
+            },
+        );
+        let settings = NornSettings {
+            provider_profiles: Some(profiles),
+            ..NornSettings::default()
+        };
+        let model = crate::config::resolve_model_selection("claude-sonnet-5", &settings)?;
+        let selection = resolve_provider_selection(
+            &cli(&["norn", "--provider-profile", "openai"])?,
+            &settings,
+            &model,
+        )?;
+        assert_eq!(selection.kind, ProviderKind::Openai);
+        assert_eq!(selection.profile_name.as_deref(), Some("openai"));
+        Ok(())
+    }
+
+    #[test]
+    fn consistent_explicit_api_shape_is_allowed_for_catalog_model() -> TestResult {
+        let model =
+            crate::config::resolve_model_selection("gpt-5.6-sol", &NornSettings::default())?;
+        let selection = resolve_provider_selection(
+            &cli(&["norn", "--api-shape", "openai-responses"])?,
+            &NornSettings::default(),
+            &model,
+        )?;
+        assert_eq!(selection.kind, ProviderKind::Openai);
+        Ok(())
     }
 }

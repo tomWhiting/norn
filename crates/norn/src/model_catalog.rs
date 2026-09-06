@@ -29,6 +29,17 @@ pub struct ModelSelection {
     pub model: &'static str,
 }
 
+/// Catalog provenance for a resolved model identifier or alias.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CatalogModelSelection {
+    /// Provider containing the selected model.
+    pub provider: &'static str,
+    /// Backend containing the selected model.
+    pub backend: &'static str,
+    /// Canonical model identifier.
+    pub model: &'static str,
+}
+
 /// Provider entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProviderEntry {
@@ -70,8 +81,11 @@ pub struct ModelEntry {
     pub context_window: u64,
     /// Maximum context window available through this backend.
     pub max_context_window: u64,
-    /// Default reasoning effort.
-    pub default_reasoning_effort: &'static str,
+    /// Provider-defined default reasoning effort, when one is documented.
+    ///
+    /// `None` means the backend owns the default. Omit an inferred override;
+    /// an operator may still choose an explicitly supported effort.
+    pub default_reasoning_effort: Option<&'static str>,
     /// Supported reasoning effort identifiers.
     pub supported_reasoning_efforts: &'static [&'static str],
     /// Default reasoning summary mode.
@@ -146,6 +160,45 @@ pub fn find_model(provider: &str, backend: &str, model: &str) -> Option<&'static
         .find(|entry| entry.id == model)
 }
 
+/// Resolve a canonical model identifier or alias within one backend.
+#[must_use]
+pub fn resolve_model_alias_at(provider: &str, backend: &str, model: &str) -> Option<&'static str> {
+    let models = find_backend(provider, backend)?.models;
+    models
+        .iter()
+        .find(|entry| entry.id == model)
+        .or_else(|| models.iter().find(|entry| entry.alias == model))
+        .map(|entry| entry.id)
+}
+
+/// Resolve a canonical model identifier or alias with its catalog provenance.
+///
+/// Canonical identifiers take precedence over aliases. Alias uniqueness is
+/// enforced by the catalog generator, while the returned provider/backend
+/// keeps callers from silently validating or dispatching through the default
+/// `OpenAI` backend when a model belongs to another provider.
+#[must_use]
+pub fn resolve_catalog_model(model: &str) -> Option<CatalogModelSelection> {
+    let models = || {
+        catalog().providers.iter().flat_map(|provider| {
+            provider.backends.iter().flat_map(move |backend| {
+                backend
+                    .models
+                    .iter()
+                    .map(move |entry| (provider.id, backend.id, entry))
+            })
+        })
+    };
+    models()
+        .find(|(_, _, entry)| entry.id == model)
+        .or_else(|| models().find(|(_, _, entry)| entry.alias == model))
+        .map(|(provider, backend, entry)| CatalogModelSelection {
+            provider,
+            backend,
+            model: entry.id,
+        })
+}
+
 /// Resolve a canonical model identifier or catalog alias.
 ///
 /// Canonical identifiers take precedence and resolve to themselves. Alias
@@ -154,18 +207,7 @@ pub fn find_model(provider: &str, backend: &str, model: &str) -> Option<&'static
 /// model is available through multiple backends.
 #[must_use]
 pub fn resolve_model_alias(model: &str) -> Option<&'static str> {
-    let models = || {
-        catalog()
-            .providers
-            .iter()
-            .flat_map(|provider| provider.backends)
-            .flat_map(|backend| backend.models)
-    };
-
-    models()
-        .find(|entry| entry.id == model)
-        .or_else(|| models().find(|entry| entry.alias == model))
-        .map(|entry| entry.id)
+    resolve_catalog_model(model).map(|selection| selection.model)
 }
 
 /// Find a service tier supported by the selected backend/model pair.
@@ -225,7 +267,11 @@ mod tests {
                 assert_eq!(resolve_model_alias(entry.alias), Some(model), "{model}");
                 assert_eq!(entry.context_window, 272_000, "{model}");
                 assert_eq!(entry.max_context_window, 872_000, "{model}");
-                assert_eq!(entry.default_reasoning_effort, default_effort, "{model}");
+                assert_eq!(
+                    entry.default_reasoning_effort,
+                    Some(default_effort),
+                    "{model}"
+                );
                 assert!(
                     entry.supported_reasoning_efforts.contains(&"max"),
                     "{model}"
@@ -255,6 +301,58 @@ mod tests {
             assert_eq!(resolve_model_alias(canonical_id), Some(canonical_id));
         }
         assert_eq!(resolve_model_alias("not-in-catalog"), None);
+    }
+
+    #[test]
+    fn catalog_resolution_preserves_provider_and_backend() {
+        assert_eq!(
+            resolve_catalog_model("claude-opus-5"),
+            Some(CatalogModelSelection {
+                provider: "anthropic",
+                backend: "claude_code_subscription",
+                model: "claude-opus-5",
+            }),
+        );
+        assert_eq!(
+            resolve_catalog_model("sol"),
+            Some(CatalogModelSelection {
+                provider: "openai",
+                backend: "codex_subscription",
+                model: "gpt-5.6-sol",
+            }),
+        );
+        assert_eq!(
+            resolve_model_alias_at("anthropic", "claude_code_subscription", "claude-sonnet-5",),
+            Some("claude-sonnet-5"),
+        );
+        assert_eq!(
+            resolve_model_alias_at("openai", "codex_subscription", "claude-sonnet-5"),
+            None,
+        );
+    }
+
+    #[test]
+    fn claude_five_models_have_subscription_catalog_metadata() {
+        let efforts = &["low", "medium", "high", "xhigh", "max"];
+        for model in ["claude-opus-5", "claude-opus-5[1m]", "claude-sonnet-5"] {
+            let entry = find_model("anthropic", "claude_code_subscription", model);
+            assert!(
+                entry.is_some(),
+                "{model} must be in the Claude Code catalog"
+            );
+            if let Some(entry) = entry {
+                assert_eq!(entry.alias, model, "{model}");
+                assert_eq!(resolve_model_alias(entry.alias), Some(model), "{model}");
+                assert_eq!(entry.context_window, 1_000_000, "{model}");
+                assert_eq!(entry.max_context_window, 1_000_000, "{model}");
+                assert_eq!(entry.supported_reasoning_efforts, efforts, "{model}");
+                assert!(
+                    !entry.supported_reasoning_efforts.contains(&"none"),
+                    "{model} must not expose an unsupported none effort",
+                );
+                assert_eq!(entry.default_reasoning_effort, None, "{model}");
+            }
+        }
     }
 
     #[test]

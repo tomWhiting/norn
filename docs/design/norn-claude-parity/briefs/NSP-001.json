@@ -1,0 +1,184 @@
+{
+  "id": "NSP-001",
+  "cluster": "norn-claude-parity",
+  "title": "Reconcile preserved Claude SDK parity into current Norn",
+  "depends_on": [],
+  "blocked_by": [
+    "NSP-LIFECYCLE-1",
+    "NSP-UNDERSCORE-1"
+  ],
+  "checklist": [
+    "C1",
+    "C2",
+    "C3"
+  ],
+  "stories": [
+    "S1",
+    "S2",
+    "S3"
+  ],
+  "purpose": "Integrate real unmerged Claude SDK work without regressing current Norn model, channel, retained-view or session fixes. Draft development-branch checkpoint only. Local focused tests, strict workspace/all-targets Clippy and fmt passed; merge and release blocked by NSP-LIFECYCLE-1 and NSP-UNDERSCORE-1.",
+  "task": "Preserve the reconciled nine-commit SDK integration as a clearly draft checkpoint on codex/norn-claude-parity-integrated. Document the two unresolved blockers and actual local evidence. Do not merge main, release, install, remove the original parity branch, or represent the checkpoint as accepted.",
+  "provenance": [
+    "Tom, 6 September 2026 Melbourne: merge outstanding branches and clean worktrees/builds.",
+    "Parent source-owner dispatch, 6 September 2026 Melbourne: isolated integration from d27259cc1c218a44be0ce624d103b04d799dcf21 of codex/claude-sdk-parity 8faa4c36ff35a5e75276479b4463f63c33aa7751.",
+    "docs/design/norn/briefs/N-016.json R1/R2/R4 and original parity handoff",
+    "Read-only reconciliation /private/tmp/nrt-001-proof/claude-sdk-parity-reconciliation-20260906/RECONCILIATION.json SHA256 2d48a3ba348e16298bb756d327b1a26579de56849dc3ece746622a3060238b92",
+    "Parent authorization, 6 September 2026 Melbourne: commit and push a clearly draft development checkpoint preserving main and the original parity branch. This preserves work only; it is not landing approval or a repository-visibility change."
+  ],
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Dependency, catalogue and route resolution",
+      "spec": "WHEN the preserved Claude parity candidate is integrated onto d27259cc1c218a44be0ce624d103b04d799dcf21, THE SYSTEM SHALL reconcile its provider capabilities without changing established model authority.",
+      "files": {
+        "modify": [
+          "Cargo.lock",
+          "Cargo.toml",
+          "assets/models.json",
+          "crates/norn-cli/src/config/model_aliases.rs",
+          "crates/norn-cli/src/config/provider_selection.rs",
+          "crates/norn-cli/src/runtime/resolve.rs",
+          "crates/norn/build.rs",
+          "crates/norn/src/loop/command_options.rs",
+          "crates/norn/src/model_catalog.rs",
+          "crates/norn/src/model_selection.rs",
+          "crates/norn/src/model_selection/tests.rs",
+          "crates/norn/tests/codex_catalogue_snapshot.rs"
+        ],
+        "create": []
+      },
+      "acceptance": [
+        "Preserve every existing OpenAI/Codex catalogue fact, Astra owner defaults, route-specific validation, explicit alias authority, live model identity and child context provenance.",
+        "Integrate Claude subscription catalogue routing only on its actual declared backend. Explicit provider/profile/API selections retain authority and truthful conflicts.",
+        "Do not restore removed cross-backend capability helpers. Reconcile through CatalogBackend and actual provider identity; reject unsupported Ultra exhaustively."
+      ],
+      "acceptance_greps": [
+        "rg -n \"Claude|claude\" Cargo.lock Cargo.toml"
+      ],
+      "checklist": [
+        "C1"
+      ],
+      "stories": [
+        "S1"
+      ]
+    },
+    {
+      "id": "R2",
+      "title": "Claude one-shot and persistent SDK integration",
+      "spec": "WHEN the preserved Claude parity candidate is integrated onto d27259cc1c218a44be0ce624d103b04d799dcf21, THE SYSTEM SHALL retain current correctness fixes while adding the explicitly described SDK behavior.",
+      "files": {
+        "modify": [
+          "crates/norn/src/integration/claude/adapter.rs",
+          "crates/norn/src/integration/claude/adapter/validation.rs",
+          "crates/norn/src/integration/claude/mod.rs",
+          "crates/norn/src/integration/claude/wrapped.rs",
+          "crates/norn/src/integration/mod.rs"
+        ],
+        "create": [
+          "crates/norn/src/integration/claude/adapter/effort_tests.rs",
+          "crates/norn/src/integration/claude/wrapped/command_line.rs",
+          "crates/norn/src/integration/claude/wrapped/config.rs",
+          "crates/norn/src/integration/claude/wrapped/control.rs",
+          "crates/norn/src/integration/claude/wrapped/error.rs",
+          "crates/norn/src/integration/claude/wrapped/events.rs",
+          "crates/norn/src/integration/claude/wrapped/legacy.rs",
+          "crates/norn/src/integration/claude/wrapped/session.rs",
+          "crates/norn/src/integration/claude/wrapped/tests.rs",
+          "crates/norn/src/integration/claude/wrapped/execution.rs"
+        ],
+        "delete": [
+          "crates/norn/src/integration/claude/wrapped/legacy.rs"
+        ]
+      },
+      "acceptance": [
+        "Preserve current deterministic spawn-failure classification, terminal result requirements and typed malformed-payload handling.",
+        "Add the persistent single-process SDK session and control handle, exact correlated protocol IDs, descriptor admission and real process teardown semantics.",
+        "Use subscription-minimal configuration and strict Norn MCP namespace; refuse unbound one-shot tools and unsupported effort before spawn.",
+        "No invented tool length limit, hidden compatibility behavior, suppressed lint or silent fallback. Record any lifecycle ownership not yet settled; do not claim main-loop hosting merely from a library wrapper.",
+        "NSP-LIFECYCLE-1 \u2014 BLOCKED: Runner 3231faadbecd7cddaeb4c9c4e00c206341c73456 Query::wait removes the sole live child controller before a blocking wait. Cancelling the Norn wait can detach that owner and release descriptor admission before actual teardown. The SDK also aborts an unfinished blocking reader without joining it. Fix and deterministically prove child/reader ownership before landing; no safe complete fix through the existing wrapper API was identified.",
+        "NSP-UNDERSCORE-1 \u2014 BLOCKED: ten inherited underscore operations remain in changed source: build.rs:399 and adapter.rs:156,161,164,172,186,196,207,226,334. Seven discard channel-send Results; two adapter bindings retain descriptor permits and one build binding discards an error. Replace silent result handling and resolve the bindings structurally while preserving resource lifetimes. Passing Clippy and no newly introduced AST violation do not close this policy finding."
+      ],
+      "acceptance_greps": [
+        "rg -n \"Claude|claude\" crates/norn/src/integration/claude/adapter.rs crates/norn/src/integration/claude/adapter/effort_tests.rs"
+      ],
+      "checklist": [
+        "C2"
+      ],
+      "stories": [
+        "S2"
+      ]
+    },
+    {
+      "id": "R3",
+      "title": "Update handoff and freeze honest evidence",
+      "spec": "WHEN the preserved Claude parity candidate is integrated onto d27259cc1c218a44be0ce624d103b04d799dcf21, THE SYSTEM SHALL record exact source and proof boundaries before a parent-reviewed landing.",
+      "files": {
+        "modify": [],
+        "create": [
+          "docs/CLAUDE-SDK-INTEGRATION-IMPACT-2026-07-25.md",
+          "docs/reviews/2026-07-25-claude-sdk-parity-implementation-handoff.md"
+        ]
+      },
+      "acceptance": [
+        "Current handoff records integrated base, original branch, selected Runner pin, resolved conflicts, tests present, tests actually run and remaining semantic/review requirements.",
+        "Preserve historic handoff facts as dated provenance; do not reuse historical pass claims as current acceptance.",
+        "Parent owns rigorous review, exact-commit venue battery, final main landing, release and installation. Only a clearly draft development-branch checkpoint is authorized at this stage.",
+        "Local proof: /private/tmp/norn-claude-parity-integration-proof/INTEGRATION-HANDOFF.json; checked source freeze SHA256 540cc75d5459346d5bc4aa386544c06c95da70418748d14826fd852afec74ba4. Focused tests: 38 Claude, 13 model-selection, 3 catalogue, 187 config, 16 runtime resolution and 15 CLI/child cases. After the sole test-only Clippy repair, strict workspace/all-targets Clippy including compile-only live-smoke, the exact repaired adapter test, and workspace fmt passed. Full workspace runtime tests were deferred to release the shared build lane; no live provider, current Fable acceptance or exact-commit venue receipt."
+      ],
+      "acceptance_greps": [
+        "rg -n \"Claude|claude\" docs/CLAUDE-SDK-INTEGRATION-IMPACT-2026-07-25.md docs/reviews/2026-07-25-claude-sdk-parity-implementation-handoff.md"
+      ],
+      "checklist": [
+        "C3"
+      ],
+      "stories": [
+        "S3"
+      ]
+    }
+  ],
+  "registration_documents": [
+    "docs/design/norn-claude-parity/design.json",
+    "docs/design/norn-claude-parity/DESIGN.md",
+    "docs/design/norn-claude-parity/checklist.json",
+    "docs/design/norn-claude-parity/CHECKLIST.md",
+    "docs/design/norn-claude-parity/stories.json",
+    "docs/design/norn-claude-parity/USER-STORIES.md",
+    "docs/design/norn-claude-parity/briefs/NSP-001.json",
+    "docs/design/norn-claude-parity/briefs/NSP-001.md"
+  ],
+  "boundaries": [
+    "No source outside row walls; add exact paths before extending scope.",
+    "Preserve current NMS/NCS/NRT/NFP semantics; no main merge, release or install from this worktree.",
+    "No Cargo until parent releases the build lane. Direct formatting/static checks are allowed.",
+    "No arbitrary limits, compatibility shims, bypass attributes, library unwrap/expect/panic or ignored tests.",
+    "The persistent Claude SDK wrapper is not proof of a Norn session daemon, live attach/detach or Liminal host integration.",
+    "Draft commit/push authorization does not waive NSP-LIFECYCLE-1, NSP-UNDERSCORE-1, rigorous review or exact-commit venue acceptance. Existing origin visibility is unchanged."
+  ],
+  "verification": [
+    "Local proof: /private/tmp/norn-claude-parity-integration-proof/INTEGRATION-HANDOFF.json; checked source freeze SHA256 540cc75d5459346d5bc4aa386544c06c95da70418748d14826fd852afec74ba4. Focused tests: 38 Claude, 13 model-selection, 3 catalogue, 187 config, 16 runtime resolution and 15 CLI/child cases. After the sole test-only Clippy repair, strict workspace/all-targets Clippy including compile-only live-smoke, the exact repaired adapter test, and workspace fmt passed. Full workspace runtime tests were deferred to release the shared build lane; no live provider, current Fable acceptance or exact-commit venue receipt.",
+    "Render the updated authoritative JSON and check cluster coverage. Verify every non-document byte matches the checked source freeze before committing the draft.",
+    "Before main landing: close both explicit findings, rerun affected/full required checks, obtain rigorous review and the exact accepted-commit venue battery."
+  ],
+  "status": "Draft development-branch checkpoint only. Local focused tests, strict workspace/all-targets Clippy and fmt passed; merge and release blocked by NSP-LIFECYCLE-1 and NSP-UNDERSCORE-1.",
+  "wall_amendments": [
+    {
+      "row": "R1",
+      "date": "2026-09-06 Melbourne",
+      "added": [
+        "crates/norn/src/model_selection.rs",
+        "crates/norn/src/model_selection/tests.rs",
+        "crates/norn/tests/codex_catalogue_snapshot.rs"
+      ],
+      "reason": "Declare actual Claude backend authority for provider/CLI and preserve two existing factual catalogue fixtures after optional default-effort metadata; named to parent before edits."
+    },
+    {
+      "row": "R2",
+      "added": [
+        "crates/norn/src/integration/claude/wrapped/execution.rs"
+      ],
+      "rename_from": "crates/norn/src/integration/claude/wrapped/legacy.rs",
+      "reason": "Rename the imported compatibility-labelled module into the actual execution-mode owner. Keep real one-shot mode and persistent session mode, with no shim or fallback."
+    }
+  ]
+}
