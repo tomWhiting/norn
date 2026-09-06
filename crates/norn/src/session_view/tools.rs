@@ -2,6 +2,7 @@
 
 use crate::provider::request::ToolCallKind;
 use crate::session::events::EventId;
+use crate::tool::ENVELOPE_DESCRIPTION_KEY;
 
 use super::body::{BodyOrigin, BodyRef, BodyRepresentation, DisplayText};
 use super::contract::{
@@ -38,7 +39,7 @@ pub struct ToolView {
     pub stream_item_id: Option<String>,
     /// Original tool name, absent if the stream has not supplied it.
     pub name: Option<DisplayText>,
-    /// Original description argument, explicitly absent when not supplied.
+    /// Original nonblank envelope intent, explicitly absent when not supplied or invalid.
     pub description: Option<DisplayText>,
     /// Why complete arguments could not yield a description, kept separate.
     pub description_error: Option<DisplayText>,
@@ -97,14 +98,48 @@ pub(super) fn description(
         return (None, None);
     }
     match serde_json::from_str::<serde_json::Value>(arguments) {
-        Ok(value) => (
-            value
-                .get("description")
-                .and_then(serde_json::Value::as_str)
-                .map(DisplayText::new),
+        Ok(value) => description_value(&value, kind),
+        Err(error) => (
             None,
+            Some(DisplayText::new(&format!(
+                "cannot read {ENVELOPE_DESCRIPTION_KEY}: {error}"
+            ))),
         ),
-        Err(error) => (None, Some(DisplayText::new(&error.to_string()))),
+    }
+}
+
+pub(super) fn description_value(
+    arguments: &serde_json::Value,
+    kind: ToolCallKind,
+) -> (Option<DisplayText>, Option<DisplayText>) {
+    if kind == ToolCallKind::Custom {
+        return (None, None);
+    }
+    let Some(arguments) = arguments.as_object() else {
+        return (
+            None,
+            Some(DisplayText::new(&format!(
+                "function tool arguments must be an object to read {ENVELOPE_DESCRIPTION_KEY}"
+            ))),
+        );
+    };
+    match arguments.get(ENVELOPE_DESCRIPTION_KEY) {
+        None => (None, None),
+        Some(serde_json::Value::String(text)) if !text.trim().is_empty() => {
+            (Some(DisplayText::new(text)), None)
+        }
+        Some(serde_json::Value::String(_)) => (
+            None,
+            Some(DisplayText::new(&format!(
+                "{ENVELOPE_DESCRIPTION_KEY} is empty"
+            ))),
+        ),
+        Some(_) => (
+            None,
+            Some(DisplayText::new(&format!(
+                "{ENVELOPE_DESCRIPTION_KEY} must be a string"
+            ))),
+        ),
     }
 }
 

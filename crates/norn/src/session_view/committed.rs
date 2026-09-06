@@ -13,7 +13,7 @@ use super::contract::{
 use super::error::ViewError;
 use super::projection::SessionProjection;
 use super::response::{ResponsePartKind, response_parts};
-use super::tools::{ToolState, ToolView, description, result_facts};
+use super::tools::{ToolState, ToolView, description, description_value, result_facts};
 
 /// Project a selected store record after its actual cursor has been validated.
 /// The returned record owns only compact metadata and lazy display capabilities.
@@ -177,14 +177,8 @@ impl SessionProjection {
                         view.arguments = Some(body.clone());
                         view.invocation_event = Some(event.base().id.clone());
                         view.state = ToolState::Running;
-                        view.description = match tool.kind {
-                            ToolCallKind::Function => tool
-                                .arguments
-                                .get("description")
-                                .and_then(serde_json::Value::as_str)
-                                .map(DisplayText::new),
-                            ToolCallKind::Custom => None,
-                        };
+                        (view.description, view.description_error) =
+                            description_value(&tool.arguments, tool.kind);
                         rows.push(ViewItemKind::Tool(Box::new(view)), &tool.name, None)?;
                         if let Some(row) = rows.items.last_mut() {
                             row.bodies.push(body);

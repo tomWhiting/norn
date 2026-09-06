@@ -1,0 +1,139 @@
+{
+  "id": "NUI-002",
+  "title": "Use the reserved tool envelope description in retained tool rows",
+  "status": "registered_implementation_pending",
+  "source_repository": "/private/tmp/norn-frontend-preferences",
+  "source_head": "718ab1272375a4cc8edf9852018191b24ec6d52d",
+  "source_files": {
+    "crates/norn/src/session_view/tools.rs": "6c8b700935b4c2654f5e92efe7870d78cfcfa6d7ec10322ea472fe52ac8d8fb6",
+    "crates/norn/src/session_view/committed.rs": "22e46c239b7a422fd2db07548685d3a36eaa359e9fc7caf8a4520ee4eef3e811",
+    "crates/norn/src/session_view/projection_tests.rs": "db4e56135d227e0b8884457e24d7346317b9b08c7e40ce87df82eb0655b86ca6"
+  },
+  "registration_time": "2026-09-06T11:40:35.511625+10:00",
+  "requirements": [
+    {
+      "id": "R1",
+      "files": {
+        "modify": [
+          "crates/norn/src/session_view/tools.rs",
+          "crates/norn/src/session_view/committed.rs"
+        ],
+        "create": [],
+        "delete": []
+      },
+      "acceptance": [
+        "Use crate::tool::ENVELOPE_DESCRIPTION_KEY for function-call metadata in live/native completion, completed Responses items, modern replay and legacy tool_calls replay. Never read ordinary description as envelope metadata.",
+        "One borrowed Value extractor serves parsed modern/live arguments and already-parsed legacy values. Do not invoke split_envelope_fields: projection does not coerce or log invalid user values.",
+        "Absent reserved key yields absent description/no error; empty or whitespace-only string yields absent description and named empty diagnostic; present non-string, null or non-object arguments yield absent description and named shape diagnostic with no payload values. A nonblank string retains its original content through existing DisplayText safety transformation.",
+        "Freeform Custom calls preserve their existing no-extraction behavior for JSON-looking and invalid-JSON inputs. No argument-body changes, model changes or runtime settings changes."
+      ],
+      "title": "Correct shared description extraction",
+      "owner": "norn_tui",
+      "spec": "Use crate::tool::ENVELOPE_DESCRIPTION_KEY for function-call metadata in live/native completion, completed Responses items, modern replay and legacy tool_calls replay. Never read ordinary description as envelope metadata.",
+      "checklist": [
+        "C5"
+      ],
+      "stories": [
+        "S3"
+      ],
+      "design_refs": [
+        "D3"
+      ]
+    },
+    {
+      "id": "R2",
+      "depends_on": [
+        "R1"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session_view/projection_tests.rs"
+        ],
+        "create": [],
+        "delete": []
+      },
+      "acceptance": [
+        "Correct the three existing fixtures incorrectly calling envelope prose description, preserving their identity/join assertions.",
+        "Exercise live ToolCallComplete, live ResponseItemDone, modern committed response_items and legacy tool_calls using both fields with different content. Ordinary-description-only input must not become a compact description.",
+        "Test absent/empty/whitespace/non-string/null/non-object cases, exact original nonblank text, diagnostic payload privacy, invalid serialized function JSON and custom payload non-extraction. Preserve existing original assertions."
+      ],
+      "title": "Prove live and historical extraction",
+      "owner": "norn_tui",
+      "spec": "Correct the three existing fixtures incorrectly calling envelope prose description, preserving their identity/join assertions.",
+      "checklist": [
+        "C5"
+      ],
+      "stories": [
+        "S3"
+      ],
+      "design_refs": [
+        "D3"
+      ]
+    },
+    {
+      "id": "R3",
+      "title": "Publish a checked local repair checkpoint",
+      "owner": "root",
+      "depends_on": [
+        "R1",
+        "R2"
+      ],
+      "spec": "Validate and install the native repair while retaining preview.2 rollback bytes.",
+      "files": {
+        "modify": [
+          "Cargo.toml",
+          "Cargo.lock",
+          "docs/release-notes/UNRELEASED.md"
+        ],
+        "create": [],
+        "delete": []
+      },
+      "acceptance": [
+        "Change only the four workspace package versions; no dependency upgrades.",
+        "Run semantic projection tests, retained TUI checks, formatting, strict workspace/all-target Clippy and actual AST policy before local installation.",
+        "Preserve source-bound receipts, atomic installation with rollback, version/hash verification and the requested Mac speech. Main landing remains pending exact205 and review."
+      ],
+      "checklist": [
+        "C5"
+      ],
+      "stories": [
+        "S3"
+      ],
+      "design_refs": [
+        "D3"
+      ]
+    }
+  ],
+  "verification": [
+    "The external scratch registration precedes authoring; root verifies preimage hashes before applying to the registered UI worktree.",
+    "Direct Rust1.94 rustfmt, actual ast-grep no-bypass/forbidden-operation scan, git diff --check on patch and exact preimage hashes. No Cargo/provider/network execution.",
+    "The earlier preferences test build was interrupted to prioritize this user-reported repair; no test pass is inferred from that attempt. Root validates the final UI repair source before local installation."
+  ],
+  "cluster": "norn-retained-tui",
+  "baseline": "718ab1272375a4cc8edf9852018191b24ec6d52d",
+  "branch": "codex/norn-ui-polish",
+  "worktree": "/private/tmp/norn-ui-polish",
+  "written_at_melbourne": "2026-09-06T11:44:30.932510+10:00",
+  "purpose": "Repair every-tool description unavailable caused by reading ordinary description rather than the reserved envelope field.",
+  "task": "Correct live and restored retained tool descriptions, validate and install the next local preview while preserving appearance and changed-cell rendering.",
+  "depends_on": [
+    "NUI-001"
+  ],
+  "blocked_by": [],
+  "checklist": [
+    "C5"
+  ],
+  "stories": [
+    "S3"
+  ],
+  "design_source": "../design.json#D3",
+  "release_version": "0.1.0-preview.3",
+  "registration_file_wall": {
+    "create": [
+      "docs/design/norn-retained-tui/briefs/NUI-002.json",
+      "docs/design/norn-retained-tui/briefs/NUI-002.md"
+    ],
+    "modify": [],
+    "delete": []
+  }
+}

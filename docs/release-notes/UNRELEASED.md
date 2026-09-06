@@ -1,5 +1,10 @@
 # Unreleased — model selection, Channels and MCP startup
 
+## 0.1.0-preview.3 — compact tool descriptions (local validation pending)
+
+Retained tool rows now read the reserved `tool_use_description` envelope field in live calls and restored history. Ordinary tool arguments named `description` are no longer mistaken for tool-use prose. Compact rows keep arguments and results collapsed; the preview.2 layout, multiline styling and changed-cell renderer are preserved. Saved frontend preferences are a separate, uninstalled follow-up.
+
+
 5 September 2026, Melbourne time. No public version or release is declared. The historical NML-001/NV-002 installation checkpoint at 20:15 Melbourne on 5 September 2026 used exact commit `5227db49d805a4c0729912dca3832c842c8f39e1`, installed at 20:15:11 Melbourne on 5 September 2026 and merged to local/remote main. Installed SHA-256: `dc61b730918db4928e5e9ff0cf1194f7ed0fdfcf0d010286ab87f8d2d26e0a19`. Its exact 205 battery passed all six declared legs with 14 venue bindings; native build and installed help/list/redacted-error checks passed. Proof: `/private/tmp/nwp-04-proof/exact-battery-2/execution-result.json` and `/private/tmp/nwp-04-proof/native-release-2/installation.json`. Fresh Fable re-review remains pending; no new review pass or waiver is claimed.
 
 The Codex subscription catalogue adds GPT-6 Astra and refreshes the visible Sol, Terra, Luna and Spark metadata from the supplied export. Astra is now the default model. Norn's CLI defaults to high reasoning where the selected Codex model declares support, and Astra derives a 372,000-token operating window. These owner-selected defaults (NMS-002, 5 September 2026 Melbourne) preserve explicit settings/profile/CLI overrides. Astra's provider metadata remains 272,000 tokens by default and 872,000 maximum; it is separate from Norn's operating policy. Switching models recalculates a derived window, while an explicit context override remains explicit. Ultra is an effort identifier on the models whose route metadata declares it. It does not imply automatic delegation. Hidden entries and bundled prompt bodies are excluded from ordinary model selection.

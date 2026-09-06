@@ -3503,7 +3503,7 @@ checksum = "9737e026353e5cd0736f98eddae28665118eb6f6600902a7f50db585621fecb6"
 
 [[package]]
 name = "norn"
-version = "0.1.0-preview.2"
+version = "0.1.0-preview.3"
 dependencies = [
  "async-trait",
  "base64",
@@ -3565,7 +3565,7 @@ dependencies = [
 
 [[package]]
 name = "norn-cli"
-version = "0.1.0-preview.2"
+version = "0.1.0-preview.3"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3597,7 +3597,7 @@ dependencies = [
 
 [[package]]
 name = "norn-macros"
-version = "0.1.0-preview.2"
+version = "0.1.0-preview.3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3609,7 +3609,7 @@ dependencies = [
 
 [[package]]
 name = "norn-tui"
-version = "0.1.0-preview.2"
+version = "0.1.0-preview.3"
 dependencies = [
  "async-trait",
  "chrono",

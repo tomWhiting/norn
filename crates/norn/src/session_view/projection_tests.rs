@@ -540,7 +540,7 @@ fn missing_parent_page_never_joins_a_reused_call_to_an_older_invocation() -> Tes
         vec![call(
             "reused",
             "edit",
-            json!({"description":"older"}),
+            json!({"tool_use_description":"older"}),
             ToolCallKind::Function,
         )],
     );
@@ -549,7 +549,7 @@ fn missing_parent_page_never_joins_a_reused_call_to_an_older_invocation() -> Tes
         vec![call(
             "reused",
             "edit",
-            json!({"description":"newer"}),
+            json!({"tool_use_description":"newer"}),
             ToolCallKind::Function,
         )],
     );
@@ -842,7 +842,7 @@ fn orphan_results_rejoin_explicit_history_without_losing_failure_facts() -> Test
         vec![call(
             "call",
             "edit",
-            json!({"description":"original description","old_string":"old","new_string":"new"}),
+            json!({"tool_use_description":"original description","description":"ordinary tool argument","old_string":"old","new_string":"new"}),
             ToolCallKind::Function,
         )],
     );
@@ -1450,5 +1450,195 @@ fn routine_live_metadata_stays_retained_while_errors_refusals_and_external_input
         view.items()
             .any(|row| matches!(row.kind, ViewItemKind::ExternalInput))
     );
+    Ok(())
+}
+
+fn description_projection_tools(
+    raw: &str,
+    kind: ToolCallKind,
+    legacy: Option<serde_json::Value>,
+) -> Result<Vec<super::ToolView>, Box<dyn std::error::Error>> {
+    let owner = source();
+    let item = response(match kind {
+        ToolCallKind::Function => json!({
+            "type":"function_call", "id":"item", "call_id":"description-call",
+            "name":"edit", "arguments":raw
+        }),
+        ToolCallKind::Custom => json!({
+            "type":"custom_tool_call", "id":"item", "call_id":"description-call",
+            "name":"edit", "input":raw
+        }),
+    })?;
+    let mut tools = Vec::new();
+    for event in [
+        ProviderEvent::ToolCallComplete {
+            call_id: "description-call".to_owned(),
+            name: "edit".to_owned(),
+            arguments: raw.to_owned(),
+            kind,
+        },
+        ProviderEvent::ResponseItemDone { item: item.clone() },
+    ] {
+        let mut view = SessionProjection::new(owner.clone());
+        view.begin_execution(Uuid::new_v4(), model()?)?;
+        live(&mut view, event)?;
+        let tool = projected_description_tool(&view)?;
+        let original = view.read_provisional(
+            tool.arguments.as_ref().ok_or("live argument body absent")?,
+            BodyRange {
+                offset: 0,
+                max_bytes: NonZeroUsize::new(raw.len()).ok_or("empty fixture arguments")?,
+            },
+        )?;
+        assert_eq!(original.original_text, raw);
+        tools.push(tool.clone());
+    }
+    let modern = assistant(vec![item], Vec::new());
+    let legacy = legacy.map(|arguments| {
+        assistant(
+            Vec::new(),
+            vec![call("description-call", "edit", arguments, kind)],
+        )
+    });
+    for event in std::iter::once(modern).chain(legacy) {
+        let mut view = SessionProjection::new(owner.clone());
+        view.apply_history_record(&project_committed(&cursor(&owner, 0, &event), &event)?)?;
+        tools.push(projected_description_tool(&view)?.clone());
+    }
+    Ok(tools)
+}
+
+fn projected_description_tool(
+    view: &SessionProjection,
+) -> Result<&super::ToolView, Box<dyn std::error::Error>> {
+    let mut tools = view.items().filter_map(|item| match &item.kind {
+        ViewItemKind::Tool(tool) => Some(tool.as_ref()),
+        _ => None,
+    });
+    let tool = tools.next().ok_or("projected tool absent")?;
+    assert!(
+        tools.next().is_none(),
+        "one invocation became multiple tool rows"
+    );
+    assert!(
+        tool.arguments.is_some(),
+        "description extraction lost original arguments"
+    );
+    Ok(tool)
+}
+
+#[test]
+fn tool_envelope_description_wins_over_ordinary_argument_in_every_projection() -> TestResult {
+    let original = "  inspect configuration\nthen edit 🦀  ";
+    let arguments = json!({
+        "description":"ordinary argument must not become the row",
+        "tool_use_description": original,
+        "path":"config.json"
+    });
+    let tools = description_projection_tools(
+        &arguments.to_string(),
+        ToolCallKind::Function,
+        Some(arguments),
+    )?;
+    assert_eq!(
+        tools.len(),
+        4,
+        "native live, Responses live, modern replay and legacy replay"
+    );
+    for tool in tools {
+        assert_eq!(
+            tool.description.as_ref().map(super::DisplayText::as_str),
+            Some(original)
+        );
+        assert!(tool.description_error.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn missing_empty_and_invalid_envelope_descriptions_remain_distinct() -> TestResult {
+    for (arguments, expected_error) in [
+        (json!({"description":"not envelope metadata"}), None),
+        (
+            json!({"tool_use_description":"", "description":"not fallback"}),
+            Some("is empty"),
+        ),
+        (
+            json!({"tool_use_description":" \n\t ", "description":"not fallback"}),
+            Some("is empty"),
+        ),
+        (
+            json!({"tool_use_description":null}),
+            Some("must be a string"),
+        ),
+        (
+            json!({"tool_use_description":false}),
+            Some("must be a string"),
+        ),
+        (json!({"tool_use_description":42}), Some("must be a string")),
+        (
+            json!({"tool_use_description":["PRIVATE_DESCRIPTION_VALUE"]}),
+            Some("must be a string"),
+        ),
+        (
+            json!({"tool_use_description":{"secret":"PRIVATE_DESCRIPTION_VALUE"}}),
+            Some("must be a string"),
+        ),
+        (
+            json!(["PRIVATE_DESCRIPTION_VALUE"]),
+            Some("must be an object"),
+        ),
+    ] {
+        let tools = description_projection_tools(
+            &arguments.to_string(),
+            ToolCallKind::Function,
+            Some(arguments),
+        )?;
+        assert_eq!(tools.len(), 4);
+        for tool in tools {
+            assert!(tool.description.is_none());
+            match (expected_error, tool.description_error.as_ref()) {
+                (None, None) => {}
+                (Some(expected), Some(error)) => {
+                    assert!(error.as_str().contains(expected));
+                    assert!(error.as_str().contains("tool_use_description"));
+                    assert!(!error.as_str().contains("PRIVATE_DESCRIPTION_VALUE"));
+                }
+                pair => return Err(format!("wrong description availability: {pair:?}").into()),
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn invalid_serialized_function_arguments_are_diagnostic_in_live_and_modern_replay() -> TestResult {
+    let tools = description_projection_tools("{broken", ToolCallKind::Function, None)?;
+    assert_eq!(tools.len(), 3);
+    for tool in tools {
+        assert!(tool.description.is_none());
+        assert!(
+            tool.description_error
+                .as_ref()
+                .is_some_and(|error| error.as_str().contains("cannot read tool_use_description"))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn custom_payloads_never_become_envelope_descriptions() -> TestResult {
+    for raw in [
+        r#"{"tool_use_description":"not metadata","description":"also not metadata"}"#,
+        "freeform {broken text",
+    ] {
+        let tools = description_projection_tools(raw, ToolCallKind::Custom, Some(json!(raw)))?;
+        assert_eq!(tools.len(), 4);
+        for tool in tools {
+            assert!(tool.description.is_none());
+            assert!(tool.description_error.is_none());
+            assert_eq!(tool.kind, Some(ToolCallKind::Custom));
+        }
+    }
     Ok(())
 }
