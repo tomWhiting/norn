@@ -259,13 +259,13 @@
     {
       "id": "D-NUI003-AGENTS",
       "title": "Restore populated agent status through the retained frame",
-      "status": "registered_root_authorized",
+      "status": "implemented_locally_verified_installed;main_205_Fable_pending",
       "body": "AgentStatusPanel is still populated; restore its missing retained presentation through one typed snapshot per prepared frame. Reuse existing tree::collapse/order_for_display, current five-row-plus-overflow rule, recovery/hold semantics and formatting/activity/token facts. Root-only state adds zero agent chrome. Paint compact agent/fork status rows immediately above the full-width composer within the upper display allocation; preserve tiny geometry and existing pane behavior without changing layout.rs or composer input. Accepted child activity dirties the retained frame even if the root transcript projection revision does not change. Never turn formatted ANSI into typed rows, replay agent history, infer an active agent by text, or start/restart an agent to paint status. One AgentFrame snapshot carries both the existing compact five-row-plus-overflow strip and the full admitted agent listing, including the root, for the explicitly selected Agents pane. agents::paint_pane(&AgentFrame, &mut Frame, area, scroll) clips the full list to the current pane rectangle and uses its explicit scroll; it does not reuse the compact truncation as a data cap. No second status read or second state owner. Compact root-only state still adds zero agent chrome; an explicitly opened Agents pane can show its actual root. Root integrates the chosen rectangle and sole frame writer. Preserve exact identity/order/hold/recovery and explicit unavailable facts. Listing grants no target selection/history/message authority, fabricated transcript, history read or provider activation. Within already-modified agents/status_line.rs, norn_models removes inherited test-only allow attributes and underlying unwrap/expect/panic/unwrap_err/expect_err uses structurally. Preserve every test and assertion meaning, propagate contextual fallible Result errors, and leave unrelated production behavior unchanged. The user no-bypass instruction overrides the inherited CLAUDE.md test exception; no extra source path is authorized."
     },
     {
       "id": "D-NUI003-READABILITY",
       "title": "Readable semantic rows and generated separation",
-      "status": "registered_root_authorized",
+      "status": "implemented_locally_verified_installed;main_205_Fable_pending",
       "body": "Restore tool name beside its description with current lifecycle/duration and explicit missing-evidence wording. Insert exactly one generated blank between visible semantic items, replacing incidental empty-label gaps; no per-body-line, stream-chunk or token gaps. Use distinct BeforeItem anchors with no BodyRef, body demand or original copy/export authority. Work through indexed visible iteration/lookahead, preserve exact selection/source mappings and pinned scrolling, and reuse styled/wrapped caches without whole-history scans or per-paint reparsing. Use existing typed role/lifecycle facts: unchanged user blue RGB80/160/220, Error/failed tool red200/80/80, blocked/incomplete tool amber215/175/0, Thinking Dim+Italic merged with Markdown attributes and explicit code colors, Notice/Metadata dim. Do not search model descriptions for state words. Preserve actual source bytes, ranges, Markdown emphasis and code colors; colors supplement existing role/state words rather than being their only cue. Emit BeforeItem only when an earlier visible semantic item exists: no leading separator and no gap contributed by hidden metadata/thinking. Header remains a virtual navigation start for headerless assistant/input bodies; keep original body-cache construction and exact source/copy mappings unchanged."
     },
     {
@@ -277,7 +277,7 @@
     {
       "id": "D-NUI003-PANE",
       "title": "Direct pane commands and typed auxiliary content",
-      "status": "registered_root_authorized",
+      "status": "implemented_locally_verified_installed;main_205_Fable_pending",
       "body": "Recognize /pane as a TUI-only named entry using the existing View handler kind. /pane with no arguments toggles the existing auxiliary open state without changing selected content; /pane diff and /pane agents select the exact typed content and open it. Preserve all existing /view commands as supported aliases, help and autocomplete. Reject unknown arguments locally with LocalCommandOutcome::Rejected and preserve the draft. Both idle and active-turn paths dispatch the actual command name plus arguments through command_named; no /pane command enters provider input, steer or queue. Root adds AuxiliaryPane { Diff, Agents } and ScreenState.auxiliary in app/render.rs, defaulting to Diff to preserve the existing Changes view. Keep this content selector distinct from UpperPane, which controls conversation/auxiliary geometry focus. Root paints the selected content in the existing auxiliary rectangle and gates Changes evidence demand when Agents is selected; no new Changes body demand for agent listing. Preserve full-width composer, existing open/split/focus, narrow-terminal pane switching and current frame publication. This checkpoint keeps selected auxiliary content in current-run state. Existing saved open/split preferences remain unchanged. Persisting the new content selector through the existing frontend settings owner is required next work R6, not silently claimed here; /pane agents does not complete R4 target view/message. The existing /view pane grammar additionally accepts diff and agents as aliases for the same exact content selection. Explicit /pane diff|agents and /view pane diff|agents also set UpperPane::Changes, so the selected auxiliary content is immediately visible when narrow geometry can show only one upper pane. /pane with no arguments and /view pane toggle preserve the selected auxiliary content and focus, apart from existing visibility normalization; do not switch targets or alter transcript identity."
     }
   ],
@@ -1988,7 +1988,7 @@
     ]
   },
   "urgent_agent_readability_repair": {
-    "status": "registered_urgent_repairs_dispatched_agent_interaction_pending",
+    "status": "local_restoration_installed;R4_R6_pending;main_205_Fable_pending",
     "brief": "briefs/NUI-003.json",
     "baseline": "04bcc9a77aa6f815669ee18e591a52a2520c9bb5",
     "remaining_user_requirement": {
@@ -2005,7 +2005,7 @@
     "current_frozen_validation_unchanged": false,
     "registered_at_melbourne": "2026-09-06T15:24:33.006139+10:00",
     "prior_validation_records_preserved": true,
-    "final_repaired_source_validation_required": true,
+    "final_repaired_source_validation_required": false,
     "pane_amended_at_melbourne": "2026-09-06T15:32:52.650033+10:00",
     "agent_snapshot_contract": "One AgentFrame snapshot carries both the existing compact five-row-plus-overflow strip and the full admitted agent listing, including the root, for the explicitly selected Agents pane. agents::paint_pane(&AgentFrame, &mut Frame, area, scroll) clips the full list to the current pane rectangle and uses its explicit scroll; it does not reuse the compact truncation as a data cap. No second status read or second state owner. Compact root-only state still adds zero agent chrome; an explicitly opened Agents pane can show its actual root. Root integrates the chosen rectangle and sole frame writer. Preserve exact identity/order/hold/recovery and explicit unavailable facts. Listing grants no target selection/history/message authority, fabricated transcript, history read or provider activation.",
     "pane_narrow_visibility": "Explicit /pane diff|agents and /view pane diff|agents also set UpperPane::Changes, so the selected auxiliary content is immediately visible when narrow geometry can show only one upper pane. /pane with no arguments and /view pane toggle preserve the selected auxiliary content and focus, apart from existing visibility normalization; do not switch targets or alter transcript identity.",
@@ -2017,7 +2017,173 @@
         "crates/norn-tui/tests/mcp_channels.rs"
       ],
       "evidence": "/private/tmp/ncp-001-proof/assembly/frontend-repairs-1.log",
-      "status": "registered_pending_execution"
+      "status": "implemented_locally_verified"
+    },
+    "local_checkpoint": {
+      "at_melbourne": "2026-09-06T16:55:55.268481+10:00",
+      "commit": "05109e6f6294c9af6f58657722dc7e968857b721",
+      "summary": "norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed.",
+      "install_receipt": {
+        "path": "/Users/tom/.local/state/norn/install-backups/20260906-164905-composer-preview/receipt.json",
+        "sha256": "77ba8ac7fb725895a54c70c0c801f61babe6f968abd6f4dd6f43a0284ee781bb"
+      },
+      "validation": [
+        {
+          "role": "workspace",
+          "path": "/private/tmp/ncp-001-proof/assembly/workspace-4.json",
+          "sha256": "7e8419e4ea6e250d21970895b70b1b3f9925267a2e4faaf0ce65afd80a9e90b5",
+          "log": "/private/tmp/ncp-001-proof/assembly/workspace-4.log",
+          "log_sha256": "5b056ee1fa249226bde8a3483500c61322b1fd210d5ecc3bf8eda3339b331a06"
+        },
+        {
+          "role": "doctests",
+          "path": "/private/tmp/ncp-001-proof/assembly/docs-3.json",
+          "sha256": "9fbd4f650d1087b976728378c3f3472ee5462bc59160090a24b0ca1201c2eab7",
+          "log": "/private/tmp/ncp-001-proof/assembly/docs-3.log",
+          "log_sha256": "cc609cdc488c2812e3afce61dd7368efe503899d3bee2a7358dcd27fdaa11c0e"
+        },
+        {
+          "role": "clippy",
+          "path": "/private/tmp/ncp-001-proof/assembly/clippy-11.json",
+          "sha256": "b6088e10905476c1c08e3a5f8e32296adb9941e190edafae7acb301bf0d05c44",
+          "log": "/private/tmp/ncp-001-proof/assembly/clippy-11.log",
+          "log_sha256": "3b7bf058aa92bfa1c3bdc5d827b5526b0c942f4fb18cdcfdaa19955910f95747"
+        },
+        {
+          "role": "fmt",
+          "path": "/private/tmp/ncp-001-proof/assembly/fmt-8.json",
+          "sha256": "c74f89aa9e9799bee6ab2582e3a1a77a4902e5b09e50c852196e4440eaad62c3",
+          "log": "/private/tmp/ncp-001-proof/assembly/fmt-8.log",
+          "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "role": "release",
+          "path": "/private/tmp/ncp-001-proof/assembly/release-4.json",
+          "sha256": "5168871cb3f37e807058fdd62179347e2aea6afa043dd28dc12a7efa9d5f6bab",
+          "log": "/private/tmp/ncp-001-proof/assembly/release-4.log",
+          "log_sha256": "aa43f4a04c505a8a9c2967e06d281bfa039e489554357c069b44d45101deb2c5"
+        }
+      ],
+      "workspace": {
+        "passed": 6378,
+        "failed": 0,
+        "ignored": 0,
+        "suites": 39
+      },
+      "doctests": {
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0,
+        "suites": 5
+      },
+      "actual_required_tests": [
+        "process::manager::tests::a_late_attached_watch_catches_up_over_a_large_region_without_wedging",
+        "tests::descriptor_retention::active_process_permits_release_on_terminal_paths",
+        "app::render::transcript::tests::mixed_frame_restores_spacing_typed_colours_and_full_width_composer",
+        "app::render::transcript::tests::one_row_navigation_crosses_distinct_spacers_in_both_directions",
+        "tools::summary::tests::supplied_name_always_accompanies_original_description_in_both_views",
+        "actual_idle_and_active_pane_commands_preserve_original_composer_and_admission"
+      ],
+      "boundaries": {
+        "main_landing": false,
+        "venue205": false,
+        "Fable": false,
+        "public_release": false,
+        "live_provider_execution": false
+      },
+      "NUI003_implemented_rows": [
+        "R1",
+        "R2",
+        "R3",
+        "R5"
+      ],
+      "NUI003_pending_rows": [
+        "R4",
+        "R6"
+      ]
     }
+  },
+  "ui_restoration_local_checkpoint": {
+    "at_melbourne": "2026-09-06T16:55:55.268481+10:00",
+    "commit": "05109e6f6294c9af6f58657722dc7e968857b721",
+    "summary": "norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed.",
+    "install_receipt": {
+      "path": "/Users/tom/.local/state/norn/install-backups/20260906-164905-composer-preview/receipt.json",
+      "sha256": "77ba8ac7fb725895a54c70c0c801f61babe6f968abd6f4dd6f43a0284ee781bb"
+    },
+    "validation": [
+      {
+        "role": "workspace",
+        "path": "/private/tmp/ncp-001-proof/assembly/workspace-4.json",
+        "sha256": "7e8419e4ea6e250d21970895b70b1b3f9925267a2e4faaf0ce65afd80a9e90b5",
+        "log": "/private/tmp/ncp-001-proof/assembly/workspace-4.log",
+        "log_sha256": "5b056ee1fa249226bde8a3483500c61322b1fd210d5ecc3bf8eda3339b331a06"
+      },
+      {
+        "role": "doctests",
+        "path": "/private/tmp/ncp-001-proof/assembly/docs-3.json",
+        "sha256": "9fbd4f650d1087b976728378c3f3472ee5462bc59160090a24b0ca1201c2eab7",
+        "log": "/private/tmp/ncp-001-proof/assembly/docs-3.log",
+        "log_sha256": "cc609cdc488c2812e3afce61dd7368efe503899d3bee2a7358dcd27fdaa11c0e"
+      },
+      {
+        "role": "clippy",
+        "path": "/private/tmp/ncp-001-proof/assembly/clippy-11.json",
+        "sha256": "b6088e10905476c1c08e3a5f8e32296adb9941e190edafae7acb301bf0d05c44",
+        "log": "/private/tmp/ncp-001-proof/assembly/clippy-11.log",
+        "log_sha256": "3b7bf058aa92bfa1c3bdc5d827b5526b0c942f4fb18cdcfdaa19955910f95747"
+      },
+      {
+        "role": "fmt",
+        "path": "/private/tmp/ncp-001-proof/assembly/fmt-8.json",
+        "sha256": "c74f89aa9e9799bee6ab2582e3a1a77a4902e5b09e50c852196e4440eaad62c3",
+        "log": "/private/tmp/ncp-001-proof/assembly/fmt-8.log",
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "role": "release",
+        "path": "/private/tmp/ncp-001-proof/assembly/release-4.json",
+        "sha256": "5168871cb3f37e807058fdd62179347e2aea6afa043dd28dc12a7efa9d5f6bab",
+        "log": "/private/tmp/ncp-001-proof/assembly/release-4.log",
+        "log_sha256": "aa43f4a04c505a8a9c2967e06d281bfa039e489554357c069b44d45101deb2c5"
+      }
+    ],
+    "workspace": {
+      "passed": 6378,
+      "failed": 0,
+      "ignored": 0,
+      "suites": 39
+    },
+    "doctests": {
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0,
+      "suites": 5
+    },
+    "actual_required_tests": [
+      "process::manager::tests::a_late_attached_watch_catches_up_over_a_large_region_without_wedging",
+      "tests::descriptor_retention::active_process_permits_release_on_terminal_paths",
+      "app::render::transcript::tests::mixed_frame_restores_spacing_typed_colours_and_full_width_composer",
+      "app::render::transcript::tests::one_row_navigation_crosses_distinct_spacers_in_both_directions",
+      "tools::summary::tests::supplied_name_always_accompanies_original_description_in_both_views",
+      "actual_idle_and_active_pane_commands_preserve_original_composer_and_admission"
+    ],
+    "boundaries": {
+      "main_landing": false,
+      "venue205": false,
+      "Fable": false,
+      "public_release": false,
+      "live_provider_execution": false
+    },
+    "NUI003_implemented_rows": [
+      "R1",
+      "R2",
+      "R3",
+      "R5"
+    ],
+    "NUI003_pending_rows": [
+      "R4",
+      "R6"
+    ]
   }
 }

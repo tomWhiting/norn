@@ -2,7 +2,7 @@
   "id": "NV-003",
   "cluster": "norn-verification",
   "title": "Prove large late-watch catch-up through committed output and test-owned release",
-  "status": "registered_pending_implementation",
+  "status": "implemented_actual_test_passed;main_205_Fable_pending",
   "baseline": "04bcc9a77aa6f815669ee18e591a52a2520c9bb5",
   "branch": "codex/norn-frontend-preferences-integrated",
   "worktree": "/private/tmp/norn-frontend-preferences",
@@ -22,7 +22,7 @@
       "id": "R1",
       "title": "Establish committed large output and receive its alert without fixture timing assumptions",
       "owner": "review_child_context",
-      "status": "registered_pending_implementation",
+      "status": "implemented_actual_test_passed;main_205_Fable_pending",
       "spec": "Change only a_late_attached_watch_catches_up_over_a_large_region_without_wedging and minimal cfg(test) helpers in process/manager.rs. Establish committed spool bytes via the existing ProcessHandle subscription and incremental SpoolReader, then attach the real cat watch while a test-owned release handshake keeps the child Running. Observe the stored alert via push notification; retain the equally large catch-up region, >64KiB precondition and full byte-for-byte equality. No runtime process/spool/watch changes, new timing promise, polling/sleeps/retries, ignored checks or success caps.",
       "files": {
         "modify": [
@@ -48,7 +48,97 @@
       ],
       "design_refs": [
         "V6"
-      ]
+      ],
+      "historical_status_records": [
+        {
+          "status": "registered_pending_implementation",
+          "done": null,
+          "superseded_at_melbourne": "2026-09-06T16:55:55.268481+10:00"
+        }
+      ],
+      "local_checkpoint": {
+        "at_melbourne": "2026-09-06T16:55:55.268481+10:00",
+        "commit": "05109e6f6294c9af6f58657722dc7e968857b721",
+        "summary": "norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed.",
+        "install_receipt": {
+          "path": "/Users/tom/.local/state/norn/install-backups/20260906-164905-composer-preview/receipt.json",
+          "sha256": "77ba8ac7fb725895a54c70c0c801f61babe6f968abd6f4dd6f43a0284ee781bb"
+        },
+        "validation": [
+          {
+            "role": "workspace",
+            "path": "/private/tmp/ncp-001-proof/assembly/workspace-4.json",
+            "sha256": "7e8419e4ea6e250d21970895b70b1b3f9925267a2e4faaf0ce65afd80a9e90b5",
+            "log": "/private/tmp/ncp-001-proof/assembly/workspace-4.log",
+            "log_sha256": "5b056ee1fa249226bde8a3483500c61322b1fd210d5ecc3bf8eda3339b331a06"
+          },
+          {
+            "role": "doctests",
+            "path": "/private/tmp/ncp-001-proof/assembly/docs-3.json",
+            "sha256": "9fbd4f650d1087b976728378c3f3472ee5462bc59160090a24b0ca1201c2eab7",
+            "log": "/private/tmp/ncp-001-proof/assembly/docs-3.log",
+            "log_sha256": "cc609cdc488c2812e3afce61dd7368efe503899d3bee2a7358dcd27fdaa11c0e"
+          },
+          {
+            "role": "clippy",
+            "path": "/private/tmp/ncp-001-proof/assembly/clippy-11.json",
+            "sha256": "b6088e10905476c1c08e3a5f8e32296adb9941e190edafae7acb301bf0d05c44",
+            "log": "/private/tmp/ncp-001-proof/assembly/clippy-11.log",
+            "log_sha256": "3b7bf058aa92bfa1c3bdc5d827b5526b0c942f4fb18cdcfdaa19955910f95747"
+          },
+          {
+            "role": "fmt",
+            "path": "/private/tmp/ncp-001-proof/assembly/fmt-8.json",
+            "sha256": "c74f89aa9e9799bee6ab2582e3a1a77a4902e5b09e50c852196e4440eaad62c3",
+            "log": "/private/tmp/ncp-001-proof/assembly/fmt-8.log",
+            "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "role": "release",
+            "path": "/private/tmp/ncp-001-proof/assembly/release-4.json",
+            "sha256": "5168871cb3f37e807058fdd62179347e2aea6afa043dd28dc12a7efa9d5f6bab",
+            "log": "/private/tmp/ncp-001-proof/assembly/release-4.log",
+            "log_sha256": "aa43f4a04c505a8a9c2967e06d281bfa039e489554357c069b44d45101deb2c5"
+          }
+        ],
+        "workspace": {
+          "passed": 6378,
+          "failed": 0,
+          "ignored": 0,
+          "suites": 39
+        },
+        "doctests": {
+          "passed": 8,
+          "failed": 0,
+          "ignored": 0,
+          "suites": 5
+        },
+        "actual_required_tests": [
+          "process::manager::tests::a_late_attached_watch_catches_up_over_a_large_region_without_wedging",
+          "tests::descriptor_retention::active_process_permits_release_on_terminal_paths",
+          "app::render::transcript::tests::mixed_frame_restores_spacing_typed_colours_and_full_width_composer",
+          "app::render::transcript::tests::one_row_navigation_crosses_distinct_spacers_in_both_directions",
+          "tools::summary::tests::supplied_name_always_accompanies_original_description_in_both_views",
+          "actual_idle_and_active_pane_commands_preserve_original_composer_and_admission"
+        ],
+        "boundaries": {
+          "main_landing": false,
+          "venue205": false,
+          "Fable": false,
+          "public_release": false,
+          "live_provider_execution": false
+        },
+        "NUI003_implemented_rows": [
+          "R1",
+          "R2",
+          "R3",
+          "R5"
+        ],
+        "NUI003_pending_rows": [
+          "R4",
+          "R6"
+        ]
+      }
     }
   ],
   "documentation_wall": [
@@ -81,6 +171,97 @@
   "verification": [
     "Registration/render/coverage before source edits.",
     "Production byte comparison and bounded fixture/helper policy audit.",
-    "Actual late-watch and affected notifier regression execution, followed by root final shared checks on final bytes."
-  ]
+    "Actual late-watch and affected notifier regression execution, followed by root final shared checks on final bytes.",
+    "norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed."
+  ],
+  "historical_status_records": [
+    {
+      "status": "registered_pending_implementation",
+      "done": null,
+      "superseded_at_melbourne": "2026-09-06T16:55:55.268481+10:00"
+    }
+  ],
+  "local_checkpoint": {
+    "at_melbourne": "2026-09-06T16:55:55.268481+10:00",
+    "commit": "05109e6f6294c9af6f58657722dc7e968857b721",
+    "summary": "norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed.",
+    "install_receipt": {
+      "path": "/Users/tom/.local/state/norn/install-backups/20260906-164905-composer-preview/receipt.json",
+      "sha256": "77ba8ac7fb725895a54c70c0c801f61babe6f968abd6f4dd6f43a0284ee781bb"
+    },
+    "validation": [
+      {
+        "role": "workspace",
+        "path": "/private/tmp/ncp-001-proof/assembly/workspace-4.json",
+        "sha256": "7e8419e4ea6e250d21970895b70b1b3f9925267a2e4faaf0ce65afd80a9e90b5",
+        "log": "/private/tmp/ncp-001-proof/assembly/workspace-4.log",
+        "log_sha256": "5b056ee1fa249226bde8a3483500c61322b1fd210d5ecc3bf8eda3339b331a06"
+      },
+      {
+        "role": "doctests",
+        "path": "/private/tmp/ncp-001-proof/assembly/docs-3.json",
+        "sha256": "9fbd4f650d1087b976728378c3f3472ee5462bc59160090a24b0ca1201c2eab7",
+        "log": "/private/tmp/ncp-001-proof/assembly/docs-3.log",
+        "log_sha256": "cc609cdc488c2812e3afce61dd7368efe503899d3bee2a7358dcd27fdaa11c0e"
+      },
+      {
+        "role": "clippy",
+        "path": "/private/tmp/ncp-001-proof/assembly/clippy-11.json",
+        "sha256": "b6088e10905476c1c08e3a5f8e32296adb9941e190edafae7acb301bf0d05c44",
+        "log": "/private/tmp/ncp-001-proof/assembly/clippy-11.log",
+        "log_sha256": "3b7bf058aa92bfa1c3bdc5d827b5526b0c942f4fb18cdcfdaa19955910f95747"
+      },
+      {
+        "role": "fmt",
+        "path": "/private/tmp/ncp-001-proof/assembly/fmt-8.json",
+        "sha256": "c74f89aa9e9799bee6ab2582e3a1a77a4902e5b09e50c852196e4440eaad62c3",
+        "log": "/private/tmp/ncp-001-proof/assembly/fmt-8.log",
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "role": "release",
+        "path": "/private/tmp/ncp-001-proof/assembly/release-4.json",
+        "sha256": "5168871cb3f37e807058fdd62179347e2aea6afa043dd28dc12a7efa9d5f6bab",
+        "log": "/private/tmp/ncp-001-proof/assembly/release-4.log",
+        "log_sha256": "aa43f4a04c505a8a9c2967e06d281bfa039e489554357c069b44d45101deb2c5"
+      }
+    ],
+    "workspace": {
+      "passed": 6378,
+      "failed": 0,
+      "ignored": 0,
+      "suites": 39
+    },
+    "doctests": {
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0,
+      "suites": 5
+    },
+    "actual_required_tests": [
+      "process::manager::tests::a_late_attached_watch_catches_up_over_a_large_region_without_wedging",
+      "tests::descriptor_retention::active_process_permits_release_on_terminal_paths",
+      "app::render::transcript::tests::mixed_frame_restores_spacing_typed_colours_and_full_width_composer",
+      "app::render::transcript::tests::one_row_navigation_crosses_distinct_spacers_in_both_directions",
+      "tools::summary::tests::supplied_name_always_accompanies_original_description_in_both_views",
+      "actual_idle_and_active_pane_commands_preserve_original_composer_and_admission"
+    ],
+    "boundaries": {
+      "main_landing": false,
+      "venue205": false,
+      "Fable": false,
+      "public_release": false,
+      "live_provider_execution": false
+    },
+    "NUI003_implemented_rows": [
+      "R1",
+      "R2",
+      "R3",
+      "R5"
+    ],
+    "NUI003_pending_rows": [
+      "R4",
+      "R6"
+    ]
+  }
 }
