@@ -7,20 +7,6 @@
 
 use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
 
-/// Display width for text painted into the input area.
-///
-/// Unicode reports many control characters as zero-width, but the TUI
-/// renderer replaces them with visible placeholders before writing to
-/// the terminal. Treating controls as width one here keeps wrapping and
-/// cursor placement aligned with the rendered representation.
-pub(crate) fn input_display_width(ch: char) -> usize {
-    if ch.is_control() {
-        1
-    } else {
-        ch.width().unwrap_or(0)
-    }
-}
-
 /// Truncate `text` to at most `width` display columns.
 ///
 /// Walks character-by-character accumulating the Unicode display width
@@ -139,13 +125,6 @@ mod tests {
     fn truncate_with_ellipsis_width_one_returns_single_ellipsis() {
         let out = truncate_with_ellipsis("hello", 1);
         assert_eq!(out, "\u{2026}");
-    }
-
-    #[test]
-    fn input_display_width_treats_controls_as_visible_placeholders() {
-        assert_eq!(input_display_width('\x1b'), 1);
-        assert_eq!(input_display_width('\t'), 1);
-        assert_eq!(input_display_width('a'), 1);
     }
 
     #[test]

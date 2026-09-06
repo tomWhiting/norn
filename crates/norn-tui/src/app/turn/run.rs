@@ -264,9 +264,10 @@ async fn run_turn(
         &runtime.root_event_sender,
         &runtime.store,
         &runtime.model_selection,
-        local_input,
+        local_input.clone(),
     )?;
     let observation = state.transcript.observation();
+    crate::app::composer_submission::bind(state, local_input.as_ref(), observation.as_ref())?;
     state.turn_start = Some(Instant::now());
     state.in_flight_input.set_running(true);
 
@@ -382,6 +383,7 @@ async fn run_turn(
                 }
                 msg = term_rx.recv(), if !terminal_closed => match msg {
                     Some(Ok(event)) => {
+                        crate::app::composer_submission::resolve(state)?;
                         state.screen.terminal_event(term_rx.len());
                         if is_ctrl_c(&event) {
                             cancel_requested = true;
@@ -429,6 +431,7 @@ async fn run_turn(
                 },
                 () = async { match &observation { Some(owner) => owner.changed().await, None => std::future::pending().await } } => {
                     state.transcript.drain_publications()?;
+                    crate::app::composer_submission::resolve(state)?;
                     state.screen.allow_body_load = true;
                     redraw_all(state, guard)?;
                 }
@@ -477,6 +480,7 @@ async fn run_turn(
         handle_active_input_delivery(&delivery, state, &runtime.store)?;
     }
     state.transcript.drain_publications()?;
+    crate::app::composer_submission::resolve(state)?;
     while let Some(result) = state.transcript.input_tasks.join_next().await {
         state.transcript.finish_input(result)?;
     }

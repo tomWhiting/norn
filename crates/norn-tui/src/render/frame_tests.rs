@@ -55,6 +55,7 @@ fn untrusted_controls_are_never_emitted_as_terminal_commands()
                 })
             })
             .collect::<Result<_, std::num::TryFromIntError>>()?,
+        composer: None,
         cursor: Some((0, 23)),
     };
     let bytes = frame.encode(&TerminalCaps::baseline())?;
@@ -92,6 +93,7 @@ fn tiny_and_zero_geometry_never_invent_extra_screen_rows() -> Result<(), Box<dyn
         let frame = Frame {
             layout,
             rows: Vec::new(),
+            composer: None,
             cursor: None,
         };
         let bytes = frame.encode(&TerminalCaps::baseline())?;
@@ -144,6 +146,7 @@ fn selected_original_range_highlights_whole_grapheme_only() -> Result<(), Box<dy
             selection: std::iter::once(1..12).collect(),
             composer: false,
         }],
+        composer: None,
         cursor: None,
     };
     let encoded = String::from_utf8(frame.encode(&TerminalCaps::baseline())?)?;
@@ -197,6 +200,7 @@ fn release_visible_surface_work_samples() -> Result<(), Box<dyn std::error::Erro
                     composer: row == lines - 1,
                 })
                 .collect(),
+            composer: None,
             cursor: Some((0, lines - 1)),
         };
         let caps = TerminalCaps::baseline();
@@ -228,5 +232,59 @@ fn release_visible_surface_work_samples() -> Result<(), Box<dyn std::error::Erro
             started.elapsed().as_micros()
         );
     }
+    Ok(())
+}
+
+#[test]
+fn typed_composer_cells_are_below_popup_rows_and_confined_to_the_input_area()
+-> Result<(), Box<dyn std::error::Error>> {
+    use iridium_tui::cell::{CellBuffer, Style};
+    let width = 8;
+    let area = Rect {
+        column: 0,
+        row: 1,
+        width,
+        height: 1,
+    };
+    let mut cells = CellBuffer::new(usize::from(width), 1);
+    assert_eq!(cells.set_str(0, 0, "draft", Style::default()), 5);
+    let text = Arc::new(render_plain("popup")?);
+    let TextLayout::Rows(rows) = text.styled.layout(usize::from(width), NonZeroUsize::MIN)? else {
+        return Err("popup fixture has no rows".into());
+    };
+    let mut frame = Frame {
+        layout: Layout::Ready {
+            upper: UpperLayout::Single {
+                pane: UpperPane::Conversation,
+                area: Rect { row: 0, ..area },
+            },
+            composer: area,
+        },
+        rows: vec![PaintRow {
+            area,
+            row: 0,
+            text,
+            geometry: rows.first().ok_or("popup row missing")?.clone(),
+            selected: true,
+            selection: Vec::new(),
+            composer: false,
+        }],
+        composer: Some(ComposerLayer { area, cells }),
+        cursor: None,
+    };
+    let mut observed = PrintableText::default();
+    vte::Parser::new().advance(&mut observed, &frame.encode(&TerminalCaps::baseline())?);
+    assert!(observed.0.contains("popup"));
+    assert!(!observed.0.contains("draft"));
+    frame
+        .composer
+        .as_mut()
+        .ok_or("composer layer missing")?
+        .area
+        .row = 0;
+    assert!(matches!(
+        frame.prepare(&TerminalCaps::baseline()),
+        Err(TuiError::FrameBounds)
+    ));
     Ok(())
 }

@@ -37,6 +37,7 @@ const DEADLINE: Duration = Duration::from_secs(15);
 const CHILD_ENV: &str = "NORN_RETAINED_WORKSPACE_CHILD";
 const CONTROL_ENV: &str = "NORN_RETAINED_WORKSPACE_CONTROL";
 const REPORT_ENV: &str = "NORN_RETAINED_WORKSPACE_REPORT";
+const COMPOSER_ENV: &str = "NORN_RETAINED_COMPOSER_SEND_KEY";
 const INITIAL: &str = "workspace provider held";
 const RELEASED: &str = "workspace provider released";
 
@@ -62,6 +63,23 @@ pub fn child_entrypoint() -> TestResult {
 }
 
 async fn child_app() -> TestResult {
+    let composer_mode = std::env::var_os(COMPOSER_ENV).is_some();
+    let frontend_preferences = if composer_mode {
+        let root = std::env::current_dir()?;
+        let settings = norn::config::load_resolved_settings(
+            &root,
+            &norn::config::McpRuntimeOverrides::default(),
+        )?;
+        if !settings.mcp_servers.is_empty() {
+            return Err("composer fixture unexpectedly resolved MCP servers".into());
+        }
+        norn_tui::frontend_preferences::FrontendPreferencesLaunch::from_layers(
+            &settings.tui_preferences,
+            &settings.project_root,
+        )?
+    } else {
+        norn_tui::frontend_preferences::FrontendPreferencesLaunch::run_only()
+    };
     let inner = Arc::new(MockProvider::new(vec![vec![ProviderEvent::TextDelta {
         text: INITIAL.to_owned(),
     }]]));
@@ -105,7 +123,7 @@ async fn child_app() -> TestResult {
         serve_control(control, &control_store, &control_provider, &gate)
     });
     let result = Box::pin(norn_tui::run_app(norn_tui::TuiInputs {
-        frontend_preferences: norn_tui::frontend_preferences::FrontendPreferencesLaunch::run_only(),
+        frontend_preferences,
         session_binding: Arc::new(norn::session::SessionBinding::ephemeral_root()),
         model_selection: norn::model_selection::ModelRuntime::new(
             provider.model_catalog_backend(),
@@ -131,7 +149,7 @@ async fn child_app() -> TestResult {
             ..StatusBar::default()
         },
         root_id,
-        initial_prompt: Some("workspace fixture prompt".to_owned()),
+        initial_prompt: (!composer_mode).then(|| "workspace fixture prompt".to_owned()),
         data_dir: None,
         session_id: None,
         // Ephemeral fixture never opens an index; this is only its explicit required input.
@@ -250,30 +268,55 @@ pub struct Workspace {
     geometries: Vec<(u16, u16)>,
     directory: tempfile::TempDir,
     final_report: PathBuf,
+    send_key: Option<String>,
     finished: bool,
 }
 
 /// Catch fixture assertions, then terminate/reap the child and join its reader before returning.
 pub fn with_workspace(exercise: impl FnOnce(&mut Workspace) -> TestResult) -> TestResult {
-    let mut app = Workspace::start()?;
+    with_launch(None, |app| {
+        exercise(app)?;
+        Ok("workspace fixture prompt".to_owned())
+    })
+}
+
+/// Launch idle with an actual settings layer; return the one expected accepted prompt.
+pub fn with_composer(
+    send_key: &str,
+    exercise: impl FnOnce(&mut Workspace) -> TestResult<String>,
+) -> TestResult {
+    with_launch(Some(send_key), exercise)
+}
+
+fn with_launch(
+    send_key: Option<&str>,
+    exercise: impl FnOnce(&mut Workspace) -> TestResult<String>,
+) -> TestResult {
+    let startup = Instant::now();
+    let mut app = Workspace::start(send_key)?;
+    if let Some(send_key) = send_key {
+        eprintln!(
+            "{}",
+            json!({"scope":"actual App child process launch through first complete idle PTY frame", "send_key":send_key, "startup_ns":startup.elapsed().as_nanos()})
+        );
+    }
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| exercise(&mut app)))
         .map_err(|payload| panic_error(payload.as_ref(), "workspace assertions"))
         .and_then(|result| result.map_err(|error| io::Error::other(error.to_string())));
-    let stopped = if result.is_ok() {
-        app.release_and_stop()
-    } else {
-        app.finish(true)
+    let stopped = match &result {
+        Ok(prompt) => app.release_and_stop(prompt),
+        Err(_) => app.finish(true),
     };
     let ensured = app.finish(stopped.is_err());
     let output = app.output.bytes()?;
     match (result, stopped, ensured) {
-        (Ok(()), Ok(()), Ok(())) => Ok(()),
+        (Ok(_), Ok(()), Ok(())) => Ok(()),
         (primary, cleanup, ensured) => Err(io::Error::other(format!("workspace exercise: {primary:?}; child cleanup: {cleanup:?}; final teardown: {ensured:?}; captured stdout/stderr:\n{}", String::from_utf8_lossy(&output))).into()),
     }
 }
 
 impl Workspace {
-    fn start() -> TestResult<Self> {
+    fn start(send_key: Option<&str>) -> TestResult<Self> {
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
         let address = listener.local_addr()?;
         let directory = tempfile::tempdir()?;
@@ -295,6 +338,17 @@ impl Workspace {
         command.env(CHILD_ENV, "1");
         command.env(CONTROL_ENV, address.to_string());
         command.env(REPORT_ENV, &final_report);
+        if let Some(send_key) = send_key {
+            let home = directory.path().join("norn-home");
+            std::fs::create_dir(&home)?;
+            std::fs::write(
+                home.join("settings.json"),
+                serde_json::to_vec(&json!({"tui":{"composer":{"send_key":send_key}}}))?,
+            )?;
+            command.env(COMPOSER_ENV, send_key);
+            command.env("NORN_HOME", &home);
+            command.env("HOME", directory.path());
+        }
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         command.cwd(directory.path());
@@ -322,6 +376,7 @@ impl Workspace {
             geometries: vec![(24, 100)],
             directory,
             final_report,
+            send_key: send_key.map(str::to_owned),
             finished: false,
         };
         app.reader = Some(std::thread::spawn(move || read_output(read, &output)));
@@ -368,8 +423,10 @@ impl Workspace {
                 .then_some(()))
         })?;
         self.send(retained_screen::PROBE_REPLY)?;
-        self.frame(0, |screen| screen.contains(INITIAL))?
-            .assert_composer(1)?;
+        self.frame(0, |screen| {
+            self.send_key.is_some() || screen.contains(INITIAL)
+        })?
+        .assert_composer(1)?;
         Ok(())
     }
 
@@ -416,6 +473,31 @@ impl Workspace {
         })
     }
 
+    /// Deliver original terminal bytes and await a newly published matching screen.
+    pub fn input(
+        &mut self,
+        bytes: &[u8],
+        predicate: impl Fn(&Screen) -> bool,
+    ) -> io::Result<Screen> {
+        let after = self.output.bytes()?.len();
+        self.send(bytes)?;
+        self.frame(after, predicate)
+    }
+
+    /// Observe the already-published frame without requiring a redundant repaint.
+    pub fn screen(&self) -> io::Result<Screen> {
+        self.frame(0, |_| true)
+    }
+
+    /// The physical send key selected by this fixture's actual launch preferences.
+    pub fn submit_key(&self) -> &'static [u8] {
+        if self.send_key.as_deref() == Some("alt-enter") {
+            b"\x1b\r"
+        } else {
+            b"\r"
+        }
+    }
+
     /// Submit the same local view command as a person; no direct frontend-method calls.
     pub fn command(&mut self, command: &str, expected: &str) -> io::Result<Screen> {
         let after = self.output.bytes()?.len();
@@ -430,7 +512,7 @@ impl Workspace {
                 .any(|row| lines.get(*row).is_some_and(|line| line.contains("/view")))
         })?;
         let after = self.output.bytes()?.len();
-        self.send(b"\r")?;
+        self.send(self.submit_key())?;
         self.frame(after, |screen| {
             screen.contains(expected) && screen.cursor.0 == 0 && screen.assert_composer(1).is_ok()
         })
@@ -496,7 +578,18 @@ impl Workspace {
         copies(&self.output.bytes()?)
     }
 
-    fn release_and_stop(&mut self) -> io::Result<()> {
+    fn release_and_stop(&mut self, expected_prompt: &str) -> io::Result<()> {
+        // Composer scenarios may deliberately leave a multiline recalled draft.
+        // Escape is the actual explicit clear action, not a test-only setter.
+        if self.send_key.is_some() {
+            self.send(b"\x1b")?;
+            self.frame(0, |screen| {
+                screen
+                    .composer_rows()
+                    .iter()
+                    .all(|row| screen.lines()[*row].is_empty())
+            })?;
+        }
         self.control("release")?;
         self.command("/view follow", "Turn completed")?;
         let completed = self.snapshot()?;
@@ -510,7 +603,7 @@ impl Workspace {
         self.finish(false)?;
         let report: Value = serde_json::from_slice(&std::fs::read(&self.final_report)?)?;
         if report["provider_calls"] != 1
-            || report["user_events"] != json!(["workspace fixture prompt"])
+            || report["user_events"] != json!([expected_prompt])
             || report != completed
         {
             return Err(io::Error::other(format!(

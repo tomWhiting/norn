@@ -1,10 +1,12 @@
-//! Input editor, keybindings, autocomplete, and visual wrap layout.
+//! One plain Iridium composer, host completion and independent submission recall.
 
+pub(crate) mod composer_clipboard;
+pub mod composer_kernel;
+pub(crate) mod composer_keys;
+pub mod composer_transactions;
 pub mod editor;
 pub mod history;
 pub mod keybindings;
-mod navigation;
-pub mod wrap;
 
 pub use autocomplete::{
     Acceptance, AutocompletePopup, AutocompleteTrigger, CandidateRow, FileCandidate,
@@ -16,3 +18,6 @@ pub use history::InputHistory;
 pub use keybindings::{InputAction, map_key_event};
 
 pub mod autocomplete;
+
+pub use composer_kernel::ComposerError;
+pub use composer_transactions::{CompletionContext, ComposerSnapshot, PreparedComposerCut};

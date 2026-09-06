@@ -13,6 +13,8 @@ diffy = { workspace = true }
 dirs = { workspace = true }
 futures-core = "0.3"
 ignore = { workspace = true }
+iridium-editor = { workspace = true }
+iridium-tui = { workspace = true }
 norn = { path = "../norn" }
 nucleo-matcher = "0.3"
 parking_lot = "0.12"
@@ -42,4 +44,8 @@ workspace = true
 
 [[test]]
 name = "mcp_channels"
+harness = false
+
+[[bench]]
+name = "iridium_composer"
 harness = false

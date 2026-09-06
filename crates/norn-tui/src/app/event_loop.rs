@@ -18,13 +18,11 @@ use norn::agent_loop::inbound::InboundChannel;
 use norn::agent_loop::loop_context::LoopContext;
 use norn::agent_loop::runner::ToolExecutor;
 use norn::integration::McpControlHandle;
-use norn::integration::is_live_mcp_definition_input;
 use norn::provider::request::ToolDefinition;
 use norn::provider::traits::Provider;
 use norn::session::store::EventStore;
 
 use crate::TuiError;
-use crate::input::InputEditor;
 use crate::input::history::InputHistory;
 use crate::input::keybindings::{InputAction, map_key_event};
 use crate::render::fixed_panel::StatusBar;
@@ -489,14 +487,6 @@ enum InputOutcome {
     Exit,
 }
 
-fn submit_input(editor: &mut InputEditor) -> std::io::Result<Option<String>> {
-    if is_live_mcp_definition_input(&editor.text()) {
-        Ok(editor.submit_without_history())
-    } else {
-        editor.submit()
-    }
-}
-
 /// Map a terminal event to the appropriate handler.
 ///
 /// `term_rx` is forwarded into [`handle_action`] so that the
@@ -531,7 +521,7 @@ async fn dispatch_input(
             if state.autocomplete.is_some()
                 && key.kind == KeyEventKind::Press
                 && matches!(
-                    handle_popup_key(key, state, cols, guard.terminal_rows()),
+                    handle_popup_key(key, state, cols, guard.terminal_rows())?,
                     PopupKeyOutcome::Consumed
                 )
             {
@@ -543,9 +533,8 @@ async fn dispatch_input(
                 load_visible(state, &runtime.store)?;
                 return Ok(InputOutcome::Continue);
             }
-            let caps = state.terminal_caps.clone();
             let popup_open = state.autocomplete.is_some();
-            let Some(action) = map_key_event(key, &caps, popup_open) else {
+            let Some(action) = map_key_event(key, state.composer_send_key, popup_open) else {
                 return Ok(InputOutcome::Continue);
             };
             handle_action(
@@ -568,15 +557,15 @@ async fn dispatch_input(
         }
         Event::Paste(text) => {
             super::view_actions::pin_visible(state)?;
-            insert_paste_text(state, &text);
-            sync_input_for_current_geometry(state, guard);
+            insert_paste_text(state, &text)?;
+            sync_input_for_current_geometry(state, guard)?;
             redraw_all(state, guard)?;
             Ok(InputOutcome::Continue)
         }
         Event::WindowResized(size) => {
             guard.handle_resize(size.cols, size.rows);
             state.screen.allow_body_load = false;
-            sync_input_for_current_geometry(state, guard);
+            sync_input_for_current_geometry(state, guard)?;
             redraw_all(state, guard)?;
             Ok(InputOutcome::Continue)
         }
@@ -589,22 +578,21 @@ async fn dispatch_input(
 /// `term_rx` is only consumed by the [`InputAction::Submit`] arm, where
 /// it is forwarded into [`run_turn`] so a mid-turn Ctrl+C key event can
 /// abort the in-flight agent step.
-pub(super) fn sync_input_for_current_geometry(state: &mut AppState, guard: &mut TerminalGuard) {
-    state.screen.dirty = true;
-    let cols = guard.terminal_columns();
-    let input_rows = sync_input_area(&mut state.input_editor, cols, guard.terminal_rows());
-    state.fixed_panel.set_input_area(input_rows);
+pub(super) fn sync_input_for_current_geometry(
+    state: &mut AppState,
+    guard: &TerminalGuard,
+) -> Result<(), TuiError> {
+    let rows = sync_input_area(state, guard.terminal_columns(), guard.terminal_rows())?;
+    state.fixed_panel.set_input_area(rows);
+    Ok(())
 }
 
-pub(super) fn insert_paste_text(state: &mut AppState, text: &str) {
+/// Bracketed paste is one reversible edit and never a send or completion gesture.
+pub(super) fn insert_paste_text(state: &mut AppState, text: &str) -> Result<(), TuiError> {
+    state.input_editor.paste_cells(text)?;
     dismiss_autocomplete(state);
-    for ch in text.chars() {
-        if ch == '\n' {
-            state.input_editor.insert_newline();
-        } else {
-            state.input_editor.insert_char(ch);
-        }
-    }
+    state.screen.dirty = true;
+    Ok(())
 }
 
 async fn handle_action(
@@ -626,27 +614,32 @@ async fn handle_action(
                     return Ok(InputOutcome::Exit);
                 }
             }
-            state.input_editor.clear();
+            state.input_editor.clear()?;
             dismiss_autocomplete(state);
         }
         InputAction::Submit => {
             dismiss_autocomplete(state);
-            let text = submit_input(&mut state.input_editor)?.unwrap_or_default();
-            if text.trim().is_empty() {
+            let Some(snapshot) = super::composer_submission::prepare(state)? else {
                 return Ok(InputOutcome::Continue);
-            }
-            sync_input_for_current_geometry(state, guard);
-            redraw_all(state, guard)?;
-            // Phase 1 slash dispatch. None = not a recognised slash —
-            // fall through to the normal run_turn pipeline. Some =
-            // handled here; skip run_turn. Exit short-circuits the
-            // outer loop directly.
+            };
+            let text = snapshot.text().to_owned();
             let slash = try_dispatch_slash(&text, state, runtime).await?;
             match slash {
-                Some(SlashOutcome::Exit) => return Ok(InputOutcome::Exit),
-                Some(SlashOutcome::Continue) => {}
+                Some(SlashOutcome::Rejected) => {}
+                Some(SlashOutcome::AcceptedWithError(error)) => {
+                    return Err(super::composer_submission::accepted_with_error(
+                        state, &snapshot, error,
+                    ));
+                }
+                Some(SlashOutcome::Exit) => {
+                    super::composer_submission::accepted_local(state, &snapshot)?;
+                    return Ok(InputOutcome::Exit);
+                }
+                Some(SlashOutcome::Continue) => {
+                    super::composer_submission::accepted_local(state, &snapshot)?;
+                }
                 None => {
-                    let input = write_user_message(text, state)?;
+                    let input = super::composer_submission::begin(state, snapshot)?;
                     run_turn_and_pending(
                         state,
                         runtime,
@@ -666,11 +659,12 @@ async fn handle_action(
         }
         other => {
             let cols = guard.terminal_columns();
-            apply_edit_action(other, state, cols, guard.terminal_rows());
+            let result = apply_edit_action(other, state, cols, guard.terminal_rows())?;
+            super::composer_effects::finish(state, guard, result)?;
         }
     }
     super::frontend_preferences::edited(state)?;
-    sync_input_for_current_geometry(state, guard);
+    sync_input_for_current_geometry(state, guard)?;
     redraw_all(state, guard)?;
     Ok(outcome)
 }
@@ -696,6 +690,7 @@ pub(super) fn is_ctrl_c(event: &Event) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::InputEditor;
     use crate::input::autocomplete::{AutocompletePopup, SlashCandidate, SourceTag};
     use crate::input::history::InputHistory;
     use crate::render::fixed_panel::StatusBar;
@@ -733,14 +728,47 @@ mod tests {
         ))
     }
 
-    fn seed_popup(state: &mut AppState) {
+    fn type_text(editor: &mut InputEditor, text: &str) -> Result<(), TuiError> {
+        let options = iridium_editor::editor::CellInputOptions {
+            wrap: iridium_editor::cell_layout::CellWrapParameters::new(80, 4),
+            visible_rows: 10,
+        };
+        for character in text.chars() {
+            assert_eq!(
+                editor.handle_cell_key(
+                    &iridium_editor::KeyEvent::simple(iridium_editor::KeyCode::Char(character)),
+                    options
+                )?,
+                iridium_editor::EditorKeyResult::None
+            );
+        }
+        Ok(())
+    }
+
+    fn logical_lines(editor: &InputEditor) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let document = &editor.kernel().state().document;
+        (0..document.line_count())
+            .map(|line| {
+                document
+                    .line(line)
+                    .ok_or_else(|| format!("fixture logical line {line} is missing").into())
+            })
+            .collect()
+    }
+
+    fn seed_popup(state: &mut AppState) -> Result<(), TuiError> {
         let candidates = vec![SlashCandidate {
             name: "help".to_owned(),
             source_tag: SourceTag::Builtin,
             description: "Show help".to_owned(),
         }];
-        state.autocomplete = Some(AutocompletePopup::new_slash(candidates, "", 0));
+        state.autocomplete = Some(AutocompletePopup::new_slash(
+            candidates,
+            "",
+            state.input_editor.completion_context(0)?,
+        ));
         state.fixed_panel.set_autocomplete_popup(1);
+        Ok(())
     }
 
     #[test]
@@ -748,25 +776,26 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let history_path = directory.path().join("history.txt");
-        let mut editor = InputEditor::new(InputHistory::load_from(&history_path));
-
-        for character in "ordinary prompt".chars() {
-            editor.insert_char(character);
-        }
-        assert_eq!(
-            submit_input(&mut editor)?,
-            Some("ordinary prompt".to_owned())
-        );
+        let mut state = fresh_state()?;
+        state.input_editor = InputEditor::new(InputHistory::load_from(&history_path));
+        type_text(&mut state.input_editor, "ordinary prompt")?;
+        let snapshot = super::super::composer_submission::prepare(&mut state)?
+            .ok_or("ordinary submission absent")?;
+        assert_eq!(snapshot.text(), "ordinary prompt");
+        super::super::composer_submission::accepted_local(&mut state, &snapshot)?;
+        assert!(state.input_editor.is_empty());
 
         let secret_inputs = [
             "/mcp add local stdio command --env TOKEN=env-secret",
             "/mcp add remote http https://example.test/private --header Authorization=header-secret",
         ];
         for input in secret_inputs {
-            for character in input.chars() {
-                editor.insert_char(character);
-            }
-            assert_eq!(submit_input(&mut editor)?, Some(input.to_owned()));
+            type_text(&mut state.input_editor, input)?;
+            let snapshot = super::super::composer_submission::prepare(&mut state)?
+                .ok_or("definition submission absent")?;
+            assert_eq!(snapshot.text(), input);
+            super::super::composer_submission::accepted_local(&mut state, &snapshot)?;
+            assert!(state.input_editor.is_empty());
         }
 
         let persisted = std::fs::read_to_string(history_path)?;
@@ -781,14 +810,14 @@ mod tests {
     fn paste_inserts_multiline_text_and_dismisses_popup_without_turn()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut state = fresh_state()?;
-        seed_popup(&mut state);
+        seed_popup(&mut state)?;
         let initial_turn_start = state.turn_start;
 
-        insert_paste_text(&mut state, "line 1\nline 2\nline 3");
+        insert_paste_text(&mut state, "line 1\nline 2\nline 3")?;
 
         assert_eq!(state.input_editor.text(), "line 1\nline 2\nline 3");
         assert_eq!(
-            state.input_editor.lines(),
+            logical_lines(&state.input_editor)?,
             &[
                 "line 1".to_owned(),
                 "line 2".to_owned(),
@@ -805,17 +834,18 @@ mod tests {
     fn paste_splices_at_cursor_and_parks_after_inserted_text()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut state = fresh_state()?;
-        for ch in "hello world".chars() {
-            state.input_editor.insert_char(ch);
-        }
+        type_text(&mut state.input_editor, "hello world")?;
         for _ in 0..6 {
-            state.input_editor.cursor_left();
+            assert_eq!(
+                apply_edit_action(InputAction::CursorLeft, &mut state, 80, 24)?,
+                iridium_editor::EditorKeyResult::None
+            );
         }
 
-        insert_paste_text(&mut state, "PASTED\nLINE2");
+        insert_paste_text(&mut state, "PASTED\nLINE2")?;
 
         assert_eq!(
-            state.input_editor.lines(),
+            logical_lines(&state.input_editor)?,
             &["helloPASTED".to_owned(), "LINE2 world".to_owned()]
         );
         assert_eq!(state.input_editor.text(), "helloPASTED\nLINE2 world");
@@ -830,19 +860,25 @@ mod tests {
         let cols = 80;
         let terminal_rows = 24;
 
-        insert_paste_text(&mut state, "line1\nline2\nline3");
-        let grown_rows = sync_input_area(&mut state.input_editor, cols, terminal_rows);
+        insert_paste_text(&mut state, "line1\nline2\nline3")?;
+        let grown_rows = sync_input_area(&mut state, cols, terminal_rows)?;
         state.fixed_panel.set_input_area(grown_rows);
         assert_eq!(state.fixed_panel.total_height(), 6);
 
         for _ in 0..=5 {
-            state.input_editor.backspace();
+            assert_eq!(
+                apply_edit_action(InputAction::Backspace, &mut state, cols, terminal_rows)?,
+                iridium_editor::EditorKeyResult::None
+            );
         }
-        let shrunk_rows = sync_input_area(&mut state.input_editor, cols, terminal_rows);
+        let shrunk_rows = sync_input_area(&mut state, cols, terminal_rows)?;
         state.fixed_panel.set_input_area(shrunk_rows);
 
         assert_eq!(state.input_editor.text(), "line1\nline2");
-        assert_eq!(shrunk_rows, state.input_editor.visual_height(cols));
+        assert_eq!(
+            usize::from(shrunk_rows),
+            state.composer_geometry.total_rows()
+        );
         assert_eq!(state.fixed_panel.total_height(), 3 + shrunk_rows);
         Ok(())
     }

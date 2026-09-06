@@ -1,9 +1,9 @@
 //! Persistent input history.
 //!
 //! [`InputHistory`] holds the chronological list of previous submissions
-//! and the transient navigation state used while the user cycles through
-//! them with the Up/Down arrows. When file-backed, entries persist to
-//! `$NORN_HOME/history.txt` (normally `~/.norn/history.txt`) — one entry per line, with newlines and
+//! only. The editor facade owns transactional recall navigation and the saved
+//! original draft selection. When file-backed, entries persist to
+//! `$NORN_HOME/history.txt` (normally `~/.norn/history.txt`) — one entry per line, with line endings and
 //! backslashes escaped so multi-line submissions round-trip losslessly.
 //!
 //! A history with no resolvable path (the home directory could not be
@@ -29,7 +29,7 @@ pub fn default_history_path() -> Option<PathBuf> {
 
 /// Escape a submission for single-line on-disk storage.
 ///
-/// A backslash becomes `\\` and a newline becomes `\n`, so a multi-line
+/// Backslashes and CR/LF line endings are escaped, so a multi-line
 /// submission occupies exactly one physical line in the history file and
 /// survives a round trip through [`decode`].
 fn encode(entry: &str) -> String {
@@ -38,6 +38,7 @@ fn encode(entry: &str) -> String {
         match ch {
             '\\' => out.push_str("\\\\"),
             '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
             other => out.push(other),
         }
     }
@@ -46,8 +47,7 @@ fn encode(entry: &str) -> String {
 
 /// Decode a stored history line back into its original submission.
 ///
-/// Inverts [`encode`]: `\\` becomes a backslash and `\n` becomes a
-/// newline. An unrecognised escape (or a trailing lone backslash) is
+/// Inverts [`encode`], including CR and LF as distinct original bytes. An unrecognised escape (or a trailing lone backslash) is
 /// preserved verbatim so no input is silently dropped.
 fn decode(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
@@ -56,6 +56,7 @@ fn decode(line: &str) -> String {
         if ch == '\\' {
             match chars.next() {
                 Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
                 Some('\\') | None => out.push('\\'),
                 Some(other) => {
                     out.push('\\');
@@ -74,12 +75,6 @@ fn decode(line: &str) -> String {
 pub struct InputHistory {
     /// Submitted entries, oldest first.
     entries: Vec<String>,
-    /// Current navigation index into `entries`; `None` when not
-    /// navigating.
-    nav: Option<usize>,
-    /// The editor draft saved before the first navigation step, restored
-    /// when the user navigates forward past the newest entry.
-    draft: Option<String>,
     /// Private backing log; `None` for in-memory-only history.
     log: Option<PrivateLineLog>,
 }
@@ -89,8 +84,6 @@ impl fmt::Debug for InputHistory {
         formatter
             .debug_struct("InputHistory")
             .field("entry_count", &self.entries.len())
-            .field("navigating", &self.nav.is_some())
-            .field("draft_present", &self.draft.is_some())
             .field("backing_path", &self.log.as_ref().map(PrivateLineLog::path))
             .finish()
     }
@@ -141,8 +134,6 @@ impl InputHistory {
         };
         Self {
             entries,
-            nav: None,
-            draft: None,
             log: Some(log),
         }
     }
@@ -177,53 +168,16 @@ impl InputHistory {
         Ok(())
     }
 
-    /// Step to the previous (older) history entry.
-    ///
-    /// `current` is the live editor text. On the first step it is saved
-    /// as the draft so a later forward step past the newest entry can
-    /// restore it. Returns `None` — leaving the editor untouched — when
-    /// the history is empty.
-    pub fn prev(&mut self, current: &str) -> Option<String> {
-        if self.entries.is_empty() {
-            return None;
-        }
-        let idx = match self.nav {
-            None => {
-                self.draft = Some(current.to_owned());
-                self.entries.len() - 1
-            }
-            Some(idx) => idx.saturating_sub(1),
-        };
-        self.nav = Some(idx);
-        self.entries.get(idx).cloned()
+    /// Borrow one accepted submission by chronological index.
+    #[must_use]
+    pub fn entry(&self, index: usize) -> Option<&str> {
+        self.entries.get(index).map(String::as_str)
     }
 
-    /// Step to the next (newer) history entry.
-    ///
-    /// Advancing past the newest entry ends navigation and restores the
-    /// saved draft (draining it, so a fresh draft is captured on the next
-    /// [`prev`](Self::prev)). Returns `None` when not currently
-    /// navigating.
-    pub fn advance(&mut self) -> Option<String> {
-        let idx = self.nav?;
-        if idx + 1 < self.entries.len() {
-            self.nav = Some(idx + 1);
-            self.entries.get(idx + 1).cloned()
-        } else {
-            self.nav = None;
-            self.draft.take()
-        }
-    }
-
-    /// Reset the navigation cursor.
-    ///
-    /// Called after the editor buffer is replaced out-of-band (a submit
-    /// or a clear) so that the next [`prev`](Self::prev) re-captures the
-    /// draft from the current buffer rather than navigating relative to a
-    /// stale position. The saved draft is left intact; it is harmlessly
-    /// overwritten on the next `prev`.
-    pub fn cancel_navigation(&mut self) {
-        self.nav = None;
+    /// Actual configured backing path, absent for in-memory history.
+    #[must_use]
+    pub fn path(&self) -> Option<PathBuf> {
+        self.log.as_ref().map(PrivateLineLog::path)
     }
 }
 
@@ -237,68 +191,6 @@ mod tests {
         let encoded = encode(original);
         assert!(!encoded.contains('\n'), "encoded form must be single-line");
         assert_eq!(decode(&encoded), original);
-    }
-
-    #[test]
-    fn prev_returns_newest_first_then_walks_back() -> io::Result<()> {
-        let mut history = InputHistory::in_memory();
-        history.append("a")?;
-        history.append("b")?;
-        assert_eq!(history.prev(""), Some("b".to_string()));
-        assert_eq!(history.prev(""), Some("a".to_string()));
-        // Saturates at the oldest entry.
-        assert_eq!(history.prev(""), Some("a".to_string()));
-        Ok(())
-    }
-
-    #[test]
-    fn prev_on_empty_history_returns_none() {
-        let mut history = InputHistory::in_memory();
-        assert_eq!(history.prev("draft"), None);
-    }
-
-    #[test]
-    fn next_past_newest_restores_draft() -> io::Result<()> {
-        let mut history = InputHistory::in_memory();
-        history.append("a")?;
-        history.append("b")?;
-        // One step back, then forward past the newest entry.
-        assert_eq!(history.prev("my draft"), Some("b".to_string()));
-        assert_eq!(history.advance(), Some("my draft".to_string()));
-        Ok(())
-    }
-
-    #[test]
-    fn next_walks_forward_then_restores_draft() -> io::Result<()> {
-        let mut history = InputHistory::in_memory();
-        history.append("a")?;
-        history.append("b")?;
-        assert_eq!(history.prev("draft"), Some("b".to_string()));
-        assert_eq!(history.prev("draft"), Some("a".to_string()));
-        assert_eq!(history.advance(), Some("b".to_string()));
-        assert_eq!(history.advance(), Some("draft".to_string()));
-        // Draft was drained — no further forward movement.
-        assert_eq!(history.advance(), None);
-        Ok(())
-    }
-
-    #[test]
-    fn next_without_navigation_is_a_noop() -> io::Result<()> {
-        let mut history = InputHistory::in_memory();
-        history.append("a")?;
-        assert_eq!(history.advance(), None);
-        Ok(())
-    }
-
-    #[test]
-    fn cancel_navigation_lets_prev_recapture_the_draft() -> io::Result<()> {
-        let mut history = InputHistory::in_memory();
-        history.append("a")?;
-        assert_eq!(history.prev("first draft"), Some("a".to_string()));
-        history.cancel_navigation();
-        assert_eq!(history.prev("second draft"), Some("a".to_string()));
-        assert_eq!(history.advance(), Some("second draft".to_string()));
-        Ok(())
     }
 
     #[test]
@@ -328,7 +220,7 @@ mod tests {
 
         let mut history = InputHistory::load_from(&path);
         history.append("first")?;
-        history.append("second\nwith newline")?;
+        history.append("second\r\nwith newline\rand carriage return")?;
         history.append("third")?;
         drop(history);
 
@@ -337,7 +229,7 @@ mod tests {
             reloaded.entries,
             vec![
                 "first".to_string(),
-                "second\nwith newline".to_string(),
+                "second\r\nwith newline\rand carriage return".to_string(),
                 "third".to_string(),
             ]
         );
@@ -370,15 +262,13 @@ mod tests {
     }
 
     #[test]
-    fn debug_omits_entries_and_draft() -> io::Result<()> {
+    fn debug_omits_entries() -> io::Result<()> {
         let mut history = InputHistory::in_memory();
         history.append("history-secret")?;
-        let _ = history.prev("draft-secret");
 
         let debug = format!("{history:?}");
 
         assert!(!debug.contains("history-secret"));
-        assert!(!debug.contains("draft-secret"));
         assert!(debug.contains("entry_count"));
         Ok(())
     }

@@ -1,0 +1,43 @@
+{
+  "cluster": "norn-iridium-composer",
+  "title": "Composer integration checklist",
+  "sections": [
+    {
+      "name": "Registered integration rows",
+      "items": [
+        {
+          "id": "C0",
+          "text": "Settle and register the actual dependency and host contracts"
+        },
+        {
+          "id": "C1",
+          "text": "Replace the mutable input buffer with one plain-text Iridium Editor"
+        },
+        {
+          "id": "C2",
+          "text": "Route real idle and active-turn input through the same kernel and clipboard owner"
+        },
+        {
+          "id": "C3",
+          "text": "Paint and hit-test one borrowed cell rectangle inside the retained Norn Frame"
+        },
+        {
+          "id": "C4",
+          "text": "Make draft submission, completion and recall preserve admission and undo semantics"
+        },
+        {
+          "id": "C5",
+          "text": "Consume NFP shared settings writer and single preference owner"
+        },
+        {
+          "id": "C6",
+          "text": "Extend NFP typed preference owner with visible composer send-key choice"
+        },
+        {
+          "id": "C7",
+          "text": "Prove the integrated application and performance before landing"
+        }
+      ]
+    }
+  ]
+}

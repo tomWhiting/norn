@@ -1,0 +1,1035 @@
+{
+  "schema_version": 1,
+  "cluster": "norn-iridium-composer",
+  "title": "Plain Iridium composer inside the existing Norn session",
+  "status": "assembled_pending_validation",
+  "written_at_melbourne": "2026-09-06T13:11:57.894111+10:00",
+  "intention": "Replace duplicated editing with one capable kernel while preserving the user’s appearance, startup and session control.",
+  "problem": "Norn still owns independent mutable scalar input/wrapping, paste loops and pre-admission draft clearing; Iridium public cell APIs and NFP shared persistence now exist but are not yet assembled into this composer.",
+  "solution": {
+    "summary": "The source now assembles one plain Iridium kernel facade, borrowed cell geometry in the retained Norn Frame, explicit admission/draft handling and a persisted Enter/Alt-Enter policy in the existing NFP owner. Candidate preview.5 is not installed; two observed modifier-translation failures and remaining composed verification still block acceptance."
+  },
+  "decisions": [
+    {
+      "id": "D1",
+      "title": "Dependency and execution authority",
+      "body": "Checked NFP baseline d27259cc1c218a44be0ce624d103b04d799dcf21 (code fe6af320) is installed preview.4. Root accepted R0 and pinned both Iridium crates with default-features=false to private checked/pushed15673cba9222489e3c3315bb1526f60a6224a187, including ICC002/003/004. Earlier09cfa793/84d026f6 observations remain historical. ICC-004 at private commit15673cba9222489e3c3315bb1526f60a6224a187 implements iridium-tui default=[\"syntax\"] and syntax=[\"iridium-editor/syntax\", \"dep:ropey\"]. Both Norn Iridium dependencies now disable defaults. Feature-off preserves public cell editing/rendering/search/selection/caret/chrome and iridium-lang rules; its Frame has no parser/span/Rope highlight-snapshot cache, while the editor text buffer still uses Rope. Palette::highlighted is syntax-only and default Iridium TUI remains highlighted. The recorded no-syntax/default scopes passed378/393 tests, both strict Clippy and fmt; standalone compile with tree-sitter0.25.10 and the normal no-syntax subtree passed. These are bounded dependency checks, not Norn assembly or GPU/full-workspace/venue/Fable proof. Parser-free means only the Iridium composer subtree; Norn/Chiron0.25 and unrelated parsers remain. Checked local previews are authorized after their own source-bound acceptance; main Fable/exact205 remain separate. Root may set default-features=false on the existing workspace claude_runner dependency at unchanged Git revision643a1166f06a1f42961acf442f654670fbe9da22. Its default toon feature enables optional toon-format; that unused converter brings ratatui0.29/unicode-width=0.2.0, conflicting with the Iridium^0.2.2 requirement. Norn has no TOON/format-converter API use; its Claude adapter uses types::OutputFormat::StreamJson, separate from optional formats converters. Keep Text/Json/StreamJson, process/route/model behavior and all dependency source revisions unchanged. Resolve the lockfile for this explicit feature selection and existing composer dependencies; do not update unrelated dependencies. Run existing Claude adapter/wrapper tests and required composed checks to verify preserved behavior. This amendment authorizes only the feature flag/necessary resolved lock change, not a Claude route redesign or a passing graph claim.",
+      "status": "registered_from_recorded_decisions"
+    },
+    {
+      "id": "D2",
+      "title": "One editor and one terminal owner",
+      "body": "One plain-text Iridium Editor replaces InputEditor storage/motion/wrapping. Norn owns terminal, reader, frame publication, focus, send and session lifecycle. No Iridium driver or second mutable buffer. Root owns a behavior-preserving extraction of finish_editor_action host-effect handling from app/event_loop.rs into app/composer_effects.rs, exposed as composer_effects::finish. Idle and active-turn callers use that one owner; app/mod.rs changes only the module declaration. This resolves the measured 518-production-line event_loop.rs excess without altering input order, clipboard/send/focus effects, acceptance, errors or terminal/runtime ownership. No extra feature, test file or duplicate event handler is added; keep the resulting production files within 500 lines. Root may remove the now-dead render/text.rs input_display_width helper and its single implementation-mirroring input_display_width_treats_controls_as_visible_placeholders test. The old input/wrap tab/control-placeholder path is retired; current Iridium kernel/cell geometry and actual rendering tests own input-width behavior. Do not retain dead production code behind cfg(test), add suppressions or weaken existing live geometry assertions. Other rendering helpers and tests remain unchanged.",
+      "status": "registered_from_recorded_decisions"
+    },
+    {
+      "id": "D3",
+      "title": "One current geometry",
+      "body": "Use existing composer_input_area, no live prefix and bare Iridium chrome. The final borrowed geometry supplies cells/caret/hits; retain typed extent/stale-hit errors and visual affinity. Measure preparation work; do not add a global layout identity/cache. Root owns the narrow render/frame/diff.rs adapter-access amendment: widen only PreparedFrame::new and PreparedFrame::put from pub(super) to pub(in crate::render), and add dimensions() -> (u16, usize) at the same render-only visibility from the owned columns/cells grid. The sibling composer cell adapter uses those existing construction/insertion operations and validates destination dimensions before insertion. No grid ownership, cell mutation semantics, glyph clipping, delta encoding, terminal publication, rollback or renderer behavior changes are authorized by this amendment.",
+      "status": "registered_from_recorded_decisions"
+    },
+    {
+      "id": "D4",
+      "title": "Reversible host transactions",
+      "body": "ICC-002 is the explicit prerequisite for public Editor::replace_cell_range(range, replacement, cursor policy) and CellReplacementCursor. The current bound private revision15673cba9222489e3c3315bb1526f60a6224a187 includes that API. In Norn, completion/recall/clear use one preflighted, undoable public transaction preserving pre-action selection, grapheme joins, refusal atomicity and isolated gesture grouping. Never copy private normalization/preparation or weaken undo; any additional API need requires its own prior Iridium registration. R2 clipboard uses authoritative ClipboardOperation plus an opaque kernel snapshot for collapsed-line and multicursor copy/cut. To prepare a cut, apply the public Command to cloned Document/CursorState only and retain that exact result; these are preflight scratch, not a second live editor. Before transport compare the actual copied strings for sanitation changes (not byte lengths); refuse sanitized destructive Cut before write. Only after successful transport write and flush, validate the unchanged snapshot and commit through checked ICC-002 replace_cell_range over the whole document with Exact(result_cursor), one undo transaction. Failure, sanitation or stale snapshot leaves live text/history unchanged. No private Iridium preparation or live raw apply_command is used. Clipboard adapter/transport remains R2; the already-registered kernel facade remains its existing owner, with no Iridium wall expansion.",
+      "status": "registered_from_recorded_decisions"
+    },
+    {
+      "id": "D5",
+      "title": "Send policy is host configuration",
+      "body": "Default Enter sends; alt-enter is a typed option. Popup bare Enter/Tab comes first; paste never submits; delivery steer/queue remains independent. Modifier absence is not guessed.",
+      "status": "registered_from_recorded_decisions"
+    },
+    {
+      "id": "D6",
+      "title": "Restored appearance is preserved",
+      "body": "Keep full-width plain live text, dim top-left mode/token rule, bottom-right model/effort/tier/session rule and last-row hints; existing three-row chrome yields at tiny height. Preserve blue user text on every line, > transcript prompt, two-column continuation and blank margin. No fourth control row.",
+      "status": "registered_from_recorded_decisions"
+    },
+    {
+      "id": "D7",
+      "title": "Admission and recall ownership",
+      "body": "Prepare/admit/clear explicitly, preserve rejected draft/undo, accepted input identities and no-resend behavior. Private submission recall remains separate from editor undo; /auth exclusions unchanged. Root owns composer_submission plus the existing event_loop/mid/run orchestration seam. Keep exactly one pending local ItemId and ComposerSnapshot in AppState. Before clearing a pending submitted draft, consume the actual ExecutionObservation::opening_input push receipt for that input. Accepted-but-unavailable is still acceptance; never infer admission from text, labels, item order, replayed events or a fabricated receipt. A missing/rejected pre-admission outcome retains the exact draft/selection/undo; no polling or duplicate runtime input is added. Typed local command acceptance propagates from slash/model_selection/mcp_slash and the existing view command function alongside all current retained diagnostics. Distinguish rejected local commands from accepted commands even when the current handler renders a notice and returns Ok. Model capability/preflight checks and the original MCP start owner stay authoritative; parse/busy/preflight refusal does not admit or clear the draft, and a successfully started asynchronous operation is not replayed if later completion or notice/persistence handling fails. Preserve acceptance versus post-acceptance failure in the returned outcome. After an effect is accepted, later history/preferences persistence or result reporting failure must explicitly retain that accepted fact and its error; it cannot be returned as a rejection that invites repeating the effect. Local errors still render their original diagnostics. Existing agent/profile slash routing remains unchanged. R4 also owns the typed acceptance result of the existing app/frontend_preferences.rs command function, coordinated with its R6 owner. Decide accepted/rejected from the actual command branch: unknown subcommands are rejected, while an accepted scope/settings change followed by save-start, persistence or reporting failure remains accepted-with-error. Never infer outcomes from notice text, roll back a published settings change implicitly, replay a save/effect, or introduce a second preference owner. Only the command outcome propagation is added to the bounded slash partition; existing save lifecycle and publication semantics remain unchanged.",
+      "status": "registered_from_recorded_decisions"
+    },
+    {
+      "id": "D8",
+      "title": "NFP owns persistence",
+      "body": "Extend existing typed FrontendPreferences and PreferenceOwner; no new writer/task/lock/store. Use install/edited/wait/finish/command/drain/exit_outcome and existing snapshot CAS. Add composer to same projection/owned keys; strict owned section means fixture sentinels move to an unowned sibling. Keep NFP automatic-personal assumption, run/local and truthful pending/shadowing outcomes.",
+      "status": "registered_from_recorded_decisions"
+    },
+    {
+      "id": "D9",
+      "title": "Startup and input efficiency",
+      "body": "Reuse already-loaded layers and existing startup_trace; composer work adds no settings reads/locks/write, language inference/parse, MCP/provider activation, transcript replay/hydration or invented capacity/timer. ICC-004 at private commit15673cba9222489e3c3315bb1526f60a6224a187 implements iridium-tui default=[\"syntax\"] and syntax=[\"iridium-editor/syntax\", \"dep:ropey\"]. Both Norn Iridium dependencies now disable defaults. Feature-off preserves public cell editing/rendering/search/selection/caret/chrome and iridium-lang rules; its Frame has no parser/span/Rope highlight-snapshot cache, while the editor text buffer still uses Rope. Palette::highlighted is syntax-only and default Iridium TUI remains highlighted. The recorded no-syntax/default scopes passed378/393 tests, both strict Clippy and fmt; standalone compile with tree-sitter0.25.10 and the normal no-syntax subtree passed. These are bounded dependency checks, not Norn assembly or GPU/full-workspace/venue/Fable proof. Parser-free means only the Iridium composer subtree; Norn/Chiron0.25 and unrelated parsers remain. Measure actual Norn assembly without arbitrary pass thresholds. R7 may change only the existing tests/support/frontend_preferences_restart.rs App::frame helper visibility and API documentation so composer_preferences can call its existing source-position-bound, push/deadline complete-frame predicate wait. Reuse App::press for Alt-Enter instead of command/submit helpers that force bare Enter. Preserve the helper body, existing deadline semantics and all fixture assertions; no copied harness, polling, new runtime or other executable/signature behavior change. Parser-free is scoped to the Iridium composer dependency subtree, not the whole Norn graph. With default-features=false on both Iridium crates, the actual resolved graph must omit iridium-syntax, the Iridium tree-sitter0.26 edge and Iridium GPU dependencies. Norn/Chiron tree-sitter0.25 and unrelated parser-backed tools remain unchanged. Verify dependency origins/versions rather than asserting no tree-sitter package anywhere in Norn.",
+      "status": "registered_from_recorded_decisions"
+    },
+    {
+      "id": "D10",
+      "title": "Registered execution and public-history boundary",
+      "body": "R0 now registers the eight documents on the checked NFP worktree. Root accepted R0; exact row dispatch and dependency readiness govern source edits; Current ICC-002/ICC-003/ICC-004 private checkpoint binding is fulfilled at15673cba9222489e3c3315bb1526f60a6224a187; composed Norn validation remains a prerequisite for its next local preview. Existing checked local-preview authority covers later build/install and successful-update speech. R0 claims only documentation/source-witness work. Main Fable/exact205 and any public-history rewrite/visibility/release remain separate; original programme IDs and historical receipts are preserved. Root owns the next local composer preview release note in docs/release-notes/UNRELEASED.md. Reserve 0.1.0-preview.5 for this assembled composer checkpoint; edit the note and already-registered Cargo version fields only after actual assembled checks pass. Describe the observed features, exact validation scope and remaining limitations; do not claim an installation before its receipt, or a main landing/public release/Fable/exact205 verdict. This registration performs neither the version bump nor the note edit. Current candidate status is assembled_pending_validation, not installed: type check completed, TUI833/835 passed with two translator defects under repair. No full/PTY/performance/preview.5 installation or main/Fable/205 verdict is claimed.",
+      "status": "registered_from_recorded_decisions"
+    }
+  ],
+  "structure": {
+    "Cargo.lock": "NCP-001 R1, R7",
+    "Cargo.toml": "NCP-001 R1 dependency feature/revision declaration, including both Iridium defaults disabled and existing claude_runner optional TOON defaults disabled at unchanged643a1166; root ownership.",
+    "crates/norn-cli/Cargo.toml": "NCP-001 R7",
+    "crates/norn-cli/tests/composer_preferences.rs": "NCP-001 R7",
+    "crates/norn-cli/tests/frontend_preferences_restart.rs": "NCP-001 R7",
+    "crates/norn-cli/tests/support/composer_preferences.rs": "NCP-001 R7",
+    "crates/norn-tui/Cargo.toml": "NCP-001 R1, R7",
+    "crates/norn-tui/benches/iridium_composer.rs": "NCP-001 R7",
+    "crates/norn-tui/src/app/autocomplete.rs": "NCP-001 R1, R2, R4",
+    "crates/norn-tui/src/app/composer_geometry.rs": "NCP-001 R3",
+    "crates/norn-tui/src/app/composer_geometry_tests.rs": "NCP-001 R3",
+    "crates/norn-tui/src/app/composer_submission.rs": "NCP-001 R4",
+    "crates/norn-tui/src/app/composer_submission_tests.rs": "NCP-001 R4",
+    "crates/norn-tui/src/app/edit.rs": "NCP-001 R1, R2",
+    "crates/norn-tui/src/app/event_loop.rs": "NCP-001 R1, R2, R4",
+    "crates/norn-tui/src/app/frontend_preferences.rs": "NCP-001 R4 command acceptance plus existing R6 preference owner; actual branch result preserves accepted change with later save failure, no notice-text inference.",
+    "crates/norn-tui/src/app/frontend_preferences_tests.rs": "NCP-001 R6",
+    "crates/norn-tui/src/app/mod.rs": "NCP-001 R2, R3, R4 module declarations/reexports only; R2/R4 adds the root-owned composer_effects module.",
+    "crates/norn-tui/src/app/render.rs": "NCP-001 R1, R3",
+    "crates/norn-tui/src/app/render/composer.rs": "NCP-001 R1, R3, R6",
+    "crates/norn-tui/src/app/render/composer_tests.rs": "NCP-001 R3",
+    "crates/norn-tui/src/app/state.rs": "NCP-001 R4 typed input/local-command admission seam; root pending snapshot/opening receipt orchestration; existing other registered row responsibilities unchanged.",
+    "crates/norn-tui/src/app/turn/mid.rs": "NCP-001 R1, R2, R4",
+    "crates/norn-tui/src/app/view_actions.rs": "NCP-001 R1, R2",
+    "crates/norn-tui/src/app/view_actions/commands.rs": "NCP-001 R4, R6",
+    "crates/norn-tui/src/app/view_actions/keys.rs": "NCP-001 R6",
+    "crates/norn-tui/src/app/view_actions/mouse.rs": "NCP-001 R3, R6",
+    "crates/norn-tui/src/error.rs": "NCP-001 R1",
+    "crates/norn-tui/src/frontend_preferences.rs": "NCP-001 R6",
+    "crates/norn-tui/src/frontend_preferences_tests.rs": "NCP-001 R6",
+    "crates/norn-tui/src/input/autocomplete.rs": "NCP-001 R1",
+    "crates/norn-tui/src/input/composer_clipboard.rs": "NCP-001 R2",
+    "crates/norn-tui/src/input/composer_clipboard_tests.rs": "NCP-001 R2",
+    "crates/norn-tui/src/input/composer_kernel.rs": "NCP-001 R1, R2",
+    "crates/norn-tui/src/input/composer_kernel_tests.rs": "NCP-001 R1",
+    "crates/norn-tui/src/input/composer_keys.rs": "NCP-001 R2",
+    "crates/norn-tui/src/input/composer_keys_tests.rs": "NCP-001 R2",
+    "crates/norn-tui/src/input/composer_transactions.rs": "NCP-001 R4",
+    "crates/norn-tui/src/input/composer_transactions_tests.rs": "NCP-001 R4",
+    "crates/norn-tui/src/input/editor.rs": "NCP-001 R1, R2, R3, R4",
+    "crates/norn-tui/src/input/history.rs": "NCP-001 R4",
+    "crates/norn-tui/src/input/keybindings.rs": "NCP-001 R2, R6",
+    "crates/norn-tui/src/input/mod.rs": "NCP-001 R1, R2, R4",
+    "crates/norn-tui/src/input/navigation.rs": "NCP-001 R1",
+    "crates/norn-tui/src/input/wrap.rs": "NCP-001 R1",
+    "crates/norn-tui/src/render/composer_cells.rs": "NCP-001 R3",
+    "crates/norn-tui/src/render/composer_cells_tests.rs": "NCP-001 R3",
+    "crates/norn-tui/src/render/frame.rs": "NCP-001 R3",
+    "crates/norn-tui/src/render/frame_tests.rs": "NCP-001 R3",
+    "crates/norn-tui/src/render/mod.rs": "NCP-001 R3",
+    "crates/norn-tui/src/terminal/clipboard.rs": "NCP-001 R2",
+    "crates/norn-tui/tests/iridium_composer.rs": "NCP-001 R7",
+    "crates/norn-tui/tests/retained_workspace.rs": "NCP-001 R7",
+    "crates/norn-tui/tests/support/iridium_composer.rs": "NCP-001 R7",
+    "crates/norn-tui/tests/support/retained_screen.rs": "NCP-001 R7",
+    "crates/norn-tui/tests/support/retained_workspace.rs": "NCP-001 R7",
+    "docs/TUI-PREFERENCES.md": "NCP-001 R6",
+    "docs/design/norn-iridium-composer/CHECKLIST.md": "NCP-001 R0",
+    "docs/design/norn-iridium-composer/DESIGN.md": "NCP-001 R0",
+    "docs/design/norn-iridium-composer/USER-STORIES.md": "NCP-001 R0",
+    "docs/design/norn-iridium-composer/briefs/NCP-001.json": "NCP-001 R0",
+    "docs/design/norn-iridium-composer/briefs/NCP-001.md": "NCP-001 R0",
+    "docs/design/norn-iridium-composer/checklist.json": "NCP-001 R0",
+    "docs/design/norn-iridium-composer/design.json": "NCP-001 R0",
+    "docs/design/norn-iridium-composer/stories.json": "NCP-001 R0",
+    "crates/norn-tui/src/render/frame/diff.rs": "NCP-001 R3 root-only PreparedFrame render-sibling access: new/put visibility and dimensions from the owned grid; no renderer behavior change.",
+    "crates/norn-tui/src/app/turn/run.rs": "NCP-001 R4 typed input/local-command admission seam; root pending snapshot/opening receipt orchestration; existing other registered row responsibilities unchanged.",
+    "crates/norn-tui/src/app/slash.rs": "NCP-001 R4 typed input/local-command admission seam; bounded slash owner retains diagnostics and authoritative model/MCP checks; existing other registered row responsibilities unchanged.",
+    "crates/norn-tui/src/app/model_selection.rs": "NCP-001 R4 typed input/local-command admission seam; bounded slash owner retains diagnostics and authoritative model/MCP checks; existing other registered row responsibilities unchanged.",
+    "crates/norn-tui/src/app/mcp_slash.rs": "NCP-001 R4 typed input/local-command admission seam; bounded slash owner retains diagnostics and authoritative model/MCP checks; existing other registered row responsibilities unchanged.",
+    "crates/norn-cli/tests/support/frontend_preferences_restart.rs": "NCP-001 R7 App::frame visibility and documentation only; reuse existing push/deadline complete-frame owner with App::press for composer send-mode tests.",
+    "docs/release-notes/UNRELEASED.md": "NCP-001 R7 root-owned factual local composer preview.5 notes after assembled checks, no main/public claim.",
+    "crates/norn-tui/src/app/composer_effects.rs": "NCP-001 R2 creates / R4 consumes: root-only extraction of existing finish_editor_action into composer_effects::finish, no behavior change.",
+    "crates/norn-tui/src/app/render/transcript.rs": "NCP-001 R7 test-only propagation of the existing draft-survives paste Result; production renderer remains read-only.",
+    "crates/norn-tui/src/render/text.rs": "NCP-001 R7 remove retired input_display_width helper and its one implementation-mirroring test only; kernel/cell geometry is current authority."
+  },
+  "constraints": [
+    {
+      "id": "B1",
+      "text": "No changes outside each exact row wall; extra paths require prior amendment."
+    },
+    {
+      "id": "B2",
+      "text": "No second settings owner/TTY reader, Aion/Manifold dependency, runtime capacity change, side-panel file editor or daemon attach work."
+    },
+    {
+      "id": "B3",
+      "text": "No new lint suppression, unwrap/expect bypass or swallowed error; <=500 production LOC and declarations-only modules."
+    },
+    {
+      "id": "B4",
+      "text": "Local checked-preview implementation/build/install is already authorized when registered row dependencies and exact-source checks pass. R0 is documents only and source edits await root acceptance/dispatch. No public rewrite, visibility change, public release or main landing is authorized by this registration."
+    }
+  ],
+  "provenance": [
+    {
+      "path": "/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/session-ready-design/BRIEF-NWP-05-COMPOSER-DRAFT-20260906.json",
+      "sha256": "512cf01a62561f1f324b00a01cdcd5f5e5ca078cccc28bf621fb2e3cf1924b18",
+      "referent": "Original NWP-05.3/NWP-05.4 composer design and acceptance, reconciled explicitly here."
+    },
+    {
+      "path": "/private/tmp/nwp-05-proof/norn-iridium-composer-integration-handoff-20260906.json",
+      "sha256": "968af2c5f7b4d86b644a1c77686034cdd3ba38ce867d1f28f3691b1e8364c67e",
+      "referent": "Previous source-grounded handoff; old missing-owner/fixture assertions superseded."
+    },
+    {
+      "path": "/private/tmp/norn-frontend-preferences/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+      "sha256": "5b1cbffccaf224f7476f82877932658f194c2a90e4125a8c02187e256fb8a597",
+      "referent": "Shared snapshot/writer, single owner, automatic-personal working assumption and actual restart acceptance."
+    },
+    {
+      "path": "/private/tmp/norn-frontend-preferences/docs/design/norn-retained-tui/briefs/NRT-001.json",
+      "sha256": "fa14f415092df655a8e7b4542a67fba7fae0ab8da0a422f5c98746f223a862f9",
+      "referent": "Retained frame/source/reading contracts and restored appearance ruling."
+    },
+    {
+      "path": "/private/tmp/iridium-cell-transactions/docs/design/iridium-cell-composer/design.json",
+      "sha256": "e95ed44fa0096cc1025ac697748c09650d0e4d7798c6f06ced70eec691170e4d",
+      "referent": "Current committed Iridium contract at private checked ICC00415673cba; earlier snapshots are preserved as historical dependency evidence."
+    },
+    {
+      "path": "/private/tmp/nwp-05-proof/ncp-registration-draft-20260906T123052+1000/HANDOFF.json",
+      "sha256": "6601e9ae47a6bf3bd42e7002f4871f9b6e9faaa1bab00fe39d337bc0d4285a2b",
+      "referent": "Immutable external R0 preparation; all eight input document hashes verified before registration."
+    },
+    {
+      "path": "/private/tmp/iridium-cell-transactions/docs/design/iridium-cell-composer/briefs/ICC-002.json",
+      "sha256": "6fe073be136c538bffcb56b5d9c9a7d5ecb5df8af3ba609d17110cc48f6f78bd",
+      "referent": "Current committed Iridium contract at private checked ICC00415673cba; earlier snapshots are preserved as historical dependency evidence."
+    },
+    {
+      "path": "/Users/tom/.local/state/norn/install-backups/20260906-124647-preferences-preview/receipt.json",
+      "sha256": "15319e50978b50eb326e8e90a521c19e418de00b353cc9615a415cb9b0bdb626",
+      "referent": "NFP installed preview.4 from fe6af320; registration makes no new installation."
+    },
+    {
+      "path": "/Users/tom/.local/state/norn/cleanup/20260906-125130/iridium-worktree-cleanup.json",
+      "sha256": "39b5f90295b6d9a0cb91f443a619d91eb2d17b3049eab5610420fd79db1924c9",
+      "referent": "Historical iridium-cell-composer path archived and removed; active iridium-cell-transactions retained."
+    },
+    {
+      "path": "/private/tmp/iridium-cell-transactions/docs/design/iridium-cell-composer/briefs/ICC-003.json",
+      "sha256": "ef2c7935daea5f7437d914649c05c95973f2e8c2b5b92b2828f4e7755791b58c",
+      "referent": "Current committed Iridium contract at private checked ICC00415673cba; earlier snapshots are preserved as historical dependency evidence."
+    },
+    {
+      "path": "/private/tmp/nwp-05-proof/icc-003-primary-caret/private-checkpoint/CHECKPOINT.json",
+      "sha256": "710d95d7bf973a28f73c8660ecce20fc8d8f74099a7effef5c5318486d113bd5",
+      "referent": "Pushed private ICC002+003 revision, exact committed source/docs, remote ref, unchanged main and privacy verification."
+    },
+    {
+      "path": "/private/tmp/iridium-cell-transactions/docs/design/iridium-cell-composer/briefs/ICC-004.json",
+      "sha256": "186118ecd7ab14d711c4efa0a2da329114424b3af2fa6f21375e07c2a50667bf",
+      "referent": "Current committed Iridium contract at private checked ICC00415673cba; earlier snapshots are preserved as historical dependency evidence."
+    },
+    {
+      "path": "/private/tmp/nwp-05-proof/icc-004-optional-syntax/private-checkpoint/CHECKPOINT.json",
+      "sha256": "2e5c562f1f2b1e965d985c8d289c28dbbdcfee6d627261f682c21ca240febf27",
+      "referent": "Private ICC004 checked commit/push/remote/source/docs binding; main unchanged."
+    },
+    {
+      "path": "/private/tmp/nwp-05-proof/icc-004-optional-syntax/private-checkpoint/review-and-checks.json",
+      "sha256": "35c6decaf6756b8f9c9a7668e517697d8a37ba709743202c1c25a79841003b09",
+      "referent": "Scoped CPU/default-feature/strict-lint and native-link coexistence evidence; not composed Norn/full-workspace/venue/Fable proof."
+    }
+  ],
+  "dependency_contract": {
+    "norn_worktree": "/private/tmp/norn-frontend-preferences",
+    "norn_branch": "codex/norn-frontend-preferences-integrated",
+    "nfp_final_checked_parent": "d27259cc1c218a44be0ce624d103b04d799dcf21",
+    "nfp_code_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+    "installed_version": "norn 0.1.0-preview.4",
+    "installed_sha256": "a1431e647a23bd372ee1b56b5262f9e27db91e76608ccd3d78da24fa922d0b1e",
+    "nfp_source_sha256": {
+      "CLAUDE.md": "952e08ec25793b63009788a5b5d3c6bdfe482577d199e872635aba73c90ec629",
+      "Cargo.lock": "3682ab42b2bcd6f2bbb6814587918658ca6c545f2dd751e98fcdeee67a608d80",
+      "Cargo.toml": "d99bdeac2e296298a802906deb73d188c4c73dc5262340fbd9cf0569a71acdfd",
+      "crates/norn-cli/Cargo.toml": "2ad7ab4dfd1b0dbc14aa5dc8e460d5f5fcf5c75e03f90e8384d5e35086aae436",
+      "crates/norn-cli/src/runtime/resolve.rs": "81c31d96891491b163b08dcc09891a71de98d94a8205f6fc78468d2c3004eea0",
+      "crates/norn-cli/src/tui/driver.rs": "498f223055853f0cfcd27dc2aad58800e488aad0b3f30b4050945d402c176d68",
+      "crates/norn-cli/tests/frontend_preferences_restart.rs": "68777f42a218c6e552ead9b3166e5418a0c4d964998a29dcb8ff16a36ddb0da9",
+      "crates/norn-cli/tests/support/frontend_preferences_restart.rs": "ad95a3f1f20894aeb4a90bf13d9d7d837abe726e8d0ff5e2d07b1c3dba33f5ea",
+      "crates/norn-tui/Cargo.toml": "b9b0d11d8f4f5f9783c9699bf93c2d8a3e7daf7234b12cdfc360667dc091865e",
+      "crates/norn-tui/src/app/autocomplete.rs": "e3a280313068feca2ef16157220bd1fbeb7b0249ad4629a1185bd539a8e9431d",
+      "crates/norn-tui/src/app/edit.rs": "6437f91db225f1cf5fefb6776192058cc2a298ea5d7c96fc213ae5c2a3ecb5d0",
+      "crates/norn-tui/src/app/event_loop.rs": "49616126fa0497f88d809c1cb79eb9cd8b68ccb498cbbafe205c88234bb9b761",
+      "crates/norn-tui/src/app/frontend_preferences.rs": "e4acb69316081febc72b756c7616bc3804da448bd3766410c540537106590871",
+      "crates/norn-tui/src/app/frontend_preferences_tests.rs": "b640e329fa8ef328110edf43ac6b5fca14e33d9c070e35d52d972093a9c57e27",
+      "crates/norn-tui/src/app/mod.rs": "8aa5d88b6c8edfbaad7a61ac180f1dba31b3d8d9414adf05191bf9624fe43bc8",
+      "crates/norn-tui/src/app/render.rs": "fb6f2391492b91e5abf6d19d8ae1621fdcf6ec9547f646116e29968a9254ae7f",
+      "crates/norn-tui/src/app/render/composer.rs": "4b318202ab9f283c34d5bab455cf4e2d7eeab93a90772ec362e48abbae219baf",
+      "crates/norn-tui/src/app/render/composer_tests.rs": "42c564a8873a135391af4f66c8aaedefc208b76ba053e5e9bfa53e97222a3c11",
+      "crates/norn-tui/src/app/render/transcript.rs": "34c691eeaae49ddb029f66959e7d65af4918fd3828f46f720453f0b821895ff9",
+      "crates/norn-tui/src/app/state.rs": "8bb965ca17c8f76dfb2d48be4f1ff8f7a4e391dc7e0817f7fb3a88dd5772e68c",
+      "crates/norn-tui/src/app/turn/mid.rs": "b8bb0f08d5a11a3acadfccef360ce1dbc526b6ccb474cee0beaaa25605a2eed5",
+      "crates/norn-tui/src/app/view_actions.rs": "b0e0b55fb3314194fe4459ad7dc5c20ebcd21a564b409f7d12acab0007171db2",
+      "crates/norn-tui/src/app/view_actions/commands.rs": "b791478d956656f568eeafad920d32ef6307f61219b09b016dff3d5421a4f565",
+      "crates/norn-tui/src/app/view_actions/keys.rs": "787eecaef99cc1fa580a2909984155d5f4850a5882f19ec5b4ca2d6e364cdfa7",
+      "crates/norn-tui/src/app/view_actions/mouse.rs": "a8379d2fd9ceb4b26c7ad59f6037bdc0b4a17830e7f2b4e303f414ff78a155b9",
+      "crates/norn-tui/src/error.rs": "230f201e141e121e0cb9c934f5b7ba56dc0b94eb9ba5309623da51993dfd8caa",
+      "crates/norn-tui/src/frontend_preferences.rs": "9c9fa5f176fe087edf73bf3ff90273d2539a6e254187fc0f527f6714355a8a9e",
+      "crates/norn-tui/src/frontend_preferences_tests.rs": "85f2759196f728a09ea59f632c61e5f787de83702f9349d422308af2165715a6",
+      "crates/norn-tui/src/input/autocomplete.rs": "080039d2d2149e9d8a66cc18bb365ef0a3bae6a5cc3ab8423daef6ff2a0b5be3",
+      "crates/norn-tui/src/input/editor.rs": "cd009959d0499bd8613367732be2b355efae1c6c9e16ac8498e19e0dfb57c26b",
+      "crates/norn-tui/src/input/history.rs": "ea376fd697a6787809f0a9170db5395362e10781f96f23ad855c82861679faf6",
+      "crates/norn-tui/src/input/keybindings.rs": "10548665aa0a02d5ab3005f2e4f80c073e969fce3b74ade53f1ff0c49234467d",
+      "crates/norn-tui/src/input/mod.rs": "37429dc0b20a78a687e03f09c46a8c468cb65401d845894ac3f4b2ea23b26c50",
+      "crates/norn-tui/src/input/navigation.rs": "447409fbc1adf60d34e1cfbe1d8eacbf940a4b110767733b48b7f059fecec033",
+      "crates/norn-tui/src/input/wrap.rs": "515bf86ac123416b4cdf021b0ec34a6e9f443da793bb3371a06a267d01faceed",
+      "crates/norn-tui/src/render/frame.rs": "095a5d7a17b656d3ab4b0af13a71cdaf1f570f7257c50f0b94111bb817fd1b7f",
+      "crates/norn-tui/src/render/frame_tests.rs": "314f162a1afce020f6a74cf8a1c99f277284ca93fc759791b64502f38b57d952",
+      "crates/norn-tui/src/render/layout.rs": "7bdbaade102392b51930131a37cd56c9fbc6f85bd2a0ced3a0ccd8a46a32af8a",
+      "crates/norn-tui/src/render/mod.rs": "a7b49317c2e5b95f0267137f87196d0da740d3c131d090b1b667213e2d19af64",
+      "crates/norn-tui/src/terminal/clipboard.rs": "3756615e5bd88ebd6038507d660d40ad0475da4fa0306bee58576b380fdefa3c",
+      "crates/norn-tui/tests/model_selection.rs": "64663349760d02de10f2564b4d0924d3ae285a1fd537ee21c974a343a5897e4f",
+      "crates/norn-tui/tests/pty_smoke.rs": "59a547656669c044130be768e82a2588d3105fdaa83b5060a9f81c8caef62d78",
+      "crates/norn-tui/tests/retained_workspace.rs": "a6dddaf5ec0df94f61b7e427e1305e8d0c4d38dbec13fdf0c6a09e1b6c23dfc0",
+      "crates/norn-tui/tests/support/mcp_channels_tui.rs": "d2dfa7610d80dc78f7abbb6c965f0064b9ac7d282ac1338e74f91671fa444805",
+      "crates/norn-tui/tests/support/retained_screen.rs": "b6e0389787730b76517cc5e256595a00bab22f9fe65934bf1bb928a964a6bc00",
+      "crates/norn-tui/tests/support/retained_workspace.rs": "d15a6435be4ca26bd84917abe4c5ee6c764c55294547e940be49dd2af6050649",
+      "crates/norn/src/config/settings_write.rs": "b35b51ab9fb536dcacdb4ba29368a656db41da8e2452aa32a6a4728f2b3ef1ab",
+      "crates/norn/src/config/tui_preferences.rs": "af7392143ca9feb3945597fcb9e173f5a346edaa087d415b6bcb1563370a69aa",
+      "docs/TUI-PREFERENCES.md": "0ab44160dc66d785a882fc712c000a9648bb92e6bd0c711c744a78643076572b",
+      "docs/design/norn-frontend-preferences/briefs/NFP-001.json": "5b1cbffccaf224f7476f82877932658f194c2a90e4125a8c02187e256fb8a597",
+      "docs/design/norn-frontend-preferences/design.json": "98982cc780b9f859115c774f0121bd939685a1e396be9a54ab017df9a1f66ec5",
+      "docs/design/norn-retained-tui/briefs/NRT-001.json": "fa14f415092df655a8e7b4542a67fba7fae0ab8da0a422f5c98746f223a862f9"
+    },
+    "icc_historical_checkpoint": "09cfa793d2f2aa70fad8e86c55d3323d1c7f8d04",
+    "icc_active_worktree": "/private/tmp/iridium-cell-transactions",
+    "icc_prerequisite": "ICC-002, ICC-003 and ICC-004",
+    "icc_required_api": "Editor::replace_cell_range with CellReplacementCursor",
+    "icc_status_at_registration": "Historical initial observation preserved in historical_dependency_bindings; current status below.",
+    "icc_final_checked_commit": "15673cba9222489e3c3315bb1526f60a6224a187",
+    "icc_prerequisite_document_sha256": "6fe073be136c538bffcb56b5d9c9a7d5ecb5df8af3ba609d17110cc48f6f78bd",
+    "dependency_dispatch": "Actual checked private revision is bound. Continue only dispatched row walls and prove composed Norn behavior; no dependency or local checkpoint is a main/public landing.",
+    "caller_census": {
+      "Frame": [
+        "crates/norn-tui/src/render/frame_tests.rs",
+        "crates/norn-tui/src/render/frame.rs",
+        "crates/norn-tui/src/app/render.rs",
+        "crates/norn-tui/src/app/render/composer_tests.rs"
+      ],
+      "TuiInputs_constructions": [
+        "crates/norn-cli/src/tui/driver.rs",
+        "crates/norn-tui/tests/pty_smoke.rs",
+        "crates/norn-tui/tests/support/mcp_channels_tui.rs",
+        "crates/norn-tui/tests/support/retained_workspace.rs",
+        "crates/norn-tui/tests/model_selection.rs"
+      ],
+      "TuiInputs_definition": "crates/norn-tui/src/app/event_loop.rs"
+    },
+    "local_preview_authorized": true,
+    "main_requires": [
+      "independent Fable review",
+      "exact-commit 205 receipt"
+    ],
+    "icc_current_status": "committed_pushed_verified_private_checkpoint_not_landed",
+    "icc_repository": "https://github.com/tomWhiting/iridium.git",
+    "icc_branch": "codex/iridium-cell-transactions",
+    "icc_source_set_sha256": "3d299be0ba75ecb0377282dffa4cf2c948a64cd8069dc29bd4f4ca439a0dd8c4",
+    "icc_checkpoint_receipt": {
+      "path": "/private/tmp/nwp-05-proof/icc-004-optional-syntax/private-checkpoint/CHECKPOINT.json",
+      "sha256": "2e5c562f1f2b1e965d985c8d289c28dbbdcfee6d627261f682c21ca240febf27"
+    },
+    "icc_visibility": "PRIVATE",
+    "icc_main_unchanged": true,
+    "norn_dependency_pins_observed": {
+      "iridium-editor": {
+        "git": "https://github.com/tomWhiting/iridium",
+        "rev": "15673cba9222489e3c3315bb1526f60a6224a187",
+        "default-features": false
+      },
+      "iridium-tui": {
+        "git": "https://github.com/tomWhiting/iridium",
+        "rev": "15673cba9222489e3c3315bb1526f60a6224a187",
+        "default-features": false
+      }
+    },
+    "norn_manifest_sha256_at_binding": "d50df17f343574a26708a945b4edbd06fa5b81a867769dfad1eb6e4b4574eed2",
+    "current_assembly_status": {
+      "status": "types_assembled_two_translation_failures_under_repair",
+      "current_Iridium_pin": "15673cba9222489e3c3315bb1526f60a6224a187",
+      "detail": "Both Iridium defaults disabled. Actual Norn type check completed; TUI library833/835 passed with META/BackTab failures. Full/PTY/performance proof and preview.5 installation remain pending."
+    },
+    "icc_additional_prerequisite": "Fulfilled by checked ICC-004 private commit15673cba; composed Norn verification pending.",
+    "icc004_checked_commit": "15673cba9222489e3c3315bb1526f60a6224a187",
+    "icc004_feature_contract": "ICC-004 at private commit15673cba9222489e3c3315bb1526f60a6224a187 implements iridium-tui default=[\"syntax\"] and syntax=[\"iridium-editor/syntax\", \"dep:ropey\"]. Both Norn Iridium dependencies now disable defaults. Feature-off preserves public cell editing/rendering/search/selection/caret/chrome and iridium-lang rules; its Frame has no parser/span/Rope highlight-snapshot cache, while the editor text buffer still uses Rope. Palette::highlighted is syntax-only and default Iridium TUI remains highlighted. The recorded no-syntax/default scopes passed378/393 tests, both strict Clippy and fmt; standalone compile with tree-sitter0.25.10 and the normal no-syntax subtree passed. These are bounded dependency checks, not Norn assembly or GPU/full-workspace/venue/Fable proof. Parser-free means only the Iridium composer subtree; Norn/Chiron0.25 and unrelated parsers remain.",
+    "graph_proof_scope": {
+      "omitted_from_Iridium_composer_subtree": [
+        "iridium-syntax",
+        "Iridium tree-sitter0.26",
+        "Iridium GPU dependencies"
+      ],
+      "retained_elsewhere_in_Norn": [
+        "Norn/Chiron tree-sitter0.25",
+        "existing parser-backed tools"
+      ],
+      "whole_Norn_parser_free_claim": false,
+      "future_checked_ICC_pin": "15673cba9222489e3c3315bb1526f60a6224a187",
+      "bound_ICC_revision": "15673cba9222489e3c3315bb1526f60a6224a187"
+    },
+    "icc004_local_review_and_checks": {
+      "path": "/private/tmp/nwp-05-proof/icc-004-optional-syntax/private-checkpoint/review-and-checks.json",
+      "sha256": "35c6decaf6756b8f9c9a7668e517697d8a37ba709743202c1c25a79841003b09",
+      "scope": "No-syntax TUI378 passed; default syntax TUI393 passed; both0 failed/ignored. Both strict all-targets Clippy, fmt, normal parser-free dependency tree and standalone actual compile with tree-sitter0.25.10 passed on final55 source. Fifteen parser-specific tests remain enabled in default mode."
+    },
+    "icc004_document_sha256": "186118ecd7ab14d711c4efa0a2da329114424b3af2fa6f21375e07c2a50667bf",
+    "claude_runner_feature_selection": {
+      "revision_unchanged": "643a1166f06a1f42961acf442f654670fbe9da22",
+      "required_default_features": false,
+      "reason": "Unused optional TOON conversion stack conflicts with composer unicode-width resolution; process OutputFormat API independent.",
+      "status": "root_flag_applied_assembled_type_check_completed_claude_regression_proof_pending",
+      "evidence": {
+        "pinned_runner_manifest": {
+          "path": "/Users/tom/.cargo/git/checkouts/claude-runner-1bc1bff56a656874/643a116/Cargo.toml",
+          "sha256": "dc1bc8a1790c4f47a1a0416f58bbe35ee7f66e42a54c8865089853400fccbf45",
+          "default_features": [
+            "toon"
+          ],
+          "optional_toon_dependency": {
+            "version": "0.4",
+            "optional": true
+          }
+        },
+        "optional_converter": {
+          "path": "/Users/tom/.cargo/git/checkouts/claude-runner-1bc1bff56a656874/643a116/src/formats.rs",
+          "sha256": "97f9d97c42428bf230e5f372cbe6feb736ca2a4b6a48462acec2edf518ebf953",
+          "TOON_API_cfg_feature": "toon"
+        },
+        "independent_process_output_format": {
+          "path": "/Users/tom/.cargo/git/checkouts/claude-runner-1bc1bff56a656874/643a116/src/types/output_format.rs",
+          "sha256": "525fcd7a77d13ffc5f191f2a8afbbf30c7d39780ec4dd24936c20be20a1090db",
+          "variants": [
+            "Text",
+            "Json",
+            "StreamJson"
+          ]
+        },
+        "Norn_converter_usage_search": {
+          "command": [
+            "rg",
+            "-n",
+            "TOON|Toon|toon|claude_runner::formats|claude_runner::.*convert",
+            "crates"
+          ],
+          "exit": 1,
+          "stdout": "",
+          "stderr": "",
+          "meaning": "No matching TOON or converter API use in Norn crates at this observation."
+        },
+        "actual_resolution_error": {
+          "path": "/private/tmp/ncp-001-proof/cargo-update-compose-4.log",
+          "sha256": "be6f25d973add25fdff5614e68eb518d28e860426b47a5c86fc905cb1d857e6f"
+        }
+      }
+    }
+  },
+  "remaining_engineering_contract": "ICC002/003/004 dependency binding is now fulfilled at15673cba with both Iridium default features disabled. Prove actual resolved Norn assembly and all composer behavior/startup/geometry/persistence acceptance on the current Norn source. Preserve Norn/Chiron tree-sitter0.25; do not claim the entire Norn graph is parser-free.",
+  "registered_at_melbourne": "2026-09-06T13:11:57.894111+10:00",
+  "historical_draft_written_at_melbourne": "2026-09-06T12:30:52.201570+10:00",
+  "historical_provenance": [
+    {
+      "path": "/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/session-ready-design/BRIEF-NWP-05-COMPOSER-DRAFT-20260906.json",
+      "sha256": "512cf01a62561f1f324b00a01cdcd5f5e5ca078cccc28bf621fb2e3cf1924b18",
+      "referent": "Original NWP-05.3/NWP-05.4 composer design and acceptance, reconciled explicitly here."
+    },
+    {
+      "path": "/private/tmp/nwp-05-proof/norn-iridium-composer-integration-handoff-20260906.json",
+      "sha256": "968af2c5f7b4d86b644a1c77686034cdd3ba38ce867d1f28f3691b1e8364c67e",
+      "referent": "Previous source-grounded handoff; old missing-owner/fixture assertions superseded."
+    },
+    {
+      "path": "/private/tmp/norn-frontend-preferences/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+      "sha256": "c3a98e95cbc27e5df2acd6f0bc7421dc28f600839995dac82f468fea2b7234b2",
+      "referent": "Shared snapshot/writer, single owner, automatic-personal working assumption and actual restart acceptance."
+    },
+    {
+      "path": "/private/tmp/norn-frontend-preferences/docs/design/norn-retained-tui/briefs/NRT-001.json",
+      "sha256": "fa14f415092df655a8e7b4542a67fba7fae0ab8da0a422f5c98746f223a862f9",
+      "referent": "Retained frame/source/reading contracts and restored appearance ruling."
+    },
+    {
+      "path": "/private/tmp/iridium-cell-composer/docs/design/iridium-cell-composer/design.json",
+      "sha256": "fdc4c1700b81cae63d47f3470e5ff79afad79adb97ffd24b91f023f143714c09",
+      "referent": "ICC borrowed geometry/input/bare Frame API at private checkpoint09cfa793."
+    }
+  ],
+  "historical_dependency_observation": {
+    "icc_checkpoint": "09cfa793d2f2aa70fad8e86c55d3323d1c7f8d04",
+    "nfp_observed_head": "687f2efcdcc4704f6406f01703a1345b794891a2",
+    "nfp_final_checked_parent": null,
+    "source_sha256": {
+      "CLAUDE.md": "952e08ec25793b63009788a5b5d3c6bdfe482577d199e872635aba73c90ec629",
+      "Cargo.lock": "3682ab42b2bcd6f2bbb6814587918658ca6c545f2dd751e98fcdeee67a608d80",
+      "Cargo.toml": "d99bdeac2e296298a802906deb73d188c4c73dc5262340fbd9cf0569a71acdfd",
+      "crates/norn-cli/Cargo.toml": "2ad7ab4dfd1b0dbc14aa5dc8e460d5f5fcf5c75e03f90e8384d5e35086aae436",
+      "crates/norn-cli/src/runtime/resolve.rs": "81c31d96891491b163b08dcc09891a71de98d94a8205f6fc78468d2c3004eea0",
+      "crates/norn-cli/src/tui/driver.rs": "498f223055853f0cfcd27dc2aad58800e488aad0b3f30b4050945d402c176d68",
+      "crates/norn-cli/tests/frontend_preferences_restart.rs": "68777f42a218c6e552ead9b3166e5418a0c4d964998a29dcb8ff16a36ddb0da9",
+      "crates/norn-cli/tests/support/frontend_preferences_restart.rs": "ad95a3f1f20894aeb4a90bf13d9d7d837abe726e8d0ff5e2d07b1c3dba33f5ea",
+      "crates/norn-tui/Cargo.toml": "b9b0d11d8f4f5f9783c9699bf93c2d8a3e7daf7234b12cdfc360667dc091865e",
+      "crates/norn-tui/src/app/autocomplete.rs": "e3a280313068feca2ef16157220bd1fbeb7b0249ad4629a1185bd539a8e9431d",
+      "crates/norn-tui/src/app/edit.rs": "6437f91db225f1cf5fefb6776192058cc2a298ea5d7c96fc213ae5c2a3ecb5d0",
+      "crates/norn-tui/src/app/event_loop.rs": "49616126fa0497f88d809c1cb79eb9cd8b68ccb498cbbafe205c88234bb9b761",
+      "crates/norn-tui/src/app/frontend_preferences.rs": "e4acb69316081febc72b756c7616bc3804da448bd3766410c540537106590871",
+      "crates/norn-tui/src/app/frontend_preferences_tests.rs": "b640e329fa8ef328110edf43ac6b5fca14e33d9c070e35d52d972093a9c57e27",
+      "crates/norn-tui/src/app/mod.rs": "8aa5d88b6c8edfbaad7a61ac180f1dba31b3d8d9414adf05191bf9624fe43bc8",
+      "crates/norn-tui/src/app/render.rs": "fb6f2391492b91e5abf6d19d8ae1621fdcf6ec9547f646116e29968a9254ae7f",
+      "crates/norn-tui/src/app/render/composer.rs": "4b318202ab9f283c34d5bab455cf4e2d7eeab93a90772ec362e48abbae219baf",
+      "crates/norn-tui/src/app/render/composer_tests.rs": "42c564a8873a135391af4f66c8aaedefc208b76ba053e5e9bfa53e97222a3c11",
+      "crates/norn-tui/src/app/render/transcript.rs": "34c691eeaae49ddb029f66959e7d65af4918fd3828f46f720453f0b821895ff9",
+      "crates/norn-tui/src/app/state.rs": "8bb965ca17c8f76dfb2d48be4f1ff8f7a4e391dc7e0817f7fb3a88dd5772e68c",
+      "crates/norn-tui/src/app/turn/mid.rs": "b8bb0f08d5a11a3acadfccef360ce1dbc526b6ccb474cee0beaaa25605a2eed5",
+      "crates/norn-tui/src/app/view_actions.rs": "b0e0b55fb3314194fe4459ad7dc5c20ebcd21a564b409f7d12acab0007171db2",
+      "crates/norn-tui/src/app/view_actions/commands.rs": "b791478d956656f568eeafad920d32ef6307f61219b09b016dff3d5421a4f565",
+      "crates/norn-tui/src/app/view_actions/keys.rs": "787eecaef99cc1fa580a2909984155d5f4850a5882f19ec5b4ca2d6e364cdfa7",
+      "crates/norn-tui/src/app/view_actions/mouse.rs": "a8379d2fd9ceb4b26c7ad59f6037bdc0b4a17830e7f2b4e303f414ff78a155b9",
+      "crates/norn-tui/src/error.rs": "230f201e141e121e0cb9c934f5b7ba56dc0b94eb9ba5309623da51993dfd8caa",
+      "crates/norn-tui/src/frontend_preferences.rs": "9c9fa5f176fe087edf73bf3ff90273d2539a6e254187fc0f527f6714355a8a9e",
+      "crates/norn-tui/src/frontend_preferences_tests.rs": "85f2759196f728a09ea59f632c61e5f787de83702f9349d422308af2165715a6",
+      "crates/norn-tui/src/input/autocomplete.rs": "080039d2d2149e9d8a66cc18bb365ef0a3bae6a5cc3ab8423daef6ff2a0b5be3",
+      "crates/norn-tui/src/input/editor.rs": "cd009959d0499bd8613367732be2b355efae1c6c9e16ac8498e19e0dfb57c26b",
+      "crates/norn-tui/src/input/history.rs": "ea376fd697a6787809f0a9170db5395362e10781f96f23ad855c82861679faf6",
+      "crates/norn-tui/src/input/keybindings.rs": "10548665aa0a02d5ab3005f2e4f80c073e969fce3b74ade53f1ff0c49234467d",
+      "crates/norn-tui/src/input/mod.rs": "37429dc0b20a78a687e03f09c46a8c468cb65401d845894ac3f4b2ea23b26c50",
+      "crates/norn-tui/src/input/navigation.rs": "447409fbc1adf60d34e1cfbe1d8eacbf940a4b110767733b48b7f059fecec033",
+      "crates/norn-tui/src/input/wrap.rs": "515bf86ac123416b4cdf021b0ec34a6e9f443da793bb3371a06a267d01faceed",
+      "crates/norn-tui/src/render/frame.rs": "095a5d7a17b656d3ab4b0af13a71cdaf1f570f7257c50f0b94111bb817fd1b7f",
+      "crates/norn-tui/src/render/frame_tests.rs": "314f162a1afce020f6a74cf8a1c99f277284ca93fc759791b64502f38b57d952",
+      "crates/norn-tui/src/render/layout.rs": "7bdbaade102392b51930131a37cd56c9fbc6f85bd2a0ced3a0ccd8a46a32af8a",
+      "crates/norn-tui/src/render/mod.rs": "a7b49317c2e5b95f0267137f87196d0da740d3c131d090b1b667213e2d19af64",
+      "crates/norn-tui/src/terminal/clipboard.rs": "3756615e5bd88ebd6038507d660d40ad0475da4fa0306bee58576b380fdefa3c",
+      "crates/norn-tui/tests/model_selection.rs": "64663349760d02de10f2564b4d0924d3ae285a1fd537ee21c974a343a5897e4f",
+      "crates/norn-tui/tests/pty_smoke.rs": "59a547656669c044130be768e82a2588d3105fdaa83b5060a9f81c8caef62d78",
+      "crates/norn-tui/tests/retained_workspace.rs": "a6dddaf5ec0df94f61b7e427e1305e8d0c4d38dbec13fdf0c6a09e1b6c23dfc0",
+      "crates/norn-tui/tests/support/mcp_channels_tui.rs": "d2dfa7610d80dc78f7abbb6c965f0064b9ac7d282ac1338e74f91671fa444805",
+      "crates/norn-tui/tests/support/retained_screen.rs": "b6e0389787730b76517cc5e256595a00bab22f9fe65934bf1bb928a964a6bc00",
+      "crates/norn-tui/tests/support/retained_workspace.rs": "d15a6435be4ca26bd84917abe4c5ee6c764c55294547e940be49dd2af6050649",
+      "crates/norn/src/config/settings_write.rs": "b35b51ab9fb536dcacdb4ba29368a656db41da8e2452aa32a6a4728f2b3ef1ab",
+      "crates/norn/src/config/tui_preferences.rs": "af7392143ca9feb3945597fcb9e173f5a346edaa087d415b6bcb1563370a69aa",
+      "docs/TUI-PREFERENCES.md": "364be5efb9d9f0be99918b46a1b3c262247c860fc012f3595b9afcf493ba76b1",
+      "docs/design/norn-frontend-preferences/briefs/NFP-001.json": "c3a98e95cbc27e5df2acd6f0bc7421dc28f600839995dac82f468fea2b7234b2",
+      "docs/design/norn-frontend-preferences/design.json": "bde129d207dab6c4797b6cda85ef185634795b2835a7f26bdcd9b31469709ed4",
+      "docs/design/norn-retained-tui/briefs/NRT-001.json": "fa14f415092df655a8e7b4542a67fba7fae0ab8da0a422f5c98746f223a862f9"
+    },
+    "icc_source_set_sha256": "e785bb9ecf5bf4174c7d3ea5b5871b4a4d90bb844605fde43bdd9acd8d5fd6a2"
+  },
+  "registration_amendments": [
+    {
+      "at_melbourne": "2026-09-06T13:14:55.594899+10:00",
+      "row": "R3",
+      "path": "crates/norn-tui/src/render/frame/diff.rs",
+      "reason": "The pure sibling cell adapter cannot call pub(super) PreparedFrame::new/put or validate destination extent.",
+      "approved_scope": "Root owns the narrow render/frame/diff.rs adapter-access amendment: widen only PreparedFrame::new and PreparedFrame::put from pub(super) to pub(in crate::render), and add dimensions() -> (u16, usize) at the same render-only visibility from the owned columns/cells grid. The sibling composer cell adapter uses those existing construction/insertion operations and validates destination dimensions before insertion. No grid ownership, cell mutation semantics, glyph clipping, delta encoding, terminal publication, rollback or renderer behavior changes are authorized by this amendment.",
+      "source_sha256_before_authorized_edit": "4bcc8c6b7599ef33b001f21217496595bd74c8d0977c5fd73ee0420dd74038f1",
+      "root_accepted_R0": true
+    },
+    {
+      "at_melbourne": "2026-09-06T13:27:32.236249+10:00",
+      "row": "R4",
+      "added_modify_paths": [
+        "crates/norn-tui/src/app/turn/run.rs",
+        "crates/norn-tui/src/app/state.rs",
+        "crates/norn-tui/src/app/slash.rs",
+        "crates/norn-tui/src/app/model_selection.rs",
+        "crates/norn-tui/src/app/mcp_slash.rs"
+      ],
+      "source_hashes_before_registration": {
+        "crates/norn-tui/src/app/turn/run.rs": "73117433e19c83c8ab64a57c31742928763ac689f67ac2d7454257dcbaec2226",
+        "crates/norn-tui/src/app/state.rs": "aa99d84c98f915b0a5f1a1b6bb08f3ac28ecd7c024c9bcf12abe43d64d907c3e",
+        "crates/norn-tui/src/app/slash.rs": "db63a10bf6dc4a2c35476d1101735fb306e74f323ead768ca058004e1aa55708",
+        "crates/norn-tui/src/app/model_selection.rs": "9e0222a7abbf8e54f64040c6ac2db272ff596aaa7d47aebb13d1707801fb48a6",
+        "crates/norn-tui/src/app/mcp_slash.rs": "38e3e3a2272907f1c4189c0ce7d1256df9dd02e71083ac9d4458ab13a2d2856c"
+      },
+      "reason": "Current local handlers hide refusal in successful notice rendering, and runtime input admission is available through the actual opening_input push receipt; both must inform draft clearing.",
+      "scope": [
+        "Root owns composer_submission plus the existing event_loop/mid/run orchestration seam. Keep exactly one pending local ItemId and ComposerSnapshot in AppState. Before clearing a pending submitted draft, consume the actual ExecutionObservation::opening_input push receipt for that input. Accepted-but-unavailable is still acceptance; never infer admission from text, labels, item order, replayed events or a fabricated receipt. A missing/rejected pre-admission outcome retains the exact draft/selection/undo; no polling or duplicate runtime input is added.",
+        "Typed local command acceptance propagates from slash/model_selection/mcp_slash and the existing view command function alongside all current retained diagnostics. Distinguish rejected local commands from accepted commands even when the current handler renders a notice and returns Ok. Model capability/preflight checks and the original MCP start owner stay authoritative; parse/busy/preflight refusal does not admit or clear the draft, and a successfully started asynchronous operation is not replayed if later completion or notice/persistence handling fails.",
+        "Preserve acceptance versus post-acceptance failure in the returned outcome. After an effect is accepted, later history/preferences persistence or result reporting failure must explicitly retain that accepted fact and its error; it cannot be returned as a rejection that invites repeating the effect. Local errors still render their original diagnostics. Existing agent/profile slash routing remains unchanged.",
+        "R4 authoring partition: root owns app/composer_submission.rs, its tests and the event_loop.rs, turn/mid.rs, turn/run.rs, state.rs seams. A separately dispatched bounded slash owner owns app/slash.rs, app/model_selection.rs, app/mcp_slash.rs and only the shared view_actions/commands.rs command result function. Coordinate with its R6 preference owner; no simultaneous edits to that shared function or replay of settings/MCP effects."
+      ],
+      "clipboard_existing_wall_clarification": "R2 clipboard uses authoritative ClipboardOperation plus an opaque kernel snapshot for collapsed-line and multicursor copy/cut. To prepare a cut, apply the public Command to cloned Document/CursorState only and retain that exact result; these are preflight scratch, not a second live editor. Before transport compare the actual copied strings for sanitation changes (not byte lengths); refuse sanitized destructive Cut before write. Only after successful transport write and flush, validate the unchanged snapshot and commit through checked ICC-002 replace_cell_range over the whole document with Exact(result_cursor), one undo transaction. Failure, sanitation or stale snapshot leaves live text/history unchanged. No private Iridium preparation or live raw apply_command is used. Clipboard adapter/transport remains R2; the already-registered kernel facade remains its existing owner, with no Iridium wall expansion.",
+      "norn_baseline": "d27259cc1c218a44be0ce624d103b04d799dcf21 is the historical source baseline; other assigned source is concurrently changing."
+    },
+    {
+      "at_melbourne": "2026-09-06T13:28:22.583610+10:00",
+      "row": "R4",
+      "path": "crates/norn-tui/src/app/frontend_preferences.rs",
+      "source_sha256_before_authorized_edit": "0cf48604ab9e3ddee066bcde60d482f77fe36fd846a36a94c6cfc524bbf4e311",
+      "approved_scope": "R4 also owns the typed acceptance result of the existing app/frontend_preferences.rs command function, coordinated with its R6 owner. Decide accepted/rejected from the actual command branch: unknown subcommands are rejected, while an accepted scope/settings change followed by save-start, persistence or reporting failure remains accepted-with-error. Never infer outcomes from notice text, roll back a published settings change implicitly, replay a save/effect, or introduce a second preference owner. Only the command outcome propagation is added to the bounded slash partition; existing save lifecycle and publication semantics remain unchanged."
+    },
+    {
+      "at_melbourne": "2026-09-06T13:39:44.633277+10:00",
+      "row": "R7",
+      "path": "crates/norn-cli/tests/support/frontend_preferences_restart.rs",
+      "approved_scope": "R7 may change only the existing tests/support/frontend_preferences_restart.rs App::frame helper visibility and API documentation so composer_preferences can call its existing source-position-bound, push/deadline complete-frame predicate wait. Reuse App::press for Alt-Enter instead of command/submit helpers that force bare Enter. Preserve the helper body, existing deadline semantics and all fixture assertions; no copied harness, polling, new runtime or other executable/signature behavior change.",
+      "source_sha256_before_authorized_edit": "ad95a3f1f20894aeb4a90bf13d9d7d837abe726e8d0ff5e2d07b1c3dba33f5ea"
+    },
+    {
+      "at_melbourne": "2026-09-06T13:50:26.177369+10:00",
+      "row": "R7",
+      "path": "docs/release-notes/UNRELEASED.md",
+      "source_sha256_before_note_edit": "981426008ed0ca9f78edd1247aca8ef2a907ef24ecb026650a3f3860a91b993c",
+      "approved_scope": "Root owns the next local composer preview release note in docs/release-notes/UNRELEASED.md. Reserve 0.1.0-preview.5 for this assembled composer checkpoint; edit the note and already-registered Cargo version fields only after actual assembled checks pass. Describe the observed features, exact validation scope and remaining limitations; do not claim an installation before its receipt, or a main landing/public release/Fable/exact205 verdict. This registration performs neither the version bump nor the note edit."
+    },
+    {
+      "at_melbourne": "2026-09-06T13:57:29.591713+10:00",
+      "rows": [
+        "R2",
+        "R4"
+      ],
+      "create": "crates/norn-tui/src/app/composer_effects.rs",
+      "modify_module": "crates/norn-tui/src/app/mod.rs",
+      "source_sha256_before_authorized_extraction": {
+        "crates/norn-tui/src/app/event_loop.rs": "84d78ba6bfa58656223761996aa306eb8967ced1f8d8514560f4b11e7b71c703",
+        "crates/norn-tui/src/app/turn/mid.rs": "bec17625dbda2f6ba8a8f85771d084d2ce30463bb88cec3c92ac8e0c30419397",
+        "crates/norn-tui/src/app/mod.rs": "e4fc318106eae151656c5b7d76e7d33d1d5580ed13f13c23b765c7a5bc41bf63"
+      },
+      "extraction_contract": "Root owns a behavior-preserving extraction of finish_editor_action host-effect handling from app/event_loop.rs into app/composer_effects.rs, exposed as composer_effects::finish. Idle and active-turn callers use that one owner; app/mod.rs changes only the module declaration. This resolves the measured 518-production-line event_loop.rs excess without altering input order, clipboard/send/focus effects, acceptance, errors or terminal/runtime ownership. No extra feature, test file or duplicate event handler is added; keep the resulting production files within 500 lines.",
+      "ICC004_feature_contract": "ICC-004 confirms iridium-tui default=[\"syntax\"] and syntax=[\"iridium-editor/syntax\", \"dep:ropey\"]. Its direct editor dependency retains default-features=false and removes the unconditional syntax edge. Norn must set default-features=false on both editor and TUI when the actual checked ICC-004 revision is available. Parser-off preserves public cell editing/rendering/search/selection/caret/chrome and iridium-lang rules, but has no syntax parse/cache/Rope snapshot; Palette::highlighted is syntax-only. Existing default-feature TUI remains highlighted. Both feature scopes require their own checks and graph proof; no new revision is invented by registration.",
+      "ICC004_checked_pin": null
+    },
+    {
+      "at_melbourne": "2026-09-06T14:04:13.241481+10:00",
+      "rows": [
+        "R1",
+        "R7"
+      ],
+      "kind": "graph_scope_clarification_only",
+      "accepted_scope": "Parser-free is scoped to the Iridium composer dependency subtree, not the whole Norn graph. With default-features=false on both Iridium crates, the actual resolved graph must omit iridium-syntax, the Iridium tree-sitter0.26 edge and Iridium GPU dependencies. Norn/Chiron tree-sitter0.25 and unrelated parser-backed tools remain unchanged. Verify dependency origins/versions rather than asserting no tree-sitter package anywhere in Norn."
+    },
+    {
+      "at_melbourne": "2026-09-06T14:09:43.147331+10:00",
+      "row": "R1",
+      "existing_paths": [
+        "Cargo.toml",
+        "Cargo.lock"
+      ],
+      "approved_scope": "Root may set default-features=false on the existing workspace claude_runner dependency at unchanged Git revision643a1166f06a1f42961acf442f654670fbe9da22. Its default toon feature enables optional toon-format; that unused converter brings ratatui0.29/unicode-width=0.2.0, conflicting with the Iridium^0.2.2 requirement. Norn has no TOON/format-converter API use; its Claude adapter uses types::OutputFormat::StreamJson, separate from optional formats converters. Keep Text/Json/StreamJson, process/route/model behavior and all dependency source revisions unchanged. Resolve the lockfile for this explicit feature selection and existing composer dependencies; do not update unrelated dependencies. Run existing Claude adapter/wrapper tests and required composed checks to verify preserved behavior. This amendment authorizes only the feature flag/necessary resolved lock change, not a Claude route redesign or a passing graph claim.",
+      "source_sha256_before_feature_edit": "d50df17f343574a26708a945b4edbd06fa5b81a867769dfad1eb6e4b4574eed2",
+      "evidence": {
+        "pinned_runner_manifest": {
+          "path": "/Users/tom/.cargo/git/checkouts/claude-runner-1bc1bff56a656874/643a116/Cargo.toml",
+          "sha256": "dc1bc8a1790c4f47a1a0416f58bbe35ee7f66e42a54c8865089853400fccbf45",
+          "default_features": [
+            "toon"
+          ],
+          "optional_toon_dependency": {
+            "version": "0.4",
+            "optional": true
+          }
+        },
+        "optional_converter": {
+          "path": "/Users/tom/.cargo/git/checkouts/claude-runner-1bc1bff56a656874/643a116/src/formats.rs",
+          "sha256": "97f9d97c42428bf230e5f372cbe6feb736ca2a4b6a48462acec2edf518ebf953",
+          "TOON_API_cfg_feature": "toon"
+        },
+        "independent_process_output_format": {
+          "path": "/Users/tom/.cargo/git/checkouts/claude-runner-1bc1bff56a656874/643a116/src/types/output_format.rs",
+          "sha256": "525fcd7a77d13ffc5f191f2a8afbbf30c7d39780ec4dd24936c20be20a1090db",
+          "variants": [
+            "Text",
+            "Json",
+            "StreamJson"
+          ]
+        },
+        "Norn_converter_usage_search": {
+          "command": [
+            "rg",
+            "-n",
+            "TOON|Toon|toon|claude_runner::formats|claude_runner::.*convert",
+            "crates"
+          ],
+          "exit": 1,
+          "stdout": "",
+          "stderr": "",
+          "meaning": "No matching TOON or converter API use in Norn crates at this observation."
+        },
+        "actual_resolution_error": {
+          "path": "/private/tmp/ncp-001-proof/cargo-update-compose-4.log",
+          "sha256": "be6f25d973add25fdff5614e68eb518d28e860426b47a5c86fc905cb1d857e6f"
+        }
+      }
+    },
+    {
+      "at_melbourne": "2026-09-06T14:16:23.589299+10:00",
+      "row": "R7",
+      "root_owned_modify_paths": [
+        "crates/norn-tui/src/app/render/transcript.rs",
+        "crates/norn-tui/src/render/text.rs"
+      ],
+      "source_sha256_before_authorized_edit": {
+        "crates/norn-tui/src/app/render/transcript.rs": "34c691eeaae49ddb029f66959e7d65af4918fd3828f46f720453f0b821895ff9",
+        "crates/norn-tui/src/render/text.rs": "e48ef902f6776a3763ca8ecb6bbb1c63f88c96833c8db4f860379cc025094f26"
+      },
+      "scope": [
+        "Root may modify app/render/transcript.rs only at the existing test call insert_paste_text(&mut state, \"draft survives\") to propagate its newly fallible result with ?. Preserve its assertions and all production transcript-renderer bytes; R3 production read-only scope remains unchanged.",
+        "Root may remove the now-dead render/text.rs input_display_width helper and its single implementation-mirroring input_display_width_treats_controls_as_visible_placeholders test. The old input/wrap tab/control-placeholder path is retired; current Iridium kernel/cell geometry and actual rendering tests own input-width behavior. Do not retain dead production code behind cfg(test), add suppressions or weaken existing live geometry assertions. Other rendering helpers and tests remain unchanged."
+      ],
+      "basis": "Root assembled cargo check passed type checking but reported warnings; this registration itself claims no clean test/Clippy verdict."
+    }
+  ],
+  "historical_dependency_bindings": [
+    {
+      "superseded_at_melbourne": "2026-09-06T13:44:52.106192+10:00",
+      "prior": {
+        "brief_status": "registered_implementation_pending_dependency_checkpoint_and_root_dispatch",
+        "depends_on": [
+          "NFP-001 checked checkpoint d27259cc1c218a44be0ce624d103b04d799dcf21",
+          "ICC-002 checked checkpoint pending (includes ICC-001)"
+        ],
+        "dependency_contract": {
+          "norn_worktree": "/private/tmp/norn-frontend-preferences",
+          "norn_branch": "codex/norn-frontend-preferences-integrated",
+          "nfp_final_checked_parent": "d27259cc1c218a44be0ce624d103b04d799dcf21",
+          "nfp_code_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+          "installed_version": "norn 0.1.0-preview.4",
+          "installed_sha256": "a1431e647a23bd372ee1b56b5262f9e27db91e76608ccd3d78da24fa922d0b1e",
+          "nfp_source_sha256": {
+            "CLAUDE.md": "952e08ec25793b63009788a5b5d3c6bdfe482577d199e872635aba73c90ec629",
+            "Cargo.lock": "3682ab42b2bcd6f2bbb6814587918658ca6c545f2dd751e98fcdeee67a608d80",
+            "Cargo.toml": "d99bdeac2e296298a802906deb73d188c4c73dc5262340fbd9cf0569a71acdfd",
+            "crates/norn-cli/Cargo.toml": "2ad7ab4dfd1b0dbc14aa5dc8e460d5f5fcf5c75e03f90e8384d5e35086aae436",
+            "crates/norn-cli/src/runtime/resolve.rs": "81c31d96891491b163b08dcc09891a71de98d94a8205f6fc78468d2c3004eea0",
+            "crates/norn-cli/src/tui/driver.rs": "498f223055853f0cfcd27dc2aad58800e488aad0b3f30b4050945d402c176d68",
+            "crates/norn-cli/tests/frontend_preferences_restart.rs": "68777f42a218c6e552ead9b3166e5418a0c4d964998a29dcb8ff16a36ddb0da9",
+            "crates/norn-cli/tests/support/frontend_preferences_restart.rs": "ad95a3f1f20894aeb4a90bf13d9d7d837abe726e8d0ff5e2d07b1c3dba33f5ea",
+            "crates/norn-tui/Cargo.toml": "b9b0d11d8f4f5f9783c9699bf93c2d8a3e7daf7234b12cdfc360667dc091865e",
+            "crates/norn-tui/src/app/autocomplete.rs": "e3a280313068feca2ef16157220bd1fbeb7b0249ad4629a1185bd539a8e9431d",
+            "crates/norn-tui/src/app/edit.rs": "6437f91db225f1cf5fefb6776192058cc2a298ea5d7c96fc213ae5c2a3ecb5d0",
+            "crates/norn-tui/src/app/event_loop.rs": "49616126fa0497f88d809c1cb79eb9cd8b68ccb498cbbafe205c88234bb9b761",
+            "crates/norn-tui/src/app/frontend_preferences.rs": "e4acb69316081febc72b756c7616bc3804da448bd3766410c540537106590871",
+            "crates/norn-tui/src/app/frontend_preferences_tests.rs": "b640e329fa8ef328110edf43ac6b5fca14e33d9c070e35d52d972093a9c57e27",
+            "crates/norn-tui/src/app/mod.rs": "8aa5d88b6c8edfbaad7a61ac180f1dba31b3d8d9414adf05191bf9624fe43bc8",
+            "crates/norn-tui/src/app/render.rs": "fb6f2391492b91e5abf6d19d8ae1621fdcf6ec9547f646116e29968a9254ae7f",
+            "crates/norn-tui/src/app/render/composer.rs": "4b318202ab9f283c34d5bab455cf4e2d7eeab93a90772ec362e48abbae219baf",
+            "crates/norn-tui/src/app/render/composer_tests.rs": "42c564a8873a135391af4f66c8aaedefc208b76ba053e5e9bfa53e97222a3c11",
+            "crates/norn-tui/src/app/render/transcript.rs": "34c691eeaae49ddb029f66959e7d65af4918fd3828f46f720453f0b821895ff9",
+            "crates/norn-tui/src/app/state.rs": "8bb965ca17c8f76dfb2d48be4f1ff8f7a4e391dc7e0817f7fb3a88dd5772e68c",
+            "crates/norn-tui/src/app/turn/mid.rs": "b8bb0f08d5a11a3acadfccef360ce1dbc526b6ccb474cee0beaaa25605a2eed5",
+            "crates/norn-tui/src/app/view_actions.rs": "b0e0b55fb3314194fe4459ad7dc5c20ebcd21a564b409f7d12acab0007171db2",
+            "crates/norn-tui/src/app/view_actions/commands.rs": "b791478d956656f568eeafad920d32ef6307f61219b09b016dff3d5421a4f565",
+            "crates/norn-tui/src/app/view_actions/keys.rs": "787eecaef99cc1fa580a2909984155d5f4850a5882f19ec5b4ca2d6e364cdfa7",
+            "crates/norn-tui/src/app/view_actions/mouse.rs": "a8379d2fd9ceb4b26c7ad59f6037bdc0b4a17830e7f2b4e303f414ff78a155b9",
+            "crates/norn-tui/src/error.rs": "230f201e141e121e0cb9c934f5b7ba56dc0b94eb9ba5309623da51993dfd8caa",
+            "crates/norn-tui/src/frontend_preferences.rs": "9c9fa5f176fe087edf73bf3ff90273d2539a6e254187fc0f527f6714355a8a9e",
+            "crates/norn-tui/src/frontend_preferences_tests.rs": "85f2759196f728a09ea59f632c61e5f787de83702f9349d422308af2165715a6",
+            "crates/norn-tui/src/input/autocomplete.rs": "080039d2d2149e9d8a66cc18bb365ef0a3bae6a5cc3ab8423daef6ff2a0b5be3",
+            "crates/norn-tui/src/input/editor.rs": "cd009959d0499bd8613367732be2b355efae1c6c9e16ac8498e19e0dfb57c26b",
+            "crates/norn-tui/src/input/history.rs": "ea376fd697a6787809f0a9170db5395362e10781f96f23ad855c82861679faf6",
+            "crates/norn-tui/src/input/keybindings.rs": "10548665aa0a02d5ab3005f2e4f80c073e969fce3b74ade53f1ff0c49234467d",
+            "crates/norn-tui/src/input/mod.rs": "37429dc0b20a78a687e03f09c46a8c468cb65401d845894ac3f4b2ea23b26c50",
+            "crates/norn-tui/src/input/navigation.rs": "447409fbc1adf60d34e1cfbe1d8eacbf940a4b110767733b48b7f059fecec033",
+            "crates/norn-tui/src/input/wrap.rs": "515bf86ac123416b4cdf021b0ec34a6e9f443da793bb3371a06a267d01faceed",
+            "crates/norn-tui/src/render/frame.rs": "095a5d7a17b656d3ab4b0af13a71cdaf1f570f7257c50f0b94111bb817fd1b7f",
+            "crates/norn-tui/src/render/frame_tests.rs": "314f162a1afce020f6a74cf8a1c99f277284ca93fc759791b64502f38b57d952",
+            "crates/norn-tui/src/render/layout.rs": "7bdbaade102392b51930131a37cd56c9fbc6f85bd2a0ced3a0ccd8a46a32af8a",
+            "crates/norn-tui/src/render/mod.rs": "a7b49317c2e5b95f0267137f87196d0da740d3c131d090b1b667213e2d19af64",
+            "crates/norn-tui/src/terminal/clipboard.rs": "3756615e5bd88ebd6038507d660d40ad0475da4fa0306bee58576b380fdefa3c",
+            "crates/norn-tui/tests/model_selection.rs": "64663349760d02de10f2564b4d0924d3ae285a1fd537ee21c974a343a5897e4f",
+            "crates/norn-tui/tests/pty_smoke.rs": "59a547656669c044130be768e82a2588d3105fdaa83b5060a9f81c8caef62d78",
+            "crates/norn-tui/tests/retained_workspace.rs": "a6dddaf5ec0df94f61b7e427e1305e8d0c4d38dbec13fdf0c6a09e1b6c23dfc0",
+            "crates/norn-tui/tests/support/mcp_channels_tui.rs": "d2dfa7610d80dc78f7abbb6c965f0064b9ac7d282ac1338e74f91671fa444805",
+            "crates/norn-tui/tests/support/retained_screen.rs": "b6e0389787730b76517cc5e256595a00bab22f9fe65934bf1bb928a964a6bc00",
+            "crates/norn-tui/tests/support/retained_workspace.rs": "d15a6435be4ca26bd84917abe4c5ee6c764c55294547e940be49dd2af6050649",
+            "crates/norn/src/config/settings_write.rs": "b35b51ab9fb536dcacdb4ba29368a656db41da8e2452aa32a6a4728f2b3ef1ab",
+            "crates/norn/src/config/tui_preferences.rs": "af7392143ca9feb3945597fcb9e173f5a346edaa087d415b6bcb1563370a69aa",
+            "docs/TUI-PREFERENCES.md": "0ab44160dc66d785a882fc712c000a9648bb92e6bd0c711c744a78643076572b",
+            "docs/design/norn-frontend-preferences/briefs/NFP-001.json": "5b1cbffccaf224f7476f82877932658f194c2a90e4125a8c02187e256fb8a597",
+            "docs/design/norn-frontend-preferences/design.json": "98982cc780b9f859115c774f0121bd939685a1e396be9a54ab017df9a1f66ec5",
+            "docs/design/norn-retained-tui/briefs/NRT-001.json": "fa14f415092df655a8e7b4542a67fba7fae0ab8da0a422f5c98746f223a862f9"
+          },
+          "icc_historical_checkpoint": "09cfa793d2f2aa70fad8e86c55d3323d1c7f8d04",
+          "icc_active_worktree": "/private/tmp/iridium-cell-transactions",
+          "icc_prerequisite": "ICC-002",
+          "icc_required_api": "Editor::replace_cell_range with CellReplacementCursor",
+          "icc_status_at_registration": "source_frozen_local_checks_pending",
+          "icc_final_checked_commit": null,
+          "icc_prerequisite_document_sha256": "5b65143db111c1d20dc21bee4257f016d4026d5ca9c42eaaf1382656a4ffdf20",
+          "dependency_dispatch": "Bind both Iridium crate revisions to the actual verified ICC-002 commit before NCP R1 source/dependency dispatch; no invented pin.",
+          "caller_census": {
+            "Frame": [
+              "crates/norn-tui/src/render/frame_tests.rs",
+              "crates/norn-tui/src/render/frame.rs",
+              "crates/norn-tui/src/app/render.rs",
+              "crates/norn-tui/src/app/render/composer_tests.rs"
+            ],
+            "TuiInputs_constructions": [
+              "crates/norn-cli/src/tui/driver.rs",
+              "crates/norn-tui/tests/pty_smoke.rs",
+              "crates/norn-tui/tests/support/mcp_channels_tui.rs",
+              "crates/norn-tui/tests/support/retained_workspace.rs",
+              "crates/norn-tui/tests/model_selection.rs"
+            ],
+            "TuiInputs_definition": "crates/norn-tui/src/app/event_loop.rs"
+          },
+          "local_preview_authorized": true,
+          "main_requires": [
+            "independent Fable review",
+            "exact-commit 205 receipt"
+          ]
+        },
+        "decisions": [
+          {
+            "id": "D1",
+            "title": "Dependency and execution authority",
+            "body": "The checked NFP baseline is d27259cc1c218a44be0ce624d103b04d799dcf21 (code fe6af3209d2498f5a67100552511078a3b749b74), installed as norn 0.1.0-preview.4. ICC-00109cfa793 is historical groundwork. ICC-002 in /private/tmp/iridium-cell-transactions is implementing Editor::replace_cell_range and awaits final checks/commit; capture its actual checked Git revision before source/dependency dispatch. No invented revision or private path dependency. Local checked previews are explicitly authorized; independent Fable and exact-commit 205 remain required for main landing.",
+            "status": "registered_from_recorded_decisions"
+          },
+          {
+            "id": "D2",
+            "title": "One editor and one terminal owner",
+            "body": "One plain-text Iridium Editor replaces InputEditor storage/motion/wrapping. Norn owns terminal, reader, frame publication, focus, send and session lifecycle. No Iridium driver or second mutable buffer.",
+            "status": "registered_from_recorded_decisions"
+          },
+          {
+            "id": "D3",
+            "title": "One current geometry",
+            "body": "Use existing composer_input_area, no live prefix and bare Iridium chrome. The final borrowed geometry supplies cells/caret/hits; retain typed extent/stale-hit errors and visual affinity. Measure preparation work; do not add a global layout identity/cache. Root owns the narrow render/frame/diff.rs adapter-access amendment: widen only PreparedFrame::new and PreparedFrame::put from pub(super) to pub(in crate::render), and add dimensions() -> (u16, usize) at the same render-only visibility from the owned columns/cells grid. The sibling composer cell adapter uses those existing construction/insertion operations and validates destination dimensions before insertion. No grid ownership, cell mutation semantics, glyph clipping, delta encoding, terminal publication, rollback or renderer behavior changes are authorized by this amendment.",
+            "status": "registered_from_recorded_decisions"
+          },
+          {
+            "id": "D4",
+            "title": "Reversible host transactions",
+            "body": "ICC-002 is the explicit prerequisite for public Editor::replace_cell_range(range, replacement, cursor policy) and CellReplacementCursor. Its checked commit is not available at registration. After binding that actual revision, completion/recall/clear use one preflighted, undoable public transaction preserving pre-action selection, grapheme joins, refusal atomicity and isolated gesture grouping. Never copy private normalization/preparation or weaken undo; any additional API need requires its own prior Iridium registration. R2 clipboard uses authoritative ClipboardOperation plus an opaque kernel snapshot for collapsed-line and multicursor copy/cut. To prepare a cut, apply the public Command to cloned Document/CursorState only and retain that exact result; these are preflight scratch, not a second live editor. Before transport compare the actual copied strings for sanitation changes (not byte lengths); refuse sanitized destructive Cut before write. Only after successful transport write and flush, validate the unchanged snapshot and commit through checked ICC-002 replace_cell_range over the whole document with Exact(result_cursor), one undo transaction. Failure, sanitation or stale snapshot leaves live text/history unchanged. No private Iridium preparation or live raw apply_command is used. Clipboard adapter/transport remains R2; the already-registered kernel facade remains its existing owner, with no Iridium wall expansion.",
+            "status": "registered_from_recorded_decisions"
+          },
+          {
+            "id": "D5",
+            "title": "Send policy is host configuration",
+            "body": "Default Enter sends; alt-enter is a typed option. Popup bare Enter/Tab comes first; paste never submits; delivery steer/queue remains independent. Modifier absence is not guessed.",
+            "status": "registered_from_recorded_decisions"
+          },
+          {
+            "id": "D6",
+            "title": "Restored appearance is preserved",
+            "body": "Keep full-width plain live text, dim top-left mode/token rule, bottom-right model/effort/tier/session rule and last-row hints; existing three-row chrome yields at tiny height. Preserve blue user text on every line, > transcript prompt, two-column continuation and blank margin. No fourth control row.",
+            "status": "registered_from_recorded_decisions"
+          },
+          {
+            "id": "D7",
+            "title": "Admission and recall ownership",
+            "body": "Prepare/admit/clear explicitly, preserve rejected draft/undo, accepted input identities and no-resend behavior. Private submission recall remains separate from editor undo; /auth exclusions unchanged. Root owns composer_submission plus the existing event_loop/mid/run orchestration seam. Keep exactly one pending local ItemId and ComposerSnapshot in AppState. Before clearing a pending submitted draft, consume the actual ExecutionObservation::opening_input push receipt for that input. Accepted-but-unavailable is still acceptance; never infer admission from text, labels, item order, replayed events or a fabricated receipt. A missing/rejected pre-admission outcome retains the exact draft/selection/undo; no polling or duplicate runtime input is added. Typed local command acceptance propagates from slash/model_selection/mcp_slash and the existing view command function alongside all current retained diagnostics. Distinguish rejected local commands from accepted commands even when the current handler renders a notice and returns Ok. Model capability/preflight checks and the original MCP start owner stay authoritative; parse/busy/preflight refusal does not admit or clear the draft, and a successfully started asynchronous operation is not replayed if later completion or notice/persistence handling fails. Preserve acceptance versus post-acceptance failure in the returned outcome. After an effect is accepted, later history/preferences persistence or result reporting failure must explicitly retain that accepted fact and its error; it cannot be returned as a rejection that invites repeating the effect. Local errors still render their original diagnostics. Existing agent/profile slash routing remains unchanged. R4 also owns the typed acceptance result of the existing app/frontend_preferences.rs command function, coordinated with its R6 owner. Decide accepted/rejected from the actual command branch: unknown subcommands are rejected, while an accepted scope/settings change followed by save-start, persistence or reporting failure remains accepted-with-error. Never infer outcomes from notice text, roll back a published settings change implicitly, replay a save/effect, or introduce a second preference owner. Only the command outcome propagation is added to the bounded slash partition; existing save lifecycle and publication semantics remain unchanged.",
+            "status": "registered_from_recorded_decisions"
+          },
+          {
+            "id": "D8",
+            "title": "NFP owns persistence",
+            "body": "Extend existing typed FrontendPreferences and PreferenceOwner; no new writer/task/lock/store. Use install/edited/wait/finish/command/drain/exit_outcome and existing snapshot CAS. Add composer to same projection/owned keys; strict owned section means fixture sentinels move to an unowned sibling. Keep NFP automatic-personal assumption, run/local and truthful pending/shadowing outcomes.",
+            "status": "registered_from_recorded_decisions"
+          },
+          {
+            "id": "D9",
+            "title": "Startup and input efficiency",
+            "body": "Reuse already-loaded layers and existing startup_trace; no extra settings reads/locks/write, language inference/parse, MCP/provider activation, replay/body hydration or invented capacity/timer. GPU-free does not mean syntax-free build graph. Measure actual assembly without arbitrary pass thresholds. R7 may change only the existing tests/support/frontend_preferences_restart.rs App::frame helper visibility and API documentation so composer_preferences can call its existing source-position-bound, push/deadline complete-frame predicate wait. Reuse App::press for Alt-Enter instead of command/submit helpers that force bare Enter. Preserve the helper body, existing deadline semantics and all fixture assertions; no copied harness, polling, new runtime or other executable/signature behavior change.",
+            "status": "registered_from_recorded_decisions"
+          },
+          {
+            "id": "D10",
+            "title": "Registered execution and public-history boundary",
+            "body": "R0 now registers the eight documents on the checked NFP worktree. Root accepted R0; exact row dispatch and dependency readiness govern source edits; ICC-002 final check/commit binding remains a prerequisite. Existing checked local-preview authority covers later build/install and successful-update speech. R0 claims only documentation/source-witness work. Main Fable/exact205 and any public-history rewrite/visibility/release remain separate; original programme IDs and historical receipts are preserved.",
+            "status": "registered_from_recorded_decisions"
+          }
+        ],
+        "remaining_engineering_contract": "ICC-002 final source checks and commit are pending. Bind its actual checked revision and prove Norn replacement/clear/recall against the public replacement transaction before R1 completion. Historical ICC-001 evidence does not cover this new API."
+      }
+    },
+    {
+      "superseded_at_melbourne": "2026-09-06T14:08:06.430420+10:00",
+      "prior": {
+        "at_melbourne": "2026-09-06T14:08:06.430420+10:00",
+        "brief_status": "registered_implementation_in_progress_pending_ICC004_checked_pin",
+        "depends_on": [
+          "NFP-001 checked checkpoint d27259cc1c218a44be0ce624d103b04d799dcf21",
+          "ICC-002 and ICC-003 private checkpoint 84d026f6c1a0621a7988712b171d45c97f43610b",
+          "ICC-004 parser-free TUI checked checkpoint pending"
+        ],
+        "dependency_contract": {
+          "norn_worktree": "/private/tmp/norn-frontend-preferences",
+          "norn_branch": "codex/norn-frontend-preferences-integrated",
+          "nfp_final_checked_parent": "d27259cc1c218a44be0ce624d103b04d799dcf21",
+          "nfp_code_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+          "installed_version": "norn 0.1.0-preview.4",
+          "installed_sha256": "a1431e647a23bd372ee1b56b5262f9e27db91e76608ccd3d78da24fa922d0b1e",
+          "nfp_source_sha256": {
+            "CLAUDE.md": "952e08ec25793b63009788a5b5d3c6bdfe482577d199e872635aba73c90ec629",
+            "Cargo.lock": "3682ab42b2bcd6f2bbb6814587918658ca6c545f2dd751e98fcdeee67a608d80",
+            "Cargo.toml": "d99bdeac2e296298a802906deb73d188c4c73dc5262340fbd9cf0569a71acdfd",
+            "crates/norn-cli/Cargo.toml": "2ad7ab4dfd1b0dbc14aa5dc8e460d5f5fcf5c75e03f90e8384d5e35086aae436",
+            "crates/norn-cli/src/runtime/resolve.rs": "81c31d96891491b163b08dcc09891a71de98d94a8205f6fc78468d2c3004eea0",
+            "crates/norn-cli/src/tui/driver.rs": "498f223055853f0cfcd27dc2aad58800e488aad0b3f30b4050945d402c176d68",
+            "crates/norn-cli/tests/frontend_preferences_restart.rs": "68777f42a218c6e552ead9b3166e5418a0c4d964998a29dcb8ff16a36ddb0da9",
+            "crates/norn-cli/tests/support/frontend_preferences_restart.rs": "ad95a3f1f20894aeb4a90bf13d9d7d837abe726e8d0ff5e2d07b1c3dba33f5ea",
+            "crates/norn-tui/Cargo.toml": "b9b0d11d8f4f5f9783c9699bf93c2d8a3e7daf7234b12cdfc360667dc091865e",
+            "crates/norn-tui/src/app/autocomplete.rs": "e3a280313068feca2ef16157220bd1fbeb7b0249ad4629a1185bd539a8e9431d",
+            "crates/norn-tui/src/app/edit.rs": "6437f91db225f1cf5fefb6776192058cc2a298ea5d7c96fc213ae5c2a3ecb5d0",
+            "crates/norn-tui/src/app/event_loop.rs": "49616126fa0497f88d809c1cb79eb9cd8b68ccb498cbbafe205c88234bb9b761",
+            "crates/norn-tui/src/app/frontend_preferences.rs": "e4acb69316081febc72b756c7616bc3804da448bd3766410c540537106590871",
+            "crates/norn-tui/src/app/frontend_preferences_tests.rs": "b640e329fa8ef328110edf43ac6b5fca14e33d9c070e35d52d972093a9c57e27",
+            "crates/norn-tui/src/app/mod.rs": "8aa5d88b6c8edfbaad7a61ac180f1dba31b3d8d9414adf05191bf9624fe43bc8",
+            "crates/norn-tui/src/app/render.rs": "fb6f2391492b91e5abf6d19d8ae1621fdcf6ec9547f646116e29968a9254ae7f",
+            "crates/norn-tui/src/app/render/composer.rs": "4b318202ab9f283c34d5bab455cf4e2d7eeab93a90772ec362e48abbae219baf",
+            "crates/norn-tui/src/app/render/composer_tests.rs": "42c564a8873a135391af4f66c8aaedefc208b76ba053e5e9bfa53e97222a3c11",
+            "crates/norn-tui/src/app/render/transcript.rs": "34c691eeaae49ddb029f66959e7d65af4918fd3828f46f720453f0b821895ff9",
+            "crates/norn-tui/src/app/state.rs": "8bb965ca17c8f76dfb2d48be4f1ff8f7a4e391dc7e0817f7fb3a88dd5772e68c",
+            "crates/norn-tui/src/app/turn/mid.rs": "b8bb0f08d5a11a3acadfccef360ce1dbc526b6ccb474cee0beaaa25605a2eed5",
+            "crates/norn-tui/src/app/view_actions.rs": "b0e0b55fb3314194fe4459ad7dc5c20ebcd21a564b409f7d12acab0007171db2",
+            "crates/norn-tui/src/app/view_actions/commands.rs": "b791478d956656f568eeafad920d32ef6307f61219b09b016dff3d5421a4f565",
+            "crates/norn-tui/src/app/view_actions/keys.rs": "787eecaef99cc1fa580a2909984155d5f4850a5882f19ec5b4ca2d6e364cdfa7",
+            "crates/norn-tui/src/app/view_actions/mouse.rs": "a8379d2fd9ceb4b26c7ad59f6037bdc0b4a17830e7f2b4e303f414ff78a155b9",
+            "crates/norn-tui/src/error.rs": "230f201e141e121e0cb9c934f5b7ba56dc0b94eb9ba5309623da51993dfd8caa",
+            "crates/norn-tui/src/frontend_preferences.rs": "9c9fa5f176fe087edf73bf3ff90273d2539a6e254187fc0f527f6714355a8a9e",
+            "crates/norn-tui/src/frontend_preferences_tests.rs": "85f2759196f728a09ea59f632c61e5f787de83702f9349d422308af2165715a6",
+            "crates/norn-tui/src/input/autocomplete.rs": "080039d2d2149e9d8a66cc18bb365ef0a3bae6a5cc3ab8423daef6ff2a0b5be3",
+            "crates/norn-tui/src/input/editor.rs": "cd009959d0499bd8613367732be2b355efae1c6c9e16ac8498e19e0dfb57c26b",
+            "crates/norn-tui/src/input/history.rs": "ea376fd697a6787809f0a9170db5395362e10781f96f23ad855c82861679faf6",
+            "crates/norn-tui/src/input/keybindings.rs": "10548665aa0a02d5ab3005f2e4f80c073e969fce3b74ade53f1ff0c49234467d",
+            "crates/norn-tui/src/input/mod.rs": "37429dc0b20a78a687e03f09c46a8c468cb65401d845894ac3f4b2ea23b26c50",
+            "crates/norn-tui/src/input/navigation.rs": "447409fbc1adf60d34e1cfbe1d8eacbf940a4b110767733b48b7f059fecec033",
+            "crates/norn-tui/src/input/wrap.rs": "515bf86ac123416b4cdf021b0ec34a6e9f443da793bb3371a06a267d01faceed",
+            "crates/norn-tui/src/render/frame.rs": "095a5d7a17b656d3ab4b0af13a71cdaf1f570f7257c50f0b94111bb817fd1b7f",
+            "crates/norn-tui/src/render/frame_tests.rs": "314f162a1afce020f6a74cf8a1c99f277284ca93fc759791b64502f38b57d952",
+            "crates/norn-tui/src/render/layout.rs": "7bdbaade102392b51930131a37cd56c9fbc6f85bd2a0ced3a0ccd8a46a32af8a",
+            "crates/norn-tui/src/render/mod.rs": "a7b49317c2e5b95f0267137f87196d0da740d3c131d090b1b667213e2d19af64",
+            "crates/norn-tui/src/terminal/clipboard.rs": "3756615e5bd88ebd6038507d660d40ad0475da4fa0306bee58576b380fdefa3c",
+            "crates/norn-tui/tests/model_selection.rs": "64663349760d02de10f2564b4d0924d3ae285a1fd537ee21c974a343a5897e4f",
+            "crates/norn-tui/tests/pty_smoke.rs": "59a547656669c044130be768e82a2588d3105fdaa83b5060a9f81c8caef62d78",
+            "crates/norn-tui/tests/retained_workspace.rs": "a6dddaf5ec0df94f61b7e427e1305e8d0c4d38dbec13fdf0c6a09e1b6c23dfc0",
+            "crates/norn-tui/tests/support/mcp_channels_tui.rs": "d2dfa7610d80dc78f7abbb6c965f0064b9ac7d282ac1338e74f91671fa444805",
+            "crates/norn-tui/tests/support/retained_screen.rs": "b6e0389787730b76517cc5e256595a00bab22f9fe65934bf1bb928a964a6bc00",
+            "crates/norn-tui/tests/support/retained_workspace.rs": "d15a6435be4ca26bd84917abe4c5ee6c764c55294547e940be49dd2af6050649",
+            "crates/norn/src/config/settings_write.rs": "b35b51ab9fb536dcacdb4ba29368a656db41da8e2452aa32a6a4728f2b3ef1ab",
+            "crates/norn/src/config/tui_preferences.rs": "af7392143ca9feb3945597fcb9e173f5a346edaa087d415b6bcb1563370a69aa",
+            "docs/TUI-PREFERENCES.md": "0ab44160dc66d785a882fc712c000a9648bb92e6bd0c711c744a78643076572b",
+            "docs/design/norn-frontend-preferences/briefs/NFP-001.json": "5b1cbffccaf224f7476f82877932658f194c2a90e4125a8c02187e256fb8a597",
+            "docs/design/norn-frontend-preferences/design.json": "98982cc780b9f859115c774f0121bd939685a1e396be9a54ab017df9a1f66ec5",
+            "docs/design/norn-retained-tui/briefs/NRT-001.json": "fa14f415092df655a8e7b4542a67fba7fae0ab8da0a422f5c98746f223a862f9"
+          },
+          "icc_historical_checkpoint": "09cfa793d2f2aa70fad8e86c55d3323d1c7f8d04",
+          "icc_active_worktree": "/private/tmp/iridium-cell-transactions",
+          "icc_prerequisite": "ICC-002 and ICC-003",
+          "icc_required_api": "Editor::replace_cell_range with CellReplacementCursor",
+          "icc_status_at_registration": "Historical initial observation preserved in historical_dependency_bindings; current status below.",
+          "icc_final_checked_commit": "84d026f6c1a0621a7988712b171d45c97f43610b",
+          "icc_prerequisite_document_sha256": "6fe073be136c538bffcb56b5d9c9a7d5ecb5df8af3ba609d17110cc48f6f78bd",
+          "dependency_dispatch": "Actual checked private revision is bound. Continue only dispatched row walls and prove composed Norn behavior; no dependency or local checkpoint is a main/public landing.",
+          "caller_census": {
+            "Frame": [
+              "crates/norn-tui/src/render/frame_tests.rs",
+              "crates/norn-tui/src/render/frame.rs",
+              "crates/norn-tui/src/app/render.rs",
+              "crates/norn-tui/src/app/render/composer_tests.rs"
+            ],
+            "TuiInputs_constructions": [
+              "crates/norn-cli/src/tui/driver.rs",
+              "crates/norn-tui/tests/pty_smoke.rs",
+              "crates/norn-tui/tests/support/mcp_channels_tui.rs",
+              "crates/norn-tui/tests/support/retained_workspace.rs",
+              "crates/norn-tui/tests/model_selection.rs"
+            ],
+            "TuiInputs_definition": "crates/norn-tui/src/app/event_loop.rs"
+          },
+          "local_preview_authorized": true,
+          "main_requires": [
+            "independent Fable review",
+            "exact-commit 205 receipt"
+          ],
+          "icc_current_status": "private_checkpoint_committed_pushed_verified_not_landed",
+          "icc_repository": "https://github.com/tomWhiting/iridium.git",
+          "icc_branch": "codex/iridium-cell-transactions",
+          "icc_source_set_sha256": "cdba3c0becde66d39dd1614c7f966baa5be86882b5093c5a9d46e6a6ebf36bb0",
+          "icc_checkpoint_receipt": {
+            "path": "/private/tmp/nwp-05-proof/icc-003-primary-caret/private-checkpoint/CHECKPOINT.json",
+            "sha256": "710d95d7bf973a28f73c8660ecce20fc8d8f74099a7effef5c5318486d113bd5"
+          },
+          "icc_visibility": "PRIVATE",
+          "icc_main_unchanged": true,
+          "norn_dependency_pins_observed": {
+            "iridium-editor": {
+              "git": "https://github.com/tomWhiting/iridium",
+              "rev": "84d026f6c1a0621a7988712b171d45c97f43610b",
+              "default-features": false
+            },
+            "iridium-tui": {
+              "git": "https://github.com/tomWhiting/iridium",
+              "rev": "84d026f6c1a0621a7988712b171d45c97f43610b"
+            }
+          },
+          "norn_manifest_sha256_at_binding": "890a5c225108e8c732fab3741052748840b71dbda5474a7e6b566179ed3097a1",
+          "current_assembly_status": {
+            "status": "native_links_conflict_repair_registered_checked_pin_pending",
+            "detail": "84 forces Iridium syntax/tree-sitter0.26 alongside Norn/Chiron0.25; ICC-004 makes syntax default-on optional. Both Norn crates will disable default features after verified replacement binding.",
+            "current_pin_unchanged": "84d026f6c1a0621a7988712b171d45c97f43610b",
+            "future_pin": null
+          },
+          "icc_additional_prerequisite": "ICC-004 optional syntax feature",
+          "icc004_checked_commit": null,
+          "icc004_feature_contract": "ICC-004 confirms iridium-tui default=[\"syntax\"] and syntax=[\"iridium-editor/syntax\", \"dep:ropey\"]. Its direct editor dependency retains default-features=false and removes the unconditional syntax edge. Norn must set default-features=false on both editor and TUI when the actual checked ICC-004 revision is available. Parser-off preserves public cell editing/rendering/search/selection/caret/chrome and iridium-lang rules, but has no syntax parse/cache/Rope snapshot; Palette::highlighted is syntax-only. Existing default-feature TUI remains highlighted. Both feature scopes require their own checks and graph proof; no new revision is invented by registration. Parser-free is scoped to the Iridium composer dependency subtree, not the whole Norn graph. With default-features=false on both Iridium crates, the actual resolved graph must omit iridium-syntax, the Iridium tree-sitter0.26 edge and Iridium GPU dependencies. Norn/Chiron tree-sitter0.25 and unrelated parser-backed tools remain unchanged. Verify dependency origins/versions rather than asserting no tree-sitter package anywhere in Norn.",
+          "graph_proof_scope": {
+            "omitted_from_Iridium_composer_subtree": [
+              "iridium-syntax",
+              "Iridium tree-sitter0.26",
+              "Iridium GPU dependencies"
+            ],
+            "retained_elsewhere_in_Norn": [
+              "Norn/Chiron tree-sitter0.25",
+              "existing parser-backed tools"
+            ],
+            "whole_Norn_parser_free_claim": false,
+            "future_checked_ICC_pin": null
+          }
+        },
+        "remaining_engineering_contract": "ICC002/00384 checkpoint remains bound, but the graph conflict blocks successful Norn assembly. Complete both ICC-004 feature-scope checks and dependency graph proof, commit/push an actual replacement, then bind it before composed Norn validation. NCP behavior, startup, editing and integration acceptance remain necessary."
+      }
+    }
+  ],
+  "candidate_status": {
+    "at_melbourne": "2026-09-06T14:32:59.015941+10:00",
+    "status": "assembled_pending_validation",
+    "candidate_version": "0.1.0-preview.5",
+    "installed_version_unchanged": "0.1.0-preview.4",
+    "Iridium_dependency": "15673cba9222489e3c3315bb1526f60a6224a187",
+    "Iridium_default_features": {
+      "editor": false,
+      "tui": false
+    },
+    "dependency_verification": "Private ICC004 no-syntax378/default393 tests and their strictClippy/fmt/standalone tree-sitter0.25.10 coexistence proof passed. This is not composed Norn proof.",
+    "cargo_check": {
+      "path": "/private/tmp/ncp-001-proof/assembly/check-2.log",
+      "sha256": "ec5f0ad994469590516514286df1b6789f9a3b47486bf07014cab809c411d6be",
+      "status": "type_check_completed_with_warnings_before_registered_warning_cleanup"
+    },
+    "TUI_library": {
+      "receipt": "/private/tmp/ncp-001-proof/assembly/tui-lib-2.json",
+      "sha256": "f97523641c6169a7756121a7e3cf7c37b14c356f48b635720c7c8bf2d976609a",
+      "log": "/private/tmp/ncp-001-proof/assembly/tui-lib-2.log",
+      "log_sha256": "36fb6f0a2a7e9174ef41d8c70985bbeabfc76ce52228b885b7d33d4c8e554289",
+      "passed": 833,
+      "failed": 2,
+      "ignored": 0,
+      "exit": 101,
+      "at_melbourne": "2026-09-06T14:30:23.978759+10:00",
+      "failures": [
+        "input::composer_keys::tests::capital_and_backtab_keep_their_delivered_text_and_selection_modifiers",
+        "input::composer_keys::tests::delivered_modifiers_and_repeat_survive_the_shared_translator"
+      ],
+      "assessment": "Actual META/BackTab translation defects under repair; no passing rerun claimed."
+    },
+    "not_yet_claimed": [
+      "full Norn workspace verification",
+      "actual integrated PTY acceptance",
+      "composer performance checks",
+      "preview.5 native build or installation",
+      "main landing",
+      "Fable or exact205 verdict",
+      "editable panels",
+      "hosted attach"
+    ],
+    "candidate_version_selected_by_root": true
+  }
+}

@@ -36,8 +36,18 @@ pub struct Frame {
     pub layout: Layout,
     /// Visible content only, in painting order.
     pub rows: Vec<PaintRow>,
+    /// Typed composer cells; painted before host chrome and completion overlays.
+    pub composer: Option<ComposerLayer>,
     /// Zero-based cursor, absent when focus is outside the composer.
     pub cursor: Option<(u16, u16)>,
+}
+
+/// The kernel's exact local cell buffer in Norn's full-width input rectangle.
+pub struct ComposerLayer {
+    /// Parent-owned input rectangle, excluding all host chrome.
+    pub area: Rect,
+    /// Already rendered cells; Norn does not rewrap their text.
+    pub cells: iridium_tui::cell::CellBuffer,
 }
 
 impl Frame {
@@ -84,6 +94,19 @@ impl Frame {
             }
         }
         let mut output = PreparedFrame::new(columns, lines, self.cursor);
+        if let Some(composer) = &self.composer {
+            if !matches!(self.layout, Layout::Ready { composer: panel, .. }
+                if super::layout::composer_input_area(panel) == composer.area)
+            {
+                return Err(TuiError::FrameBounds);
+            }
+            super::composer_cells::paint_composer_cells(
+                &mut output,
+                composer.area,
+                &composer.cells,
+                caps,
+            )?;
+        }
         if let Layout::Ready {
             upper: UpperLayout::Split { divider, .. },
             ..

@@ -374,8 +374,6 @@ fn prepare_command(state: &mut AppState, command: &str) -> Result<(), TuiError> 
         .focus
         .focus(Focus::Composer, state.screen.availability())
         .map_err(interaction)?;
-    for ch in command.chars() {
-        state.input_editor.insert_char(ch);
-    }
+    state.input_editor.paste_cells(command)?;
     Ok(())
 }

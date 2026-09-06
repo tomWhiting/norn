@@ -4,10 +4,12 @@ Saved frontend preferences are installed locally in **Norn 0.1.0-preview.4**. St
 
 ## Choose where changes are saved
 
-Each CLI launch starts with **personal automatic saving**. This is the implementation's working assumption, chosen from the request that settings be remembered; it is not a quoted or confirmed user ruling. Opening Norn alone does not write preferences. Changing a saved view, display or input preference starts a save.
+Each CLI launch starts with **personal automatic saving**. This is the implementation's working assumption, chosen from the request that settings be remembered; it is not a quoted or confirmed user ruling. Opening Norn alone does not write preferences. Changing a saved view, display, input or composer preference starts a save.
 
 | Command | Effect |
 | --- | --- |
+| `/view composer send-key enter` | Enter sends; Alt+Enter inserts a newline. This is the default. |
+| `/view composer send-key alt-enter` | Alt+Enter sends; Enter inserts a newline. |
 | `/view preferences status` | Show active values, target, pending/failed/saved outcome and the captured winning settings layer. `/view preferences` also shows status. |
 | `/view preferences run` | Keep subsequent preference changes temporary for this process. |
 | `/view preferences user` | Save the current values to personal settings, then save further preference edits there automatically. |
@@ -46,7 +48,8 @@ This is the current default projection. Add or edit the `tui` member in the chos
       "thinking_visible": true,
       "secondary_fields_visible": false
     },
-    "input": { "submit_mode": "steer" }
+    "input": { "submit_mode": "steer" },
+    "composer": { "send_key": "enter" }
   }
 }
 ```
@@ -54,10 +57,11 @@ This is the current default projection. Add or edit the `tui` member in the chos
 - `split` stores positive integer weights from 1 to 65535, not a measured terminal width. `upper_pane` is `conversation` or `changes`.
 - `history_events` and `body_bytes` are positive machine-sized integers controlling requested history/body loads. They are not retention or model limits.
 - `clipboard` is `unspecified`, `disabled` or `osc52`. This records transport intent, not proof that the terminal accepts clipboard writes.
-- `submit_mode` is `steer` or `queue` for input submitted during agent work. It does not configure Enter versus Alt-Enter.
+- `input.submit_mode` is `steer` or `queue` for input submitted during agent work. Ctrl+T changes this delivery choice.
+- `composer.send_key` is `enter` (default) or `alt-enter`; it selects the physical send key independently of steer/queue. Change it with `/view composer send-key enter|alt-enter` or the existing last-row send-key control. A visible completion popup takes bare Enter/Tab first. Reported Shift+Enter inserts a newline; terminals that cannot distinguish it from Enter still follow their reported key. The setting does not enable unsupported terminal modifiers.
 - Boolean fields require JSON booleans. Fields may be omitted to use the declared defaults within the winning object.
 
-The frontend owns only `tui.view`, `tui.display` and `tui.input`. Saves preserve unrelated document keys and unowned `tui` siblings such as `composer`. They do not save drafts, selections, viewport positions, transcript IDs, queued messages or terminal capability replies.
+The frontend owns `tui.view`, `tui.display`, `tui.input` and `tui.composer`. `composer` is a strict object containing only `send_key`; unknown fields such as `composer.future` are refused. Saves preserve unrelated document keys and unowned `tui` siblings such as `extension_data`. They do not save drafts, selections, viewport positions, transcript IDs, queued messages or terminal capability replies.
 
 Malformed values and unknown fields inside an owned section are refused with the document and dotted field name, rather than silently replaced. Each loaded layer is validated, including a shadowed layer. Correct the named field and restart. Unknown top-level `tui` siblings remain available to their separate owners.
 
@@ -65,10 +69,10 @@ Malformed values and unknown fields inside an owned section are refused with the
 
 Only one save runs at a time. Later edits remain active in the current view and unsaved until their own values are persisted. After a successful completion, the same owner saves the latest eligible state; an older completion is not reported as saving newer edits. An ordinary exit waits for accepted preference writes and reports failures.
 
-The shared settings writer compares the three owned sections against the captured snapshot under the same document lock used by MCP settings writes. Unrelated changes are preserved. A concurrent change to an owned section is a named conflict and is not overwritten.
+The shared settings writer compares the four owned sections against the captured snapshot under the same document lock used by MCP settings writes. Unrelated changes are preserved. A concurrent change to an owned section is a named conflict and is not overwritten.
 
 A failure before publication leaves the run values intact and stops automatic retries. Inspect `/view preferences status` and the reported file/error. After correcting a transient write problem, `/view preferences save` can retry; for an owned-section conflict, inspect the file and restart to capture its current values before reapplying desired changes.
 
 “Published; durability uncertain” means the settings reached the document but durable directory sync was not confirmed. It is not a rollback. A save task ending without a known outcome also cannot be treated as a failed write: further saves are blocked until you inspect the settings and restart. Do not assume either case requires repeating an already-published write.
 
-The [authoritative brief](design/norn-frontend-preferences/briefs/NFP-001.md) records acceptance and verification. The installed local preview does not constitute venue approval or a public release.
+The [preference brief](design/norn-frontend-preferences/briefs/NFP-001.md) records the existing save owner and verification; [NCP-001](design/norn-iridium-composer/briefs/NCP-001.md) adds the composer send-key preference. The composer changes are under implementation and are not part of the installed preview.4 described above. The installed local preview does not constitute venue approval or a public release.

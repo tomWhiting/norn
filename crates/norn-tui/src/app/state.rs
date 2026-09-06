@@ -69,6 +69,10 @@ pub struct AppState {
         tokio::task::JoinSet<super::view_actions::reading::ExportResult>,
     /// Multi-line input editor in the fixed panel.
     pub input_editor: InputEditor,
+    /// One measured cell viewport shared by composer keys, paint and pointer input.
+    pub composer_geometry: super::composer_geometry::ComposerGeometry,
+    /// Exact local input and draft snapshot awaiting its opening publication receipt.
+    pub(super) pending_composer_submission: Option<super::composer_submission::PendingSubmission>,
     /// Visibility toggles for thinking and secondary structured-output
     /// fields. Flipped by Ctrl+E.
     pub display_toggles: DisplayToggles,
@@ -136,6 +140,8 @@ pub struct AppState {
     /// In-flight human input state for active-turn steering and queued
     /// follow-up prompts.
     pub in_flight_input: InFlightInputState,
+    /// Physical send-key policy; steer/queue delivery remains independently selected.
+    pub composer_send_key: crate::frontend_preferences::ComposerSendKey,
 }
 
 impl AppState {
@@ -160,6 +166,8 @@ impl AppState {
             screen: super::render::ScreenState::new(source),
             export_tasks: tokio::task::JoinSet::new(),
             input_editor: InputEditor::new(history),
+            composer_geometry: super::composer_geometry::ComposerGeometry::default(),
+            pending_composer_submission: None,
             display_toggles: DisplayToggles::default(),
             verbosity: VerbosityState::default(),
             streaming_indicator: StreamingIndicator::Idle,
@@ -176,6 +184,7 @@ impl AppState {
             usage_totals: HashMap::new(),
             live_root_usage: (0, 0),
             in_flight_input: InFlightInputState::default(),
+            composer_send_key: crate::frontend_preferences::ComposerSendKey::default(),
         }
     }
 

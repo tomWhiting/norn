@@ -6,7 +6,7 @@ use norn::integration::{
 
 use crate::TuiError;
 
-use super::slash::write_dim_line;
+use super::slash::{LocalCommandOutcome, write_dim_line};
 use super::{notices, state::AppState};
 
 type McpCommandResult = Result<Vec<String>, LiveMcpCommandError>;
@@ -77,15 +77,19 @@ pub(super) fn handle_mcp(
     control: Option<&McpControlHandle>,
     task: &mut Option<McpCommandTask>,
     state: &mut AppState,
-) -> Result<(), TuiError> {
+) -> Result<LocalCommandOutcome, TuiError> {
     match start_mcp(arguments, control, task) {
-        Ok(McpStartOutcome::Started) => write_dim_line("MCP command running...", state),
+        Ok(McpStartOutcome::Started) => Ok(LocalCommandOutcome::after_acceptance(write_dim_line(
+            "MCP command running...",
+            state,
+        ))),
         Ok(McpStartOutcome::Busy) => {
-            write_dim_line("norn: another /mcp command is still running", state)
+            write_dim_line("norn: another /mcp command is still running", state)?;
+            Ok(LocalCommandOutcome::Rejected)
         }
         Err(error) => {
             notices::error(state, "/mcp failed", &error.to_string())?;
-            Ok(())
+            Ok(LocalCommandOutcome::Rejected)
         }
     }
 }
@@ -127,12 +131,25 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::*;
+    use crate::input::history::InputHistory;
+    use crate::render::fixed_panel::StatusBar;
+    use crate::terminal::caps::TerminalCaps;
     use norn::config::{McpApprovalStore, McpConfigState};
     use norn::integration::{
         McpActivationCandidate, McpActivationRequest, McpCandidateBuilder, McpCandidateError,
         McpRuntime, McpRuntimeStore,
     };
     use norn::tool::{ToolContext, ToolGeneration, ToolGenerationStore, ToolRegistry};
+
+    fn app_state() -> AppState {
+        AppState::new(
+            TerminalCaps::baseline(),
+            InputHistory::in_memory(),
+            norn::agent::registry::AgentRegistry::shared(),
+            crate::app::state::test_view_source(uuid::Uuid::new_v4()),
+            StatusBar::default(),
+        )
+    }
 
     struct BlockingBuilder {
         started: Notify,
@@ -183,17 +200,23 @@ mod tests {
         )?;
         let started = builder.started.notified();
         let mut task = None;
+        let mut app = app_state();
 
-        assert_eq!(
-            start_mcp("add docs stdio fixture", Some(&control), &mut task)?,
-            McpStartOutcome::Started
-        );
+        assert!(matches!(
+            handle_mcp(
+                "add docs stdio fixture",
+                Some(&control),
+                &mut task,
+                &mut app
+            )?,
+            LocalCommandOutcome::Accepted
+        ));
         started.await;
         assert!(mcp_exit_is_blocked(task.as_ref()));
-        assert_eq!(
-            start_mcp("list", Some(&control), &mut task)?,
-            McpStartOutcome::Busy
-        );
+        assert!(matches!(
+            handle_mcp("list", Some(&control), &mut task, &mut app)?,
+            LocalCommandOutcome::Rejected
+        ));
 
         builder.release.notify_one();
         let completion = task
@@ -204,6 +227,38 @@ mod tests {
             .ok_or("MCP task handle was missing")??;
         assert!(completion.is_ok());
         assert!(!mcp_exit_is_blocked(task.as_ref()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_refusal_and_later_async_failure_have_distinct_admission()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = app_state();
+        let mut task = None;
+        assert!(matches!(
+            handle_mcp("invalid-command", None, &mut task, &mut app)?,
+            LocalCommandOutcome::Rejected
+        ));
+        assert!(task.is_none());
+        assert!(matches!(
+            handle_mcp("list", None, &mut task, &mut app)?,
+            LocalCommandOutcome::Accepted
+        ));
+        let result = wait_mcp_result(&mut task).await;
+        assert!(matches!(result, Ok(Err(LiveMcpCommandError::Unavailable))));
+        render_completed_mcp(&mut app, &mut task, result)?;
+        assert!(task.is_none());
+        let failure = app
+            .transcript
+            .projection
+            .items()
+            .next_back()
+            .ok_or("missing asynchronous MCP failure")?;
+        assert!(matches!(
+            failure.kind,
+            norn::session_view::ViewItemKind::Error
+        ));
+        assert_eq!(failure.label.as_str(), "/mcp failed");
         Ok(())
     }
 

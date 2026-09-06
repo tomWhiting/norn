@@ -1,15 +1,13 @@
 //! Full-width grapheme composer and on-demand completion overlay preparation.
 
 use super::{
-    AppState, Arc, DisplayText, Focus, Frame, PaintRow, Rect, RenderedMarkdown, TextRow, TuiError,
-    interaction, push_text,
+    AppState, Arc, Frame, PaintRow, Rect, RenderedMarkdown, TuiError, interaction, push_text,
 };
 use std::fmt::Write as _;
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 pub(super) fn paint_chrome(
-    state: &AppState,
+    state: &mut AppState,
     frame: &mut Frame,
     panel: Rect,
 ) -> Result<(), TuiError> {
@@ -59,16 +57,39 @@ pub(super) fn paint_chrome(
             },
         )?;
     }
+    let button = match state.composer_send_key {
+        crate::frontend_preferences::ComposerSendKey::Enter => "[Enter sends]",
+        crate::frontend_preferences::ComposerSendKey::AltEnter => "[Alt+Enter sends]",
+    };
+    let newline = match state.composer_send_key {
+        crate::frontend_preferences::ComposerSendKey::Enter => {
+            crate::render::style::newline_key_hint(&state.terminal_caps)
+        }
+        crate::frontend_preferences::ComposerSendKey::AltEnter => "Enter",
+    };
+    let last_row = panel.row + panel.height - 1;
+    let button_width =
+        u16::try_from(button.width()).map_err(|source| TuiError::FrameCoordinate {
+            value: button.width(),
+            source,
+        })?;
+    let hints = format!(
+        "{button}  {}  ^O verbose  ^E thinking  ^T {}  {newline} newline",
+        status.key_hints,
+        if mode == "steer" { "queue" } else { "steer" }
+    );
+    let hints = crate::render::text::truncate_with_ellipsis(&hints, panel.width);
+    state.screen.composer_send_key_area = hints.starts_with(button).then_some(Rect {
+        column: panel.column,
+        row: last_row,
+        width: button_width,
+        height: 1,
+    });
     chrome_line(
         frame,
-        &format!(
-            "{}  ^O verbose  ^E thinking  ^T {}  {}",
-            status.key_hints,
-            if mode == "steer" { "queue" } else { "steer" },
-            crate::render::style::newline_key_hint(&state.terminal_caps)
-        ),
+        &hints,
         Rect {
-            row: panel.row + panel.height - 1,
+            row: last_row,
             height: 1,
             ..panel
         },
@@ -101,98 +122,6 @@ fn chrome_line(frame: &mut Frame, line: &str, area: Rect) -> Result<(), TuiError
             selection: Vec::new(),
             composer: false,
         });
-    }
-    Ok(())
-}
-
-pub(super) fn paint_composer(
-    state: &AppState,
-    frame: &mut Frame,
-    composer: Rect,
-    prefix: u16,
-    draft: &Arc<RenderedMarkdown>,
-    rows: &[TextRow],
-    original_cursor: usize,
-) -> Result<(), TuiError> {
-    let original = state.input_editor.text();
-    let snapped = original
-        .grapheme_indices(true)
-        .find_map(|(offset, grapheme)| {
-            (offset <= original_cursor && original_cursor < offset + grapheme.len())
-                .then_some(offset)
-        })
-        .unwrap_or(original_cursor);
-    let cursor = DisplayText::new(&original[..snapped]).as_str().len();
-    let cursor_row = rows
-        .iter()
-        .rposition(|row| {
-            let bytes = row.bytes();
-            bytes.start <= cursor && cursor <= bytes.end
-        })
-        .unwrap_or(0);
-    let first = cursor_row.saturating_sub(usize::from(composer.height).saturating_sub(1));
-    let input = Rect {
-        column: prefix,
-        width: composer.width.saturating_sub(prefix),
-        ..composer
-    };
-    for (index, geometry) in rows
-        .iter()
-        .skip(first)
-        .take(usize::from(composer.height))
-        .enumerate()
-    {
-        frame.rows.push(PaintRow {
-            area: input,
-            row: u16::try_from(index).map_err(|source| TuiError::FrameCoordinate {
-                value: index,
-                source,
-            })?,
-            text: Arc::clone(draft),
-            geometry: geometry.clone(),
-            selected: false,
-            selection: Vec::new(),
-            composer: true,
-        });
-    }
-    if prefix > 0 {
-        push_text(
-            frame,
-            "› ",
-            Rect {
-                width: prefix,
-                height: 1,
-                ..composer
-            },
-            false,
-            true,
-        )?;
-    }
-    if state
-        .screen
-        .focus
-        .visible(state.screen.availability())
-        .map_err(interaction)?
-        == Focus::Composer
-        && let Some(row) = rows.get(cursor_row)
-    {
-        let column = row
-            .column_for(cursor)?
-            .min(usize::from(input.width.saturating_sub(1)));
-        frame.cursor = Some((
-            input.column
-                + u16::try_from(column).map_err(|source| TuiError::FrameCoordinate {
-                    value: column,
-                    source,
-                })?,
-            composer.row
-                + u16::try_from(cursor_row - first).map_err(|source| {
-                    TuiError::FrameCoordinate {
-                        value: cursor_row - first,
-                        source,
-                    }
-                })?,
-        ));
     }
     Ok(())
 }

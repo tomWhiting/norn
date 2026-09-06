@@ -36,12 +36,59 @@ use super::state::AppState;
 use super::slash_catalog::{EffortCommand, is_tui_builtin, parse_effort_command, split_first_word};
 
 /// Outcome of a recognised slash command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub(super) enum SlashOutcome {
     /// Slash handled — the outer loop should redraw and continue.
     Continue,
+    /// The local effect committed, but its result could not be reported.
+    AcceptedWithError(TuiError),
+    /// Local validation refused the command; retain the submitted draft.
+    Rejected,
     /// Slash handled — the TUI should exit cleanly.
     Exit,
+}
+
+/// Whether a local operation was admitted, independently of its displayed notices.
+#[derive(Debug)]
+pub(super) enum LocalCommandOutcome {
+    /// The query, setting change or asynchronous operation was admitted.
+    Accepted,
+    /// The effect committed before this reporting failure occurred.
+    AcceptedWithError(TuiError),
+    /// The command was refused before its requested operation was admitted.
+    Rejected,
+}
+
+impl LocalCommandOutcome {
+    /// Reporting failure never revokes an already committed local effect.
+    pub(super) fn after_acceptance(reporting: Result<(), TuiError>) -> Self {
+        match reporting {
+            Ok(()) => Self::Accepted,
+            Err(error) => Self::AcceptedWithError(error),
+        }
+    }
+
+    /// Retain both an accepted operation's failure and any failure to report it.
+    pub(super) fn after_reported_failure(
+        original: TuiError,
+        reporting: Result<(), TuiError>,
+    ) -> Self {
+        Self::after_acceptance(
+            reporting.map_err(|secondary| combine_local_errors(original, secondary)),
+        )
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{primary}; local command reporting also failed: {secondary}")]
+struct LocalCommandErrors {
+    #[source]
+    primary: TuiError,
+    secondary: TuiError,
+}
+
+fn combine_local_errors(primary: TuiError, secondary: TuiError) -> TuiError {
+    super::render::interaction(LocalCommandErrors { primary, secondary })
 }
 
 /// Try to dispatch `text` as a slash command.
@@ -70,65 +117,45 @@ pub(super) async fn try_dispatch_slash(
     let Some(command) = find_tui_builtin_command(&lower) else {
         return Ok(None);
     };
-    match command.kind {
-        TuiBuiltinKind::New | TuiBuiltinKind::Clear => {
-            handle_new(state, runtime).await?;
-            Ok(Some(SlashOutcome::Continue))
-        }
-        TuiBuiltinKind::Compact => {
-            handle_compact(state, runtime).await?;
-            Ok(Some(SlashOutcome::Continue))
-        }
+    let outcome = match command.kind {
+        TuiBuiltinKind::New | TuiBuiltinKind::Clear => handle_new(state, runtime).await?,
+        TuiBuiltinKind::Compact => handle_compact(state, runtime).await?,
         TuiBuiltinKind::Exit | TuiBuiltinKind::Quit => {
             if mcp_exit_is_blocked(runtime.mcp_command.as_ref()) {
                 render_pending_mcp_exit(state)?;
-                Ok(Some(SlashOutcome::Continue))
-            } else {
-                Ok(Some(SlashOutcome::Exit))
+                return Ok(Some(SlashOutcome::Rejected));
             }
+            return Ok(Some(SlashOutcome::Exit));
         }
-        TuiBuiltinKind::View => {
-            super::view_actions::command(arg, state)?;
-            Ok(Some(SlashOutcome::Continue))
-        }
+        TuiBuiltinKind::View => super::view_actions::command(arg, state)?,
         TuiBuiltinKind::Help => {
             handle_help(state)?;
-            Ok(Some(SlashOutcome::Continue))
+            LocalCommandOutcome::Accepted
         }
-        TuiBuiltinKind::Model => {
-            handle_model(state, runtime, arg)?;
-            Ok(Some(SlashOutcome::Continue))
-        }
-        TuiBuiltinKind::Effort => {
-            handle_reasoning_effort(state, runtime, arg)?;
-            Ok(Some(SlashOutcome::Continue))
-        }
-        TuiBuiltinKind::ServiceTier => {
-            handle_service_tier(state, runtime, arg)?;
-            Ok(Some(SlashOutcome::Continue))
-        }
-        TuiBuiltinKind::Fast => {
-            set_fast_service_tier(state, runtime)?;
-            Ok(Some(SlashOutcome::Continue))
-        }
+        TuiBuiltinKind::Model => handle_model(state, runtime, arg)?,
+        TuiBuiltinKind::Effort => handle_reasoning_effort(state, runtime, arg)?,
+        TuiBuiltinKind::ServiceTier => handle_service_tier(state, runtime, arg)?,
+        TuiBuiltinKind::Fast => set_fast_service_tier(state, runtime)?,
         TuiBuiltinKind::Tools => {
             handle_tools(runtime, state)?;
-            Ok(Some(SlashOutcome::Continue))
+            LocalCommandOutcome::Accepted
         }
-        TuiBuiltinKind::Mcp => {
-            handle_mcp(
-                arg,
-                runtime.mcp_control.as_ref(),
-                &mut runtime.mcp_command,
-                state,
-            )?;
-            Ok(Some(SlashOutcome::Continue))
-        }
+        TuiBuiltinKind::Mcp => handle_mcp(
+            arg,
+            runtime.mcp_control.as_ref(),
+            &mut runtime.mcp_command,
+            state,
+        )?,
         TuiBuiltinKind::Schema
         | TuiBuiltinKind::Session
         | TuiBuiltinKind::Name
-        | TuiBuiltinKind::Variables => Ok(None),
-    }
+        | TuiBuiltinKind::Variables => return Ok(None),
+    };
+    Ok(Some(match outcome {
+        LocalCommandOutcome::Accepted => SlashOutcome::Continue,
+        LocalCommandOutcome::AcceptedWithError(error) => SlashOutcome::AcceptedWithError(error),
+        LocalCommandOutcome::Rejected => SlashOutcome::Rejected,
+    }))
 }
 
 /// Retain a compact status notice for the single frame owner to paint.
@@ -214,7 +241,10 @@ fn create_new_session_store(
 /// The new view carries the current frontend preferences while resetting
 /// source-bound rows, cursors and body demands. Prior persisted history remains
 /// in its original session store.
-async fn handle_new(state: &mut AppState, runtime: &mut RuntimeRefs) -> Result<(), TuiError> {
+async fn handle_new(
+    state: &mut AppState,
+    runtime: &mut RuntimeRefs,
+) -> Result<LocalCommandOutcome, TuiError> {
     // Phase 1 — all fallible work, touching no app state. A failure
     // here leaves the current session running exactly as it was.
     let (new_id, new_store, new_binding) = if let (Some(data_dir), Some(_)) =
@@ -228,7 +258,8 @@ async fn handle_new(state: &mut AppState, runtime: &mut RuntimeRefs) -> Result<(
                     data_dir.display(),
                 );
                 let message = format!("/new failed: {err} — keeping the current session");
-                return write_error_line(state, &message);
+                write_error_line(state, &message)?;
+                return Ok(LocalCommandOutcome::Rejected);
             }
         }
     } else {
@@ -280,7 +311,10 @@ async fn handle_new(state: &mut AppState, runtime: &mut RuntimeRefs) -> Result<(
 
     state.clear_usage_totals();
 
-    write_dim_line("[new session]", state)
+    Ok(LocalCommandOutcome::after_acceptance(write_dim_line(
+        "[new session]",
+        state,
+    )))
 }
 
 /// `/compact` — supersede older assistant turns by calling libnorn's
@@ -290,7 +324,10 @@ async fn handle_new(state: &mut AppState, runtime: &mut RuntimeRefs) -> Result<(
 /// The TUI retains its own semantic notice for the command result, but
 /// shares the mechanical compaction estimate with CLI mode through
 /// [`norn::agent_loop::estimate_manual_compaction`].
-async fn handle_compact(state: &mut AppState, runtime: &mut RuntimeRefs) -> Result<(), TuiError> {
+async fn handle_compact(
+    state: &mut AppState,
+    runtime: &mut RuntimeRefs,
+) -> Result<LocalCommandOutcome, TuiError> {
     let keep = runtime.agent_config.auto_compact_keep_recent_turns;
 
     let Some(estimate) = norn::agent_loop::estimate_manual_compaction(
@@ -298,14 +335,16 @@ async fn handle_compact(state: &mut AppState, runtime: &mut RuntimeRefs) -> Resu
         keep,
         runtime.loop_context.token_estimator.as_deref(),
     ) else {
-        return write_dim_line("Nothing to compact.", state);
+        write_dim_line("Nothing to compact.", state)?;
+        return Ok(LocalCommandOutcome::Accepted);
     };
 
     let Some(edits) = runtime.loop_context.context_edits.as_mut() else {
-        return write_dim_line(
+        write_dim_line(
             "norn: warning: context edits unavailable; cannot compact.",
             state,
-        );
+        )?;
+        return Ok(LocalCommandOutcome::Rejected);
     };
 
     match edits.auto_compact_keeping_recent_turns(
@@ -318,21 +357,28 @@ async fn handle_compact(state: &mut AppState, runtime: &mut RuntimeRefs) -> Resu
                 "Compacted older turns, freed ~{} tokens (keeping {keep} most recent).",
                 estimate.token_estimate_freed,
             );
-            write_dim_line(&line, state)?;
+            let mut reporting = write_dim_line(&line, state);
             // The compaction appended a Compaction event through the
             // sink; flush the sink's pending index delta now so the
             // session index reflects it even if the TUI aborts before
             // the next turn-boundary checkpoint. Failure is surfaced
             // in the error-line style but never undoes the compaction.
             if let Some(message) = super::helpers::checkpoint_session(&runtime.store).await {
-                write_error_line(state, &message)?;
+                reporting = match (reporting, write_error_line(state, &message)) {
+                    (Ok(()), result) | (result, Ok(())) => result,
+                    (Err(primary), Err(secondary)) => Err(combine_local_errors(primary, secondary)),
+                };
             }
-            Ok(())
+            Ok(LocalCommandOutcome::after_acceptance(reporting))
         }
-        Ok(None) => write_dim_line("Nothing to compact.", state),
+        Ok(None) => {
+            write_dim_line("Nothing to compact.", state)?;
+            Ok(LocalCommandOutcome::Accepted)
+        }
         Err(err) => {
             let line = format!("Compact failed: {err}");
-            write_error_line(state, &line)
+            write_error_line(state, &line)?;
+            Ok(LocalCommandOutcome::Rejected)
         }
     }
 }
@@ -411,6 +457,46 @@ mod tests {
     /// Index-lock deadline for the store fixtures — generous test
     /// configuration; no test here contends the lock.
     const TEST_LOCK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
+    #[test]
+    fn accepted_effect_keeps_original_typed_reporting_error()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let outcome = LocalCommandOutcome::after_acceptance(Err(TuiError::Io(
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "confirmation write"),
+        )));
+        let LocalCommandOutcome::AcceptedWithError(TuiError::Io(error)) = outcome else {
+            return Err("accepted effect lost its typed reporting failure".into());
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+        assert_eq!(error.to_string(), "confirmation write");
+        Ok(())
+    }
+
+    #[test]
+    fn accepted_save_and_notice_failures_are_both_retained()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let outcome = LocalCommandOutcome::after_reported_failure(
+            TuiError::Io(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "settings publication",
+            )),
+            Err(TuiError::FrameBounds),
+        );
+        let LocalCommandOutcome::AcceptedWithError(TuiError::ViewInteraction { source }) = outcome
+        else {
+            return Err("accepted effect lost its combined reporting failures".into());
+        };
+        let errors = source
+            .downcast_ref::<LocalCommandErrors>()
+            .ok_or("missing typed local command errors")?;
+        let TuiError::Io(original) = &errors.primary else {
+            return Err("missing original settings I/O error".into());
+        };
+        assert_eq!(original.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(original.to_string(), "settings publication");
+        assert!(matches!(errors.secondary, TuiError::FrameBounds));
+        Ok(())
+    }
 
     #[test]
     fn create_new_session_store_registers_session_in_index()

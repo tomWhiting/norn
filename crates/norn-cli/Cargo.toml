@@ -65,3 +65,7 @@ harness = false
 [[test]]
 name = "frontend_preferences_restart"
 harness = false
+
+[[test]]
+name = "composer_preferences"
+harness = false

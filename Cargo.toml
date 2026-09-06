@@ -8,14 +8,16 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0-preview.4"
+version = "0.1.0-preview.5"
 edition = "2024"
 license = "AGPL-3.0-only"
 authors = ["Yggdrasil Contributors"]
 
 [workspace.dependencies]
 # Extracted crates — GitHub references
-claude_runner = { git = "https://github.com/tomWhiting/claude-runner", rev = "643a1166f06a1f42961acf442f654670fbe9da22" }
+iridium-editor = { git = "https://github.com/tomWhiting/iridium", rev = "15673cba9222489e3c3315bb1526f60a6224a187", default-features = false }
+iridium-tui = { git = "https://github.com/tomWhiting/iridium", rev = "15673cba9222489e3c3315bb1526f60a6224a187", default-features = false }
+claude_runner = { git = "https://github.com/tomWhiting/claude-runner", rev = "643a1166f06a1f42961acf442f654670fbe9da22", default-features = false }
 diagnostics = { git = "https://github.com/tomWhiting/chiron", package = "diagnostics", rev = "25161bc8f93484b34291184e49dc3dfdda957760" }
 lsp = { git = "https://github.com/tomWhiting/chiron", package = "lsp", rev = "25161bc8f93484b34291184e49dc3dfdda957760" }
 syntax = { git = "https://github.com/tomWhiting/chiron", package = "syntax", rev = "25161bc8f93484b34291184e49dc3dfdda957760" }

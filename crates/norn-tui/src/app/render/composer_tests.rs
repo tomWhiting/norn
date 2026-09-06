@@ -54,6 +54,7 @@ fn encoded_user_rows_keep_the_same_colour_after_newlines_and_wrapping() -> TestR
         let mut frame = Frame {
             layout: Layout::ResizeRequired { area },
             rows: Vec::new(),
+            composer: None,
             cursor: None,
         };
         for (row, geometry) in rows.into_iter().enumerate() {
@@ -135,4 +136,101 @@ impl vte::Perform for UserColours {
             remaining = rest;
         }
     }
+}
+
+#[test]
+fn live_composer_keeps_full_width_default_colours_and_three_existing_chrome_rows() -> TestResult {
+    for (columns, terminal_rows, expected_chrome) in
+        [(80, 24, 3), (16, 10, 3), (8, 5, 0), (1, 2, 0)]
+    {
+        let mut state = AppState::new(
+            TerminalCaps::baseline(),
+            crate::input::history::InputHistory::in_memory(),
+            norn::agent::registry::AgentRegistry::shared(),
+            crate::app::state::test_view_source(uuid::Uuid::new_v4()),
+            crate::render::fixed_panel::StatusBar::default(),
+        );
+        state.input_editor.paste_cells("a")?;
+        let frame = super::super::prepare(&mut state, columns, terminal_rows)?;
+        let Layout::Ready { composer, .. } = frame.layout else {
+            return Err("ready layout expected".into());
+        };
+        let layer = frame
+            .composer
+            .as_ref()
+            .ok_or("typed composer layer missing")?;
+        assert_eq!(layer.area.column, 0);
+        assert_eq!(layer.area.width, columns);
+        assert_eq!(composer.height - layer.area.height, expected_chrome);
+        assert_eq!(
+            layer.area,
+            crate::render::layout::composer_input_area(composer)
+        );
+        assert!(
+            frame.rows.iter().all(|row| !row.composer),
+            "draft must not be rewrapped as a PaintRow"
+        );
+        let first = layer.cells.get(0, 0).ok_or("first composer cell missing")?;
+        assert_eq!(first.style().foreground, iridium_tui::cell::Color::Default);
+        assert_eq!(first.style().background, iridium_tui::cell::Color::Default);
+        assert_eq!(state.input_editor.text(), "a");
+        assert!(frame.cursor.is_some());
+        frame.prepare(&TerminalCaps::baseline())?;
+    }
+    Ok(())
+}
+
+#[test]
+fn send_key_control_reuses_the_last_hint_row_and_never_claims_a_clipped_hit_area() -> TestResult {
+    let mut state = AppState::new(
+        TerminalCaps::baseline(),
+        crate::input::history::InputHistory::in_memory(),
+        norn::agent::registry::AgentRegistry::shared(),
+        crate::app::state::test_view_source(uuid::Uuid::new_v4()),
+        crate::render::fixed_panel::StatusBar::default(),
+    );
+    for (policy, label) in [
+        (
+            crate::frontend_preferences::ComposerSendKey::Enter,
+            "[Enter sends]",
+        ),
+        (
+            crate::frontend_preferences::ComposerSendKey::AltEnter,
+            "[Alt+Enter sends]",
+        ),
+    ] {
+        state.composer_send_key = policy;
+        let frame = super::super::prepare(&mut state, 80, 24)?;
+        let button = state
+            .screen
+            .composer_send_key_area
+            .ok_or("send control missing")?;
+        assert_eq!(button.row, 23);
+        assert_eq!(button.height, 1);
+        assert_eq!(usize::from(button.width), label.len());
+        let hint = frame
+            .rows
+            .iter()
+            .find(|row| row.area.row == button.row)
+            .ok_or("hint row missing")?;
+        assert!(hint.text.styled.text().starts_with(label));
+        let Layout::Ready { composer, .. } = frame.layout else {
+            return Err("composer missing".into());
+        };
+        assert_eq!(composer.height, 4);
+        super::super::prepare(&mut state, u16::try_from(label.len())?, 24)?;
+        assert!(
+            state.screen.composer_send_key_area.is_none(),
+            "ellipsis clips the final button cell"
+        );
+        super::super::prepare(&mut state, u16::try_from(label.len() + 1)?, 24)?;
+        assert!(state.screen.composer_send_key_area.is_some());
+    }
+    super::super::prepare(&mut state, 3, 24)?;
+    assert!(state.screen.composer_send_key_area.is_none());
+    super::super::prepare(&mut state, 80, 5)?;
+    assert!(state.screen.composer_send_key_area.is_none());
+    super::super::prepare(&mut state, 0, 0)?;
+    assert!(state.screen.composer_send_key_area.is_none());
+    Ok(())
 }

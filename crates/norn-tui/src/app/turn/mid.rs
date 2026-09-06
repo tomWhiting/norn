@@ -34,7 +34,7 @@ pub(super) fn handle_mid_turn_event(
         Event::WindowResized(size) => {
             guard.handle_resize(size.cols, size.rows);
             state.screen.allow_body_load = false;
-            sync_input_for_current_geometry(state, guard);
+            sync_input_for_current_geometry(state, guard)?;
             redraw_all(state, guard)?;
         }
         Event::Mouse(event) => {
@@ -44,11 +44,11 @@ pub(super) fn handle_mid_turn_event(
         }
         Event::Paste(text) => {
             crate::app::view_actions::pin_visible(state)?;
-            insert_paste_text(state, &text);
-            sync_input_for_current_geometry(state, guard);
+            insert_paste_text(state, &text)?;
+            sync_input_for_current_geometry(state, guard)?;
             redraw_all(state, guard)?;
         }
-        Event::Key(key) if key.kind == KeyEventKind::Press => {
+        Event::Key(key) if key.kind != KeyEventKind::Release => {
             handle_mid_turn_key(key, state, guard, active_input_tx, cancel, cancel_requested)?;
         }
         _ => {}
@@ -75,8 +75,9 @@ fn handle_mid_turn_key(
 ) -> Result<(), TuiError> {
     let cols = guard.terminal_columns();
     if state.autocomplete.is_some()
+        && key.kind == KeyEventKind::Press
         && matches!(
-            handle_popup_key(key, state, cols, guard.terminal_rows()),
+            handle_popup_key(key, state, cols, guard.terminal_rows())?,
             PopupKeyOutcome::Consumed
         )
     {
@@ -87,9 +88,8 @@ fn handle_mid_turn_key(
         redraw_all(state, guard)?;
         return Ok(());
     }
-    let caps = state.terminal_caps.clone();
     let popup_open = state.autocomplete.is_some();
-    if let Some(action) = map_key_event(key, &caps, popup_open) {
+    if let Some(action) = map_key_event(key, state.composer_send_key, popup_open) {
         handle_mid_turn_action(
             action,
             state,
@@ -98,7 +98,7 @@ fn handle_mid_turn_key(
             cancel,
             cancel_requested,
         )?;
-        sync_input_for_current_geometry(state, guard);
+        sync_input_for_current_geometry(state, guard)?;
         redraw_all(state, guard)?;
     }
     Ok(())
@@ -119,7 +119,8 @@ fn handle_mid_turn_action(
         InputAction::ToggleInFlightSubmitMode => state.in_flight_input.toggle_mode(),
         other => {
             let cols = guard.terminal_columns();
-            apply_edit_action(other, state, cols, guard.terminal_rows());
+            let result = apply_edit_action(other, state, cols, guard.terminal_rows())?;
+            crate::app::composer_effects::finish(state, guard, result)?;
         }
     }
     crate::app::frontend_preferences::edited(state)?;
@@ -133,29 +134,53 @@ fn submit_mid_turn_input(
     cancel_requested: &mut bool,
 ) -> Result<(), TuiError> {
     dismiss_autocomplete(state);
-    let Some(text) = state.input_editor.submit()? else {
-        if state.in_flight_input.has_pending_steers() {
+    let Some(snapshot) = crate::app::composer_submission::prepare(state)? else {
+        if state.pending_composer_submission.is_none() && state.in_flight_input.has_pending_steers()
+        {
             state.in_flight_input.request_interrupt_submit();
             *cancel_requested = true;
             cancel.cancel();
         }
         return Ok(());
     };
-
+    let text = snapshot.text().to_owned();
     if crate::app::view_actions::is_view(&text) {
         let (_, arguments) =
             crate::app::slash_catalog::split_first_word(text.trim().trim_start_matches('/'));
-        crate::app::view_actions::command(arguments, state)?;
+        match crate::app::view_actions::command(arguments, state)? {
+            crate::app::slash::LocalCommandOutcome::Accepted => {
+                crate::app::composer_submission::accepted_local(state, &snapshot)?;
+            }
+            crate::app::slash::LocalCommandOutcome::Rejected => {}
+            crate::app::slash::LocalCommandOutcome::AcceptedWithError(error) => {
+                return Err(crate::app::composer_submission::accepted_with_error(
+                    state, &snapshot, error,
+                ));
+            }
+        }
         return Ok(());
     }
-    match state.in_flight_input.mode() {
+    let accepted = match state.in_flight_input.mode() {
         InFlightSubmitMode::Steer => match active_input_tx.send_steer(text.clone()) {
-            Ok(id) => state.in_flight_input.push_pending_steer(id, text),
-            Err(ActiveInputError::Closed) => state.in_flight_input.queue_followup(text),
-            Err(ActiveInputError::Empty) => {}
+            Ok(id) => {
+                state.in_flight_input.push_pending_steer(id, text);
+                true
+            }
+            Err(ActiveInputError::Closed) => {
+                state.in_flight_input.queue_followup(text);
+                true
+            }
+            Err(ActiveInputError::Empty) => false,
         },
-        InFlightSubmitMode::Queue => state.in_flight_input.queue_followup(text),
+        InFlightSubmitMode::Queue => {
+            state.in_flight_input.queue_followup(text);
+            true
+        }
+    };
+    if accepted {
+        crate::app::composer_submission::accepted_local(state, &snapshot)?;
     }
+
     Ok(())
 }
 

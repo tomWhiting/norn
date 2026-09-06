@@ -1,5 +1,6 @@
 //! Rendering primitives — style system, scroll region helpers, fixed panel compositor.
 
+pub(crate) mod composer_cells;
 pub mod content;
 pub mod fixed_panel;
 pub mod frame;

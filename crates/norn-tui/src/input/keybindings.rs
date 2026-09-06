@@ -1,22 +1,12 @@
-//! Key event → action mapping.
+//! Host send/control actions and editor keys, with delivered modifiers preserved.
 //!
-//! [`map_key_event`] is a pure, stateless translation from a terminal
-//! [`KeyEvent`] to an [`InputAction`]. It owns no editor state: the
-//! capability-dependent decisions (Shift+Enter vs Alt+Enter for a
-//! newline) are resolved here against [`TerminalCaps`], while the
-//! state-dependent decisions (Ctrl+C exit vs clear, history vs popup
-//! navigation) are left to the editor and event loop that consume the
-//! action.
-//!
-//! On Mac laptops, the Fn key is handled before events reach the
-//! terminal: the OS keyboard-driver layer translates Fn+Backspace into a
-//! Forward Delete key code. Terminals therefore deliver [`KeyCode::Delete`]
-//! rather than a distinct Fn modifier, so this mapper intentionally handles
-//! Backspace and Delete as separate key codes instead of looking for Fn.
+//! Popup and pane ownership is resolved before this mapper. Norn owns submission,
+//! clear/exit and display controls; Iridium owns editing, selection and undo.
+//! Modifier information comes from the terminal event, never from an inferred key.
 
 use termina::event::{KeyCode, KeyEvent, KeyEventKind, Modifiers};
 
-use crate::terminal::caps::TerminalCaps;
+use crate::frontend_preferences::ComposerSendKey;
 
 /// An action derived from a terminal key event.
 ///
@@ -37,6 +27,8 @@ pub enum InputAction {
     InsertNewline,
     /// Insert a character at the cursor.
     InsertChar(char),
+    /// A delivered editor key retains its modifiers for kernel selection and undo.
+    KernelKey(KeyEvent),
     /// Delete the character before the cursor.
     Backspace,
     /// Delete the character at the cursor.
@@ -98,37 +90,29 @@ pub enum InputAction {
     ToggleInFlightSubmitMode,
 }
 
-/// Translate a terminal key event into an [`InputAction`].
-///
-/// Returns `None` for events that map to no action: any non-`Press`
-/// event kind (so key releases never double-fire), Up/Down while the
-/// autocomplete popup owns navigation (`popup_open` is `true`), and any
-/// key with no binding.
-///
-/// Newline discrimination is capability-aware: `Alt+Enter` always
-/// inserts a newline, while `Shift+Enter` only does so when the terminal
-/// advertises the Kitty keyboard protocol — without it, `Shift+Enter`
-/// cannot be reliably distinguished from `Enter` and falls back to
-/// submit.
-///
-/// Modifier precedence for arrow keys mirrors macOS conventions:
-/// `SUPER` (Command) is checked first, then `ALT` (Option), then bare.
-/// `SUPER`+arrow yields line / buffer movement; `ALT`+arrow yields word
-/// movement; bare arrow yields character / visual-line movement. The
-/// `SUPER` bit only arrives on Kitty-protocol terminals — `Home` and
-/// Ctrl+A are accepted as fallback bindings for line-start, and `End` is
-/// accepted as the fallback binding for line-end, so the behaviour is
-/// reachable on terminals that swallow Command.
+/// Resolve a host action or an editor key after popup and pane handling.
+/// Releases never act. Repeats may edit but never submit or repeat host controls.
+/// Existing Mac navigation and readline shortcuts remain explicit.
 #[must_use]
 pub fn map_key_event(
     event: KeyEvent,
-    caps: &TerminalCaps,
+    send_key: ComposerSendKey,
     popup_open: bool,
 ) -> Option<InputAction> {
-    let action = if event.kind == KeyEventKind::Press {
+    let action = if matches!(event.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
         let mods = event.modifiers;
         match event.code {
-            KeyCode::Enter => Some(map_enter(mods, caps)),
+            KeyCode::Enter => Some(map_enter(mods, send_key)),
+            KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::Home
+            | KeyCode::End
+                if mods.contains(Modifiers::SHIFT) && !popup_open =>
+            {
+                Some(InputAction::KernelKey(event))
+            }
             KeyCode::Char('c') if mods.contains(Modifiers::CONTROL) => Some(InputAction::Exit),
             KeyCode::Char('o' | 'O') if mods.contains(Modifiers::CONTROL) => {
                 Some(InputAction::ToggleVerbosity)
@@ -138,6 +122,9 @@ pub fn map_key_event(
             }
             KeyCode::Char('t' | 'T') if mods.contains(Modifiers::CONTROL) => {
                 Some(InputAction::ToggleInFlightSubmitMode)
+            }
+            KeyCode::Char('f' | 'F') if mods.intersects(Modifiers::CONTROL | Modifiers::SUPER) => {
+                None
             }
             KeyCode::Char('a' | 'A') if mods.contains(Modifiers::CONTROL) => {
                 Some(InputAction::LineStart)
@@ -171,6 +158,11 @@ pub fn map_key_event(
             KeyCode::Right if mods.contains(Modifiers::SUPER) => Some(InputAction::LineEnd),
             KeyCode::Right if mods.contains(Modifiers::ALT) => Some(InputAction::WordRight),
             KeyCode::Right => Some(InputAction::CursorRight),
+            KeyCode::Up | KeyCode::Down
+                if !popup_open && mods != Modifiers::NONE && !mods.contains(Modifiers::SUPER) =>
+            {
+                Some(InputAction::KernelKey(event))
+            }
             // Popup ownership of vertical navigation takes precedence over
             // every Up/Down binding — the popup uses the keys for candidate
             // navigation even when Command is held.
@@ -182,11 +174,26 @@ pub fn map_key_event(
             KeyCode::Home => Some(InputAction::LineStart),
             KeyCode::End => Some(InputAction::LineEnd),
             KeyCode::Escape => Some(InputAction::ClearInput),
-            _ => None,
+            _ => super::composer_keys::to_kernel_key(event).map(|_| InputAction::KernelKey(event)),
         }
     } else {
         None
     };
+    // Repeated editing uses the exact same semantic mapping as the first key.
+    // Host actions and submissions remain single-press gestures.
+    let action = action.filter(|action| {
+        event.kind != KeyEventKind::Repeat
+            || !matches!(
+                action,
+                InputAction::Submit
+                    | InputAction::Exit
+                    | InputAction::InsertNewline
+                    | InputAction::ClearInput
+                    | InputAction::ToggleVerbosity
+                    | InputAction::ToggleThinking
+                    | InputAction::ToggleInFlightSubmitMode
+            ) && !matches!(event.code, KeyCode::Function(_))
+    });
 
     tracing::debug!(
         key = ?event.code,
@@ -198,17 +205,12 @@ pub fn map_key_event(
     action
 }
 
-/// Resolve the action for an `Enter` key press given its modifiers.
-///
-/// `Alt+Enter` (in any modifier combination containing `ALT`) always
-/// inserts a newline. A bare `Shift+Enter` inserts a newline only with
-/// the Kitty keyboard protocol; otherwise it — like a plain `Enter` —
-/// submits.
-fn map_enter(mods: Modifiers, caps: &TerminalCaps) -> InputAction {
-    if mods.contains(Modifiers::ALT) || (mods.contains(Modifiers::SHIFT) && caps.kitty_keyboard) {
-        InputAction::InsertNewline
-    } else {
-        InputAction::Submit
+/// Resolve delivered Enter modifiers; absent modifier information is never invented.
+fn map_enter(mods: Modifiers, send_key: ComposerSendKey) -> InputAction {
+    match send_key {
+        ComposerSendKey::Enter if mods == Modifiers::NONE => InputAction::Submit,
+        ComposerSendKey::AltEnter if mods == Modifiers::ALT => InputAction::Submit,
+        _ => InputAction::InsertNewline,
     }
 }
 
@@ -216,17 +218,11 @@ fn map_enter(mods: Modifiers, caps: &TerminalCaps) -> InputAction {
 mod tests {
     use super::*;
 
-    fn kitty_caps() -> TerminalCaps {
-        let mut caps = TerminalCaps::baseline();
-        caps.kitty_keyboard = true;
-        caps
-    }
-
     #[test]
     fn enter_maps_to_submit() {
         let event = KeyEvent::new(KeyCode::Enter, Modifiers::NONE);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::Submit)
         );
     }
@@ -235,25 +231,36 @@ mod tests {
     fn alt_enter_maps_to_insert_newline() {
         let event = KeyEvent::new(KeyCode::Enter, Modifiers::ALT);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::InsertNewline)
         );
     }
 
     #[test]
-    fn shift_enter_with_kitty_maps_to_insert_newline() {
+    fn delivered_shift_enter_maps_to_insert_newline() {
         let event = KeyEvent::new(KeyCode::Enter, Modifiers::SHIFT);
         assert_eq!(
-            map_key_event(event, &kitty_caps(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::InsertNewline)
         );
     }
 
     #[test]
-    fn shift_enter_without_kitty_falls_back_to_submit() {
-        let event = KeyEvent::new(KeyCode::Enter, Modifiers::SHIFT);
+    fn alt_enter_mode_keeps_bare_enter_in_the_draft() {
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(
+                KeyEvent::new(KeyCode::Enter, Modifiers::NONE),
+                ComposerSendKey::AltEnter,
+                false
+            ),
+            Some(InputAction::InsertNewline)
+        );
+        assert_eq!(
+            map_key_event(
+                KeyEvent::new(KeyCode::Enter, Modifiers::ALT),
+                ComposerSendKey::AltEnter,
+                false
+            ),
             Some(InputAction::Submit)
         );
     }
@@ -262,7 +269,7 @@ mod tests {
     fn ctrl_c_maps_to_exit() {
         let event = KeyEvent::new(KeyCode::Char('c'), Modifiers::CONTROL);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::Exit)
         );
     }
@@ -271,7 +278,7 @@ mod tests {
     fn plain_char_maps_to_insert_char() {
         let event = KeyEvent::new(KeyCode::Char('a'), Modifiers::NONE);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::InsertChar('a'))
         );
     }
@@ -280,7 +287,7 @@ mod tests {
     fn shifted_char_maps_to_insert_char() {
         let event = KeyEvent::new(KeyCode::Char('A'), Modifiers::SHIFT);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::InsertChar('A'))
         );
     }
@@ -292,7 +299,7 @@ mod tests {
         // the mapper itself is state-free.
         let event = KeyEvent::new(KeyCode::Up, Modifiers::NONE);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::CursorUp)
         );
     }
@@ -300,14 +307,14 @@ mod tests {
     #[test]
     fn up_with_popup_open_maps_to_nothing() {
         let event = KeyEvent::new(KeyCode::Up, Modifiers::NONE);
-        assert_eq!(map_key_event(event, &TerminalCaps::baseline(), true), None);
+        assert_eq!(map_key_event(event, ComposerSendKey::Enter, true), None);
     }
 
     #[test]
     fn down_without_popup_maps_to_cursor_down() {
         let event = KeyEvent::new(KeyCode::Down, Modifiers::NONE);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::CursorDown)
         );
     }
@@ -315,14 +322,14 @@ mod tests {
     #[test]
     fn down_with_popup_open_maps_to_nothing() {
         let event = KeyEvent::new(KeyCode::Down, Modifiers::NONE);
-        assert_eq!(map_key_event(event, &TerminalCaps::baseline(), true), None);
+        assert_eq!(map_key_event(event, ComposerSendKey::Enter, true), None);
     }
 
     #[test]
     fn alt_left_maps_to_word_left() {
         let event = KeyEvent::new(KeyCode::Left, Modifiers::ALT);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::WordLeft)
         );
     }
@@ -331,7 +338,7 @@ mod tests {
     fn alt_right_maps_to_word_right() {
         let event = KeyEvent::new(KeyCode::Right, Modifiers::ALT);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::WordRight)
         );
     }
@@ -340,7 +347,7 @@ mod tests {
     fn super_left_maps_to_line_start() {
         let event = KeyEvent::new(KeyCode::Left, Modifiers::SUPER);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::LineStart)
         );
     }
@@ -349,7 +356,7 @@ mod tests {
     fn super_right_maps_to_line_end() {
         let event = KeyEvent::new(KeyCode::Right, Modifiers::SUPER);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::LineEnd)
         );
     }
@@ -358,7 +365,7 @@ mod tests {
     fn super_up_maps_to_buffer_start() {
         let event = KeyEvent::new(KeyCode::Up, Modifiers::SUPER);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::BufferStart)
         );
     }
@@ -367,7 +374,7 @@ mod tests {
     fn super_down_maps_to_buffer_end() {
         let event = KeyEvent::new(KeyCode::Down, Modifiers::SUPER);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::BufferEnd)
         );
     }
@@ -378,7 +385,7 @@ mod tests {
         // otherwise Cmd+Up while the autocomplete is open would jump
         // the cursor instead of navigating candidates.
         let event = KeyEvent::new(KeyCode::Up, Modifiers::SUPER);
-        assert_eq!(map_key_event(event, &TerminalCaps::baseline(), true), None);
+        assert_eq!(map_key_event(event, ComposerSendKey::Enter, true), None);
     }
 
     #[test]
@@ -388,7 +395,7 @@ mod tests {
         // Command above Option.
         let event = KeyEvent::new(KeyCode::Left, Modifiers::SUPER | Modifiers::ALT);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::LineStart)
         );
     }
@@ -397,7 +404,7 @@ mod tests {
     fn super_takes_precedence_over_alt_on_backspace() {
         let event = KeyEvent::new(KeyCode::Backspace, Modifiers::SUPER | Modifiers::ALT);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::DeleteToLineStart)
         );
     }
@@ -406,7 +413,7 @@ mod tests {
     fn non_kitty_fallback_reaches_line_start_via_home() {
         let event = KeyEvent::new(KeyCode::Home, Modifiers::NONE);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::LineStart)
         );
     }
@@ -415,7 +422,7 @@ mod tests {
     fn end_maps_to_line_end_as_non_kitty_fallback() {
         let event = KeyEvent::new(KeyCode::End, Modifiers::NONE);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::LineEnd)
         );
     }
@@ -424,7 +431,7 @@ mod tests {
     fn ctrl_a_maps_to_line_start_as_readline_fallback() {
         let event = KeyEvent::new(KeyCode::Char('a'), Modifiers::CONTROL);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::LineStart)
         );
     }
@@ -433,7 +440,7 @@ mod tests {
     fn ctrl_u_maps_to_delete_to_line_start_as_readline_fallback() {
         let event = KeyEvent::new(KeyCode::Char('u'), Modifiers::CONTROL);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::DeleteToLineStart)
         );
     }
@@ -442,7 +449,7 @@ mod tests {
     fn escape_maps_to_clear_input() {
         let event = KeyEvent::new(KeyCode::Escape, Modifiers::NONE);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::ClearInput)
         );
     }
@@ -452,7 +459,7 @@ mod tests {
         assert_eq!(
             map_key_event(
                 KeyEvent::new(KeyCode::Backspace, Modifiers::NONE),
-                &TerminalCaps::baseline(),
+                ComposerSendKey::Enter,
                 false,
             ),
             Some(InputAction::Backspace)
@@ -460,7 +467,7 @@ mod tests {
         assert_eq!(
             map_key_event(
                 KeyEvent::new(KeyCode::Delete, Modifiers::NONE),
-                &TerminalCaps::baseline(),
+                ComposerSendKey::Enter,
                 false,
             ),
             Some(InputAction::Delete)
@@ -471,7 +478,7 @@ mod tests {
     fn alt_backspace_maps_to_delete_word_back() {
         let event = KeyEvent::new(KeyCode::Backspace, Modifiers::ALT);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::DeleteWordBack)
         );
     }
@@ -480,7 +487,7 @@ mod tests {
     fn alt_delete_maps_to_delete_word_forward() {
         let event = KeyEvent::new(KeyCode::Delete, Modifiers::ALT);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::DeleteWordForward)
         );
     }
@@ -489,7 +496,7 @@ mod tests {
     fn super_backspace_maps_to_delete_to_line_start() {
         let event = KeyEvent::new(KeyCode::Backspace, Modifiers::SUPER);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::DeleteToLineStart)
         );
     }
@@ -498,7 +505,7 @@ mod tests {
     fn super_delete_maps_to_delete_to_line_end() {
         let event = KeyEvent::new(KeyCode::Delete, Modifiers::SUPER);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::DeleteToLineEnd)
         );
     }
@@ -507,7 +514,7 @@ mod tests {
     fn ctrl_k_maps_to_delete_to_line_end() {
         let event = KeyEvent::new(KeyCode::Char('k'), Modifiers::CONTROL);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::DeleteToLineEnd)
         );
     }
@@ -517,7 +524,7 @@ mod tests {
         assert_eq!(
             map_key_event(
                 KeyEvent::new(KeyCode::Left, Modifiers::NONE),
-                &TerminalCaps::baseline(),
+                ComposerSendKey::Enter,
                 false,
             ),
             Some(InputAction::CursorLeft)
@@ -525,7 +532,7 @@ mod tests {
         assert_eq!(
             map_key_event(
                 KeyEvent::new(KeyCode::Right, Modifiers::NONE),
-                &TerminalCaps::baseline(),
+                ComposerSendKey::Enter,
                 false,
             ),
             Some(InputAction::CursorRight)
@@ -540,20 +547,20 @@ mod tests {
             modifiers: Modifiers::NONE,
             state: termina::event::KeyEventState::NONE,
         };
-        assert_eq!(map_key_event(event, &TerminalCaps::baseline(), false), None);
+        assert_eq!(map_key_event(event, ComposerSendKey::Enter, false), None);
     }
 
     #[test]
     fn unmapped_key_returns_none() {
         let event = KeyEvent::new(KeyCode::Insert, Modifiers::NONE);
-        assert_eq!(map_key_event(event, &TerminalCaps::baseline(), false), None);
+        assert_eq!(map_key_event(event, ComposerSendKey::Enter, false), None);
     }
 
     #[test]
     fn ctrl_o_maps_to_toggle_verbosity() {
         let event = KeyEvent::new(KeyCode::Char('o'), Modifiers::CONTROL);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::ToggleVerbosity)
         );
     }
@@ -562,7 +569,7 @@ mod tests {
     fn ctrl_e_maps_to_toggle_thinking() {
         let event = KeyEvent::new(KeyCode::Char('e'), Modifiers::CONTROL);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::ToggleThinking)
         );
     }
@@ -571,7 +578,7 @@ mod tests {
     fn ctrl_t_maps_to_toggle_in_flight_submit_mode() {
         let event = KeyEvent::new(KeyCode::Char('t'), Modifiers::CONTROL);
         assert_eq!(
-            map_key_event(event, &TerminalCaps::baseline(), false),
+            map_key_event(event, ComposerSendKey::Enter, false),
             Some(InputAction::ToggleInFlightSubmitMode),
         );
     }

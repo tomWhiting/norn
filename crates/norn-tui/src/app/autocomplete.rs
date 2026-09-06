@@ -25,6 +25,9 @@ use std::path::{Path, PathBuf};
 
 use termina::event::{KeyCode, KeyEvent, Modifiers};
 
+use crate::error::TuiError;
+use crate::input::composer_transactions::CompletionContext;
+
 use crate::input::autocomplete::{
     AutocompletePopup, AutocompleteTrigger, SlashCandidate, SourceTag, TriggerKind, detect_trigger,
     walk_entries,
@@ -42,7 +45,7 @@ use super::state::AppState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PopupKeyOutcome {
     /// The popup absorbed the key — the event loop should redraw the
-    /// panel, popup, and input and skip [`map_key_event`].
+    /// panel, popup, and input and skip [`crate::input::keybindings::map_key_event`].
     Consumed,
     /// The popup did not handle this key — the event loop should
     /// continue with its normal action pipeline.
@@ -52,23 +55,26 @@ pub enum PopupKeyOutcome {
 /// Pre-intercept popup-active special keys.
 ///
 /// Caller must have already confirmed the popup is open and the event
-/// is a [`KeyEventKind::Press`]. The function mutates `state` directly
+/// is a [`termina::event::KeyEventKind::Press`]. The function mutates `state` directly
 /// — selection navigation, splice on acceptance, dismiss on `Escape` —
 /// and returns [`PopupKeyOutcome::Consumed`] when the redraw cycle
 /// should run.
 ///
-/// `Enter` is consumed only when it carries no modifiers: `Alt+Enter`
-/// and `Shift+Enter` still insert a newline through `map_key_event`
-/// (matching `map_enter`'s capability fallback), so the user can break
-/// the line while a popup is open without first dismissing it.
+/// Only bare `Enter`/`Tab` accepts a completion. Modified `Enter` returns
+/// to the configured host send/newline policy without accepting the popup.
 pub fn handle_popup_key(
     key: KeyEvent,
     state: &mut AppState,
     cols: u16,
     terminal_rows: u16,
-) -> PopupKeyOutcome {
+) -> Result<PopupKeyOutcome, TuiError> {
+    if !single_caret(state) {
+        dismiss(state);
+        sync_editor_input_area(state, cols, terminal_rows)?;
+        return Ok(PopupKeyOutcome::NotConsumed);
+    }
     let bare = key.modifiers == Modifiers::NONE;
-    match key.code {
+    let outcome = match key.code {
         KeyCode::Up => {
             if let Some(popup) = state.autocomplete.as_mut() {
                 popup.select_up();
@@ -82,21 +88,26 @@ pub fn handle_popup_key(
             PopupKeyOutcome::Consumed
         }
         KeyCode::Tab | KeyCode::Enter if bare => {
-            accept(state, cols, terminal_rows);
+            accept(state, cols, terminal_rows)?;
             PopupKeyOutcome::Consumed
         }
         KeyCode::Escape => {
             dismiss(state);
-            sync_editor_input_area(state, cols, terminal_rows);
+            sync_editor_input_area(state, cols, terminal_rows)?;
             PopupKeyOutcome::Consumed
         }
         _ => PopupKeyOutcome::NotConsumed,
-    }
+    };
+    Ok(outcome)
 }
 
-fn sync_editor_input_area(state: &mut AppState, cols: u16, terminal_rows: u16) {
-    let rows = sync_input_area(&mut state.input_editor, cols, terminal_rows);
-    state.fixed_panel.set_input_area(rows);
+fn sync_editor_input_area(
+    state: &mut AppState,
+    cols: u16,
+    terminal_rows: u16,
+) -> Result<(), TuiError> {
+    sync_input_area(state, cols, terminal_rows)?;
+    Ok(())
 }
 
 /// Splice the popup's currently selected candidate into the editor and
@@ -105,14 +116,13 @@ fn sync_editor_input_area(state: &mut AppState, cols: u16, terminal_rows: u16) {
 /// Idempotent in the absence of a popup. A popup whose `accept()`
 /// returns `None` — possible only if the selection points outside the
 /// candidate list — is dismissed without touching the editor.
-fn accept(state: &mut AppState, cols: u16, terminal_rows: u16) {
-    if let Some(popup) = state.autocomplete.take()
-        && let Some(acceptance) = popup.accept()
-    {
-        state.input_editor.apply_acceptance(&acceptance);
-    }
+fn accept(state: &mut AppState, cols: u16, terminal_rows: u16) -> Result<(), TuiError> {
+    let acceptance = state.autocomplete.take().and_then(|popup| popup.accept());
     state.fixed_panel.set_autocomplete_popup(0);
-    sync_editor_input_area(state, cols, terminal_rows);
+    if let Some(acceptance) = acceptance {
+        state.input_editor.apply_acceptance(&acceptance)?;
+    }
+    sync_editor_input_area(state, cols, terminal_rows)
 }
 
 /// Bring the popup state in line with the current editor contents.
@@ -121,31 +131,44 @@ fn accept(state: &mut AppState, cols: u16, terminal_rows: u16) {
 /// the current working directory the TUI was launched from. Passing it
 /// in (rather than calling `std::env::current_dir` here) keeps the
 /// helper deterministic and testable.
-pub fn refresh_autocomplete(state: &mut AppState, workspace_root: &Path) {
+pub fn refresh_autocomplete(state: &mut AppState, workspace_root: &Path) -> Result<(), TuiError> {
+    if !single_caret(state) {
+        dismiss(state);
+        return Ok(());
+    }
     let text = state.input_editor.text();
-    let cursor_char = state.input_editor.cursor_char_index();
+    let cursor_char = state.input_editor.cursor_char_index()?;
     match detect_trigger(&text, cursor_char) {
         None => dismiss(state),
         Some(trigger) => {
+            let context = state
+                .input_editor
+                .completion_context(trigger.trigger_start_byte)?;
             let needs_rebuild = state
                 .autocomplete
                 .as_ref()
                 .is_none_or(|popup| !popup.matches_trigger(&trigger));
             if needs_rebuild {
-                let popup = build_popup(&trigger, workspace_root);
+                let popup = build_popup(&trigger, context, workspace_root)?;
                 if popup.is_open() {
                     state.autocomplete = Some(popup);
                 } else {
                     state.autocomplete = None;
                 }
             } else if let Some(popup) = state.autocomplete.as_mut()
-                && !popup.narrow(&trigger.prefix)
+                && !popup.narrow(&trigger.prefix, context)
             {
                 state.autocomplete = None;
             }
             sync_panel_height(state);
         }
     }
+    Ok(())
+}
+
+fn single_caret(state: &AppState) -> bool {
+    let cursor = &state.input_editor.kernel().state().cursor;
+    cursor.cursor_count() == 1 && cursor.primary.is_collapsed()
 }
 
 /// Dismiss any open popup and zero out the panel's popup row count.
@@ -169,17 +192,21 @@ fn sync_panel_height(state: &mut AppState) {
 }
 
 /// Build a fresh popup for the supplied trigger.
-fn build_popup(trigger: &AutocompleteTrigger, workspace_root: &Path) -> AutocompletePopup {
-    match trigger.kind {
+fn build_popup(
+    trigger: &AutocompleteTrigger,
+    context: CompletionContext,
+    workspace_root: &Path,
+) -> Result<AutocompletePopup, TuiError> {
+    Ok(match trigger.kind {
         TriggerKind::SlashCommand => {
-            let snapshot = build_slash_snapshot();
-            AutocompletePopup::new_slash(snapshot, &trigger.prefix, trigger.trigger_start_byte)
+            let snapshot = build_slash_snapshot(workspace_root)?;
+            AutocompletePopup::new_slash(snapshot, &trigger.prefix, context)
         }
         TriggerKind::FilePath => {
             let paths = walk_entries(workspace_root);
-            AutocompletePopup::new_file(paths, &trigger.prefix, trigger.trigger_start_byte)
+            AutocompletePopup::new_file(paths, &trigger.prefix, context)
         }
-    }
+    })
 }
 
 /// Compose the slash command snapshot: built-ins plus filesystem-
@@ -189,7 +216,7 @@ fn build_popup(trigger: &AutocompleteTrigger, workspace_root: &Path) -> Autocomp
 /// project-level `./.norn/skills/` is listed first so its names win the
 /// `seen` shadow check before the user-level `~/.norn/skills/` directory
 /// is scanned.
-fn build_slash_snapshot() -> Vec<SlashCandidate> {
+fn build_slash_snapshot(workspace_root: &Path) -> Result<Vec<SlashCandidate>, TuiError> {
     let mut snapshot: Vec<SlashCandidate> = tui_builtin_commands()
         .map(|command| SlashCandidate {
             name: command.name.to_owned(),
@@ -199,10 +226,10 @@ fn build_slash_snapshot() -> Vec<SlashCandidate> {
         .collect();
 
     let mut seen: HashSet<String> = snapshot.iter().map(|c| c.name.clone()).collect();
-    for dir in profile_skills_dirs() {
-        discover_skills(&dir, &mut snapshot, &mut seen);
+    for dir in profile_skills_dirs(workspace_root) {
+        discover_skills(&dir, &mut snapshot, &mut seen)?;
     }
-    snapshot
+    Ok(snapshot)
 }
 
 /// Directories searched for skill files, in shadow-priority order
@@ -213,13 +240,12 @@ fn build_slash_snapshot() -> Vec<SlashCandidate> {
 /// project `.norn/skills/`, `.agents/skills/`, `.claude/skills/`,
 /// user `~/.norn/skills/`, `~/.agents/skills/`, `~/.claude/skills/`.
 /// (The legacy `.meridian/skills/` tier was removed — DECISIONS §0.6(a).)
-fn profile_skills_dirs() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if let Ok(cwd) = std::env::current_dir() {
-        out.push(cwd.join(".norn").join("skills"));
-        out.push(cwd.join(".agents").join("skills"));
-        out.push(cwd.join(".claude").join("skills"));
-    }
+fn profile_skills_dirs(workspace_root: &Path) -> Vec<PathBuf> {
+    let mut out = vec![
+        workspace_root.join(".norn").join("skills"),
+        workspace_root.join(".agents").join("skills"),
+        workspace_root.join(".claude").join("skills"),
+    ];
     if let Some(home) = norn::config::paths::norn_dir() {
         out.push(home.join("skills"));
     }
@@ -240,57 +266,72 @@ fn profile_skills_dirs() -> Vec<PathBuf> {
 /// A description is best-effort from YAML frontmatter. The parse is
 /// intentionally minimal — full validation belongs in
 /// [`norn::skill::catalog::SkillCatalog`].
-fn discover_skills(dir: &Path, snapshot: &mut Vec<SlashCandidate>, seen: &mut HashSet<String>) {
-    let _descriptor_permit = match norn::resource::acquire_filesystem_operation() {
-        Ok(permit) => permit,
-        Err(error) => {
-            tracing::warn!(%error, path = %dir.display(), "skill autocomplete filesystem admission refused");
-            return;
+fn discover_skills(
+    dir: &Path,
+    snapshot: &mut Vec<SlashCandidate>,
+    seen: &mut HashSet<String>,
+) -> Result<(), TuiError> {
+    let descriptor_permit = norn::resource::acquire_filesystem_operation().map_err(|source| {
+        TuiError::ViewInteraction {
+            source: Box::new(source),
         }
+    })?;
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => return Err(filesystem_error(dir, source)),
     };
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = entry.map_err(|source| filesystem_error(dir, source))?;
         let path = entry.path();
-        if path.is_dir() {
+        let metadata =
+            std::fs::metadata(&path).map_err(|source| filesystem_error(&path, source))?;
+        let (name, description_path) = if metadata.is_dir() {
             let skill_md = path.join("SKILL.md");
-            if skill_md.is_file() {
-                let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-                    continue;
-                };
-                if seen.contains(name) {
-                    continue;
-                }
-                seen.insert(name.to_owned());
-                let description = read_skill_description(&skill_md).unwrap_or_default();
-                snapshot.push(SlashCandidate {
-                    name: name.to_owned(),
-                    source_tag: SourceTag::Profile,
-                    description,
-                });
+            match std::fs::metadata(&skill_md) {
+                Ok(metadata) if metadata.is_file() => {}
+                Ok(_) => continue,
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(source) => return Err(filesystem_error(&skill_md, source)),
             }
-            continue;
-        }
-        let Some(ext) = path.extension() else {
-            continue;
-        };
-        if ext != "md" {
-            continue;
-        }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            (path.file_name(), skill_md)
+        } else if path.extension().is_some_and(|extension| extension == "md") {
+            (path.file_stem(), path.clone())
+        } else {
             continue;
         };
-        if seen.contains(stem) {
+        let Some(name) = name.and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if seen.contains(name) {
             continue;
         }
-        seen.insert(stem.to_owned());
-        let description = read_skill_description(&path).unwrap_or_default();
+        let description = read_skill_description(&description_path)?.unwrap_or_default();
+        seen.insert(name.to_owned());
         snapshot.push(SlashCandidate {
-            name: stem.to_owned(),
+            name: name.to_owned(),
             source_tag: SourceTag::Profile,
             description,
         });
+    }
+    drop(descriptor_permit);
+    Ok(())
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("autocomplete filesystem path {path:?}: {source}")]
+struct AutocompleteFilesystemError {
+    path: PathBuf,
+    #[source]
+    source: std::io::Error,
+}
+
+fn filesystem_error(path: &Path, source: std::io::Error) -> TuiError {
+    TuiError::ViewInteraction {
+        source: Box::new(AutocompleteFilesystemError {
+            path: path.to_owned(),
+            source,
+        }),
     }
 }
 
@@ -301,26 +342,26 @@ fn discover_skills(dir: &Path, snapshot: &mut Vec<SlashCandidate>, seen: &mut Ha
 /// `---` fence on the first line, key-value lines, and a closing `---`
 /// fence. Anything else returns `None` and the caller falls back to an
 /// empty description.
-fn read_skill_description(path: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
+fn read_skill_description(path: &Path) -> Result<Option<String>, TuiError> {
+    let content = std::fs::read_to_string(path).map_err(|source| filesystem_error(path, source))?;
     let mut lines = content.lines();
-    if lines.next()?.trim() != "---" {
-        return None;
+    if lines.next().is_none_or(|line| line.trim() != "---") {
+        return Ok(None);
     }
     for line in lines {
         let trimmed = line.trim();
         if trimmed == "---" {
-            return None;
+            return Ok(None);
         }
         if let Some(rest) = trimmed.strip_prefix("description:") {
             let value = rest.trim().trim_matches(|c| c == '"' || c == '\'');
             if value.is_empty() {
-                return None;
+                return Ok(None);
             }
-            return Some(value.to_owned());
+            return Ok(Some(value.to_owned()));
         }
     }
-    None
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -369,15 +410,27 @@ mod tests {
         ))
     }
 
-    fn type_into(state: &mut AppState, text: &str) {
+    fn type_into(state: &mut AppState, text: &str) -> TestResult {
+        let options = iridium_editor::editor::CellInputOptions {
+            wrap: iridium_editor::cell_layout::CellWrapParameters::new(80, 4),
+            visible_rows: 10,
+        };
         for ch in text.chars() {
-            state.input_editor.insert_char(ch);
+            assert_eq!(
+                state.input_editor.handle_cell_key(
+                    &iridium_editor::KeyEvent::simple(iridium_editor::KeyCode::Char(ch)),
+                    options,
+                )?,
+                iridium_editor::EditorKeyResult::None
+            );
         }
+        Ok(())
     }
 
     #[test]
-    fn builtin_slash_commands_appear_in_snapshot() {
-        let snapshot = build_slash_snapshot();
+    fn builtin_slash_commands_appear_in_snapshot() -> TestResult {
+        let tmp = tempfile::tempdir()?;
+        let snapshot = build_slash_snapshot(tmp.path())?;
         let names: Vec<&str> = snapshot.iter().map(|c| c.name.as_str()).collect();
         for name in [
             "compact",
@@ -398,14 +451,15 @@ mod tests {
                 "built-in `{name}` missing from snapshot: {names:?}",
             );
         }
+        Ok(())
     }
 
     #[test]
     fn refresh_creates_slash_popup_after_slash_typed() -> TestResult {
         let mut state = fresh_state()?;
         let tmp = tempfile::tempdir()?;
-        type_into(&mut state, "/");
-        refresh_autocomplete(&mut state, tmp.path());
+        type_into(&mut state, "/")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
         assert!(
             state.autocomplete.is_some(),
             "popup must be created for `/` trigger",
@@ -418,16 +472,16 @@ mod tests {
     fn refresh_narrows_existing_slash_popup_as_user_types() -> TestResult {
         let mut state = fresh_state()?;
         let tmp = tempfile::tempdir()?;
-        type_into(&mut state, "/");
-        refresh_autocomplete(&mut state, tmp.path());
+        type_into(&mut state, "/")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
         let initial_count = state
             .autocomplete
             .as_ref()
             .ok_or("autocomplete popup is missing")?
             .candidates
             .len();
-        type_into(&mut state, "he");
-        refresh_autocomplete(&mut state, tmp.path());
+        type_into(&mut state, "he")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
         let narrowed = state
             .autocomplete
             .as_ref()
@@ -446,14 +500,35 @@ mod tests {
     fn refresh_dismisses_popup_when_trigger_disappears() -> TestResult {
         let mut state = fresh_state()?;
         let tmp = tempfile::tempdir()?;
-        type_into(&mut state, "/he");
-        refresh_autocomplete(&mut state, tmp.path());
+        type_into(&mut state, "/he")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
         assert!(state.autocomplete.is_some());
         // Backspace removes the `/he`, no trigger remains.
-        state.input_editor.backspace();
-        state.input_editor.backspace();
-        state.input_editor.backspace();
-        refresh_autocomplete(&mut state, tmp.path());
+        state.input_editor.run_cell_command(
+            "edit.deleteBackward",
+            iridium_editor::CommandArgs::NONE,
+            iridium_editor::editor::CellInputOptions {
+                wrap: iridium_editor::cell_layout::CellWrapParameters::new(80, 4),
+                visible_rows: 10,
+            },
+        )?;
+        state.input_editor.run_cell_command(
+            "edit.deleteBackward",
+            iridium_editor::CommandArgs::NONE,
+            iridium_editor::editor::CellInputOptions {
+                wrap: iridium_editor::cell_layout::CellWrapParameters::new(80, 4),
+                visible_rows: 10,
+            },
+        )?;
+        state.input_editor.run_cell_command(
+            "edit.deleteBackward",
+            iridium_editor::CommandArgs::NONE,
+            iridium_editor::editor::CellInputOptions {
+                wrap: iridium_editor::cell_layout::CellWrapParameters::new(80, 4),
+                visible_rows: 10,
+            },
+        )?;
+        refresh_autocomplete(&mut state, tmp.path())?;
         assert!(state.autocomplete.is_none());
         assert_eq!(state.fixed_panel.autocomplete_popup_rows(), 0);
         Ok(())
@@ -463,11 +538,11 @@ mod tests {
     fn refresh_dismisses_popup_when_narrowing_eliminates_all_candidates() -> TestResult {
         let mut state = fresh_state()?;
         let tmp = tempfile::tempdir()?;
-        type_into(&mut state, "/");
-        refresh_autocomplete(&mut state, tmp.path());
+        type_into(&mut state, "/")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
         assert!(state.autocomplete.is_some());
-        type_into(&mut state, "zzzzz");
-        refresh_autocomplete(&mut state, tmp.path());
+        type_into(&mut state, "zzzzz")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
         assert!(
             state.autocomplete.is_none(),
             "no slash command starts with `zzzzz`",
@@ -481,8 +556,8 @@ mod tests {
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(tmp.path().join("src/main.rs"), "x")?;
         let mut state = fresh_state()?;
-        type_into(&mut state, "@main");
-        refresh_autocomplete(&mut state, tmp.path());
+        type_into(&mut state, "@main")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
         assert!(
             state.autocomplete.is_some(),
             "file popup must be created for @main",
@@ -506,17 +581,17 @@ mod tests {
         // rather than rebuild — defeating the purpose of this test).
         fs::write(tmp.path().join("seed.txt"), "x")?;
         let mut state = fresh_state()?;
-        type_into(&mut state, "/");
-        refresh_autocomplete(&mut state, tmp.path());
+        type_into(&mut state, "/")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
         let slash_byte = state
             .autocomplete
             .as_ref()
             .ok_or("autocomplete popup is missing")?
             .trigger_start_byte();
         assert_eq!(slash_byte, 0);
-        state.input_editor.clear();
-        type_into(&mut state, "@");
-        refresh_autocomplete(&mut state, tmp.path());
+        state.input_editor.clear()?;
+        type_into(&mut state, "@")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
         assert!(state.autocomplete.is_some(), "@ trigger seeds file popup");
         Ok(())
     }
@@ -525,8 +600,8 @@ mod tests {
     fn dismiss_clears_popup_and_panel_height() -> TestResult {
         let mut state = fresh_state()?;
         let tmp = tempfile::tempdir()?;
-        type_into(&mut state, "/");
-        refresh_autocomplete(&mut state, tmp.path());
+        type_into(&mut state, "/")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
         assert!(state.autocomplete.is_some());
         dismiss(&mut state);
         assert!(state.autocomplete.is_none());
@@ -538,7 +613,7 @@ mod tests {
     fn refresh_after_initial_empty_input_is_noop() -> TestResult {
         let mut state = fresh_state()?;
         let tmp = tempfile::tempdir()?;
-        refresh_autocomplete(&mut state, tmp.path());
+        refresh_autocomplete(&mut state, tmp.path())?;
         assert!(state.autocomplete.is_none());
         Ok(())
     }
@@ -553,7 +628,7 @@ mod tests {
         )?;
         let mut snapshot = Vec::new();
         let mut seen = HashSet::new();
-        discover_skills(tmp.path(), &mut snapshot, &mut seen);
+        discover_skills(tmp.path(), &mut snapshot, &mut seen)?;
         assert_eq!(snapshot.len(), 1);
         assert_eq!(snapshot[0].name, "my-skill");
         assert_eq!(snapshot[0].description, "Do a thing");
@@ -567,7 +642,7 @@ mod tests {
         fs::write(tmp.path().join("help.md"), "---\ndescription: dup\n---\n")?;
         let mut snapshot = Vec::new();
         let mut seen: HashSet<String> = ["help".to_owned()].into_iter().collect();
-        discover_skills(tmp.path(), &mut snapshot, &mut seen);
+        discover_skills(tmp.path(), &mut snapshot, &mut seen)?;
         assert!(
             snapshot.is_empty(),
             "shadowed name must not appear in snapshot: {snapshot:?}",
@@ -581,7 +656,7 @@ mod tests {
         fs::write(tmp.path().join("notes.txt"), "ignored")?;
         let mut snapshot = Vec::new();
         let mut seen = HashSet::new();
-        discover_skills(tmp.path(), &mut snapshot, &mut seen);
+        discover_skills(tmp.path(), &mut snapshot, &mut seen)?;
         assert!(snapshot.is_empty());
         Ok(())
     }
@@ -591,7 +666,7 @@ mod tests {
         let tmp = tempfile::tempdir()?;
         let path = tmp.path().join("plain.md");
         fs::write(&path, "no frontmatter here\n")?;
-        assert!(read_skill_description(&path).is_none());
+        assert!(read_skill_description(&path)?.is_none());
         Ok(())
     }
 
@@ -601,9 +676,171 @@ mod tests {
         let path = tmp.path().join("quoted.md");
         fs::write(&path, "---\ndescription: \"hello world\"\n---\n")?;
         assert_eq!(
-            read_skill_description(&path).as_deref(),
+            read_skill_description(&path)?.as_deref(),
             Some("hello world"),
         );
+        Ok(())
+    }
+
+    #[test]
+    fn acceptance_uses_latest_narrowed_context_and_is_one_undo_gesture() -> TestResult {
+        let mut state = fresh_state()?;
+        let tmp = tempfile::tempdir()?;
+        type_into(&mut state, "/")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
+        type_into(&mut state, "hel")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
+        assert_eq!(
+            handle_popup_key(
+                KeyEvent::new(KeyCode::Tab, Modifiers::NONE),
+                &mut state,
+                80,
+                24
+            )?,
+            PopupKeyOutcome::Consumed
+        );
+        assert_eq!(state.input_editor.text(), "/help");
+        assert!(state.autocomplete.is_none());
+        let options = state.composer_geometry.input_options();
+        state.input_editor.run_cell_command(
+            "history.undo",
+            iridium_editor::CommandArgs::NONE,
+            options,
+        )?;
+        assert_eq!(state.input_editor.text(), "/hel");
+        Ok(())
+    }
+
+    #[test]
+    fn stale_popup_acceptance_preserves_newer_document_cursor_and_history() -> TestResult {
+        let mut state = fresh_state()?;
+        let tmp = tempfile::tempdir()?;
+        type_into(&mut state, "/he")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
+        type_into(&mut state, "x")?;
+        let snapshot = state.input_editor.snapshot()?;
+        let history = serde_json::to_value(state.input_editor.kernel().history_snapshot())?;
+        assert!(matches!(
+            handle_popup_key(
+                KeyEvent::new(KeyCode::Tab, Modifiers::NONE),
+                &mut state,
+                80,
+                24
+            ),
+            Err(TuiError::Composer(
+                crate::input::ComposerError::StaleSnapshot { .. }
+            ))
+        ));
+        state.input_editor.validate_snapshot(&snapshot)?;
+        assert_eq!(state.input_editor.text(), "/hex");
+        assert_eq!(
+            serde_json::to_value(state.input_editor.kernel().history_snapshot())?,
+            history
+        );
+        assert_eq!(state.fixed_panel.autocomplete_popup_rows(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn active_and_multiple_selections_explicitly_dismiss_completion() -> TestResult {
+        use iridium_editor::editor::CellReplacementCursor;
+        use iridium_editor::{CommandArgs, CursorState, Position, Range, Selection};
+        let mut state = fresh_state()?;
+        let tmp = tempfile::tempdir()?;
+        type_into(&mut state, "/he")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
+        assert!(state.autocomplete.is_some());
+        sync_input_area(&mut state, 80, 24)?;
+        let options = state.composer_geometry.input_options();
+        state
+            .input_editor
+            .run_cell_command("selection.selectAll", CommandArgs::NONE, options)?;
+        refresh_autocomplete(&mut state, tmp.path())?;
+        assert!(state.autocomplete.is_none());
+        assert_eq!(state.fixed_panel.autocomplete_popup_rows(), 0);
+        state.input_editor.run_cell_command(
+            "selection.collapseToPrimary",
+            CommandArgs::NONE,
+            options,
+        )?;
+        refresh_autocomplete(&mut state, tmp.path())?;
+        assert!(state.autocomplete.is_some());
+        let mut cursor = CursorState::at(Position::new(0, 3));
+        cursor.add_cursor(Selection::collapsed(Position::new(0, 1)));
+        state.input_editor.replace_cells(
+            Range::empty(Position::zero()),
+            "",
+            CellReplacementCursor::Exact(cursor),
+        )?;
+        assert_eq!(
+            handle_popup_key(
+                KeyEvent::new(KeyCode::Tab, Modifiers::NONE),
+                &mut state,
+                80,
+                24
+            )?,
+            PopupKeyOutcome::NotConsumed
+        );
+        assert!(state.autocomplete.is_none());
+        assert_eq!(state.fixed_panel.autocomplete_popup_rows(), 0);
+        assert_eq!(state.input_editor.text(), "/he");
+        assert_eq!(state.input_editor.kernel().state().cursor.cursor_count(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn file_acceptance_preserves_original_unicode_before_trigger() -> TestResult {
+        let mut state = fresh_state()?;
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir(tmp.path().join("src"))?;
+        fs::write(tmp.path().join("src/main.rs"), "fixture")?;
+        type_into(&mut state, "🙂 @main")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
+        assert_eq!(
+            handle_popup_key(
+                KeyEvent::new(KeyCode::Enter, Modifiers::NONE),
+                &mut state,
+                80,
+                24
+            )?,
+            PopupKeyOutcome::Consumed
+        );
+        assert_eq!(state.input_editor.text(), "🙂 src/main.rs");
+        Ok(())
+    }
+
+    #[test]
+    fn modified_enter_does_not_accept_visible_popup() -> TestResult {
+        let mut state = fresh_state()?;
+        let tmp = tempfile::tempdir()?;
+        type_into(&mut state, "/he")?;
+        refresh_autocomplete(&mut state, tmp.path())?;
+        for modifiers in [Modifiers::ALT, Modifiers::SHIFT] {
+            assert_eq!(
+                handle_popup_key(KeyEvent::new(KeyCode::Enter, modifiers), &mut state, 80, 24)?,
+                PopupKeyOutcome::NotConsumed
+            );
+            assert_eq!(state.input_editor.text(), "/he");
+            assert!(state.autocomplete.is_some());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn absent_optional_skill_directory_is_empty_but_real_read_failures_surface() -> TestResult {
+        let tmp = tempfile::tempdir()?;
+        let mut snapshot = Vec::new();
+        let mut seen = HashSet::new();
+        discover_skills(&tmp.path().join("absent"), &mut snapshot, &mut seen)?;
+        assert!(snapshot.is_empty());
+        let file = tmp.path().join("not-a-directory");
+        fs::write(&file, "fixture")?;
+        let error = discover_skills(&file, &mut snapshot, &mut seen)
+            .err()
+            .ok_or("non-directory skill root was accepted")?;
+        assert!(error.to_string().contains("not-a-directory"));
+        assert!(snapshot.is_empty());
+        assert!(read_skill_description(&tmp.path().join("missing.md")).is_err());
         Ok(())
     }
 }

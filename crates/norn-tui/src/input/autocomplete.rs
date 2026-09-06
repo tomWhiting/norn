@@ -26,6 +26,8 @@
 //! the fixed panel's `height_dirty` flag then drives the scroll-region
 //! reissue from NT-011.
 
+use super::composer_transactions::CompletionContext;
+
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
@@ -155,8 +157,8 @@ impl CandidateRow {
 /// input from `trigger_start_byte` up to the cursor with `replacement`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Acceptance {
-    /// Byte offset of the trigger character in the input string.
-    pub trigger_start_byte: usize,
+    /// Exact source revision, full cursor and captured original prefix range.
+    pub context: CompletionContext,
     /// Text to insert in place of the trigger + typed prefix.
     pub replacement: String,
 }
@@ -188,8 +190,8 @@ pub struct AutocompletePopup {
     pub selected_index: usize,
     /// First candidate index visible in the popup window.
     pub visible_offset: usize,
-    /// Byte offset of the trigger character — replayed into [`Acceptance`].
-    trigger_start_byte: usize,
+    /// Current source-bound completion prefix, refreshed whenever candidates narrow.
+    context: CompletionContext,
 }
 
 impl AutocompletePopup {
@@ -204,7 +206,7 @@ impl AutocompletePopup {
     pub fn new_slash(
         snapshot: Vec<SlashCandidate>,
         prefix: &str,
-        trigger_start_byte: usize,
+        context: CompletionContext,
     ) -> Self {
         let filtered = filter_slash_candidates(&snapshot, prefix);
         let candidates = filtered.into_iter().map(CandidateRow::Slash).collect();
@@ -213,7 +215,7 @@ impl AutocompletePopup {
             candidates,
             selected_index: 0,
             visible_offset: 0,
-            trigger_start_byte,
+            context,
         }
     }
 
@@ -225,14 +227,14 @@ impl AutocompletePopup {
     /// applies its own nucleo fuzzy match against `prefix` and retains
     /// the full list for narrowing.
     #[must_use]
-    pub fn new_file(paths: Vec<(String, bool)>, prefix: &str, trigger_start_byte: usize) -> Self {
+    pub fn new_file(paths: Vec<(String, bool)>, prefix: &str, context: CompletionContext) -> Self {
         let candidates = fuzzy_file_rows(&paths, prefix);
         Self {
             snapshot: CandidateSource::File(paths),
             candidates,
             selected_index: 0,
             visible_offset: 0,
-            trigger_start_byte,
+            context,
         }
     }
 
@@ -241,7 +243,7 @@ impl AutocompletePopup {
     /// the popup's snapshot (different kind or different start byte).
     #[must_use]
     pub fn trigger_start_byte(&self) -> usize {
-        self.trigger_start_byte
+        self.context.trigger_start_byte()
     }
 
     /// Whether the popup's snapshot matches the supplied trigger.
@@ -254,7 +256,7 @@ impl AutocompletePopup {
     /// new candidate source.
     #[must_use]
     pub fn matches_trigger(&self, trigger: &AutocompleteTrigger) -> bool {
-        if self.trigger_start_byte != trigger.trigger_start_byte {
+        if self.context.trigger_start_byte() != trigger.trigger_start_byte {
             return false;
         }
         match (&self.snapshot, trigger.kind) {
@@ -321,7 +323,7 @@ impl AutocompletePopup {
     pub fn accept(&self) -> Option<Acceptance> {
         let candidate = self.candidates.get(self.selected_index)?;
         Some(Acceptance {
-            trigger_start_byte: self.trigger_start_byte,
+            context: self.context.clone(),
             replacement: candidate.replacement(),
         })
     }
@@ -333,7 +335,8 @@ impl AutocompletePopup {
     /// window is rebased. Returns `true` when the popup still has
     /// candidates (i.e. should stay open), `false` when narrowing has
     /// emptied the list and the caller should dismiss the popup.
-    pub fn narrow(&mut self, new_prefix: &str) -> bool {
+    pub fn narrow(&mut self, new_prefix: &str, context: CompletionContext) -> bool {
+        self.context = context;
         self.candidates = match &self.snapshot {
             CandidateSource::Slash(snapshot) => filter_slash_candidates(snapshot, new_prefix)
                 .into_iter()
@@ -589,7 +592,7 @@ pub fn generate_file_candidates(
 /// filter off nothing else excludes it, and VCS internals are never
 /// attachment candidates.
 pub fn walk_entries(root: &Path) -> Vec<(String, bool)> {
-    let _descriptor_permit = match norn::resource::acquire_recursive_walk() {
+    let descriptor_permit = match norn::resource::acquire_recursive_walk() {
         Ok(permit) => permit,
         Err(error) => {
             tracing::warn!(%error, path = %root.display(), "file autocomplete walk admission refused");
@@ -632,6 +635,7 @@ pub fn walk_entries(root: &Path) -> Vec<(String, bool)> {
         }
         entries.push((display, is_dir));
     }
+    drop(descriptor_permit);
     entries
 }
 
@@ -664,18 +668,26 @@ fn fuzzy_file_rows(paths: &[(String, bool)], prefix: &str) -> Vec<CandidateRow> 
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::input::{InputEditor, InputHistory};
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn context() -> Result<CompletionContext, Box<dyn std::error::Error>> {
+        InputEditor::new(InputHistory::in_memory())
+            .completion_context(0)
+            .map_err(Into::into)
+    }
 
     // ---------- detect_trigger ----------
 
     #[test]
-    fn slash_at_column_zero_triggers_slash_command() {
-        let trigger = detect_trigger("/", 1).unwrap();
+    fn slash_at_column_zero_triggers_slash_command() -> TestResult {
+        let trigger = detect_trigger("/", 1).ok_or("expected completion trigger")?;
         assert_eq!(trigger.kind, TriggerKind::SlashCommand);
         assert_eq!(trigger.prefix, "");
         assert_eq!(trigger.trigger_start_byte, 0);
+        Ok(())
     }
 
     #[test]
@@ -684,27 +696,30 @@ mod tests {
     }
 
     #[test]
-    fn at_symbol_anywhere_triggers_file_path() {
-        let trigger = detect_trigger("@src", 4).unwrap();
+    fn at_symbol_anywhere_triggers_file_path() -> TestResult {
+        let trigger = detect_trigger("@src", 4).ok_or("expected completion trigger")?;
         assert_eq!(trigger.kind, TriggerKind::FilePath);
         assert_eq!(trigger.prefix, "src");
         assert_eq!(trigger.trigger_start_byte, 0);
+        Ok(())
     }
 
     #[test]
-    fn at_symbol_with_prefix_captures_typed_chars() {
-        let trigger = detect_trigger("hello @sr", 9).unwrap();
+    fn at_symbol_with_prefix_captures_typed_chars() -> TestResult {
+        let trigger = detect_trigger("hello @sr", 9).ok_or("expected completion trigger")?;
         assert_eq!(trigger.kind, TriggerKind::FilePath);
         assert_eq!(trigger.prefix, "sr");
         assert_eq!(trigger.trigger_start_byte, 6);
+        Ok(())
     }
 
     #[test]
-    fn slash_after_newline_is_treated_as_column_zero() {
-        let trigger = detect_trigger("hi\n/he", 6).unwrap();
+    fn slash_after_newline_is_treated_as_column_zero() -> TestResult {
+        let trigger = detect_trigger("hi\n/he", 6).ok_or("expected completion trigger")?;
         assert_eq!(trigger.kind, TriggerKind::SlashCommand);
         assert_eq!(trigger.prefix, "he");
         assert_eq!(trigger.trigger_start_byte, 3);
+        Ok(())
     }
 
     #[test]
@@ -718,13 +733,14 @@ mod tests {
     }
 
     #[test]
-    fn multibyte_prefix_byte_offset_is_correct() {
+    fn multibyte_prefix_byte_offset_is_correct() -> TestResult {
         // 'é' is two bytes; `@é` should report trigger_start_byte = 0
         // and 'éx' (cursor at char 3) prefix should be "éx".
-        let trigger = detect_trigger("@éx", 3).unwrap();
+        let trigger = detect_trigger("@éx", 3).ok_or("expected completion trigger")?;
         assert_eq!(trigger.kind, TriggerKind::FilePath);
         assert_eq!(trigger.prefix, "éx");
         assert_eq!(trigger.trigger_start_byte, 0);
+        Ok(())
     }
 
     // ---------- filter_slash_candidates ----------
@@ -772,39 +788,41 @@ mod tests {
     // ---------- generate_file_candidates ----------
 
     #[test]
-    fn generate_file_candidates_matches_nested_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
-        std::fs::write(tmp.path().join("src/main.rs"), "x").unwrap();
+    fn generate_file_candidates_matches_nested_file() -> TestResult {
+        let tmp = tempfile::tempdir()?;
+        std::fs::create_dir_all(tmp.path().join("src"))?;
+        std::fs::write(tmp.path().join("src/main.rs"), "x")?;
         let candidates = generate_file_candidates(tmp.path(), "main", 50);
         let hit = candidates
             .iter()
             .find(|c| c.path.ends_with("main.rs"))
-            .expect("main.rs must be matched");
+            .ok_or("main.rs must be matched")?;
         assert!(hit.score > 0, "score must be positive");
         assert!(!hit.is_dir);
+        Ok(())
     }
 
     #[test]
-    fn generate_file_candidates_flags_directories_with_trailing_separator() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join("nested")).unwrap();
-        std::fs::write(tmp.path().join("nested/leaf.txt"), "x").unwrap();
+    fn generate_file_candidates_flags_directories_with_trailing_separator() -> TestResult {
+        let tmp = tempfile::tempdir()?;
+        std::fs::create_dir_all(tmp.path().join("nested"))?;
+        std::fs::write(tmp.path().join("nested/leaf.txt"), "x")?;
         let candidates = generate_file_candidates(tmp.path(), "nested", 50);
         let dir_hit = candidates
             .iter()
             .find(|c| c.is_dir)
-            .expect("directory candidate must be present");
+            .ok_or("directory candidate must be present")?;
         assert!(
             dir_hit.path.ends_with(std::path::MAIN_SEPARATOR),
             "directory display must end with separator: {:?}",
             dir_hit.path,
         );
+        Ok(())
     }
 
     // ---------- popup render ----------
 
-    fn slash_popup_with(n: usize) -> AutocompletePopup {
+    fn slash_popup_with(n: usize) -> Result<AutocompletePopup, Box<dyn std::error::Error>> {
         let snapshot: Vec<SlashCandidate> = (0..n)
             .map(|i| SlashCandidate {
                 name: format!("cmd{i:02}"),
@@ -812,16 +830,16 @@ mod tests {
                 description: format!("Description for cmd{i:02}"),
             })
             .collect();
-        AutocompletePopup::new_slash(snapshot, "", 0)
+        Ok(AutocompletePopup::new_slash(snapshot, "", context()?))
     }
 
     #[test]
-    fn popup_renders_one_row_per_visible_candidate() {
-        let popup = slash_popup_with(5);
+    fn popup_renders_one_row_per_visible_candidate() -> TestResult {
+        let popup = slash_popup_with(5)?;
         let caps = TerminalCaps::baseline();
         let mut buf: Vec<u8> = Vec::new();
-        popup.render(10, 80, &mut buf, &caps).unwrap();
-        let out = String::from_utf8(buf).unwrap();
+        popup.render(10, 80, &mut buf, &caps)?;
+        let out = String::from_utf8(buf)?;
         for row_one_based in 11..=15u16 {
             assert!(
                 out.contains(&format!("\x1b[{row_one_based};1H")),
@@ -832,86 +850,95 @@ mod tests {
             !out.contains("\x1b[16;1H"),
             "no row beyond the candidate count should be addressed",
         );
+        Ok(())
     }
 
     #[test]
-    fn popup_render_highlights_the_selected_row() {
-        let popup = slash_popup_with(3);
+    fn popup_render_highlights_the_selected_row() -> TestResult {
+        let popup = slash_popup_with(3)?;
         let caps = TerminalCaps::baseline();
         let mut buf: Vec<u8> = Vec::new();
-        popup.render(10, 80, &mut buf, &caps).unwrap();
-        let out = String::from_utf8(buf).unwrap();
+        popup.render(10, 80, &mut buf, &caps)?;
+        let out = String::from_utf8(buf)?;
         // SGR 7 is the reverse-video opener; assert it appears exactly once.
         let occurrences = out.matches("\x1b[7m").count();
         assert_eq!(
             occurrences, 1,
             "selected row must be highlighted exactly once",
         );
+        Ok(())
     }
 
     #[test]
-    fn popup_height_matches_candidate_count_below_eight() {
-        let popup = slash_popup_with(3);
+    fn popup_height_matches_candidate_count_below_eight() -> TestResult {
+        let popup = slash_popup_with(3)?;
         assert_eq!(popup.height(), 3);
+        Ok(())
     }
 
     #[test]
-    fn popup_height_caps_at_eight_when_overflowing_with_indicator() {
-        let popup = slash_popup_with(12);
+    fn popup_height_caps_at_eight_when_overflowing_with_indicator() -> TestResult {
+        let popup = slash_popup_with(12)?;
         // 8 visible rows + 1 overflow indicator = 9.
         assert_eq!(popup.height(), 9);
+        Ok(())
     }
 
     #[test]
-    fn popup_renders_overflow_indicator_when_candidates_exceed_window() {
-        let popup = slash_popup_with(12);
+    fn popup_renders_overflow_indicator_when_candidates_exceed_window() -> TestResult {
+        let popup = slash_popup_with(12)?;
         let caps = TerminalCaps::baseline();
         let mut buf: Vec<u8> = Vec::new();
-        popup.render(10, 80, &mut buf, &caps).unwrap();
-        let out = String::from_utf8(buf).unwrap();
+        popup.render(10, 80, &mut buf, &caps)?;
+        let out = String::from_utf8(buf)?;
         assert!(
             out.contains("4 more"),
             "overflow indicator missing: {out:?}"
         );
+        Ok(())
     }
 
     // ---------- popup navigation, narrow, accept ----------
 
     #[test]
-    fn select_down_wraps_at_end() {
-        let mut popup = slash_popup_with(3);
+    fn select_down_wraps_at_end() -> TestResult {
+        let mut popup = slash_popup_with(3)?;
         popup.select_down();
         popup.select_down();
         popup.select_down();
         assert_eq!(popup.selected_index, 0, "select_down past end wraps to 0");
+        Ok(())
     }
 
     #[test]
-    fn select_up_wraps_at_start() {
-        let mut popup = slash_popup_with(3);
+    fn select_up_wraps_at_start() -> TestResult {
+        let mut popup = slash_popup_with(3)?;
         popup.select_up();
         assert_eq!(popup.selected_index, 2, "select_up at start wraps to end");
+        Ok(())
     }
 
     #[test]
-    fn accept_returns_slashed_replacement_for_selected_candidate() {
-        let popup = slash_popup_with(3);
-        let acceptance = popup.accept().unwrap();
+    fn accept_returns_slashed_replacement_for_selected_candidate() -> TestResult {
+        let popup = slash_popup_with(3)?;
+        let acceptance = popup.accept().ok_or("expected selected completion")?;
         assert_eq!(acceptance.replacement, "/cmd00");
-        assert_eq!(acceptance.trigger_start_byte, 0);
+        assert_eq!(acceptance.context.trigger_start_byte(), 0);
+        Ok(())
     }
 
     #[test]
-    fn accept_returns_none_when_popup_has_no_candidates() {
-        let popup = AutocompletePopup::new_slash(Vec::new(), "", 0);
+    fn accept_returns_none_when_popup_has_no_candidates() -> TestResult {
+        let popup = AutocompletePopup::new_slash(Vec::new(), "", context()?);
         assert!(popup.accept().is_none());
+        Ok(())
     }
 
     #[test]
-    fn narrow_filters_and_keeps_popup_open() {
+    fn narrow_filters_and_keeps_popup_open() -> TestResult {
         let snapshot = sample_slash_snapshot();
-        let mut popup = AutocompletePopup::new_slash(snapshot, "", 0);
-        assert!(popup.narrow("he"));
+        let mut popup = AutocompletePopup::new_slash(snapshot, "", context()?);
+        assert!(popup.narrow("he", context()?));
         let names: Vec<&str> = popup
             .candidates
             .iter()
@@ -921,50 +948,55 @@ mod tests {
             })
             .collect();
         assert_eq!(names, vec!["help"]);
+        Ok(())
     }
 
     #[test]
-    fn narrow_to_no_matches_closes_popup() {
+    fn narrow_to_no_matches_closes_popup() -> TestResult {
         let snapshot = sample_slash_snapshot();
-        let mut popup = AutocompletePopup::new_slash(snapshot, "", 0);
+        let mut popup = AutocompletePopup::new_slash(snapshot, "", context()?);
         assert!(
-            !popup.narrow("zzz"),
+            !popup.narrow("zzz", context()?),
             "narrowing to no candidates must signal closed",
         );
         assert!(popup.candidates.is_empty());
         assert!(!popup.is_open());
+        Ok(())
     }
 
     #[test]
-    fn accept_after_navigation_returns_navigated_candidate() {
-        let mut popup = slash_popup_with(3);
+    fn accept_after_navigation_returns_navigated_candidate() -> TestResult {
+        let mut popup = slash_popup_with(3)?;
         popup.select_down();
-        let acceptance = popup.accept().unwrap();
+        let acceptance = popup.accept().ok_or("expected selected completion")?;
         assert_eq!(acceptance.replacement, "/cmd01");
+        Ok(())
     }
 
     #[test]
-    fn navigation_scrolls_visible_window_past_eight() {
-        let mut popup = slash_popup_with(12);
+    fn navigation_scrolls_visible_window_past_eight() -> TestResult {
+        let mut popup = slash_popup_with(12)?;
         for _ in 0..8 {
             popup.select_down();
         }
         assert_eq!(popup.selected_index, 8);
         assert_eq!(popup.visible_offset, 1, "window must scroll past row 8");
+        Ok(())
     }
 
     #[test]
-    fn file_popup_accept_uses_path_verbatim() {
+    fn file_popup_accept_uses_path_verbatim() -> TestResult {
         let paths = vec![
             ("src/main.rs".to_owned(), false),
             ("src/lib.rs".to_owned(), false),
         ];
-        let popup = AutocompletePopup::new_file(paths, "main", 0);
-        let acceptance = popup.accept().unwrap();
+        let popup = AutocompletePopup::new_file(paths, "main", context()?);
+        let acceptance = popup.accept().ok_or("expected selected completion")?;
         assert!(
             acceptance.replacement.ends_with("main.rs"),
             "file replacement must be the matched path: {:?}",
             acceptance.replacement,
         );
+        Ok(())
     }
 }

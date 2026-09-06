@@ -45,6 +45,7 @@ pub(crate) struct PreparedCopy {
     sequence: String,
     original_bytes: usize,
     sanitized_bytes: usize,
+    content_changed: bool,
 }
 
 impl PreparedCopy {
@@ -62,6 +63,12 @@ impl PreparedCopy {
     pub const fn sanitized_bytes(&self) -> usize {
         self.sanitized_bytes
     }
+
+    /// Whether visible control escaping changed the actual clipboard content.
+    /// Destructive cut must be refused when this is true, regardless of length.
+    pub const fn content_changed(&self) -> bool {
+        self.content_changed
+    }
 }
 
 impl fmt::Debug for PreparedCopy {
@@ -71,6 +78,7 @@ impl fmt::Debug for PreparedCopy {
             .field("sequence", &"[redacted]")
             .field("original_bytes", &self.original_bytes)
             .field("sanitized_bytes", &self.sanitized_bytes)
+            .field("content_changed", &self.content_changed)
             .finish()
     }
 }
@@ -102,6 +110,7 @@ pub(crate) fn prepare_copy(
                 sequence: Osc::SetSelection(Selection::CLIPBOARD, sanitized.as_str()).to_string(),
                 original_bytes: original_selection.len(),
                 sanitized_bytes: sanitized.as_str().len(),
+                content_changed: sanitized.as_str() != original_selection,
             })
         }
     }
@@ -143,6 +152,7 @@ mod tests {
         assert_eq!(copy.as_bytes(), b"\x1b]52;c;Y29waWVkIHRleHQ=\x1b\\");
         assert_eq!(copy.original_bytes(), 11);
         assert_eq!(copy.sanitized_bytes(), 11);
+        assert!(!copy.content_changed());
         Ok(())
     }
 
@@ -183,6 +193,7 @@ mod tests {
         );
         assert_eq!(copy.original_bytes(), original.len());
         assert_eq!(copy.sanitized_bytes(), sanitized.len());
+        assert!(copy.content_changed());
         let payload = copy
             .as_bytes()
             .strip_prefix(b"\x1b]52;c;")

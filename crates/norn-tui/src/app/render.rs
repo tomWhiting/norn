@@ -5,10 +5,9 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Instant;
 
-use norn::session_view::{BodyRef, DisplayText, ItemId, ViewSource};
+use norn::session_view::{BodyRef, ItemId, ViewSource};
 
 use crate::TuiError;
-use crate::input::editor::InputEditor;
 use crate::render::frame::{Frame, PaintRow, PreparedFrame};
 use crate::render::layout::{
     Layout, LayoutPolicy, LayoutRequest, Rect, SplitPreference, UpperLayout, UpperPane,
@@ -25,11 +24,9 @@ pub(in crate::app) mod changes;
 mod composer;
 pub(in crate::app) mod hit;
 pub(in crate::app) mod transcript;
-use composer::{paint_composer, popup};
+use composer::popup;
 use transcript::conversation;
 
-/// Existing composer cap, shared with the pure rectangle owner.
-pub(crate) const INPUT_AREA_MAX_ROWS: u16 = crate::render::layout::DEFAULT_MAX_COMPOSER_ROWS;
 /// Declared terminal tab display width; input bytes stay unchanged.
 const DISPLAY_TAB_WIDTH: usize = 4;
 
@@ -52,9 +49,11 @@ pub struct ScreenState {
     pub(super) visible: Vec<ViewAnchor>,
     pub(super) hit_rows: Vec<hit::HitRow>,
     pub(super) dragging_selection: bool,
+    pub(super) dragging_composer: bool,
     pub(super) dragging_divider: bool,
     pub(super) layout: Layout,
     pub(super) pane_switch: Option<Rect>,
+    pub(super) composer_send_key_area: Option<Rect>,
     pub(super) navigation: Option<ScrollRequest>,
     pub(super) changes_row: usize,
     pub(in crate::app) changes: changes::ChangesState,
@@ -106,9 +105,11 @@ impl ScreenState {
             visible: Vec::new(),
             hit_rows: Vec::new(),
             dragging_selection: false,
+            dragging_composer: false,
             dragging_divider: false,
             layout: Layout::NoPaint,
             pane_switch: None,
+            composer_send_key_area: None,
             navigation: None,
             changes_row: 0,
             changes: changes::ChangesState::new(),
@@ -149,6 +150,7 @@ impl ScreenState {
             self.visible.clear();
             self.hit_rows.clear();
             self.dragging_selection = false;
+            self.dragging_composer = false;
             self.dragging_divider = false;
             self.displayed.clear();
             self.last_frame = None;
@@ -188,25 +190,17 @@ impl ScreenState {
     }
 }
 
-/// Legacy editor wrapping is used only for its editing viewport, never to clip paint.
-#[must_use]
-pub(crate) fn capped_input_height(editor: &InputEditor, cols: u16, terminal_rows: u16) -> u16 {
-    let chrome = if terminal_rows >= 6 {
-        crate::render::layout::COMPOSER_CHROME_ROWS
-    } else {
-        0
-    };
-    editor
-        .visual_height(cols)
-        .min(((terminal_rows - chrome) / 2).clamp(1, INPUT_AREA_MAX_ROWS))
-        .max(1)
-}
-
-/// Keep editor navigation's internal viewport in step with its requested size.
-pub(crate) fn sync_input_area(editor: &mut InputEditor, cols: u16, terminal_rows: u16) -> u16 {
-    let height = capped_input_height(editor, cols, terminal_rows);
-    editor.scroll_to_cursor(cols, height);
-    height
+/// Keep cell input and parent height synchronized without mutating the editor document.
+pub(crate) fn sync_input_area(
+    state: &mut AppState,
+    cols: u16,
+    terminal_rows: u16,
+) -> Result<u16, TuiError> {
+    let height = state
+        .composer_geometry
+        .measure(&state.input_editor, cols, terminal_rows)?;
+    state.fixed_panel.set_input_area(height);
+    Ok(height)
 }
 
 /// Retain a locally admitted human input; the committed record remains independently identified.
@@ -237,12 +231,17 @@ pub fn redraw_all(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(),
     }
     let frame = prepare(state, guard.terminal_columns(), guard.terminal_rows())?;
     let prepared = frame.prepare(&state.terminal_caps)?;
-    super::helpers::sync_with_guard(
+    let publication = super::helpers::sync_with_guard(
         &state.terminal_caps,
         guard,
         &mut state.screen.last_frame,
         prepared,
-    )?;
+    );
+    if publication.is_err() {
+        state.screen.composer_send_key_area = None;
+        state.screen.dragging_composer = false;
+    }
+    state.composer_geometry.finish_publication(publication)?;
     // Publication and flush must succeed before either baseline is advanced.
     state.screen.dirty = false;
     state.screen.last_revision = Some(revision);
@@ -261,20 +260,13 @@ pub fn redraw_streaming_tick(
 }
 
 fn prepare(state: &mut AppState, columns: u16, rows: u16) -> Result<Frame, TuiError> {
-    let prefix = 0;
-    let original = state.input_editor.text();
-    let cursor = original
-        .char_indices()
-        .nth(state.input_editor.cursor_char_index())
-        .map_or(original.len(), |(offset, _)| offset);
-    // The prefix is a separate rectangle: a leading combining mark cannot join its space.
-    let draft = safe_text(&format!("{original} "))?;
-    let draft_rows = layout_rows(&draft.styled, columns.saturating_sub(prefix))?;
+    state.composer_geometry.begin_frame();
+    let input_height = sync_input_area(state, columns, rows)?;
     let layout = Layout::calculate(
         LayoutRequest {
             columns,
             rows,
-            requested_composer_rows: u16::try_from(draft_rows.len()).unwrap_or(u16::MAX),
+            requested_composer_rows: input_height,
             changes_open: state.screen.changes_open,
             split: state.screen.split,
             active_upper_pane: state.screen.upper,
@@ -283,12 +275,14 @@ fn prepare(state: &mut AppState, columns: u16, rows: u16) -> Result<Frame, TuiEr
     )?;
     state.screen.layout = layout;
     state.screen.pane_switch = None;
+    state.screen.composer_send_key_area = None;
     state.screen.visible.clear();
     state.screen.hit_rows.clear();
     state.screen.demands.clear();
     let mut frame = Frame {
         layout,
         rows: Vec::new(),
+        composer: None,
         cursor: None,
     };
     match layout {
@@ -336,15 +330,19 @@ fn prepare(state: &mut AppState, columns: u16, rows: u16) -> Result<Frame, TuiEr
             }
             composer::paint_chrome(state, &mut frame, composer)?;
             let input_area = crate::render::layout::composer_input_area(composer);
-            paint_composer(
-                state,
-                &mut frame,
-                input_area,
-                prefix,
-                &draft,
-                &draft_rows,
-                cursor,
-            )?;
+            let (cells, cursor) = state
+                .composer_geometry
+                .prepare(&state.input_editor, input_area)?;
+            frame.composer = Some(cells);
+            if state
+                .screen
+                .focus
+                .visible(state.screen.availability())
+                .map_err(interaction)?
+                == Focus::Composer
+            {
+                frame.cursor = cursor;
+            }
             popup(state, &mut frame, composer)?;
         }
     }

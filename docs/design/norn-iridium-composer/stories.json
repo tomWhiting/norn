@@ -1,0 +1,27 @@
+{
+  "cluster": "norn-iridium-composer",
+  "title": "Composer integration stories",
+  "personas": [
+    {
+      "name": "Session participant",
+      "role": "operator",
+      "stories": [
+        {
+          "id": "S1",
+          "title": "Edit one draft reliably",
+          "text": "I can type, select, complete, recall, paste and undo Unicode in the actual session without losing a draft."
+        },
+        {
+          "id": "S2",
+          "title": "Choose the send key",
+          "text": "I can choose and remember Enter or Alt-Enter while seeing the active policy and save outcome."
+        },
+        {
+          "id": "S3",
+          "title": "Keep the working environment",
+          "text": "My original prompt/dividers/full-width input and fast startup stay intact while a turn runs."
+        }
+      ]
+    }
+  ]
+}

@@ -350,7 +350,9 @@ impl App {
         writer.flush()
     }
 
-    fn frame(&self, after: usize, predicate: impl Fn(&Screen) -> bool) -> io::Result<Screen> {
+    /// Wait for a completed frame strictly after the supplied output position.
+    /// Reuses the sole push-driven reader and its fixture deadline; callers do not poll.
+    pub fn frame(&self, after: usize, predicate: impl Fn(&Screen) -> bool) -> io::Result<Screen> {
         self.output.wait("complete CLI frame", |bytes| {
             Ok(retained_screen::latest(bytes, &self.geometries)?
                 .filter(|screen| screen.end_offset > after && predicate(screen)))

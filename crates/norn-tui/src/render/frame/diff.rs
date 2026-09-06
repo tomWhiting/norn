@@ -22,7 +22,7 @@ pub struct PreparedFrame {
 }
 
 impl PreparedFrame {
-    pub(super) fn new(columns: u16, lines: u16, cursor: Option<(u16, u16)>) -> Self {
+    pub(in crate::render) fn new(columns: u16, lines: u16, cursor: Option<(u16, u16)>) -> Self {
         Self {
             columns,
             cells: vec![vec![Cell::Blank; usize::from(columns)]; usize::from(lines)],
@@ -37,7 +37,11 @@ impl PreparedFrame {
         self.columns == 0 || self.cells.is_empty()
     }
 
-    pub(super) fn put(
+    pub(in crate::render) fn dimensions(&self) -> (u16, usize) {
+        (self.columns, self.cells.len())
+    }
+
+    pub(in crate::render) fn put(
         &mut self,
         column: u16,
         row: u16,

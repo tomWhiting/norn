@@ -1,6 +1,7 @@
 //! One frontend save owner: no timers, provider effects or unobserved background transactions.
 
 use super::render::interaction;
+use super::slash::LocalCommandOutcome;
 use super::state::AppState;
 use crate::TuiError;
 use crate::frontend_preferences::{
@@ -110,7 +111,7 @@ impl PreferenceOwner {
             requested: self.current.clone(),
             path: snapshot.path().to_path_buf(),
             task: tokio::task::spawn_blocking(move || {
-                snapshot.patch(&["view", "display", "input"], &projection)
+                snapshot.patch(&["view", "display", "input", "composer"], &projection)
             }),
         });
         Ok(true)
@@ -173,6 +174,7 @@ fn capture(state: &AppState) -> FrontendPreferences {
         view: state.transcript.config.clone(),
         display: state.display_toggles,
         submit_mode: state.in_flight_input.mode(),
+        composer_send_key: state.composer_send_key,
     }
 }
 
@@ -184,6 +186,7 @@ pub(super) fn install(state: &mut AppState, launch: FrontendPreferencesLaunch) {
     state.transcript.config = initial.view.clone();
     state.display_toggles = initial.display;
     state.in_flight_input.set_mode(initial.submit_mode);
+    state.composer_send_key = initial.composer_send_key;
     state.preferences = PreferenceOwner::new(launch);
 }
 
@@ -280,9 +283,12 @@ pub(super) fn finish(state: &mut AppState, result: SaveResult) -> Result<(), Tui
 }
 
 /// Explicit commands stay local even during steer/queue admission.
-pub(super) fn command(arguments: &str, state: &mut AppState) -> Result<(), TuiError> {
-    match arguments.trim() {
-        "" | "status" => {}
+pub(super) fn command(
+    arguments: &str,
+    state: &mut AppState,
+) -> Result<LocalCommandOutcome, TuiError> {
+    let outcome = match arguments.trim() {
+        "" | "status" => LocalCommandOutcome::Accepted,
         "run" | "user" | "local" => {
             state.preferences.scope = match arguments.trim() {
                 "run" => PreferenceScope::Run,
@@ -291,32 +297,71 @@ pub(super) fn command(arguments: &str, state: &mut AppState) -> Result<(), TuiEr
             };
             state.preferences.dirty = true;
             state.preferences.blocked = false;
-            state.preferences.start(false)?;
+            if let Err(error) = state.preferences.start(false) {
+                let reporting = command_failure(state, &error);
+                return Ok(LocalCommandOutcome::after_reported_failure(
+                    error, reporting,
+                ));
+            }
+            LocalCommandOutcome::Accepted
         }
         "save" => {
             if state.preferences.scope == PreferenceScope::Run {
                 state.screen.feedback = Some("Temporary run preferences: choose /view preferences user or local before saving".to_owned());
+                LocalCommandOutcome::Rejected
             } else if state.preferences.pending.is_some() {
                 state.screen.feedback = Some(
                     "Preference save pending; latest edits remain unsaved until its outcome"
                         .to_owned(),
                 );
+                LocalCommandOutcome::Accepted
             } else {
-                state.preferences.start(true)?;
+                if let Err(error) = state.preferences.start(true) {
+                    command_failure(state, &error)?;
+                    return Ok(LocalCommandOutcome::Rejected);
+                }
+                LocalCommandOutcome::Accepted
             }
         }
         _ => {
             state.screen.feedback =
                 Some("Use /view preferences status|run|user|local|save".to_owned());
-            return Ok(());
+            return Ok(LocalCommandOutcome::Rejected);
         }
+    };
+    let reporting = (|| {
+        let detail = format!(
+            "{}\n\nActive preferences\n{}",
+            state.preferences.summary(),
+            ValueDisplay(capture(state).projection()?)
+        );
+        let item = super::notices::notice(state, "Frontend preferences", Some(&detail))?;
+        state
+            .screen
+            .viewport
+            .scroll_to(
+                super::viewport::ViewAnchor {
+                    item,
+                    position: super::viewport::AnchorPosition::Header,
+                },
+                &state.transcript.projection,
+            )
+            .map_err(interaction)
+    })();
+    match outcome {
+        LocalCommandOutcome::Accepted => Ok(LocalCommandOutcome::after_acceptance(reporting)),
+        LocalCommandOutcome::Rejected => {
+            reporting?;
+            Ok(LocalCommandOutcome::Rejected)
+        }
+        LocalCommandOutcome::AcceptedWithError(error) => Ok(
+            LocalCommandOutcome::after_reported_failure(error, reporting),
+        ),
     }
-    let detail = format!(
-        "{}\n\nActive preferences\n{}",
-        state.preferences.summary(),
-        ValueDisplay(capture(state).projection()?)
-    );
-    let item = super::notices::notice(state, "Frontend preferences", Some(&detail))?;
+}
+
+fn command_failure(state: &mut AppState, error: &TuiError) -> Result<(), TuiError> {
+    let item = super::notices::error(state, "View command", &error.to_string())?;
     state
         .screen
         .viewport

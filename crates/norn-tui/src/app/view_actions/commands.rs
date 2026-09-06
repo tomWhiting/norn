@@ -4,11 +4,12 @@ use super::{browse, ensure_selected, expand, focus, pin_visible, select_original
 use crate::TuiError;
 use crate::app::focus::Focus;
 use crate::app::render::interaction;
+use crate::app::slash::LocalCommandOutcome;
 use crate::app::state::AppState;
 use crate::render::layout::SplitPreference;
 use std::num::{NonZeroU16, NonZeroUsize};
 
-const HELP: &str = "View controls\n/view focus composer|conversation|changes|divider · F6 / Shift+F6 cycles visible regions\n/view pane open|close|toggle · F2 switches upper pane\n/view split <conversation-weight> <changes-weight> · arrows resize focused divider\n/view up|down · PgUp/PgDn browse; Up/Down select rows outside composer\n/view expand|collapse|toggle|reset · Enter toggles selected tool\n/view compact|detailed · Ctrl+O toggles global tool detail\n/view follow|pin · return to live tail or keep current position\n/view older · demand one older history page\n/view more · demand next bytes of selected item's bodies\n/view history <events> · /view body <bytes> · positive demand preferences\n/view select <body-index> [<start-byte> <end-byte>] · select a whole loaded original body or explicit grapheme range\n/view selection [clear] · inspect/reset selection; mouse drag selects text\n/view copy · F4 · /view clipboard unspecified|disabled|osc52\n/view search [loaded|selected|older] <literal> · F3 · older requests one page and configured body prefixes; unavailable suffixes stay explicit\n/view next|previous · select a retained search hit; stale/unloaded revisions are refused\n/view export [--replace] <path> · F5 · original selection, create-new by default; spaces belong to the path\n/view status · current model, session, effort, tier, usage and local reading settings\n/view preferences status|run|user|local|save · remembered or temporary frontend choices\n/view help · frontend actions never enter steer/queue";
+const HELP: &str = "View controls\n/view focus composer|conversation|changes|divider · F6 / Shift+F6 cycles visible regions\n/view pane open|close|toggle · F2 switches upper pane\n/view split <conversation-weight> <changes-weight> · arrows resize focused divider\n/view up|down · PgUp/PgDn browse; Up/Down select rows outside composer\n/view expand|collapse|toggle|reset · Enter toggles selected tool\n/view compact|detailed · Ctrl+O toggles global tool detail\n/view follow|pin · return to live tail or keep current position\n/view older · demand one older history page\n/view more · demand next bytes of selected item's bodies\n/view history <events> · /view body <bytes> · positive demand preferences\n/view select <body-index> [<start-byte> <end-byte>] · select a whole loaded original body or explicit grapheme range\n/view selection [clear] · inspect/reset selection; mouse drag selects text\n/view copy · F4 · /view clipboard unspecified|disabled|osc52\n/view search [loaded|selected|older] <literal> · F3 · older requests one page and configured body prefixes; unavailable suffixes stay explicit\n/view next|previous · select a retained search hit; stale/unloaded revisions are refused\n/view export [--replace] <path> · F5 · original selection, create-new by default; spaces belong to the path\n/view status · current model, session, effort, tier, usage and local reading settings\n/view composer send-key enter|alt-enter · physical send key, independent of steer/queue\n/view preferences status|run|user|local|save · remembered or temporary frontend choices\n/view help · frontend actions never enter steer/queue";
 
 /// Whether this exact input belongs to the shared TUI-only view command.
 pub(in crate::app) fn is_view(text: &str) -> bool {
@@ -16,38 +17,53 @@ pub(in crate::app) fn is_view(text: &str) -> bool {
 }
 
 /// Execute a locally submitted command without admitting it to the agent.
-pub(in crate::app) fn command(text: &str, state: &mut AppState) -> Result<(), TuiError> {
-    let result = execute(text, state);
-    crate::app::frontend_preferences::edited(state)?;
+pub(in crate::app) fn command(
+    text: &str,
+    state: &mut AppState,
+) -> Result<LocalCommandOutcome, TuiError> {
+    let mut outcome = if text == "preferences" || text.starts_with("preferences ") {
+        crate::app::frontend_preferences::command(
+            text.strip_prefix("preferences").unwrap_or(text),
+            state,
+        )?
+    } else {
+        match execute(text, state) {
+            Ok(()) => LocalCommandOutcome::Accepted,
+            Err(message) => {
+                command_error(state, &message)?;
+                LocalCommandOutcome::Rejected
+            }
+        }
+    };
+    if matches!(outcome, LocalCommandOutcome::Accepted)
+        && let Err(error) = crate::app::frontend_preferences::edited(state)
+    {
+        // The local change already happened. A save-start failure must remain
+        // visible without turning the submitted command into a rejected draft.
+        let reporting = command_error(state, &error.to_string());
+        outcome = LocalCommandOutcome::after_reported_failure(error, reporting);
+    }
     state.screen.dirty = true;
     state.screen.allow_body_load = true;
-    match result {
-        Ok(()) => Ok(()),
-        Err(message) => {
-            let item = crate::app::notices::error(state, "View command", &message)?;
-            state
-                .screen
-                .viewport
-                .scroll_to(
-                    crate::app::viewport::ViewAnchor {
-                        item,
-                        position: crate::app::viewport::AnchorPosition::Header,
-                    },
-                    &state.transcript.projection,
-                )
-                .map_err(interaction)
-        }
-    }
+    Ok(outcome)
+}
+
+fn command_error(state: &mut AppState, message: &str) -> Result<(), TuiError> {
+    let item = crate::app::notices::error(state, "View command", message)?;
+    state
+        .screen
+        .viewport
+        .scroll_to(
+            crate::app::viewport::ViewAnchor {
+                item,
+                position: crate::app::viewport::AnchorPosition::Header,
+            },
+            &state.transcript.projection,
+        )
+        .map_err(interaction)
 }
 
 fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
-    if text == "preferences" || text.starts_with("preferences ") {
-        return crate::app::frontend_preferences::command(
-            text.strip_prefix("preferences").unwrap_or(text),
-            state,
-        )
-        .map_err(|error| error.to_string());
-    }
     if let Some(arguments) = text.strip_prefix("search ") {
         let (scope, query) = arguments.split_once(' ').unwrap_or(("loaded", arguments));
         let (scope, query) = match scope {
@@ -73,6 +89,16 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
     }
     let words: Vec<_> = text.split_whitespace().collect();
     match words.as_slice() {
+        ["composer", "send-key", key] => {
+            use crate::frontend_preferences::ComposerSendKey;
+            state.composer_send_key = match *key {
+                "enter" => ComposerSendKey::Enter,
+                "alt-enter" => ComposerSendKey::AltEnter,
+                _ => return Err("Use /view composer send-key enter|alt-enter".to_owned()),
+            };
+            state.screen.feedback = Some(format!("Composer send key: {key}"));
+            Ok(())
+        }
         ["next"] => super::reading::next_hit(state, false).map_err(|error| error.to_string()),
         ["previous"] => super::reading::next_hit(state, true).map_err(|error| error.to_string()),
         ["status"] => status(state),
@@ -230,7 +256,7 @@ fn parse_focus(value: &str) -> Result<Focus, String> {
 fn status(state: &mut AppState) -> Result<(), String> {
     let status = state.fixed_panel.status_bar();
     let text = format!(
-        "Model: {}\nSession: {}\nReasoning effort: {}\nService tier: {}\nTurn input tokens: {} ({})\nTurn output tokens: {} ({})\nView source: {:?}\nHistory demand: {} events\nBody demand: {} original bytes\nTool details by default: {}\nClipboard: {:?}\nThinking visible: {}\nSecondary fields visible: {}\n",
+        "Model: {}\nSession: {}\nReasoning effort: {}\nService tier: {}\nTurn input tokens: {} ({})\nTurn output tokens: {} ({})\nView source: {:?}\nHistory demand: {} events\nBody demand: {} original bytes\nTool details by default: {}\nClipboard: {:?}\nThinking visible: {}\nSecondary fields visible: {}\nComposer send key: {}\n",
         if status.model_name.is_empty() {
             "unavailable"
         } else {
@@ -270,6 +296,7 @@ fn status(state: &mut AppState) -> Result<(), String> {
         state.transcript.config.clipboard,
         state.display_toggles.thinking_visible,
         state.display_toggles.secondary_fields_visible,
+        state.composer_send_key.label(),
     );
     let item = crate::app::notices::notice(state, "Current view and runtime status", Some(&text))
         .map_err(|error| error.to_string())?;
@@ -284,4 +311,114 @@ fn status(state: &mut AppState) -> Result<(), String> {
             &state.transcript.projection,
         )
         .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+    use crate::frontend_preferences::ComposerSendKey;
+    use crate::input::history::InputHistory;
+    use crate::render::fixed_panel::StatusBar;
+    use crate::terminal::caps::TerminalCaps;
+
+    fn state() -> AppState {
+        AppState::new(
+            TerminalCaps::baseline(),
+            InputHistory::in_memory(),
+            norn::agent::registry::AgentRegistry::shared(),
+            crate::app::state::test_view_source(uuid::Uuid::new_v4()),
+            StatusBar::default(),
+        )
+    }
+
+    #[test]
+    fn invalid_command_retains_setting_and_reports_typed_rejection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = state();
+        assert!(matches!(
+            command("composer send-key alt-enter", &mut state)?,
+            LocalCommandOutcome::Accepted
+        ));
+        assert_eq!(state.composer_send_key, ComposerSendKey::AltEnter);
+        assert!(matches!(
+            command("composer send-key invalid", &mut state)?,
+            LocalCommandOutcome::Rejected
+        ));
+        assert_eq!(state.composer_send_key, ComposerSendKey::AltEnter);
+        let refusal = state
+            .transcript
+            .projection
+            .items()
+            .next_back()
+            .ok_or("missing command refusal")?;
+        assert!(matches!(
+            refusal.kind,
+            norn::session_view::ViewItemKind::Error
+        ));
+        assert_eq!(refusal.label.as_str(), "View command");
+        assert!(matches!(
+            command("status", &mut state)?,
+            LocalCommandOutcome::Accepted
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn accepted_setting_survives_save_start_failure() -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = state();
+        // The run-only fixture has no local save authority. Choosing a local
+        // scope and then changing a setting still commits those local choices.
+        assert!(matches!(
+            command("preferences local", &mut state)?,
+            LocalCommandOutcome::Accepted
+        ));
+        let notices = state.transcript.projection.items().len();
+        assert!(matches!(
+            command("composer send-key alt-enter", &mut state)?,
+            LocalCommandOutcome::Accepted
+        ));
+        assert_eq!(state.composer_send_key, ComposerSendKey::AltEnter);
+        assert_eq!(state.transcript.projection.items().len(), notices + 1);
+        let failure = state
+            .transcript
+            .projection
+            .items()
+            .next_back()
+            .ok_or("missing save-start error")?;
+        assert!(matches!(
+            failure.kind,
+            norn::session_view::ViewItemKind::Error
+        ));
+        assert!(matches!(
+            command("preferences save", &mut state)?,
+            LocalCommandOutcome::Rejected
+        ));
+        assert_eq!(state.composer_send_key, ComposerSendKey::AltEnter);
+        Ok(())
+    }
+
+    #[test]
+    fn preference_validation_is_not_lost_at_view_boundary() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut state = state();
+        for arguments in ["preferences invalid", "preferences save"] {
+            assert!(
+                matches!(
+                    command(arguments, &mut state)?,
+                    LocalCommandOutcome::Rejected
+                ),
+                "{arguments}"
+            );
+        }
+        for arguments in ["preferences", "preferences status", "preferences run"] {
+            assert!(
+                matches!(
+                    command(arguments, &mut state)?,
+                    LocalCommandOutcome::Accepted
+                ),
+                "{arguments}"
+            );
+        }
+        Ok(())
+    }
 }

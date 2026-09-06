@@ -1,4 +1,14 @@
-# Unreleased — model selection, Channels and MCP startup
+# Unreleased — local preview candidates and recorded checkpoints
+
+## 0.1.0-preview.5 — Iridium composer (assembled candidate, not installed)
+
+6 September 2026, Melbourne. The source now assembles the plain Iridium composer inside the existing retained fullscreen interface. It keeps the full-width input, blue user-message styling, dim status rules, compact tool rows and read-only Changes pane. Editable file panels, Work/Session management and hosted attach are outside this checkpoint.
+
+The candidate includes kernel undo/redo, selection and grapheme-aware editing, draft recall and completion, clipboard handling, and an Enter/Alt-Enter send choice persisted through the existing frontend preference owner. Send-key choice remains separate from steer/queue delivery mode. Rejected submissions retain their draft; accepted input and later persistence/reporting failures remain distinct. These are assembled source features awaiting the remaining integrated acceptance checks.
+
+Both Iridium crates are pinned to private checked revision `15673cba9222489e3c3315bb1526f60a6224a187` with default features disabled. The Iridium composer subtree excludes its syntax/parser and GPU features; Norn/Chiron's existing tree-sitter 0.25 tooling remains. The dependency's no-syntax/default TUI checks passed 378/393 tests, strict Clippy and formatting, plus a standalone native coexistence check. Those dependency checks do not verify the whole Norn application.
+
+Norn's assembled type check completed. The recorded TUI library run passed **833 of 835 tests**, with two real META/BackTab translation failures under repair. No passing rerun, full-workspace, integrated PTY or composer-performance result is claimed yet. Preview.5 still needs those checks and its build/install checkpoint; **installed Norn remains preview.4**. This candidate is neither a public release nor a main landing, and independent Fable/exact-commit 205 requirements remain open. See [NCP-001](../design/norn-iridium-composer/briefs/NCP-001.md) for the exact walls, acceptance and recorded proof scope.
 
 ## 0.1.0-preview.3 — compact tool descriptions (installed local preview)
 

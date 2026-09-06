@@ -14,6 +14,36 @@ use crate::events::DisplayToggles;
 use crate::render::layout::{SplitPreference, UpperPane};
 use crate::terminal::clipboard::ClipboardCapability;
 
+/// Physical send key, independent of steer/queue delivery during agent work.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ComposerSendKey {
+    /// Enter sends; Alt+Enter inserts a newline.
+    #[default]
+    Enter,
+    /// Alt+Enter sends; Enter inserts a newline.
+    AltEnter,
+}
+
+impl ComposerSendKey {
+    /// Stable settings and local-command spelling.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Enter => "enter",
+            Self::AltEnter => "alt-enter",
+        }
+    }
+
+    /// The other supported send-key policy.
+    #[must_use]
+    pub const fn toggle(self) -> Self {
+        match self {
+            Self::Enter => Self::AltEnter,
+            Self::AltEnter => Self::Enter,
+        }
+    }
+}
+
 /// Existing frontend choices; no transcript identity, draft or runtime authority is stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrontendPreferences {
@@ -23,6 +53,7 @@ pub struct FrontendPreferences {
     pub(crate) view: ViewConfig,
     pub(crate) display: DisplayToggles,
     pub(crate) submit_mode: InFlightSubmitMode,
+    pub(crate) composer_send_key: ComposerSendKey,
 }
 
 impl Default for FrontendPreferences {
@@ -34,6 +65,7 @@ impl Default for FrontendPreferences {
             view: ViewConfig::default(),
             display: DisplayToggles::default(),
             submit_mode: InFlightSubmitMode::Steer,
+            composer_send_key: ComposerSendKey::default(),
         }
     }
 }
@@ -161,7 +193,7 @@ pub enum FrontendPreferenceError {
 }
 
 impl FrontendPreferences {
-    /// Decode only the three owned sections, using existing defaults for absent fields.
+    /// Decode only the four owned sections, using existing defaults for absent fields.
     pub fn decode(value: Option<&Value>) -> Result<Self, FrontendPreferenceError> {
         let mut result = Self::default();
         let Some(value) = value else {
@@ -273,6 +305,17 @@ impl FrontendPreferences {
                 };
             }
         }
+        if let Some(value) = root.get("composer") {
+            let composer = object(value, "tui.composer")?;
+            known(composer, "tui.composer", &["send_key"])?;
+            if let Some(value) = composer.get("send_key") {
+                result.composer_send_key = match value.as_str() {
+                    Some("enter") => ComposerSendKey::Enter,
+                    Some("alt-enter") => ComposerSendKey::AltEnter,
+                    _ => return Err(invalid("tui.composer.send_key", "enter or alt-enter")),
+                };
+            }
+        }
         Ok(result)
     }
 
@@ -291,6 +334,10 @@ impl FrontendPreferences {
         result.insert(
             "input".to_owned(),
             serde_json::json!({"submit_mode":self.submit_mode.label()}),
+        );
+        result.insert(
+            "composer".to_owned(),
+            serde_json::json!({"send_key":self.composer_send_key.label()}),
         );
         Ok(result)
     }

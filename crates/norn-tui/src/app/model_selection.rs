@@ -13,7 +13,7 @@ use crate::render::fixed_panel::StatusBar;
 
 use super::dispatch::write_error_line;
 use super::event_loop::RuntimeRefs;
-use super::slash::write_dim_line;
+use super::slash::{LocalCommandOutcome, write_dim_line};
 use super::slash_catalog::{EffortCommand, effort_label, parse_effort_command};
 use super::state::AppState;
 
@@ -91,16 +91,19 @@ pub(super) fn handle_model(
     state: &mut AppState,
     runtime: &mut RuntimeRefs,
     arg: &str,
-) -> Result<(), TuiError> {
+) -> Result<LocalCommandOutcome, TuiError> {
     let name = arg.trim();
     if name.is_empty() {
-        return write_dim_line("usage: /model <name>", state);
+        write_dim_line("usage: /model <name>", state)?;
+        return Ok(LocalCommandOutcome::Rejected);
     }
     let cleared = match apply_runtime_change(state, runtime, SelectionChange::Model(name)) {
         Ok(cleared) => cleared,
-        Err(error) => return write_error_line(state, &format!("/model failed: {error}")),
+        Err(error) => {
+            write_error_line(state, &format!("/model failed: {error}"))?;
+            return Ok(LocalCommandOutcome::Rejected);
+        }
     };
-    state.transcript.model_changed()?;
     let mut line = format!("Switched model to {}", runtime.model);
     if let Some(effort) = cleared.effort {
         line.push_str("; cleared unsupported effort '");
@@ -112,93 +115,115 @@ pub(super) fn handle_model(
         line.push_str(tier.as_str());
         line.push('\'');
     }
-    write_dim_line(&line, state)
+    let reporting = state
+        .transcript
+        .model_changed()
+        .and_then(|()| write_dim_line(&line, state));
+    Ok(LocalCommandOutcome::after_acceptance(reporting))
 }
 
 pub(super) fn handle_reasoning_effort(
     state: &mut AppState,
     runtime: &mut RuntimeRefs,
     arg: &str,
-) -> Result<(), TuiError> {
+) -> Result<LocalCommandOutcome, TuiError> {
     let value = arg.trim();
     if value.is_empty() {
-        return write_dim_line(
+        write_dim_line(
             runtime
                 .model_selection
                 .effort()
                 .map_or("default", effort_label),
             state,
-        );
+        )?;
+        return Ok(LocalCommandOutcome::Accepted);
     }
     let effort = match parse_effort_command(value) {
         Some(EffortCommand::Set(effort)) => Some(effort),
         Some(EffortCommand::Clear) => None,
         None => {
-            return write_error_line(
+            write_error_line(
                 state,
                 &format!(
                     "/effort: invalid reasoning effort '{value}'; expected low, medium, high, xhigh, max, ultra, or default"
                 ),
-            );
+            )?;
+            return Ok(LocalCommandOutcome::Rejected);
         }
     };
     if let Err(error) = apply_runtime_change(state, runtime, SelectionChange::Effort(effort)) {
-        return write_error_line(state, &format!("/effort failed: {error}"));
+        write_error_line(state, &format!("/effort failed: {error}"))?;
+        return Ok(LocalCommandOutcome::Rejected);
     }
-    state.transcript.model_changed()?;
-    match effort {
-        Some(effort) => write_dim_line(
-            &format!("Reasoning effort: {}", effort_label(effort)),
-            state,
-        ),
-        None => write_dim_line("Reasoning effort cleared.", state),
-    }
+    let reporting = state
+        .transcript
+        .model_changed()
+        .and_then(|()| match effort {
+            Some(effort) => write_dim_line(
+                &format!("Reasoning effort: {}", effort_label(effort)),
+                state,
+            ),
+            None => write_dim_line("Reasoning effort cleared.", state),
+        });
+    Ok(LocalCommandOutcome::after_acceptance(reporting))
 }
 
 pub(super) fn handle_service_tier(
     state: &mut AppState,
     runtime: &mut RuntimeRefs,
     arg: &str,
-) -> Result<(), TuiError> {
+) -> Result<LocalCommandOutcome, TuiError> {
     let value = arg.trim();
     if value.is_empty() {
-        return write_dim_line(
+        write_dim_line(
             runtime
                 .model_selection
                 .tier()
                 .map_or("none", |tier| tier.as_str()),
             state,
-        );
+        )?;
+        return Ok(LocalCommandOutcome::Accepted);
     }
     match parse_service_tier_command(value) {
         Some(ServiceTierCommand::Fast) => set_fast_service_tier(state, runtime),
         Some(ServiceTierCommand::Clear) => {
             if let Err(error) = apply_runtime_change(state, runtime, SelectionChange::Tier(None)) {
-                return write_error_line(state, &format!("/service-tier failed: {error}"));
+                write_error_line(state, &format!("/service-tier failed: {error}"))?;
+                return Ok(LocalCommandOutcome::Rejected);
             }
-            state.transcript.model_changed()?;
-            write_dim_line("Service tier cleared.", state)
+            let reporting = state
+                .transcript
+                .model_changed()
+                .and_then(|()| write_dim_line("Service tier cleared.", state));
+            Ok(LocalCommandOutcome::after_acceptance(reporting))
         }
-        None => write_error_line(
-            state,
-            &format!("/service-tier: invalid service tier '{value}'; expected fast or none"),
-        ),
+        None => {
+            write_error_line(
+                state,
+                &format!("/service-tier: invalid service tier '{value}'; expected fast or none"),
+            )?;
+            Ok(LocalCommandOutcome::Rejected)
+        }
     }
 }
 
 pub(super) fn set_fast_service_tier(
     state: &mut AppState,
     runtime: &mut RuntimeRefs,
-) -> Result<(), TuiError> {
+) -> Result<LocalCommandOutcome, TuiError> {
     if let Err(error) = apply_runtime_change(
         state,
         runtime,
         SelectionChange::Tier(Some(ServiceTier::Fast)),
     ) {
-        return write_error_line(state, &format!("/service-tier failed: {error}"));
+        write_error_line(state, &format!("/service-tier failed: {error}"))?;
+        return Ok(LocalCommandOutcome::Rejected);
     }
-    state.transcript.model_changed()?;
-    write_dim_line("Service tier: fast", state)
+    let reporting = state
+        .transcript
+        .model_changed()
+        .and_then(|()| write_dim_line("Service tier: fast", state));
+    Ok(LocalCommandOutcome::after_acceptance(reporting))
 }
 
 #[cfg(test)]

@@ -39,7 +39,7 @@ fn apply_mouse(event: MouseEvent, state: &mut AppState) -> Result<bool, TuiError
     let Layout::Ready { upper, composer } = state.screen.layout else {
         return Ok(false);
     };
-    if popup(event, state, composer) {
+    if popup(event, state, composer)? {
         return Ok(true);
     }
     if matches!(event.kind, MouseEventKind::Down(MouseButton::Left))
@@ -52,6 +52,27 @@ fn apply_mouse(event: MouseEvent, state: &mut AppState) -> Result<bool, TuiError
             UpperPane::Conversation => UpperPane::Changes,
             UpperPane::Changes => UpperPane::Conversation,
         };
+        return Ok(true);
+    }
+    if matches!(event.kind, MouseEventKind::Down(MouseButton::Left))
+        && state
+            .screen
+            .composer_send_key_area
+            .is_some_and(|area| contains(area, event))
+    {
+        state.composer_send_key = state.composer_send_key.toggle();
+        return Ok(true);
+    }
+    if state.screen.dragging_composer {
+        if matches!(event.kind, MouseEventKind::Up(_)) {
+            state.screen.dragging_composer = false;
+        }
+        if matches!(
+            event.kind,
+            MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
+        ) {
+            composer_pointer(state, event, true)?;
+        }
         return Ok(true);
     }
     if state.screen.dragging_divider {
@@ -144,6 +165,11 @@ fn apply_mouse(event: MouseEvent, state: &mut AppState) -> Result<bool, TuiError
             pin_visible(state)?;
             state.screen.dragging_selection = false;
             state.screen.dragging_divider = target == Focus::Divider;
+            state.screen.dragging_composer = false;
+            if target == Focus::Composer {
+                state.screen.dragging_composer =
+                    composer_pointer(state, event, event.modifiers.contains(Modifiers::SHIFT))?;
+            }
             if target == Focus::Conversation
                 && let Some(hit) = state
                     .screen
@@ -214,9 +240,9 @@ fn drag_divider(state: &mut AppState, column: u16) -> Result<(), TuiError> {
     Ok(())
 }
 
-fn popup(event: MouseEvent, state: &mut AppState, composer: Rect) -> bool {
+fn popup(event: MouseEvent, state: &mut AppState, composer: Rect) -> Result<bool, TuiError> {
     let Some(popup) = state.autocomplete.as_mut() else {
-        return false;
+        return Ok(false);
     };
     let height = popup.height().min(composer.row);
     let area = Rect {
@@ -225,7 +251,7 @@ fn popup(event: MouseEvent, state: &mut AppState, composer: Rect) -> bool {
         ..composer
     };
     if !contains(area, event) {
-        return false;
+        return Ok(false);
     }
     match event.kind {
         MouseEventKind::ScrollUp => popup.select_up(),
@@ -239,10 +265,29 @@ fn popup(event: MouseEvent, state: &mut AppState, composer: Rect) -> bool {
                     state,
                     composer.width,
                     composer.row + composer.height,
-                );
+                )?;
             }
         }
         _ => {}
     }
-    true
+    Ok(true)
+}
+
+/// Apply an exact displayed input hit through the kernel's own cell map.
+fn composer_pointer(
+    state: &mut AppState,
+    event: MouseEvent,
+    extend: bool,
+) -> Result<bool, TuiError> {
+    if let Some(hit) =
+        state
+            .composer_geometry
+            .pointer(&state.input_editor, event.column, event.row)?
+    {
+        state
+            .input_editor
+            .set_cell_pointer(hit.row, hit.column, extend, hit.options)?;
+        return Ok(true);
+    }
+    Ok(false)
 }

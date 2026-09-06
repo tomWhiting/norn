@@ -5,6 +5,15 @@ use std::io;
 /// Errors that can occur during TUI operation.
 #[derive(Debug, thiserror::Error)]
 pub enum TuiError {
+    /// A reversible composer operation was refused by the editor.
+    #[error(transparent)]
+    Composer(#[from] crate::input::composer_kernel::ComposerError),
+    /// Iridium could not prepare the exact borrowed composer rectangle.
+    #[error(transparent)]
+    ComposerFrame(#[from] iridium_tui::frame::CellFrameError),
+    /// The editor's grapheme or cell coordinates did not resolve.
+    #[error(transparent)]
+    ComposerLayout(#[from] iridium_editor::cell_layout::CellLayoutError),
     /// Direct Markdown styling or original/display mapping failed.
     #[error(transparent)]
     Markdown(#[from] crate::render::retained_markdown::MarkdownError),

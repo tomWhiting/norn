@@ -1,0 +1,711 @@
+{
+  "id": "NCP-001",
+  "cluster": "norn-iridium-composer",
+  "title": "Integrate the plain Iridium composer with shared NFP preferences",
+  "status": "assembled_pending_validation",
+  "depends_on": [
+    "NFP-001 checked checkpoint d27259cc1c218a44be0ce624d103b04d799dcf21",
+    "ICC-002/ICC-003/ICC-004 private checkpoint 15673cba9222489e3c3315bb1526f60a6224a187"
+  ],
+  "checklist": [
+    "C0",
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C5",
+    "C6",
+    "C7"
+  ],
+  "stories": [
+    "S1",
+    "S2",
+    "S3"
+  ],
+  "design": "../design.json",
+  "purpose": "Replace duplicated editing with one capable kernel while preserving the user’s appearance, startup and session control.",
+  "task": "The registered composer implementation subsets are assembled for local candidate0.1.0-preview.5. Repair the two observed META/BackTab translator failures, then complete every exact-source acceptance and required check. Root has selected candidate version0.1.0-preview.5; build/install still requires the assembled checks to pass. Installed preview.4 remains unchanged; main Fable/exact205 and public actions remain separate.",
+  "requirements": [
+    {
+      "id": "R0",
+      "title": "Settle and register the actual dependency and host contracts",
+      "status": "accepted_by_root_registration_complete",
+      "depends_on": [],
+      "files": {
+        "modify": [],
+        "create": [
+          "docs/design/norn-iridium-composer/design.json",
+          "docs/design/norn-iridium-composer/DESIGN.md",
+          "docs/design/norn-iridium-composer/checklist.json",
+          "docs/design/norn-iridium-composer/CHECKLIST.md",
+          "docs/design/norn-iridium-composer/stories.json",
+          "docs/design/norn-iridium-composer/USER-STORIES.md",
+          "docs/design/norn-iridium-composer/briefs/NCP-001.json",
+          "docs/design/norn-iridium-composer/briefs/NCP-001.md"
+        ],
+        "delete": []
+      },
+      "spec": "WHEN root dispatches registration, THE SYSTEM SHALL register only these eight documents on the checked NFP integration checkpoint, capture current source/caller hashes, and distinguish pending ICC-002 dependency binding from local-preview and main-landing authority.",
+      "acceptance": [
+        "JSON is authoritative. Render all four Markdown files and verify checklist/story/structure coverage against every numbered requirement and exact wall. Preserve the reviewed external draft and handoff hashes as historical provenance; record these new registered bytes separately.",
+        "NFP source is fe6af3209d2498f5a67100552511078a3b749b74 with final documentation checkpoint d27259cc1c218a44be0ce624d103b04d799dcf21 in /private/tmp/norn-frontend-preferences on codex/norn-frontend-preferences-integrated. Installed norn 0.1.0-preview.4 and its source-bound local checks are recorded; preserve its single preference owner.",
+        "ICC-00109cfa793 and ICC002/00384d026f6 remain historical checkpoints. The current private checked/pushed dependency is15673cba9222489e3c3315bb1526f60a6224a187, including ICC-002 host transactions, ICC-003 host caret ownership and ICC-004 optional syntax. The bound receipt verifies remote revision, private visibility, committed source/docs and unchanged main. Both Norn Iridium crates use this exact Git rev with default-features=false; no private filesystem dependency or landed/public claim.",
+        "Root accepted R0 and dispatched bounded source partitions; required dependency binding is now recorded. Checked local preview builds/installation remain authorized after their own exact-source validation. Fable and exact-commit205 remain main requirements. R0 itself performed only documentation registration/rendering and source witnessing.",
+        "Public-history rewrite, visibility changes and public releases remain separate and unapproved. Preserve historical source paths via the recorded cleanup archives; do not treat a removed old worktree as the active dependency source."
+      ],
+      "acceptance_greps": [
+        "rg -n \"landing|receipt|send_key|scope|public_history\" docs/design/norn-iridium-composer/design.json"
+      ],
+      "design_refs": [
+        "D1",
+        "D10"
+      ],
+      "checklist": [
+        "C0"
+      ],
+      "stories": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "provenance": [
+        "norn-iridium-composer/design.json#D1",
+        "norn-iridium-composer/design.json#D10"
+      ]
+    },
+    {
+      "id": "R1",
+      "title": "Replace the mutable input buffer with one plain-text Iridium Editor",
+      "status": "assembled_pending_validation",
+      "depends_on": [
+        "R0",
+        "ICC-002/ICC-003/ICC-004 private checkpoint 15673cba9222489e3c3315bb1526f60a6224a187"
+      ],
+      "files": {
+        "modify": [
+          "Cargo.toml",
+          "Cargo.lock",
+          "crates/norn-tui/Cargo.toml",
+          "crates/norn-tui/src/error.rs",
+          "crates/norn-tui/src/input/mod.rs",
+          "crates/norn-tui/src/input/editor.rs",
+          "crates/norn-tui/src/app/edit.rs",
+          "crates/norn-tui/src/app/event_loop.rs",
+          "crates/norn-tui/src/app/turn/mid.rs",
+          "crates/norn-tui/src/app/autocomplete.rs",
+          "crates/norn-tui/src/input/autocomplete.rs",
+          "crates/norn-tui/src/app/state.rs",
+          "crates/norn-tui/src/app/view_actions.rs",
+          "crates/norn-tui/src/app/render.rs",
+          "crates/norn-tui/src/app/render/composer.rs"
+        ],
+        "create": [
+          "crates/norn-tui/src/input/composer_kernel.rs",
+          "crates/norn-tui/src/input/composer_kernel_tests.rs"
+        ],
+        "delete": [
+          "crates/norn-tui/src/input/navigation.rs",
+          "crates/norn-tui/src/input/wrap.rs"
+        ]
+      },
+      "spec": "WHEN Norn creates a foreground composer, THE SYSTEM SHALL own one long-lived Iridium Editor in the host InputEditor facade, explicitly clear its language, and replace the old Vec<String>, scalar motion and independent wrap implementation.",
+      "acceptance": [
+        "Consume iridium-editor and iridium-tui with default-features=false at the same actual checked private Git revision15673cba9222489e3c3315bb1526f60a6224a187, containing ICC-002/003/004; root has pinned both. Verify the resolved Iridium composer subtree omits iridium-syntax, its tree-sitter0.26 edge and GPU dependencies while retaining Norn/Chiron tree-sitter0.25 and unrelated parser tools. The checked standalone coexistence proof is dependency evidence, not a composed Norn build verdict. No private path dependency or invented revision.",
+        "All existing InputEditor callers compile against the replacement. Remove old live mutable lines/cursor fields and both navigation/wrap files; no second buffer, dual write, hidden compatibility editor, Iridium driver, runtime, TTY owner or event reader remains.",
+        "Normal edits use the kernel keymap and undo tree. Shared typed errors reach TuiError. Host full-document/range replacement, completion, recall and clear use the ICC-002 public Editor::replace_cell_range transaction and CellReplacementCursor, preserving one undoable operation and typed pre-publication refusal. set_content is only construction/loading, never ordinary edit, recall, clear or resize.",
+        "Use the checked ICC-002 public transaction to retain the pre-edit selection and whole grapheme boundaries, including joins across replacement edges; preserve independent undo gesture grouping. Never copy private preparation/normalization, replace this requirement with compound apply_command guessing, or weaken rejection and undo oracles. A newly discovered insufficient API requires a separately registered Iridium amendment.",
+        "No startup history replay, MCP connection, provider request, model/context/capacity change or document language inference is added. Immutable text snapshots used for completion are derived views keyed to actual editor revision, not a second mutable authority.",
+        "Update the existing unit assertions that depend on lines()/old wrapping to equivalent actual kernel state/geometry assertions; retain every semantic assertion and refusal case.",
+        "Prove replacement/clear/recall through the bound ICC-002 public Editor::replace_cell_range API in the actual Norn facade. Rejection must preserve text, revision, full cursor and undo history; exact pre/post selection and grapheme joins must round-trip. The private Iridium checkpoint evidence does not replace this composed Norn acceptance.",
+        "ICC-004 at private commit15673cba9222489e3c3315bb1526f60a6224a187 implements iridium-tui default=[\"syntax\"] and syntax=[\"iridium-editor/syntax\", \"dep:ropey\"]. Both Norn Iridium dependencies now disable defaults. Feature-off preserves public cell editing/rendering/search/selection/caret/chrome and iridium-lang rules; its Frame has no parser/span/Rope highlight-snapshot cache, while the editor text buffer still uses Rope. Palette::highlighted is syntax-only and default Iridium TUI remains highlighted. The recorded no-syntax/default scopes passed378/393 tests, both strict Clippy and fmt; standalone compile with tree-sitter0.25.10 and the normal no-syntax subtree passed. These are bounded dependency checks, not Norn assembly or GPU/full-workspace/venue/Fable proof. Parser-free means only the Iridium composer subtree; Norn/Chiron0.25 and unrelated parsers remain.",
+        "Root may set default-features=false on the existing workspace claude_runner dependency at unchanged Git revision643a1166f06a1f42961acf442f654670fbe9da22. Its default toon feature enables optional toon-format; that unused converter brings ratatui0.29/unicode-width=0.2.0, conflicting with the Iridium^0.2.2 requirement. Norn has no TOON/format-converter API use; its Claude adapter uses types::OutputFormat::StreamJson, separate from optional formats converters. Keep Text/Json/StreamJson, process/route/model behavior and all dependency source revisions unchanged. Resolve the lockfile for this explicit feature selection and existing composer dependencies; do not update unrelated dependencies. Run existing Claude adapter/wrapper tests and required composed checks to verify preserved behavior. This amendment authorizes only the feature flag/necessary resolved lock change, not a Claude route redesign or a passing graph claim."
+      ],
+      "acceptance_greps": [
+        "rg -n \"iridium|default-features|rev\" Cargo.toml crates/norn-tui/Cargo.toml",
+        "rg -n \"clear_language|Editor|CellInputError|replace_cell_range|CellReplacementCursor\" crates/norn-tui/src/input/composer_kernel.rs",
+        "rg -n \"input::wrap|super::wrap|cursor_row|cursor_col|lines: Vec<String>\" crates/norn-tui/src/input crates/norn-tui/src/app",
+        "rg -n \"claude_runner|default-features\" Cargo.toml crates/norn/Cargo.toml"
+      ],
+      "design_refs": [
+        "D1",
+        "D2",
+        "D4",
+        "D9"
+      ],
+      "checklist": [
+        "C1"
+      ],
+      "stories": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "provenance": [
+        "norn-iridium-composer/design.json#D1",
+        "norn-iridium-composer/design.json#D2",
+        "norn-iridium-composer/design.json#D4",
+        "norn-iridium-composer/design.json#D9"
+      ],
+      "authoring_partitions": [
+        {
+          "owner": "root",
+          "modify": [
+            "Cargo.toml",
+            "Cargo.lock"
+          ],
+          "scope": "Existing claude_runner default-features=false only at unchanged643a1166 revision, with necessary resolution and preserved Claude adapter tests."
+        }
+      ]
+    },
+    {
+      "id": "R2",
+      "title": "Route real idle and active-turn input through the same kernel and clipboard owner",
+      "status": "assembled_pending_validation",
+      "depends_on": [
+        "R1"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/input/mod.rs",
+          "crates/norn-tui/src/input/keybindings.rs",
+          "crates/norn-tui/src/input/editor.rs",
+          "crates/norn-tui/src/input/composer_kernel.rs",
+          "crates/norn-tui/src/app/edit.rs",
+          "crates/norn-tui/src/app/event_loop.rs",
+          "crates/norn-tui/src/app/turn/mid.rs",
+          "crates/norn-tui/src/app/autocomplete.rs",
+          "crates/norn-tui/src/app/view_actions.rs",
+          "crates/norn-tui/src/terminal/clipboard.rs",
+          "crates/norn-tui/src/app/mod.rs"
+        ],
+        "create": [
+          "crates/norn-tui/src/input/composer_keys.rs",
+          "crates/norn-tui/src/input/composer_keys_tests.rs",
+          "crates/norn-tui/src/input/composer_clipboard.rs",
+          "crates/norn-tui/src/input/composer_clipboard_tests.rs",
+          "crates/norn-tui/src/app/composer_effects.rs"
+        ],
+        "delete": []
+      },
+      "spec": "WHEN a terminal key or Paste event reaches either foreground input route, THE SYSTEM SHALL honor host control/focus/popup precedence, then dispatch unclaimed editing through the existing Iridium terminal translation and cell-key API.",
+      "acceptance": [
+        "Use iridium_tui::input::from_termina/translate for the existing termina0.3 event, after host-owned controls. Route capability replies as capabilities and unsupported keys explicitly; never erase modifiers or register a second reader. Preserve current press/release policy and prove repeated Enter does not double-submit.",
+        "Bare Enter/Tab first accept a visible popup; modified Enter reaches the configured send/newline policy. F6 focus, pane controls, Ctrl+C cancellation/clear/exit, Ctrl+O detail, Ctrl+E thinking and Ctrl+T steer/queue stay host-owned. Unclaimed undo/redo and selection commands reach Iridium; no hard-coded scalar editing remains.",
+        "One Event::Paste invokes paste_cells once and creates one undo transaction. Paste never invokes send policy or autocomplete acceptance; CR/LF and Unicode behavior follow the kernel and exact bytes are asserted. Do not loop through chars or interpret escape-looking pasted content as terminal instructions.",
+        "Copy/cut/paste requests stay under Norn terminal clipboard authority. Unspecified/disabled OSC52 never reads host clipboard or launches pbcopy/pbpaste. Successful write/flush remains explicitly unconfirmed clipboard acceptance. Unavailable or failed cut transport leaves text and history unchanged; a prepared deletion applies only after transport success and must remain undoable. If control escaping changes copied bytes, refuse destructive cut and retain the original selection.",
+        "Both idle and active-turn routes preserve non-composer focus and existing behavior deliberately: terminal Paste currently targets the composer regardless of upper-pane focus. Keep this explicit until the owner changes it, rather than inferring a new clipboard/focus policy.",
+        "Reuse the current NFP owner completion servicing in both idle and active-turn select paths; no parallel preferences task or changed exit ownership. Save keys remain local.",
+        "R2 clipboard uses authoritative ClipboardOperation plus an opaque kernel snapshot for collapsed-line and multicursor copy/cut. To prepare a cut, apply the public Command to cloned Document/CursorState only and retain that exact result; these are preflight scratch, not a second live editor. Before transport compare the actual copied strings for sanitation changes (not byte lengths); refuse sanitized destructive Cut before write. Only after successful transport write and flush, validate the unchanged snapshot and commit through checked ICC-002 replace_cell_range over the whole document with Exact(result_cursor), one undo transaction. Failure, sanitation or stale snapshot leaves live text/history unchanged. No private Iridium preparation or live raw apply_command is used. Clipboard adapter/transport remains R2; the already-registered kernel facade remains its existing owner, with no Iridium wall expansion.",
+        "Root owns a behavior-preserving extraction of finish_editor_action host-effect handling from app/event_loop.rs into app/composer_effects.rs, exposed as composer_effects::finish. Idle and active-turn callers use that one owner; app/mod.rs changes only the module declaration. This resolves the measured 518-production-line event_loop.rs excess without altering input order, clipboard/send/focus effects, acceptance, errors or terminal/runtime ownership. No extra feature, test file or duplicate event handler is added; keep the resulting production files within 500 lines."
+      ],
+      "acceptance_greps": [
+        "rg -n \"from_termina|handle_cell_key|paste_cells|Clipboard\" crates/norn-tui/src/input crates/norn-tui/src/app/edit.rs",
+        "rg -n \"for ch in text.chars|insert_paste_text|prepare_copy\" crates/norn-tui/src/app/event_loop.rs crates/norn-tui/src/app/turn/mid.rs crates/norn-tui/src/input"
+      ],
+      "design_refs": [
+        "D2",
+        "D3",
+        "D5",
+        "D9"
+      ],
+      "checklist": [
+        "C2"
+      ],
+      "stories": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "provenance": [
+        "norn-iridium-composer/design.json#D2",
+        "norn-iridium-composer/design.json#D3",
+        "norn-iridium-composer/design.json#D5",
+        "norn-iridium-composer/design.json#D9"
+      ],
+      "authoring_partitions": [
+        {
+          "owner": "root",
+          "create": [
+            "crates/norn-tui/src/app/composer_effects.rs"
+          ],
+          "modify": [
+            "crates/norn-tui/src/app/mod.rs"
+          ],
+          "scope": "Extract existing finish_editor_action host effects only; shared idle/mid callers, unchanged behavior."
+        }
+      ]
+    },
+    {
+      "id": "R3",
+      "title": "Paint and hit-test one borrowed cell rectangle inside the retained Norn Frame",
+      "status": "assembled_pending_validation",
+      "depends_on": [
+        "R1",
+        "R2"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/app/mod.rs",
+          "crates/norn-tui/src/app/state.rs",
+          "crates/norn-tui/src/app/render.rs",
+          "crates/norn-tui/src/app/render/composer.rs",
+          "crates/norn-tui/src/app/view_actions/mouse.rs",
+          "crates/norn-tui/src/input/editor.rs",
+          "crates/norn-tui/src/render/frame.rs",
+          "crates/norn-tui/src/render/frame_tests.rs",
+          "crates/norn-tui/src/render/mod.rs",
+          "crates/norn-tui/src/app/render/composer_tests.rs",
+          "crates/norn-tui/src/render/frame/diff.rs"
+        ],
+        "create": [
+          "crates/norn-tui/src/app/composer_geometry.rs",
+          "crates/norn-tui/src/app/composer_geometry_tests.rs",
+          "crates/norn-tui/src/render/composer_cells.rs",
+          "crates/norn-tui/src/render/composer_cells_tests.rs"
+        ],
+        "delete": []
+      },
+      "spec": "WHEN Norn prepares a screen or handles a composer pointer event, THE SYSTEM SHALL use the current kernel document and one authoritative cell geometry for the actual composer text rectangle, then encode those typed cells through Norn’s existing frame owner.",
+      "acceptance": [
+        "Use existing Layout::calculate and composer_input_area as parent geometry. Current live composer prefix is zero: preserve plain full-width text, not the old draft suggestion of an added input prefix.",
+        "Retain three existing host chrome rows when terminal height permits: dim top-left mode/token rule, bottom-right model/effort/tier/session rule, last-row hints. Keep current below-six-rows chrome elision. No fourth control row or width reduction.",
+        "Embed Frame::prepare_cells with chrome=None in the returned input rectangle; render_cells into typed cells encoded by Norn Frame. No independent ANSI/TTY owner or conversion back through Norn text wrapping. Current source change needed: Frame only accepts PaintRow today.",
+        "Preserve the blue > transcript prompt, two-column continuation margin and blank turn separation; app/render/transcript.rs remains read-only in this row.",
+        "Use one current geometry authority for cells/caret/selection/hit; settle parent-height negotiation before terminal writes and measure preparation counts, without assuming one whole-document map per keystroke is cheap.",
+        "Preserve blue user text on every logical/wrapped line, > transcript prefix, two-column continuation margin and blank turn separation. The current composer_tests Frame literal is in the wall solely to preserve those assertions while adapting typed Frame construction.",
+        "Current Frame literals occur in render/frame.rs, render/frame_tests.rs, app/render.rs and app/render/composer_tests.rs; update all consistently. Norn validates the full coherent frame before terminal writes; typed Iridium cells are not rewrapped as strings.",
+        "Reject extent mismatch and stale hits before mutation/paint. Recompute from the actual immutable borrow; preserve grapheme affinity, selection and undo across narrow/wide/tiny resize. No set_content, whole-text equality freshness check or extra stored editing buffer.",
+        "Keep existing Layout::calculate/composer_input_area implementation read-only unless a separately named defect requires amendment. Existing parent chrome/hints and full-width input are the approved appearance.",
+        "Root owns the narrow render/frame/diff.rs adapter-access amendment: widen only PreparedFrame::new and PreparedFrame::put from pub(super) to pub(in crate::render), and add dimensions() -> (u16, usize) at the same render-only visibility from the owned columns/cells grid. The sibling composer cell adapter uses those existing construction/insertion operations and validates destination dimensions before insertion. No grid ownership, cell mutation semantics, glyph clipping, delta encoding, terminal publication, rollback or renderer behavior changes are authorized by this amendment."
+      ],
+      "acceptance_greps": [
+        "rg -n \"prepare_cells|render_cells|CellBuffer|composer_input_area\" crates/norn-tui/src/app/render.rs crates/norn-tui/src/app/composer_geometry.rs crates/norn-tui/src/render/composer_cells.rs",
+        "rg -n \"every_user_line|encoded_user_rows\" crates/norn-tui/src/app/render/composer_tests.rs",
+        "rg -n \"pub\\(in crate::render\\)|fn new|fn put|fn dimensions\" crates/norn-tui/src/render/frame/diff.rs"
+      ],
+      "design_refs": [
+        "D2",
+        "D3",
+        "D6",
+        "D9"
+      ],
+      "checklist": [
+        "C3"
+      ],
+      "stories": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "provenance": [
+        "norn-iridium-composer/design.json#D2",
+        "norn-iridium-composer/design.json#D3",
+        "norn-iridium-composer/design.json#D6",
+        "norn-iridium-composer/design.json#D9"
+      ],
+      "authoring_partitions": [
+        {
+          "owner": "root",
+          "modify": [
+            "crates/norn-tui/src/render/frame/diff.rs"
+          ],
+          "scope": "Only render-sibling visibility for existing PreparedFrame::new/put plus owned-grid dimensions accessor; no renderer behavior changes.",
+          "reason": "PreparedFrame constructors/insertion are pub(super), so sibling composer_cells cannot call them or inspect actual destination dimensions."
+        }
+      ]
+    },
+    {
+      "id": "R4",
+      "title": "Make draft submission, completion and recall preserve admission and undo semantics",
+      "status": "assembled_pending_validation",
+      "depends_on": [
+        "R2",
+        "R3"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/input/mod.rs",
+          "crates/norn-tui/src/app/mod.rs",
+          "crates/norn-tui/src/app/event_loop.rs",
+          "crates/norn-tui/src/app/turn/mid.rs",
+          "crates/norn-tui/src/app/autocomplete.rs",
+          "crates/norn-tui/src/app/view_actions/commands.rs",
+          "crates/norn-tui/src/input/editor.rs",
+          "crates/norn-tui/src/input/history.rs",
+          "crates/norn-tui/src/app/turn/run.rs",
+          "crates/norn-tui/src/app/state.rs",
+          "crates/norn-tui/src/app/slash.rs",
+          "crates/norn-tui/src/app/model_selection.rs",
+          "crates/norn-tui/src/app/mcp_slash.rs",
+          "crates/norn-tui/src/app/frontend_preferences.rs",
+          "crates/norn-tui/src/app/composer_effects.rs"
+        ],
+        "create": [
+          "crates/norn-tui/src/app/composer_submission.rs",
+          "crates/norn-tui/src/app/composer_submission_tests.rs",
+          "crates/norn-tui/src/input/composer_transactions.rs",
+          "crates/norn-tui/src/input/composer_transactions_tests.rs"
+        ],
+        "delete": []
+      },
+      "spec": "WHEN the selected send action is invoked, THE SYSTEM SHALL snapshot and validate the current draft, admit it through the existing local/runtime input owner, and clear it only after the corresponding acceptance outcome; completion, recall and clear remain kernel transactions.",
+      "acceptance": [
+        "A rejected local command, stale completion, failed admission or unavailable destination retains exact draft bytes, selection and undo tree. Snapshot/preflight precedes the effect. No restored draft is automatically resubmitted after an accepted runtime operation.",
+        "Normal input uses the final NRT-002 SubmittedInput/local attempt/publication binding. Steer uses the existing ActiveInputSender and delivery ID; Closed retains the established explicit follow-up queue outcome; queue mode remains unchanged. No fabricated receipt, parallel runtime inbox, provider event reconstruction or text matching is introduced.",
+        "Distinguish acceptance from later failure: provider failure after admission is not a rejected send. If private recall-history persistence fails after acceptance, report the accepted outcome and history failure explicitly, retain recoverable submitted text through the existing transcript/undo semantics, and never return a rollback-looking error that invites duplicate dispatch.",
+        "InputHistory remains submission recall in its existing PrivateLineLog, separate from Iridium undo. Only accepted non-secret submissions enter it once; existing /auth secret exclusions and in-memory history behavior are retained. No public-history publication is implied by input recall.",
+        "Recall replaces the draft in one undoable transaction and restores the pre-navigation draft on forward exit. Bare Up/Down at the first/last visual row preserve current recall behavior; shifted selection motion never triggers recall. Autocomplete acceptance is a revision/trigger-bound byte-range transaction; reject stale offsets rather than silently doing nothing.",
+        "Successful submit and explicit clear are undoable editor operations. Undo is never intercepted as resend. Blank selected-send action during a pending steer retains existing interrupt-submit behavior; the alternate newline key only edits text.",
+        "Completion, recall and explicit/accepted clear call the checked ICC-002 public replacement transaction, with exact byte range and cursor policy. Preserve original pre-action selection and isolated undo grouping; no direct private command preparation or set_content reset.",
+        "Root owns composer_submission plus the existing event_loop/mid/run orchestration seam. Keep exactly one pending local ItemId and ComposerSnapshot in AppState. Before clearing a pending submitted draft, consume the actual ExecutionObservation::opening_input push receipt for that input. Accepted-but-unavailable is still acceptance; never infer admission from text, labels, item order, replayed events or a fabricated receipt. A missing/rejected pre-admission outcome retains the exact draft/selection/undo; no polling or duplicate runtime input is added.",
+        "Typed local command acceptance propagates from slash/model_selection/mcp_slash and the existing view command function alongside all current retained diagnostics. Distinguish rejected local commands from accepted commands even when the current handler renders a notice and returns Ok. Model capability/preflight checks and the original MCP start owner stay authoritative; parse/busy/preflight refusal does not admit or clear the draft, and a successfully started asynchronous operation is not replayed if later completion or notice/persistence handling fails.",
+        "Preserve acceptance versus post-acceptance failure in the returned outcome. After an effect is accepted, later history/preferences persistence or result reporting failure must explicitly retain that accepted fact and its error; it cannot be returned as a rejection that invites repeating the effect. Local errors still render their original diagnostics. Existing agent/profile slash routing remains unchanged.",
+        "R4 authoring partition: root owns app/composer_submission.rs, its tests and the event_loop.rs, turn/mid.rs, turn/run.rs, state.rs seams. A separately dispatched bounded slash owner owns app/slash.rs, app/model_selection.rs, app/mcp_slash.rs and only the shared view_actions/commands.rs command result function. Coordinate with its R6 preference owner; no simultaneous edits to that shared function or replay of settings/MCP effects.",
+        "R4 also owns the typed acceptance result of the existing app/frontend_preferences.rs command function, coordinated with its R6 owner. Decide accepted/rejected from the actual command branch: unknown subcommands are rejected, while an accepted scope/settings change followed by save-start, persistence or reporting failure remains accepted-with-error. Never infer outcomes from notice text, roll back a published settings change implicitly, replay a save/effect, or introduce a second preference owner. Only the command outcome propagation is added to the bounded slash partition; existing save lifecycle and publication semantics remain unchanged.",
+        "Root owns a behavior-preserving extraction of finish_editor_action host-effect handling from app/event_loop.rs into app/composer_effects.rs, exposed as composer_effects::finish. Idle and active-turn callers use that one owner; app/mod.rs changes only the module declaration. This resolves the measured 518-production-line event_loop.rs excess without altering input order, clipboard/send/focus effects, acceptance, errors or terminal/runtime ownership. No extra feature, test file or duplicate event handler is added; keep the resulting production files within 500 lines."
+      ],
+      "acceptance_greps": [
+        "rg -n \"admit|accepted|rejected|history|secret|receipt\" crates/norn-tui/src/app/composer_submission.rs",
+        "rg -n \"set_content|reset_buffer|for ch in\" crates/norn-tui/src/input crates/norn-tui/src/app/composer_submission.rs",
+        "rg -n \"opening_input|ComposerSnapshot|SlashOutcome|accepted|rejected\" crates/norn-tui/src/app/turn/run.rs crates/norn-tui/src/app/state.rs crates/norn-tui/src/app/slash.rs crates/norn-tui/src/app/model_selection.rs crates/norn-tui/src/app/mcp_slash.rs"
+      ],
+      "design_refs": [
+        "D4",
+        "D5",
+        "D7"
+      ],
+      "checklist": [
+        "C4"
+      ],
+      "stories": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "provenance": [
+        "norn-iridium-composer/design.json#D4",
+        "norn-iridium-composer/design.json#D5",
+        "norn-iridium-composer/design.json#D7"
+      ],
+      "authoring_partitions": [
+        {
+          "owner": "root",
+          "modify": [
+            "crates/norn-tui/src/app/event_loop.rs",
+            "crates/norn-tui/src/app/turn/mid.rs",
+            "crates/norn-tui/src/app/turn/run.rs",
+            "crates/norn-tui/src/app/state.rs"
+          ],
+          "create": [
+            "crates/norn-tui/src/app/composer_submission.rs",
+            "crates/norn-tui/src/app/composer_submission_tests.rs"
+          ],
+          "scope": "One pending snapshot/item and actual opening_input push admission; distinguish acceptance from subsequent failure."
+        },
+        {
+          "owner": "root-dispatched bounded slash agent",
+          "modify": [
+            "crates/norn-tui/src/app/slash.rs",
+            "crates/norn-tui/src/app/model_selection.rs",
+            "crates/norn-tui/src/app/mcp_slash.rs",
+            "crates/norn-tui/src/app/view_actions/commands.rs",
+            "crates/norn-tui/src/app/frontend_preferences.rs"
+          ],
+          "scope": "Typed accepted/rejected result alongside existing notices; commands.rs limited to its shared command result function, coordinated with R6 owner. frontend_preferences.rs limited to its actual command acceptance result; coordinate R6 ownership."
+        },
+        {
+          "owner": "root",
+          "create": [],
+          "modify": [
+            "crates/norn-tui/src/app/mod.rs",
+            "crates/norn-tui/src/app/composer_effects.rs"
+          ],
+          "scope": "Extract existing finish_editor_action host effects only; shared idle/mid callers, unchanged behavior."
+        }
+      ]
+    },
+    {
+      "id": "R5",
+      "title": "Consume NFP shared settings writer and single preference owner",
+      "status": "assembled_pending_validation",
+      "depends_on": [
+        "R0"
+      ],
+      "files": {
+        "modify": [],
+        "create": [],
+        "delete": []
+      },
+      "spec": "WHEN composer work is dispatched, THE SYSTEM SHALL consume the verified NFP shared snapshot/writer and one preference owner without implementing a second writer.",
+      "acceptance": [
+        "R5 deliberately has an empty composer source wall: its earlier writer extraction is fulfilled by the explicit NFP-001 dependency. Verify that prerequisite and record it; do not duplicate, silently drop or reopen its implementation.",
+        "Use TuiPreferencesSnapshot::from_layer/patch and the existing PreferenceOwner. Current core outcomes are Unchanged, PublishedDurable and PublishedDurabilityUncertain; outer patch errors mean no publication. Keep shared physical lock, descriptor/path binding, configured permit and whole-object precedence unchanged.",
+        "NFP currently owns view/display/input and preserves composer. R6 extends that same typed owner/projection and owned-key list for composer. No core settings source change is expected."
+      ],
+      "acceptance_greps": [
+        "rg -n \"snapshot.patch|fn install|fn edited|fn wait|fn finish|fn drain|fn exit_outcome\" crates/norn-tui/src/app/frontend_preferences.rs"
+      ],
+      "design_refs": [
+        "D8",
+        "D9"
+      ],
+      "checklist": [
+        "C5"
+      ],
+      "stories": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "provenance": [
+        "norn-iridium-composer/design.json#D8",
+        "norn-iridium-composer/design.json#D9"
+      ]
+    },
+    {
+      "id": "R6",
+      "title": "Extend NFP typed preference owner with visible composer send-key choice",
+      "status": "assembled_pending_validation",
+      "depends_on": [
+        "R2",
+        "R3",
+        "R4",
+        "R5"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/frontend_preferences.rs",
+          "crates/norn-tui/src/frontend_preferences_tests.rs",
+          "crates/norn-tui/src/app/frontend_preferences.rs",
+          "crates/norn-tui/src/app/frontend_preferences_tests.rs",
+          "crates/norn-tui/src/app/state.rs",
+          "crates/norn-tui/src/app/view_actions/commands.rs",
+          "crates/norn-tui/src/app/view_actions/keys.rs",
+          "crates/norn-tui/src/app/view_actions/mouse.rs",
+          "crates/norn-tui/src/app/render/composer.rs",
+          "crates/norn-tui/src/input/keybindings.rs",
+          "docs/TUI-PREFERENCES.md"
+        ],
+        "create": [],
+        "delete": []
+      },
+      "spec": "WHEN Norn launches or the operator changes the visible send control, THE SYSTEM SHALL resolve one typed send-key policy from the existing tui JSON value, use it identically in idle and active-turn routes, and persist explicit scoped changes through R5.",
+      "acceptance": [
+        "Add typed tui.composer.send_key with values enter and alt-enter to FrontendPreferences decode/projection/default and the existing PreferenceOwner capture/install/owned patch keys. Preserve Enter-send as the existing default. Malformed owned fields report dotted paths before raw mode/provider/MCP startup.",
+        "Use the current owner functions install, edited, wait, finish, command, drain and exit_outcome. AppState stores the active host policy; capture/install round-trip it. Extend snapshot.patch([view,display,input], projection) to the same owner including composer; no second writer, pending task or save queue.",
+        "Existing FrontendPreferencesLaunch already crosses ResolvedInvocation and TuiInputs; adding the typed field should not create new CLI startup reads or a second launch parameter. All five current TuiInputs construction sites (plus its separate struct definition) are inventory checks/read-only unless a separately named need arises.",
+        "Share NFP run/user/local scope, automatic-personal default working assumption, pending/failure/unknown-outcome handling, exact publication semantics, latest eligible projection and exit drain. Scope itself remains run-local as NFP documents. Do not reinstate the superseded explicit-save-only default.",
+        "Use existing last-row hint/control space and local /view composer send-key <enter|alt-enter> with /view preferences scope/status/save. No fourth chrome row, live input prefix, width reduction or agent admission. Exact pixel/cell hit area follows the retained Norn frame.",
+        "Bare Enter/Tab first accepts a popup. Enter mode: Enter submits, Alt+Enter and reported Shift+Enter newline. Alt-Enter mode: Enter newline, Alt+Enter submits. Never invent missing modifier information; unsupported combinations are truthful and a direct send action remains accessible. Ctrl+T remains steer/queue mode.",
+        "When composer becomes a strict owned section, update NFP fixture-only composer.future/composer.owner sentinels to an unowned sibling and retain the exact unowned-preservation oracle. This does not introduce a production fallback accepting unknown composer fields. Retain rejection tests for invalid owned composer fields.",
+        "Extend the existing TUI preferences guide with JSON/default/commands/limitations and the distinction between send_key and input.submit_mode; describe only implemented outcomes when later executed."
+      ],
+      "acceptance_greps": [
+        "rg -n \"send_key|alt-enter|composer\" crates/norn-tui/src/frontend_preferences.rs crates/norn-tui/src/app/frontend_preferences.rs crates/norn-tui/src/input/keybindings.rs docs/TUI-PREFERENCES.md"
+      ],
+      "design_refs": [
+        "D5",
+        "D6",
+        "D8",
+        "D9"
+      ],
+      "checklist": [
+        "C6"
+      ],
+      "stories": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "provenance": [
+        "norn-iridium-composer/design.json#D5",
+        "norn-iridium-composer/design.json#D6",
+        "norn-iridium-composer/design.json#D8",
+        "norn-iridium-composer/design.json#D9"
+      ]
+    },
+    {
+      "id": "R7",
+      "title": "Prove the integrated application and performance before landing",
+      "status": "assembled_pending_validation",
+      "depends_on": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-tui/Cargo.toml",
+          "crates/norn-tui/tests/retained_workspace.rs",
+          "crates/norn-tui/tests/support/retained_workspace.rs",
+          "crates/norn-tui/tests/support/retained_screen.rs",
+          "crates/norn-cli/Cargo.toml",
+          "Cargo.lock",
+          "crates/norn-cli/tests/frontend_preferences_restart.rs",
+          "crates/norn-cli/tests/support/frontend_preferences_restart.rs",
+          "docs/release-notes/UNRELEASED.md",
+          "crates/norn-tui/src/app/render/transcript.rs",
+          "crates/norn-tui/src/render/text.rs"
+        ],
+        "create": [
+          "crates/norn-tui/tests/iridium_composer.rs",
+          "crates/norn-tui/tests/support/iridium_composer.rs",
+          "crates/norn-tui/benches/iridium_composer.rs",
+          "crates/norn-cli/tests/composer_preferences.rs",
+          "crates/norn-cli/tests/support/composer_preferences.rs"
+        ],
+        "delete": []
+      },
+      "spec": "WHEN every implementation row is complete, THE SYSTEM SHALL verify the actual assembled Norn TUI with the kernel composer, preserved NRT acceptance and exact source guards before an authorized local preview; main landing separately requires independent Fable review and exact-commit 205 verification.",
+      "acceptance": [
+        "Use actual App/CLI assembly with a deterministic provider/PTY fixture and isolated settings/history. Exercise initial typing and active-turn typing, paired brackets/indentation, undo/redo, selection deletion, combining accents/flags/ZWJ, long lines, multiline paste, stale completion and recall restoration.",
+        "Exercise both JSON send modes through initial launch and persisted relaunch; popup Enter/Tab precedence, Alt/Shift/legacy capability cases, release/repeat, blank pending-steer interrupt, focus switching and direct send action. Prove local settings commands never become runtime inputs.",
+        "Inject rejection before admission, Closed steer-to-queue, local parse errors, history persistence failure after acceptance, clipboard disabled/send failure, pending settings write and concurrent MCP settings mutation. Assert exact draft/selection/undo and no duplicate input publication using real NRT-002 identities.",
+        "Resize wide/narrow/tiny while streaming and during selection/paste. Verify typed cell geometry/caret/hit agreement and that all existing retained transcript, Changes, compact details and publication-binding PTY assertions remain intact.",
+        "Measure actual assembled startup and short/multiline/long Unicode key+prepare+paint, including middle/end edits, ordinary no-op repaint and frame-preparation counts. Report local samples and dependency graph; no brittle wall-clock pass cap. Assert composer language remains unset and composer work introduces no Iridium syntax parsing; unrelated Norn parser activity is outside that assertion.",
+        "Reuse the actual NFP fresh executable PTY Environment/App in tests/support/frontend_preferences_restart.rs read-only; it now exists. The separate helper-process writer tests are not substituted for CLI restart. Add composer tests using its public press/session/request/MCP observations and deterministic barriers, with exact custom-test manifest registration if used.",
+        "Run both send modes through real CLI startup/save/exit/restart with user/run/local and whole-object shadowing. Preserve the current restart test unowned-sibling oracle after moving only its now-owned composer sentinels. Test local controls never produce provider requests/MCP reloads.",
+        "Measure original startup_trace stages, source/settings reads, model/MCP starts and ordinary short/multiline/middle/end Unicode editing in the actual assembly; no extra parse, transcript replay/hydration, settings lock/write or timer. Report samples and graph; no arbitrary timing pass cap. Historical error-heavy Rust parser cost is irrelevant to plain composer execution but remains separately qualified.",
+        "Execute meaningful focused/actual-App/PTY tests, fmt and strict required Clippy on exact source before the authorized local preview build/install. Preserve failures and scope limits. Fable and exact-commit 205 are required for main landing; local diagnostics never substitute for venue/review receipts. Record installed version/hash/rollback and invoke macOS say \"Norn updated\" after each successful local update. R0 registration itself performs no build or installation.",
+        "R7 may change only the existing tests/support/frontend_preferences_restart.rs App::frame helper visibility and API documentation so composer_preferences can call its existing source-position-bound, push/deadline complete-frame predicate wait. Reuse App::press for Alt-Enter instead of command/submit helpers that force bare Enter. Preserve the helper body, existing deadline semantics and all fixture assertions; no copied harness, polling, new runtime or other executable/signature behavior change.",
+        "Root owns the next local composer preview release note in docs/release-notes/UNRELEASED.md. Reserve 0.1.0-preview.5 for this assembled composer checkpoint; edit the note and already-registered Cargo version fields only after actual assembled checks pass. Describe the observed features, exact validation scope and remaining limitations; do not claim an installation before its receipt, or a main landing/public release/Fable/exact205 verdict. This registration performs neither the version bump nor the note edit.",
+        "Parser-free is scoped to the Iridium composer dependency subtree, not the whole Norn graph. With default-features=false on both Iridium crates, the actual resolved graph must omit iridium-syntax, the Iridium tree-sitter0.26 edge and Iridium GPU dependencies. Norn/Chiron tree-sitter0.25 and unrelated parser-backed tools remain unchanged. Verify dependency origins/versions rather than asserting no tree-sitter package anywhere in Norn.",
+        "Root may modify app/render/transcript.rs only at the existing test call insert_paste_text(&mut state, \"draft survives\") to propagate its newly fallible result with ?. Preserve its assertions and all production transcript-renderer bytes; R3 production read-only scope remains unchanged.",
+        "Root may remove the now-dead render/text.rs input_display_width helper and its single implementation-mirroring input_display_width_treats_controls_as_visible_placeholders test. The old input/wrap tab/control-placeholder path is retired; current Iridium kernel/cell geometry and actual rendering tests own input-width behavior. Do not retain dead production code behind cfg(test), add suppressions or weaken existing live geometry assertions. Other rendering helpers and tests remain unchanged."
+      ],
+      "acceptance_greps": [
+        "rg -n \"composer|paste|send_key|undo|rejected|history|clipboard|resize\" crates/norn-tui/tests/iridium_composer.rs crates/norn-tui/tests/support/iridium_composer.rs",
+        "rg -n \"language|parse|prepare|startup\" crates/norn-tui/benches/iridium_composer.rs",
+        "rg -n \"pub fn frame|pub async fn frame|fn frame\" crates/norn-cli/tests/support/frontend_preferences_restart.rs",
+        "rg -n \"draft survives|input_display_width\" crates/norn-tui/src/app/render/transcript.rs crates/norn-tui/src/render/text.rs"
+      ],
+      "design_refs": [
+        "D1",
+        "D2",
+        "D3",
+        "D4",
+        "D5",
+        "D6",
+        "D7",
+        "D8",
+        "D9",
+        "D10"
+      ],
+      "checklist": [
+        "C7"
+      ],
+      "stories": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "provenance": [
+        "norn-iridium-composer/design.json#D1",
+        "norn-iridium-composer/design.json#D2",
+        "norn-iridium-composer/design.json#D3",
+        "norn-iridium-composer/design.json#D4",
+        "norn-iridium-composer/design.json#D5",
+        "norn-iridium-composer/design.json#D6",
+        "norn-iridium-composer/design.json#D7",
+        "norn-iridium-composer/design.json#D8",
+        "norn-iridium-composer/design.json#D9",
+        "norn-iridium-composer/design.json#D10"
+      ],
+      "authoring_partitions": [
+        {
+          "owner": "channels_compatibility",
+          "modify": [
+            "crates/norn-cli/tests/support/frontend_preferences_restart.rs"
+          ],
+          "scope": "Only App::frame public visibility and API documentation; existing complete-frame helper implementation unchanged."
+        },
+        {
+          "owner": "root",
+          "modify": [
+            "docs/release-notes/UNRELEASED.md"
+          ],
+          "scope": "Write factual local composer preview.5 notes after actual assembled tests; no public or landed claim."
+        },
+        {
+          "owner": "root",
+          "modify": [
+            "crates/norn-tui/src/app/render/transcript.rs",
+            "crates/norn-tui/src/render/text.rs"
+          ],
+          "scope": [
+            "Root may modify app/render/transcript.rs only at the existing test call insert_paste_text(&mut state, \"draft survives\") to propagate its newly fallible result with ?. Preserve its assertions and all production transcript-renderer bytes; R3 production read-only scope remains unchanged.",
+            "Root may remove the now-dead render/text.rs input_display_width helper and its single implementation-mirroring input_display_width_treats_controls_as_visible_placeholders test. The old input/wrap tab/control-placeholder path is retired; current Iridium kernel/cell geometry and actual rendering tests own input-width behavior. Do not retain dead production code behind cfg(test), add suppressions or weaken existing live geometry assertions. Other rendering helpers and tests remain unchanged."
+          ]
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    "No changes outside each exact row wall; extra paths require prior amendment.",
+    "No second settings owner/TTY reader, Aion/Manifold dependency, runtime capacity change, side-panel file editor or daemon attach work.",
+    "No new lint suppression, unwrap/expect bypass or swallowed error; <=500 production LOC and declarations-only modules.",
+    "Local checked-preview implementation/build/install is already authorized when registered row dependencies and exact-source checks pass. R0 is documents only and source edits await root acceptance/dispatch. No public rewrite, visibility change, public release or main landing is authorized by this registration."
+  ],
+  "verification": [
+    "python3 -B .meridian/design-system/scripts/render-cluster.py docs/design/norn-iridium-composer",
+    "python3 -B .meridian/design-system/scripts/check-coverage.py docs/design/norn-iridium-composer",
+    "Run exact-source meaningful kernel/App/CLI/PTY and strict fmt/Clippy checks for changed composer code before local preview; R0 document checks do not claim those tests.",
+    "Fable and exact-commit205 before main/landing."
+  ],
+  "verification_status": "Norn cargo check completed type checking with warnings before their registered cleanup. The recorded TUI library run returned101:833 passed,2 actual META/BackTab translator failures,0 ignored; repairs and rerun are pending. No full/PTY/performance/native-preview5/install result is claimed. Private dependency checks378/393 remain scoped evidence only.",
+  "registered_at_melbourne": "2026-09-06T13:11:57.894111+10:00",
+  "registration_accepted_at_melbourne": "2026-09-06T13:14:55.594899+10:00",
+  "next_local_preview_version": {
+    "version": "0.1.0-preview.5",
+    "status": "candidate_version_selected_assembled_pending_validation_not_installed",
+    "owner": "root",
+    "prerequisite": "Fix observed translator failures; complete actual composed checks before build/install."
+  },
+  "candidate_status": {
+    "at_melbourne": "2026-09-06T14:32:59.015941+10:00",
+    "status": "assembled_pending_validation",
+    "candidate_version": "0.1.0-preview.5",
+    "installed_version_unchanged": "0.1.0-preview.4",
+    "Iridium_dependency": "15673cba9222489e3c3315bb1526f60a6224a187",
+    "Iridium_default_features": {
+      "editor": false,
+      "tui": false
+    },
+    "dependency_verification": "Private ICC004 no-syntax378/default393 tests and their strictClippy/fmt/standalone tree-sitter0.25.10 coexistence proof passed. This is not composed Norn proof.",
+    "cargo_check": {
+      "path": "/private/tmp/ncp-001-proof/assembly/check-2.log",
+      "sha256": "ec5f0ad994469590516514286df1b6789f9a3b47486bf07014cab809c411d6be",
+      "status": "type_check_completed_with_warnings_before_registered_warning_cleanup"
+    },
+    "TUI_library": {
+      "receipt": "/private/tmp/ncp-001-proof/assembly/tui-lib-2.json",
+      "sha256": "f97523641c6169a7756121a7e3cf7c37b14c356f48b635720c7c8bf2d976609a",
+      "log": "/private/tmp/ncp-001-proof/assembly/tui-lib-2.log",
+      "log_sha256": "36fb6f0a2a7e9174ef41d8c70985bbeabfc76ce52228b885b7d33d4c8e554289",
+      "passed": 833,
+      "failed": 2,
+      "ignored": 0,
+      "exit": 101,
+      "at_melbourne": "2026-09-06T14:30:23.978759+10:00",
+      "failures": [
+        "input::composer_keys::tests::capital_and_backtab_keep_their_delivered_text_and_selection_modifiers",
+        "input::composer_keys::tests::delivered_modifiers_and_repeat_survive_the_shared_translator"
+      ],
+      "assessment": "Actual META/BackTab translation defects under repair; no passing rerun claimed."
+    },
+    "not_yet_claimed": [
+      "full Norn workspace verification",
+      "actual integrated PTY acceptance",
+      "composer performance checks",
+      "preview.5 native build or installation",
+      "main landing",
+      "Fable or exact205 verdict",
+      "editable panels",
+      "hosted attach"
+    ],
+    "candidate_version_selected_by_root": true
+  }
+}

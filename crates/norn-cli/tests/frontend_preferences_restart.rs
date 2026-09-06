@@ -62,7 +62,7 @@ fn original_document() -> Value {
     json!({
         "env":{"NFP_UNOWNED_SENTINEL":"preserve exact unrelated document value"},
         "tui":{
-            "composer":{"future":{"pairing":"preserve"}},
+            "extension_data":{"future":{"pairing":"preserve"}},
             "extension":{"nested":["unchanged",7,null]}
         }
     })
@@ -70,7 +70,10 @@ fn original_document() -> Value {
 
 fn assert_unowned(actual: &Value, original: &Value) {
     assert_eq!(actual["env"], original["env"]);
-    assert_eq!(actual["tui"]["composer"], original["tui"]["composer"]);
+    assert_eq!(
+        actual["tui"]["extension_data"],
+        original["tui"]["extension_data"]
+    );
     assert_eq!(actual["tui"]["extension"], original["tui"]["extension"]);
 }
 
@@ -151,7 +154,7 @@ fn local_and_shadowing() -> TestResult {
     write_document(&environment.user, &original)?;
     let user_bytes = std::fs::read(&environment.user)?;
     let local = environment.local(0);
-    let local_original = json!({"tui":{"composer":{"owner":"local"},"extension":[1,2,3]}});
+    let local_original = json!({"tui":{"extension_data":{"owner":"local"},"extension":[1,2,3]}});
     write_document(&local, &local_original)?;
     environment.session(0, true, |app| {
         // A higher tui object replaces the complete lower object, even if it
@@ -173,7 +176,10 @@ fn local_and_shadowing() -> TestResult {
     let saved = document(&local)?;
     assert_eq!(saved["tui"]["view"]["history_events"], 9);
     assert_eq!(saved["tui"]["view"]["body_bytes"], 8192);
-    assert_eq!(saved["tui"]["composer"], local_original["tui"]["composer"]);
+    assert_eq!(
+        saved["tui"]["extension_data"],
+        local_original["tui"]["extension_data"]
+    );
     assert_eq!(
         saved["tui"]["extension"],
         local_original["tui"]["extension"]

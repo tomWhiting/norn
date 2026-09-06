@@ -546,7 +546,7 @@ mod tests {
         assert!(state.transcript.body_tasks.is_empty());
         assert!(state.transcript.body(&reference).is_none());
 
-        crate::app::event_loop::insert_paste_text(&mut state, "draft survives");
+        crate::app::event_loop::insert_paste_text(&mut state, "draft survives")?;
         // Arrivals beyond the captured frontier cannot postpone this frame.
         state.screen.terminal_event(99);
         assert_eq!(state.screen.ready_batch_remaining, 0);
