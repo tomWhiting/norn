@@ -1,7 +1,6 @@
 //! Retained-screen preparation and frame caching; terminal paint never reads history or bodies.
 
 use std::collections::{HashMap, HashSet};
-use std::io::Write as _;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Instant;
@@ -10,7 +9,7 @@ use norn::session_view::{BodyRef, DisplayText, ItemId, ViewSource};
 
 use crate::TuiError;
 use crate::input::editor::InputEditor;
-use crate::render::frame::{Frame, PaintRow};
+use crate::render::frame::{Frame, PaintRow, PreparedFrame};
 use crate::render::layout::{
     Layout, LayoutPolicy, LayoutRequest, Rect, SplitPreference, UpperLayout, UpperPane,
 };
@@ -65,7 +64,7 @@ pub struct ScreenState {
     pub allow_body_load: bool,
     displayed: HashMap<BodyRef, DisplayCache>,
     highlighter: crate::render::syntax::SyntaxHighlighter,
-    last_frame: Vec<u8>,
+    last_frame: Option<PreparedFrame>,
     /// Input/navigation/body completion marks the next ready frame dirty.
     pub dirty: bool,
     last_revision: Option<u64>,
@@ -118,7 +117,7 @@ impl ScreenState {
             allow_body_load: true,
             displayed: HashMap::new(),
             highlighter: crate::render::syntax::SyntaxHighlighter::new(),
-            last_frame: Vec::new(),
+            last_frame: None,
             dirty: true,
             last_revision: None,
             last_indicator: None,
@@ -152,7 +151,7 @@ impl ScreenState {
             self.dragging_selection = false;
             self.dragging_divider = false;
             self.displayed.clear();
-            self.last_frame.clear();
+            self.last_frame = None;
             self.navigation = None;
             self.changes_row = 0;
             self.changes.clear();
@@ -237,20 +236,17 @@ pub fn redraw_all(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(),
         return Ok(());
     }
     let frame = prepare(state, guard.terminal_columns(), guard.terminal_rows())?;
-    let output = frame.encode(&state.terminal_caps)?;
+    let prepared = frame.prepare(&state.terminal_caps)?;
+    super::helpers::sync_with_guard(
+        &state.terminal_caps,
+        guard,
+        &mut state.screen.last_frame,
+        prepared,
+    )?;
+    // Publication and flush must succeed before either baseline is advanced.
     state.screen.dirty = false;
     state.screen.last_revision = Some(revision);
     state.screen.last_indicator = indicator;
-    if output == state.screen.last_frame {
-        return Ok(());
-    }
-    let caps = state.terminal_caps.clone();
-    super::helpers::sync_with_guard(&caps, guard, |guard| {
-        guard.terminal_mut().write_all(&output)?;
-        guard.terminal_mut().flush()?;
-        Ok(())
-    })?;
-    state.screen.last_frame = output;
     Ok(())
 }
 

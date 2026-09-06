@@ -35,3 +35,12 @@ TUI startup now preserves typed build-error classification: argument failures ex
 ## Channel settings — implemented, verification in progress
 
 [NCS-001](../design/norn-channel-settings/briefs/NCS-001.md) adds a typed root `channels` object in existing settings layers and `-c channels=JSON`, with dedicated flags taking precedence. It supports optional default delivery for approved stdio sources that advertise Channels, strict named delivery and named `off`. Positive retained-message/byte limits and `reject-new` remain explicit; examples use chosen values, not product quotas. Ordinary non-channel servers keep their tools. Optional default-source failures are visible per server and exclude that connection while healthy sources publish; a malformed capability always fails its connection and is never accepted as tools-only. A named required-source failure is fatal to the candidate. Approval, generation fencing and the one-shot driven lifetime remain unchanged; `next-turn` remains interactive-only and `hold` remains unavailable. Policy/limit changes require restart, including when MCP definitions reload. These features are implemented in this source and verification is in progress. The historical `5227db4` installation predates them; its receipt does not cover NCS-001. Actual candidate checks, review results and any later installation are tracked in `/private/tmp/ncs-001-proof` and the external programme. No NCS battery or installation result is declared here. See the [operating guide](../MCP-LAUNCH.md).
+
+
+## 0.1.0-preview.2 — retained UI repair
+
+6 September 2026, Melbourne time. This checkpoint repairs full-screen repaint flicker and gives every line of a user message the same blue foreground, including wrapped lines. Original message bytes and selection mappings are preserved. The retained renderer, original composer/dividers and compact tool presentation remain.
+
+Routine updates paint changed cells without clearing the screen. Initial and resized views repaint the visible area; unchanged frames emit no terminal output. Prepared updates use one write/flush, with synchronized output where detected and explicit cleanup after I/O failure. The last successful frame remains authoritative until the next write completes.
+
+Implementation and local verification are in progress under [NUI-001](../design/norn-retained-tui/briefs/NUI-001.md). This note does not declare an installation or venue pass. Saved frontend preferences remain separate work for preview.3.

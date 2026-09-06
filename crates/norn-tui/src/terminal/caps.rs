@@ -72,7 +72,7 @@ impl TerminalCaps {
         )?;
         terminal.flush()?;
 
-        let timeout = Some(Duration::from_millis(150));
+        let mut timeout = Some(Duration::from_millis(150));
         while terminal.poll(Event::is_escape, timeout)? {
             match terminal.read(Event::is_escape)? {
                 Event::Csi(Csi::Keyboard(csi::Keyboard::ReportFlags(_))) => {
@@ -86,7 +86,9 @@ impl TerminalCaps {
                 }
                 Event::Csi(Csi::Device(csi::Device::DeviceAttributes(()))) => {
                     caps.italic_support = true;
-                    break;
+                    // Primary DA is not proof that earlier enhancement replies were received.
+                    // Drain replies already queued without extending terminal admission.
+                    timeout = Some(Duration::ZERO);
                 }
                 _ => {}
             }
@@ -135,7 +137,6 @@ impl Default for TerminalCaps {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

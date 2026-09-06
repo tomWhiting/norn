@@ -7,47 +7,18 @@ use crate::terminal::setup::TerminalGuard;
 use norn::provider::usage::Usage;
 use norn::tool::split_envelope_fields;
 use serde_json::Value;
-use std::io::Write as _;
 use std::sync::Arc;
 use std::time::Duration;
 
 /// Publish one prepared frame; always finish synchronized output after an I/O failure.
-pub(crate) fn sync_with_guard<F>(
+pub(crate) fn sync_with_guard(
     caps: &TerminalCaps,
     guard: &mut TerminalGuard,
-    body: F,
-) -> Result<(), TuiError>
-where
-    F: FnOnce(&mut TerminalGuard) -> Result<(), TuiError>,
-{
-    let prefix: &[u8] = if caps.synchronized_rendering {
-        b"\x1b[?2026h"
-    } else {
-        b"\x1b[?25l"
-    };
-    let suffix: &[u8] = if caps.synchronized_rendering {
-        b"\x1b[?2026l"
-    } else {
-        b""
-    };
-    let result = guard
-        .terminal_mut()
-        .write_all(prefix)
-        .map_err(TuiError::from)
-        .and_then(|()| body(guard));
-    let finish = guard
-        .terminal_mut()
-        .write_all(suffix)
-        .and_then(|()| guard.terminal_mut().flush());
-    match (result, finish) {
-        (Err(error), Err(finish)) => {
-            tracing::error!(%finish, "frame publication cleanup also failed");
-            Err(error)
-        }
-        (Err(error), Ok(())) => Err(error),
-        (Ok(()), Err(error)) => Err(error.into()),
-        (Ok(()), Ok(())) => Ok(()),
-    }
+    previous: &mut Option<crate::render::frame::PreparedFrame>,
+    prepared: crate::render::frame::PreparedFrame,
+) -> Result<(), TuiError> {
+    prepared.publish(previous, guard.terminal_mut(), caps.synchronized_rendering)?;
+    Ok(())
 }
 
 /// Compose `[{input} in / {output} out, {elapsed}]`.

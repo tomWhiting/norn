@@ -287,6 +287,42 @@ channels_compatibility owns exactly session_view/contract.rs, committed.rs, live
 
 The ordinary TUI view hides only the typed Metadata category and exposes it through explicit detail inspection; do not remove it from the semantic projection or persisted history, or use arbitrary text/label matching. norn_tui owns app/render/transcript.rs presentation integration; root coordinates any shared visibility wiring with that owner rather than writing the same file concurrently. Existing data preservation, publication binding, completion grouping, pinned reading and typed error requirements remain.
 
+### D-NUI-STYLE: Uniform multiline user-message styling
+
+Apply the existing blue user-message body style to the whole displayed user body, not only the range before its first newline. Keep the existing first-line prefix and continuation placement, exact source mappings, wrapping, tabs and control-character sanitization. No transcript-format, composer or layout redesign.
+
+Exercise multiline, leading blank line, CRLF, Unicode and wrapped rows; verify actual encoded frame styling where practical. Preserve existing identity/source and appearance assertions. No inserted body text, synthesized source offsets or lost graphemes.
+
+Root owns only app/render/composer.rs and new app/render/composer_tests.rs under crates/norn-tui/src for this row. Add the test child declaration in composer.rs if required; do not expand into other render files without registration.
+
+### D-NUI-FLICKER: Bounded native frame flicker repair
+
+Retain one prepared visible-cell baseline and publish only whole-grapheme changed spans in affected rows. Routine publication must not emit ESC[2J or blank the full screen first. Removed tails become explicit blank cells; a resize invalidates the previous dimensions. Unchanged cells and an unchanged frame write no terminal output. Preserve current source-map identity and retained view semantics.
+
+Assemble any supported synchronized-output prefix, the changed body and its suffix into one terminal write followed by one flush. Advance the committed baseline only after successful publication. A write or flush failure must leave the previous baseline unadvanced; cleanup preserves the original failure rather than replacing or swallowing it. No false successfully-published state after partial output.
+
+The capability probe may consume already-ready replies after primary DA without adding a delay. Retain actual terminal capability evidence and existing cleanup behavior; do not add a timer, poll interval, arbitrary frame delay, provider request, history read or semantic event.
+
+Use the named private render/frame/diff.rs child for the bounded pure comparison owner and diff_tests.rs for its regression tests. Exercise changed/unchanged frames, removed tails, whole graphemes, resize invalidation, synchronized assembly and publication failures with exact output/state assertions. Preserve existing frame and terminal tests and report the actual terminal/PTY evidence scope.
+
+norn_tui exclusively owns the original seven R2 production/private-test paths; channels_fixture separately owns the explicitly registered terminal-observer/canonical verification files. Root separately owns R1 composer styling; neither author expands into the other row or modifies shared paths concurrently. No broad styling, transcript, layout, service or runtime redesign is authorized.
+
+R2 independent verification partition: channels_fixture exclusively modifies crates/norn-tui/tests/support/retained_screen.rs and creates crates/norn-tui/tests/retained_screen_delta.rs. The current oracle assumes ESC[2J and starts a blank screen for each frame; replace that assumption with a stateful VTE model. For the same dimensions, apply changed-cell output to the last known frame. A resize starts a new geometry epoch whose acceptance requires proof of a full visible-cell paint, including explicit blanks and wide glyphs; do not treat unknown cells as known blanks. Preserve all existing style, geometry, bounds and failure assertions. Add actual delta/resize/blank/wide-glyph oracle regressions; no weakened assertions, skipped checks, invented successful screen or production source changes in this partition.
+
+The channels_fixture R2 verification partition also modifies crates/norn-tui/tests/pty_smoke.rs. Five existing rendered-text waits incorrectly require contiguous raw bytes although styled/delta output may split those bytes. Use the decoded retained Screen state for rendered-text observations while preserving every semantic, geometry, bounds, style and failure assertion. Raw terminal protocol and OSC assertions remain raw and unchanged. Do not weaken assertions, skip checks, alter production behavior or claim text exists merely because it appeared historically in a byte stream.
+
+The channels_fixture R2 verification partition also modifies crates/norn-tui/tests/support/retained_workspace.rs solely to retain repeated nonconsecutive requested terminal geometries. The existing geometries.contains check drops the second A in an actual A-to-B-to-A resize sequence; the stateful ordered-epoch observer requires that complete request sequence. Preserve the actual order and each returning geometry, all original resize scenarios, semantic assertions and bounds checks. No bounds relaxation, invented successful frame, skipped geometry, production change or broader fixture redesign.
+
+### D-NUI-CHECKPOINT: Preview.2 is the UI repair checkpoint
+
+Root owns Cargo.toml, Cargo.lock and docs/release-notes/UNRELEASED.md. Reserve0.1.0-preview.2 for this repair; change only workspace.package.version and the four workspace Norn package versions (norn, norn-cli, norn-macros, norn-tui) in Cargo.lock. Third-party versions, sources, checksums and dependencies remain unchanged.
+
+Record the actual two repairs, measured local validation and known limits in the release note. Run meaningful source-bound styling/frame/PTY regressions, formatting, strict workspace/all-target Clippy and structural no-bypass/500-production-line checks before claiming the checked preview ready. A registered case is not a passed test; evidence retains actual command, source and result.
+
+User-authorized checked local preview installation may precede the exact205 landing battery. Root verifies candidate and installed version/hash, retains a verified rollback copy and installation receipt, and invokes macOS say with the exact words Norn updated after successful installation. Report any speech failure separately from an otherwise installed binary. No main landing, public release, tag or waiver of exact venue/review requirements is authorized by this preview repair.
+
+Keep NFP work intact in its separate branch/worktree; its next preview reservation becomes0.1.0-preview.3. No saved-preference, Iridium, daemon or attach capability is implied by this repair. Do not change any programme row ID.
+
 ## Goals
 
 - All eight identity invariants and all producer obligations remain explicit.
@@ -330,6 +366,7 @@ The ordinary TUI view hides only the typed Metadata category and exposes it thro
 - `crates/norn-tui/src/app/render.rs`
 - `crates/norn-tui/src/app/render/changes.rs`
 - `crates/norn-tui/src/app/render/composer.rs`
+- `crates/norn-tui/src/app/render/composer_tests.rs`
 - `crates/norn-tui/src/app/render/hit.rs`
 - `crates/norn-tui/src/app/render/transcript.rs`
 - `crates/norn-tui/src/app/rotation.rs`
@@ -367,6 +404,8 @@ The ordinary TUI view hides only the typed Metadata category and exposes it thro
 - `crates/norn-tui/src/render/content.rs`
 - `crates/norn-tui/src/render/fixed_panel.rs`
 - `crates/norn-tui/src/render/frame.rs`
+- `crates/norn-tui/src/render/frame/diff.rs`
+- `crates/norn-tui/src/render/frame/diff_tests.rs`
 - `crates/norn-tui/src/render/frame_tests.rs`
 - `crates/norn-tui/src/render/layout.rs`
 - `crates/norn-tui/src/render/layout_tests.rs`
@@ -411,6 +450,7 @@ The ordinary TUI view hides only the typed Metadata category and exposes it thro
 - `crates/norn-tui/tests/mcp_channels.rs`
 - `crates/norn-tui/tests/model_selection.rs`
 - `crates/norn-tui/tests/pty_smoke.rs`
+- `crates/norn-tui/tests/retained_screen_delta.rs`
 - `crates/norn-tui/tests/retained_workspace.rs`
 - `crates/norn-tui/tests/support/mcp_channels_tui.rs`
 - `crates/norn-tui/tests/support/retained_screen.rs`
@@ -482,6 +522,7 @@ The ordinary TUI view hides only the typed Metadata category and exposes it thro
 - `docs/design/norn-retained-tui/producer-coverage.json`
 - `docs/design/norn-retained-tui/stories.json`
 - `docs/release-notes/0.1.0-preview.1.md`
+- `docs/release-notes/UNRELEASED.md`
 
 ## Constraints
 

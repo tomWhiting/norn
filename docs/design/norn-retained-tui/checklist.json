@@ -58,6 +58,23 @@
           "text": "Actual runtime and canonical PTY publication regression proof"
         }
       ]
+    },
+    {
+      "name": "Installed-preview repair",
+      "items": [
+        {
+          "id": "C13",
+          "text": "Uniform multiline user-message styling without source-map changes"
+        },
+        {
+          "id": "C14",
+          "text": "Native retained-frame flicker repair with exact frame/PTY evidence"
+        },
+        {
+          "id": "C15",
+          "text": "Versioned checked local preview, rollback and truthful landing boundary"
+        }
+      ]
     }
   ]
 }

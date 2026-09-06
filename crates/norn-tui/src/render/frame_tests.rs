@@ -6,6 +6,15 @@ use crate::render::retained_markdown::render_plain;
 use crate::render::retained_text::TextLayout;
 use std::num::NonZeroUsize;
 
+#[derive(Default)]
+struct PrintableText(String);
+
+impl vte::Perform for PrintableText {
+    fn print(&mut self, character: char) {
+        self.0.push(character);
+    }
+}
+
 #[test]
 fn untrusted_controls_are_never_emitted_as_terminal_commands()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -50,7 +59,11 @@ fn untrusted_controls_are_never_emitted_as_terminal_commands()
     };
     let bytes = frame.encode(&TerminalCaps::baseline())?;
     assert!(!bytes.windows(5).any(|window| window == b"\x1b]52;"));
-    assert!(String::from_utf8(bytes)?.contains("payload"));
+    assert!(!bytes.contains(&b'\x07'));
+    assert!(!bytes.contains(&b'\r'));
+    let mut decoded = PrintableText::default();
+    vte::Parser::new().advance(&mut decoded, &bytes);
+    assert!(decoded.0.contains("payload"));
     Ok(())
 }
 
@@ -138,5 +151,82 @@ fn selected_original_range_highlights_whole_grapheme_only() -> Result<(), Box<dy
         encoded.contains("A\x1b[0m\x1b[7m👩‍💻\x1b[0mZ"),
         "exact selected glyph style boundary missing"
     );
+    Ok(())
+}
+
+#[test]
+fn release_visible_surface_work_samples() -> Result<(), Box<dyn std::error::Error>> {
+    for (columns, lines) in [(120u16, 40u16), (240, 80)] {
+        let text = Arc::new(render_plain(&"x".repeat(usize::from(columns)))?);
+        let TextLayout::Rows(geometry) = text
+            .styled
+            .layout(usize::from(columns), NonZeroUsize::MIN)?
+        else {
+            return Err("sample geometry missing".into());
+        };
+        let area = Rect {
+            column: 0,
+            row: 0,
+            width: columns,
+            height: lines - 1,
+        };
+        let composer = Rect {
+            row: lines - 1,
+            height: 1,
+            ..area
+        };
+        let mut frame = Frame {
+            layout: Layout::Ready {
+                upper: UpperLayout::Single {
+                    pane: UpperPane::Conversation,
+                    area,
+                },
+                composer,
+            },
+            rows: (0..lines)
+                .map(|row| PaintRow {
+                    area: Rect {
+                        height: lines,
+                        ..area
+                    },
+                    row,
+                    text: Arc::clone(&text),
+                    geometry: geometry[0].clone(),
+                    selected: false,
+                    selection: Vec::new(),
+                    composer: row == lines - 1,
+                })
+                .collect(),
+            cursor: Some((0, lines - 1)),
+        };
+        let caps = TerminalCaps::baseline();
+        let old = frame.prepare(&caps)?;
+        let started = std::time::Instant::now();
+        let samples = 100;
+        for _ in 0..samples {
+            let prepared = std::hint::black_box(&frame).prepare(&caps)?;
+            assert!(prepared.encode_delta(Some(&old))?.is_empty());
+        }
+        let unchanged = started.elapsed();
+        let changed = Arc::new(render_plain(&format!(
+            "{}y",
+            "x".repeat(usize::from(columns) - 1)
+        ))?);
+        frame.rows.last_mut().ok_or("sample composer missing")?.text = changed;
+        let started = std::time::Instant::now();
+        let mut bytes = 0;
+        for _ in 0..samples {
+            let prepared = std::hint::black_box(&frame).prepare(&caps)?;
+            let delta = prepared.encode_delta(Some(&old))?;
+            bytes = delta.len();
+            assert!(!delta.windows(4).any(|window| window == b"\x1b[2J"));
+            assert_eq!(delta, format!("\x1b[?25l\x1b[{lines};{columns}H\x1b[0m\x1b[39;49my\x1b[0m\x1b[{lines};1H\x1b[?25h").as_bytes());
+        }
+        println!(
+            "NUI_FRAME_SAMPLE columns={columns} rows={lines} samples={samples} unchanged_total_us={} changed_total_us={} changed_bytes={bytes} unchanged_bytes=0",
+            unchanged.as_micros(),
+            started.elapsed().as_micros()
+        );
+    }
     Ok(())
 }

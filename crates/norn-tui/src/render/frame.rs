@@ -6,8 +6,11 @@ use std::sync::Arc;
 use super::layout::{Layout, Rect, UpperLayout};
 use super::retained_markdown::RenderedMarkdown;
 use super::retained_text::{AtomKind, TextAttribute, TextRow, TextStyle};
+
+mod diff;
 use crate::TuiError;
 use crate::terminal::caps::TerminalCaps;
+pub use diff::PreparedFrame;
 
 /// One already prepared row, with no terminal escape text in its content.
 pub struct PaintRow {
@@ -38,10 +41,15 @@ pub struct Frame {
 }
 
 impl Frame {
-    /// Encode one complete frame with bounded coordinates and no native scrolling.
+    /// Encode a complete initial frame without erasing the screen first.
     pub fn encode(&self, caps: &TerminalCaps) -> Result<Vec<u8>, TuiError> {
+        self.prepare(caps)?.encode_delta(None)
+    }
+
+    /// Prepare visible cells before terminal writes; no history or body reads occur here.
+    pub fn prepare(&self, caps: &TerminalCaps) -> Result<PreparedFrame, TuiError> {
         if self.layout == Layout::NoPaint {
-            return Ok(Vec::new());
+            return Ok(PreparedFrame::new(0, 0, None));
         }
         let (columns, lines) = match self.layout {
             Layout::Ready { composer, .. } => (
@@ -52,7 +60,7 @@ impl Frame {
                     .ok_or(TuiError::FrameBounds)?,
             ),
             Layout::ResizeRequired { area } => (area.width, area.height),
-            Layout::NoPaint => return Ok(Vec::new()),
+            Layout::NoPaint => return Ok(PreparedFrame::new(0, 0, None)),
         };
         if self
             .cursor
@@ -75,36 +83,21 @@ impl Frame {
                 return Err(TuiError::FrameBounds);
             }
         }
-        let mut output = Vec::new();
-        output.extend_from_slice(b"\x1b[?25l\x1b[0m\x1b[2J");
-        if let Layout::Ready { upper, composer } = self.layout {
-            fill(&mut output, composer, false, caps)?;
-            if let UpperLayout::Split { divider, .. } = upper {
-                for row in 0..divider.height {
-                    position(&mut output, divider.column, divider.row + row)?;
-                    style(&mut output, TextStyle::default(), false, false, false, caps)?;
-                    output.extend_from_slice("│".as_bytes());
-                }
+        let mut output = PreparedFrame::new(columns, lines, self.cursor);
+        if let Layout::Ready {
+            upper: UpperLayout::Split { divider, .. },
+            ..
+        } = self.layout
+        {
+            for row in 0..divider.height {
+                output.put(divider.column, divider.row + row, 1, b"\x1b[0m\xe2\x94\x82")?;
             }
         }
         for row in &self.rows {
             paint_row(&mut output, row, caps)?;
         }
-        if let Some((column, row)) = self.cursor {
-            position(&mut output, column, row)?;
-            output.extend_from_slice(b"\x1b[?25h");
-        }
         Ok(output)
     }
-}
-
-fn fill(output: &mut Vec<u8>, area: Rect, composer: bool, caps: &TerminalCaps) -> io::Result<()> {
-    style(output, TextStyle::default(), composer, false, false, caps)?;
-    for row in 0..area.height {
-        position(output, area.column, area.row + row)?;
-        output.extend(std::iter::repeat_n(b' ', usize::from(area.width)));
-    }
-    Ok(())
 }
 
 fn position(output: &mut Vec<u8>, column: u16, row: u16) -> io::Result<()> {
@@ -116,92 +109,92 @@ fn position(output: &mut Vec<u8>, column: u16, row: u16) -> io::Result<()> {
     )
 }
 
-fn paint_row(output: &mut Vec<u8>, row: &PaintRow, caps: &TerminalCaps) -> Result<(), TuiError> {
+fn paint_row(
+    output: &mut PreparedFrame,
+    row: &PaintRow,
+    caps: &TerminalCaps,
+) -> Result<(), TuiError> {
     if row.row >= row.area.height {
         return Err(TuiError::FrameBounds);
     }
-    let mut current_style = None;
-    let mut next_column = None;
+    let mut bytes = Vec::new();
     for atom in row.geometry.clip(0, usize::from(row.area.width))? {
         if atom.kind == AtomKind::Invisible {
             continue;
         }
-        if next_column != Some(atom.column) {
-            let column =
-                u16::try_from(atom.column).map_err(|source| TuiError::FrameCoordinate {
-                    value: atom.column,
-                    source,
-                })?;
-            position(
-                output,
-                row.area
-                    .column
-                    .checked_add(column)
-                    .ok_or(TuiError::FrameBounds)?,
-                row.area
-                    .row
-                    .checked_add(row.row)
-                    .ok_or(TuiError::FrameBounds)?,
-            )?;
-        }
-        next_column = Some(atom.column + atom.width);
-        if matches!(atom.kind, AtomKind::Unpaintable | AtomKind::Tab) {
-            style(
-                output,
-                TextStyle::default(),
-                row.composer,
-                row.selected,
-                row.selection
-                    .iter()
-                    .any(|range| range.start < atom.bytes.end && atom.bytes.start < range.end),
-                caps,
-            )?;
-            current_style = None;
-            output.extend(std::iter::repeat_n(b' ', atom.width));
-            continue;
-        }
+        bytes.clear();
         let highlighted = row
             .selection
             .iter()
             .any(|range| range.start < atom.bytes.end && atom.bytes.start < range.end);
-        let mut byte = atom.bytes.start;
-        let mut span_index = row
-            .text
-            .styled
-            .spans()
-            .partition_point(|span| span.range.end <= byte);
-        while byte < atom.bytes.end {
-            let span = row.text.styled.spans().get(span_index);
-            let (end, selected) = match span {
-                Some(span) if span.range.start <= byte => {
-                    (span.range.end.min(atom.bytes.end), span.style)
-                }
-                Some(span) => (span.range.start.min(atom.bytes.end), TextStyle::default()),
-                None => (atom.bytes.end, TextStyle::default()),
-            };
-            if current_style != Some((selected, highlighted)) {
+        if matches!(atom.kind, AtomKind::Unpaintable | AtomKind::Tab) {
+            style(
+                &mut bytes,
+                TextStyle::default(),
+                row.composer,
+                row.selected,
+                highlighted,
+                caps,
+            )?;
+            bytes.extend(std::iter::repeat_n(b' ', atom.width));
+        } else {
+            let mut byte = atom.bytes.start;
+            let mut span_index = row
+                .text
+                .styled
+                .spans()
+                .partition_point(|span| span.range.end <= byte);
+            while byte < atom.bytes.end {
+                let span = row.text.styled.spans().get(span_index);
+                let (end, selected) = match span {
+                    Some(span) if span.range.start <= byte => {
+                        (span.range.end.min(atom.bytes.end), span.style)
+                    }
+                    Some(span) => (span.range.start.min(atom.bytes.end), TextStyle::default()),
+                    None => (atom.bytes.end, TextStyle::default()),
+                };
                 style(
-                    output,
+                    &mut bytes,
                     selected,
                     row.composer,
                     row.selected,
                     highlighted,
                     caps,
                 )?;
-                current_style = Some((selected, highlighted));
-            }
-            let bytes = row
-                .text
-                .styled
-                .text()
-                .get(byte..end)
-                .ok_or(TuiError::FrameBounds)?;
-            output.extend_from_slice(bytes.as_bytes());
-            byte = end;
-            if span.is_some_and(|span| span.range.end <= byte) {
-                span_index += 1;
+                bytes.extend_from_slice(
+                    row.text
+                        .styled
+                        .text()
+                        .get(byte..end)
+                        .ok_or(TuiError::FrameBounds)?
+                        .as_bytes(),
+                );
+                byte = end;
+                if span.is_some_and(|span| span.range.end <= byte) {
+                    span_index += 1;
+                }
             }
         }
+        let column = u16::try_from(atom.column).map_err(|source| TuiError::FrameCoordinate {
+            value: atom.column,
+            source,
+        })?;
+        let width = u16::try_from(atom.width).map_err(|source| TuiError::FrameCoordinate {
+            value: atom.width,
+            source,
+        })?;
+        output.put(
+            row.area
+                .column
+                .checked_add(column)
+                .ok_or(TuiError::FrameBounds)?,
+            row.area
+                .row
+                .checked_add(row.row)
+                .ok_or(TuiError::FrameBounds)?,
+            width,
+            &bytes,
+        )?;
     }
     Ok(())
 }

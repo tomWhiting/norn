@@ -35,7 +35,7 @@ pub struct Screen {
     foregrounds: Vec<Vec<Option<[u8; 3]>>>,
     previous: Option<(usize, usize)>,
     error: Option<String>,
-    cleared: bool,
+    painted: Vec<Vec<bool>>,
 }
 
 impl Screen {
@@ -53,7 +53,7 @@ impl Screen {
             foregrounds: vec![vec![None; usize::from(cols)]; usize::from(rows)],
             previous: None,
             error: None,
-            cleared: false,
+            painted: vec![vec![false; usize::from(cols)]; usize::from(rows)],
         }
     }
 
@@ -168,6 +168,29 @@ impl Screen {
         Ok(())
     }
 
+    fn apply_frame(mut self, raw: &[u8], end_offset: usize) -> Self {
+        self.previous = None;
+        for row in &mut self.painted {
+            row.fill(false);
+        }
+        Parser::new().advance(&mut self, raw);
+        self.end_offset = end_offset;
+        self
+    }
+
+    fn fully_painted(&self) -> bool {
+        self.rows > 0 && self.cols > 0 && self.painted.iter().flatten().all(|painted| *painted)
+    }
+
+    fn valid(&self) -> bool {
+        self.error.is_none()
+            && !self.composer_rows().is_empty()
+            && self
+                .cells
+                .iter()
+                .all(|row| row.concat().width() == usize::from(self.cols))
+    }
+
     fn fail(&mut self, reason: impl Into<String>) {
         if self.error.is_none() {
             self.error = Some(reason.into());
@@ -257,6 +280,7 @@ impl Perform for Screen {
         }
         self.cells[location.1][location.0].clone_from(&text);
         for column in location.0..location.0 + width {
+            self.painted[location.1][column] = true;
             self.backgrounds[location.1][column] = self.background;
             self.foregrounds[location.1][column] = self.foreground;
             if column != location.0 {
@@ -298,7 +322,9 @@ impl Perform for Screen {
                         row.fill(None);
                     }
                     self.previous = None;
-                    self.cleared = true;
+                    for row in &mut self.painted {
+                        row.fill(true);
+                    }
                 }
                 'm' => self.sgr(params),
                 _ => self.fail(format!("unsupported retained-frame CSI {action}")),
@@ -318,11 +344,15 @@ impl Perform for Screen {
     }
 }
 
-/// Decode the last complete frame. Resize epochs are selected only from requested geometries.
-/// A queued old frame is validated at its old dimensions, never reinterpreted as the new size.
+/// Apply complete synchronized frames in order, retaining untouched cells and styles.
+/// Only a complete paint can admit the next explicitly requested geometry epoch.
+/// A queued old frame remains on the old dimensions; a fitting delta cannot resize it.
 pub fn latest(output: &[u8], geometries: &[(u16, u16)]) -> io::Result<Option<Screen>> {
+    let mut epochs = geometries.to_vec();
+    epochs.dedup();
+    let mut epoch = 0;
     let mut offset = 0;
-    let mut selected = None;
+    let mut selected: Option<Screen> = None;
     while let Some(start) = find(&output[offset..], FRAME_START) {
         let start = offset + start;
         let Some(end) = find(&output[start + FRAME_START.len()..], FRAME_END) else {
@@ -330,23 +360,28 @@ pub fn latest(output: &[u8], geometries: &[(u16, u16)]) -> io::Result<Option<Scr
         };
         let end = start + FRAME_START.len() + end + FRAME_END.len();
         let raw = &output[start..end];
-        let mut candidates = Vec::new();
-        for &(rows, cols) in geometries {
-            let mut screen = Screen::blank(rows, cols);
-            Parser::new().advance(&mut screen, raw);
-            let composer = screen.composer_rows();
-            if screen.error.is_none() && screen.cleared && !composer.is_empty() {
-                screen.end_offset = end;
-                candidates.push(screen);
+        let next_epoch = if selected.is_some() { epoch + 1 } else { epoch };
+        let full = epochs.get(next_epoch).and_then(|&(rows, cols)| {
+            let candidate = Screen::blank(rows, cols).apply_frame(raw, end);
+            (candidate.valid() && candidate.fully_painted()).then_some(candidate)
+        });
+        if let Some(full) = full {
+            selected = Some(full);
+            epoch = next_epoch;
+        } else if let Some(previous) = selected.take() {
+            let candidate = previous.apply_frame(raw, end);
+            if !candidate.valid() {
+                return Err(io::Error::other(format!(
+                    "invalid retained delta at byte {start} for {}x{}: {:?}",
+                    candidate.cols, candidate.rows, candidate.error
+                )));
             }
-        }
-        if candidates.len() != 1 {
+            selected = Some(candidate);
+        } else {
             return Err(io::Error::other(format!(
-                "retained frame matches {} requested geometries at byte {start}",
-                candidates.len()
+                "initial retained frame lacks a complete valid paint of the first requested geometry at byte {start}"
             )));
         }
-        selected = candidates.pop();
         offset = end;
     }
     Ok(selected)

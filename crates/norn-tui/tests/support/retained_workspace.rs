@@ -465,7 +465,7 @@ impl Workspace {
     /// Resize the PTY itself; observe the requested geometry in a completed frame.
     pub fn resize(&mut self, cols: u16, rows: u16) -> io::Result<Screen> {
         let after = self.output.bytes()?.len();
-        if !self.geometries.contains(&(rows, cols)) {
+        if self.geometries.last() != Some(&(rows, cols)) {
             self.geometries.push((rows, cols));
         }
         self.master

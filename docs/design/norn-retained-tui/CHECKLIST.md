@@ -15,3 +15,9 @@
 - [ ] **C10** — Indexed accepted-record and canonical human/assistant reconciliation
 - [ ] **C11** — Source-fenced TUI receipt consumption and compact completion
 - [ ] **C12** — Actual runtime and canonical PTY publication regression proof
+
+## Installed-preview repair
+
+- [ ] **C13** — Uniform multiline user-message styling without source-map changes
+- [ ] **C14** — Native retained-frame flicker repair with exact frame/PTY evidence
+- [ ] **C15** — Versioned checked local preview, rollback and truthful landing boundary

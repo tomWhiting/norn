@@ -245,7 +245,7 @@ pub(super) fn popup(state: &AppState, frame: &mut Frame, composer: Rect) -> Resu
 pub(super) fn input_text(content: &str) -> Result<Arc<RenderedMarkdown>, TuiError> {
     let mut rendered = crate::render::retained_markdown::render_plain(content)?;
     let text = rendered.styled.text().to_owned();
-    let end = text.find('\n').unwrap_or(text.len());
+    let end = text.len();
     let spans = if end == 0 {
         Vec::new()
     } else {
@@ -332,3 +332,7 @@ pub(super) fn activity_status(state: &AppState) -> Option<String> {
         None => activity,
     })
 }
+
+#[cfg(test)]
+#[path = "composer_tests.rs"]
+mod tests;

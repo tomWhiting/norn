@@ -25,6 +25,11 @@
           "id": "S4",
           "title": "Exact accepted conversation with compact completion",
           "text": "As a session participant I see each accepted human prompt and assistant response once, can inspect every exact execution/completion fact, and see uncertainty or errors without duplicated rows or guessed associations."
+        },
+        {
+          "id": "S5",
+          "title": "Stable display and consistent user-message styling",
+          "text": "As a participant I can read every line of a user message in the same intended style and interact with a stable retained terminal display, without changing the familiar layout."
         }
       ]
     }

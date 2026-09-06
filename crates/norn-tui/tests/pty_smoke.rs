@@ -390,7 +390,6 @@ fn run_app_handles_resize_during_streaming_output() -> Result<(), Box<dyn std::e
         return Err(child_failure("run_app resize", &run.status, &run.output).into());
     }
 
-    assert_output_contains(&run.output, RESIZE_MARKER, "resize scenario output")?;
     let screen = retained_screen::latest(&run.output, &[(SCREEN_ROWS, SCREEN_COLS), (18, 72)])?
         .ok_or("resize fixture has no completed frame")?;
     assert_eq!((screen.rows, screen.cols), (18, 72));
@@ -1128,438 +1127,482 @@ fn run_child_to_completion(
 ) -> Result<PtyRun, Box<dyn std::error::Error>> {
     // These fixtures exercise process-global PTY state, not concurrent TUI instances.
     static PTY_TEST_LOCK: Mutex<()> = Mutex::new(());
-    let _pty_test_guard = PTY_TEST_LOCK
+    let pty_test_guard = PTY_TEST_LOCK
         .lock()
         .map_err(|err| io::Error::other(format!("PTY test lock poisoned: {err}")))?;
 
-    let pty_system = native_pty_system();
-    let pair = pty_system.openpty(PtySize {
-        rows: size.rows,
-        cols: size.cols,
-        pixel_width: 0,
-        pixel_height: 0,
-    })?;
+    // Keep every PTY resource and cleanup owner inside the serialized scope.
+    let run = {
+        let pty_system = native_pty_system();
+        let pair = pty_system.openpty(PtySize {
+            rows: size.rows,
+            cols: size.cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
 
-    let capture_directory = tempfile::tempdir()?;
-    let capture = capture_directory.path().join("runtime.json");
-    let mut cmd = CommandBuilder::new(std::env::current_exe()?);
-    cmd.env(PTY_CAPTURE_ENV, &capture);
-    cmd.args(["--exact", test_name, "--nocapture"]);
-    cmd.env(child_env, "1");
-    if let Some(scenario) = scenario {
-        cmd.env(PTY_APP_SCENARIO_ENV, scenario);
-    }
-    cmd.env("TERM", "xterm-256color");
-    cmd.env("COLORTERM", "truecolor");
+        let capture_directory = tempfile::tempdir()?;
+        let capture = capture_directory.path().join("runtime.json");
+        let mut cmd = CommandBuilder::new(std::env::current_exe()?);
+        cmd.env(PTY_CAPTURE_ENV, &capture);
+        cmd.args(["--exact", test_name, "--nocapture"]);
+        cmd.env(child_env, "1");
+        if let Some(scenario) = scenario {
+            cmd.env(PTY_APP_SCENARIO_ENV, scenario);
+        }
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
 
-    #[cfg(unix)]
-    let initial_termios = pair
-        .master
-        .get_termios()
-        .ok_or("PTY termios unavailable before launch")?;
-    let mut child = pair.slave.spawn_command(cmd)?;
-    let mut cleanup = PtyChildCleanup {
-        killer: child.clone_killer(),
-        armed: true,
-    };
-    drop(pair.slave);
-
-    let output = Arc::new(OutputBuffer::default());
-    let reader_handle = spawn_reader(pair.master.try_clone_reader()?, Arc::clone(&output));
-
-    let mut writer = pair.master.take_writer()?;
-    wait_for_output(&output, retained_screen::SYNC_QUERY, Duration::from_secs(5))?;
-    writer.write_all(retained_screen::PROBE_REPLY)?;
-    writer.flush()?;
-    if child_env == PTY_APP_CHILD_ENV {
-        wait_for_frame(
-            &output,
-            &[(size.rows, size.cols)],
-            |_| true,
-            Duration::from_secs(5),
-        )?;
-    }
-    match interaction {
-        PtyInteraction::None => {}
-        PtyInteraction::InspectEmptyComposerThenExit => {
-            let screen = wait_for_frame(
-                &output,
-                &[(size.rows, size.cols)],
-                |screen| screen.composer_rows() == vec![usize::from(size.rows) - 3],
-                Duration::from_secs(5),
-            )?;
-            screen.assert_composer(1)?;
-            assert_eq!(screen.lines()[usize::from(size.rows) - 3], "");
-            assert_eq!(screen.cursor.0, 0);
-            writer.write_all(b"\x03")?;
-            writer.flush()?;
-        }
-        PtyInteraction::WaitForCommittedBasicThenExit => {
-            let screen = wait_for_frame(
-                &output,
-                &[(size.rows, size.cols)],
-                |screen| {
-                    screen.contains("Turn completed")
-                        && screen.contains("screen harness output")
-                        && screen
-                            .lines()
-                            .iter()
-                            .any(|line| line == "> prompt from pty harness")
-                },
-                Duration::from_secs(5),
-            )?;
-            assert_eq!(
-                screen.occurrences("prompt from pty harness"),
-                1,
-                "duplicate admitted prompt: {}",
-                screen.debug_text()
-            );
-            assert_eq!(
-                screen.occurrences("screen harness output"),
-                1,
-                "duplicate accepted assistant: {}",
-                screen.debug_text()
-            );
-            assert_eq!(screen.occurrences("second visible line"), 1);
-            assert_eq!(screen.occurrences("Turn completed"), 1);
-            screen.assert_composer(1)?;
-            let user_row = screen
-                .lines()
-                .iter()
-                .position(|line| line == "> prompt from pty harness")
-                .ok_or("original submitted-user prefix missing")?;
-            assert_eq!(screen.foreground_at(0, user_row), Some([80, 160, 220]));
-            assert!(
-                !screen.lines().iter().any(|line| line == "Assistant"),
-                "generic assistant header replaced original prose style"
-            );
-            assert!(
-                !screen.contains("Accepted model:"),
-                "normal completion details expanded without request"
-            );
-            assert!(
-                !screen.contains("Provider completed"),
-                "provider Done and normal completion both remained visible"
-            );
-            let completion_row = screen
-                .lines()
-                .iter()
-                .position(|line| line.contains("Turn completed"))
-                .ok_or("completed turn row missing from observed frame")?
-                + 1;
-            write!(
-                writer,
-                "\x1b[<0;1;{completion_row}M\x1b[<0;1;{completion_row}m"
-            )?;
-            writer.flush()?;
-            let details = wait_for_frame(
-                &output,
-                &[(size.rows, size.cols)],
-                |screen| {
-                    screen.contains("Accepted model:")
-                        && screen.contains("Provider response ID: None")
-                        && screen.contains("Stop reason: EndTurn")
-                },
-                Duration::from_secs(5),
-            )?;
-            assert!(details.contains("Source: ViewSource"));
-            assert!(details.contains("gpt-5.5"));
-            assert!(details.contains("context_window: 272000"));
-            assert!(details.contains("input_tokens: 3"));
-            assert!(details.contains("output_tokens: 4"));
-            assert!(details.contains("Elapsed:"));
-            assert!(
-                !details.contains("Publication coverage incomplete"),
-                "normal completion still has unresolved publications: {}",
-                details.debug_text()
-            );
-            assert!(
-                !details.cursor_visible,
-                "conversation detail focus retained composer caret"
-            );
-            writer.write_all(b"\x03")?;
-            writer.flush()?;
-        }
-        PtyInteraction::InspectResumedThenExit => {
-            let compact = wait_for_frame(
-                &output,
-                &[(size.rows, size.cols)],
-                |screen| {
-                    screen.contains("prior assistant resume answer")
-                        && screen.contains("resume_tool")
-                },
-                Duration::from_secs(5),
-            )?;
-            assert!(
-                !compact.contains("prior tool resume result"),
-                "tool body expanded by default"
-            );
-            writer.write_all(b"/view detailed \r")?;
-            writer.flush()?;
-            wait_for_screen(
-                &output,
-                "prior tool resume result",
-                size,
-                Duration::from_secs(5),
-            )?;
-            writer.write_all(b"\x03")?;
-            writer.flush()?;
-        }
-        PtyInteraction::GrowAndClear { bytes } => {
-            writer.write_all(bytes)?;
-            writer.flush()?;
-            let grown = wait_for_frame(
-                &output,
-                &[(size.rows, size.cols)],
-                |screen| screen.composer_rows().len() == 3 && screen.contains("panel-growth-input"),
-                Duration::from_secs(5),
-            )?;
-            grown.assert_composer(3)?;
-            writer.write_all(b"\x15")?;
-            writer.flush()?;
-            let cleared = wait_for_frame(
-                &output,
-                &[(size.rows, size.cols)],
-                |screen| {
-                    screen.composer_rows().len() == 1 && !screen.contains("panel-growth-input")
-                },
-                Duration::from_secs(5),
-            )?;
-            cleared.assert_composer(1)?;
-            writer.write_all(b"\x03")?;
-            writer.flush()?;
-        }
-        PtyInteraction::WaitForOutputThenCtrlC { marker } => {
-            wait_for_screen(
-                &output,
-                std::str::from_utf8(marker)?,
-                size,
-                Duration::from_secs(5),
-            )?;
-            writer.write_all(b"\x03")?;
-            writer.flush()?;
-        }
-        PtyInteraction::WaitForOutputWaitForOutputThenCtrlC {
-            first_marker,
-            second_marker,
-        } => {
-            wait_for_output(&output, first_marker, Duration::from_secs(5))?;
-            wait_for_screen(
-                &output,
-                std::str::from_utf8(second_marker)?,
-                size,
-                Duration::from_secs(5),
-            )?;
-            writer.write_all(b"\x03")?;
-            writer.flush()?;
-        }
-        PtyInteraction::WaitForOutputScreenThenCancelThenCtrlC {
-            marker,
-            screen_needle,
-        } => {
-            wait_for_output(&output, marker, Duration::from_secs(5))?;
-            wait_for_screen(&output, screen_needle, size, Duration::from_secs(5))?;
-            writer.write_all(b"\x03")?;
-            writer.flush()?;
-            wait_for_frame(
-                &output,
-                &[(size.rows, size.cols)],
-                |screen| {
-                    screen
-                        .lines()
-                        .iter()
-                        .filter(|line| line.starts_with("Turn cancelled ["))
-                        .count()
-                        == 1
-                        && screen.contains("generating")
-                },
-                Duration::from_secs(5),
-            )?;
-            writer.write_all(b"\x03")?;
-            writer.flush()?;
-            wait_for_frame(
-                &output,
-                &[(size.rows, size.cols)],
-                |screen| {
-                    screen
-                        .lines()
-                        .iter()
-                        .filter(|line| line.starts_with("Turn cancelled ["))
-                        .count()
-                        == 2
-                        && !screen.contains("generating")
-                },
-                Duration::from_secs(5),
-            )?;
-            writer.write_all(b"\x03")?;
-            writer.flush()?;
-        }
-        PtyInteraction::ResizeAfterOutputThenCtrlC { marker, rows, cols } => {
-            wait_for_output(&output, marker, Duration::from_secs(5))?;
-            pair.master.resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })?;
-            wait_for_frame(
-                &output,
-                &[(size.rows, size.cols), (rows, cols)],
-                |screen| {
-                    (screen.rows, screen.cols) == (rows, cols)
-                        && screen.contains("resize harness output before resize")
-                },
-                Duration::from_secs(5),
-            )?;
-            // The resize occurs during streaming. Finish that same response before the
-            // final Ctrl+C exits idle; a Ctrl+C while active only cancels its turn.
-            wait_for_frame(
-                &output,
-                &[(size.rows, size.cols), (rows, cols)],
-                |screen| {
-                    (screen.rows, screen.cols) == (rows, cols)
-                        && screen.contains("resize harness output after resize")
-                        && screen.contains("Turn completed")
-                },
-                Duration::from_secs(5),
-            )?;
-            writer.write_all(b"\x03")?;
-            writer.flush()?;
-        }
-        PtyInteraction::WriteWaitForOutputThenCtrlC { bytes, marker } => {
-            wait_for_frame(
-                &output,
-                &[(size.rows, size.cols)],
-                |_| true,
-                Duration::from_secs(5),
-            )?;
-            if !bytes.is_empty() {
-                writer.write_all(bytes)?;
-                writer.flush()?;
-            }
-            wait_for_screen(
-                &output,
-                std::str::from_utf8(marker)?,
-                size,
-                Duration::from_secs(5),
-            )?;
-            writer.write_all(b"\x03")?;
-            writer.flush()?;
-        }
-        PtyInteraction::WaitForOutputWriteWaitForCleanScreenThenExit {
-            first_marker,
-            bytes,
-            second_marker,
-            typed_marker,
-            forbidden,
-            boundary_marker,
-        } => {
-            wait_for_output(&output, first_marker, Duration::from_secs(5))?;
-            writer.write_all(bytes)?;
-            writer.flush()?;
-            wait_for_screen(&output, typed_marker, size, Duration::from_secs(5))?;
-            wait_for_screen(&output, forbidden, size, Duration::from_secs(5))?;
-            let assertion = assert_screen_text_above_boundary(
-                &clone_output(&output)?,
-                size,
-                forbidden,
-                boundary_marker,
-            )
-            .and_then(|()| {
-                assert_screen_line_excludes(&clone_output(&output)?, size, typed_marker, forbidden)
-            })
-            .and_then(|()| wait_for_output(&output, second_marker, Duration::from_secs(5)));
-            writer.write_all(b"\x15")?;
-            writer.write_all(b"\x03\x03\x03\x03")?;
-            writer.flush()?;
-            assertion?;
-        }
-        PtyInteraction::WriteWaitForSubmittedPromptThenCancel {
-            bytes,
-            submitted_prompt,
-            provider_marker,
-            boundary_marker,
-        } => {
-            wait_for_frame(
-                &output,
-                &[(size.rows, size.cols)],
-                |_| true,
-                Duration::from_secs(5),
-            )?;
-            writer.write_all(bytes)?;
-            writer.flush()?;
-            wait_for_screen(&output, submitted_prompt, size, Duration::from_secs(5))?;
-            let snapshot = clone_output(&output)?;
-            assert_screen_text_above_boundary(&snapshot, size, submitted_prompt, boundary_marker)?;
-            assert_screen_text_not_below_boundary(
-                &snapshot,
-                size,
-                submitted_prompt,
-                boundary_marker,
-            )?;
-            if output_contains(&snapshot, provider_marker) {
-                return Err(io::Error::other(format!(
-                    "provider marker {:?} arrived before submit-clear assertion",
-                    String::from_utf8_lossy(provider_marker),
-                ))
-                .into());
-            }
-            writer.write_all(b"\x03")?;
-            writer.flush()?;
-            wait_for_output(&output, b"Turn cancelled", Duration::from_secs(5))?;
-            writer.write_all(b"\x03")?;
-            writer.flush()?;
-        }
-        PtyInteraction::WriteWaitForSlashOutputThenCtrlC {
-            bytes,
-            marker,
-            boundary_marker,
-        } => {
-            wait_for_frame(
-                &output,
-                &[(size.rows, size.cols)],
-                |_| true,
-                Duration::from_secs(5),
-            )?;
-            writer.write_all(bytes)?;
-            writer.flush()?;
-            wait_for_screen(&output, marker, size, Duration::from_secs(5))?;
-            let snapshot = clone_output(&output)?;
-            assert_screen_text_above_boundary(&snapshot, size, marker, boundary_marker)?;
-            assert_screen_text_not_below_boundary(&snapshot, size, marker, boundary_marker)?;
-            writer.write_all(b"\x03")?;
-            writer.flush()?;
-            writer.write_all(b"\x03")?;
-            writer.flush()?;
-        }
-    }
-
-    let status = wait_for_child(&mut *child, Duration::from_secs(5))?;
-    cleanup.armed = false;
-    reader_handle.join().map_err(thread_panic_error)??;
-    #[cfg(unix)]
-    {
-        let restored = pair
+        #[cfg(unix)]
+        let initial_termios = pair
             .master
             .get_termios()
-            .ok_or("PTY termios unavailable after exit")?;
-        assert_eq!(
-            restored, initial_termios,
-            "actual terminal input attributes were not restored"
-        );
-    }
-    let output = clone_output(&output)?;
-    Lifecycle::from_output(&output, size.rows, size.cols).assert_restored()?;
-    let runtime = if child_env == PTY_APP_CHILD_ENV && status.success() {
-        Some(serde_json::from_slice(&std::fs::read(capture)?)?)
-    } else {
-        None
+            .ok_or("PTY termios unavailable before launch")?;
+        let mut child = pair.slave.spawn_command(cmd)?;
+        let mut cleanup = PtyChildCleanup {
+            killer: child.clone_killer(),
+            armed: true,
+        };
+        drop(pair.slave);
+
+        let output = Arc::new(OutputBuffer::default());
+        let reader_handle = spawn_reader(pair.master.try_clone_reader()?, Arc::clone(&output));
+
+        let mut writer = pair.master.take_writer()?;
+        wait_for_output(&output, retained_screen::SYNC_QUERY, Duration::from_secs(5))?;
+        writer.write_all(retained_screen::PROBE_REPLY)?;
+        writer.flush()?;
+        if child_env == PTY_APP_CHILD_ENV {
+            wait_for_frame(
+                &output,
+                &[(size.rows, size.cols)],
+                |_| true,
+                Duration::from_secs(5),
+            )?;
+        }
+        match interaction {
+            PtyInteraction::None => {}
+            PtyInteraction::InspectEmptyComposerThenExit => {
+                let screen = wait_for_frame(
+                    &output,
+                    &[(size.rows, size.cols)],
+                    |screen| screen.composer_rows() == vec![usize::from(size.rows) - 3],
+                    Duration::from_secs(5),
+                )?;
+                screen.assert_composer(1)?;
+                assert_eq!(screen.lines()[usize::from(size.rows) - 3], "");
+                assert_eq!(screen.cursor.0, 0);
+                writer.write_all(b"\x03")?;
+                writer.flush()?;
+            }
+            PtyInteraction::WaitForCommittedBasicThenExit => {
+                let screen = wait_for_frame(
+                    &output,
+                    &[(size.rows, size.cols)],
+                    |screen| {
+                        screen.contains("Turn completed")
+                            && screen.contains("screen harness output")
+                            && screen
+                                .lines()
+                                .iter()
+                                .any(|line| line == "> prompt from pty harness")
+                    },
+                    Duration::from_secs(5),
+                )?;
+                assert_eq!(
+                    screen.occurrences("prompt from pty harness"),
+                    1,
+                    "duplicate admitted prompt: {}",
+                    screen.debug_text()
+                );
+                assert_eq!(
+                    screen.occurrences("screen harness output"),
+                    1,
+                    "duplicate accepted assistant: {}",
+                    screen.debug_text()
+                );
+                assert_eq!(screen.occurrences("second visible line"), 1);
+                assert_eq!(screen.occurrences("Turn completed"), 1);
+                screen.assert_composer(1)?;
+                let user_row = screen
+                    .lines()
+                    .iter()
+                    .position(|line| line == "> prompt from pty harness")
+                    .ok_or("original submitted-user prefix missing")?;
+                assert_eq!(screen.foreground_at(0, user_row), Some([80, 160, 220]));
+                assert!(
+                    !screen.lines().iter().any(|line| line == "Assistant"),
+                    "generic assistant header replaced original prose style"
+                );
+                assert!(
+                    !screen.contains("Accepted model:"),
+                    "normal completion details expanded without request"
+                );
+                assert!(
+                    !screen.contains("Provider completed"),
+                    "provider Done and normal completion both remained visible"
+                );
+                let completion_row = screen
+                    .lines()
+                    .iter()
+                    .position(|line| line.contains("Turn completed"))
+                    .ok_or("completed turn row missing from observed frame")?
+                    + 1;
+                write!(
+                    writer,
+                    "\x1b[<0;1;{completion_row}M\x1b[<0;1;{completion_row}m"
+                )?;
+                writer.flush()?;
+                let details = wait_for_frame(
+                    &output,
+                    &[(size.rows, size.cols)],
+                    |screen| {
+                        screen.contains("Accepted model:")
+                            && screen.contains("Provider response ID: None")
+                            && screen.contains("Stop reason: EndTurn")
+                    },
+                    Duration::from_secs(5),
+                )?;
+                assert!(details.contains("Source: ViewSource"));
+                assert!(details.contains("gpt-5.5"));
+                assert!(details.contains("context_window: 272000"));
+                assert!(details.contains("input_tokens: 3"));
+                assert!(details.contains("output_tokens: 4"));
+                assert!(details.contains("Elapsed:"));
+                assert!(
+                    !details.contains("Publication coverage incomplete"),
+                    "normal completion still has unresolved publications: {}",
+                    details.debug_text()
+                );
+                assert!(
+                    !details.cursor_visible,
+                    "conversation detail focus retained composer caret"
+                );
+                writer.write_all(b"\x03")?;
+                writer.flush()?;
+            }
+            PtyInteraction::InspectResumedThenExit => {
+                let compact = wait_for_frame(
+                    &output,
+                    &[(size.rows, size.cols)],
+                    |screen| {
+                        screen.contains("prior assistant resume answer")
+                            && screen.contains("resume_tool")
+                    },
+                    Duration::from_secs(5),
+                )?;
+                assert!(
+                    !compact.contains("prior tool resume result"),
+                    "tool body expanded by default"
+                );
+                writer.write_all(b"/view detailed \r")?;
+                writer.flush()?;
+                wait_for_screen(
+                    &output,
+                    "prior tool resume result",
+                    size,
+                    Duration::from_secs(5),
+                )?;
+                writer.write_all(b"\x03")?;
+                writer.flush()?;
+            }
+            PtyInteraction::GrowAndClear { bytes } => {
+                writer.write_all(bytes)?;
+                writer.flush()?;
+                let grown = wait_for_frame(
+                    &output,
+                    &[(size.rows, size.cols)],
+                    |screen| {
+                        screen.composer_rows().len() == 3 && screen.contains("panel-growth-input")
+                    },
+                    Duration::from_secs(5),
+                )?;
+                grown.assert_composer(3)?;
+                writer.write_all(b"\x15")?;
+                writer.flush()?;
+                let cleared = wait_for_frame(
+                    &output,
+                    &[(size.rows, size.cols)],
+                    |screen| {
+                        screen.composer_rows().len() == 1 && !screen.contains("panel-growth-input")
+                    },
+                    Duration::from_secs(5),
+                )?;
+                cleared.assert_composer(1)?;
+                writer.write_all(b"\x03")?;
+                writer.flush()?;
+            }
+            PtyInteraction::WaitForOutputThenCtrlC { marker } => {
+                wait_for_screen(
+                    &output,
+                    std::str::from_utf8(marker)?,
+                    size,
+                    Duration::from_secs(5),
+                )?;
+                writer.write_all(b"\x03")?;
+                writer.flush()?;
+            }
+            PtyInteraction::WaitForOutputWaitForOutputThenCtrlC {
+                first_marker,
+                second_marker,
+            } => {
+                wait_for_screen(
+                    &output,
+                    std::str::from_utf8(first_marker)?,
+                    size,
+                    Duration::from_secs(5),
+                )?;
+                wait_for_screen(
+                    &output,
+                    std::str::from_utf8(second_marker)?,
+                    size,
+                    Duration::from_secs(5),
+                )?;
+                writer.write_all(b"\x03")?;
+                writer.flush()?;
+            }
+            PtyInteraction::WaitForOutputScreenThenCancelThenCtrlC {
+                marker,
+                screen_needle,
+            } => {
+                wait_for_screen(
+                    &output,
+                    std::str::from_utf8(marker)?,
+                    size,
+                    Duration::from_secs(5),
+                )?;
+                wait_for_screen(&output, screen_needle, size, Duration::from_secs(5))?;
+                writer.write_all(b"\x03")?;
+                writer.flush()?;
+                wait_for_frame(
+                    &output,
+                    &[(size.rows, size.cols)],
+                    |screen| {
+                        screen
+                            .lines()
+                            .iter()
+                            .filter(|line| line.starts_with("Turn cancelled ["))
+                            .count()
+                            == 1
+                            && screen.contains("generating")
+                    },
+                    Duration::from_secs(5),
+                )?;
+                writer.write_all(b"\x03")?;
+                writer.flush()?;
+                wait_for_frame(
+                    &output,
+                    &[(size.rows, size.cols)],
+                    |screen| {
+                        screen
+                            .lines()
+                            .iter()
+                            .filter(|line| line.starts_with("Turn cancelled ["))
+                            .count()
+                            == 2
+                            && !screen.contains("generating")
+                    },
+                    Duration::from_secs(5),
+                )?;
+                writer.write_all(b"\x03")?;
+                writer.flush()?;
+            }
+            PtyInteraction::ResizeAfterOutputThenCtrlC { marker, rows, cols } => {
+                wait_for_screen(
+                    &output,
+                    std::str::from_utf8(marker)?,
+                    size,
+                    Duration::from_secs(5),
+                )?;
+                pair.master.resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })?;
+                wait_for_frame(
+                    &output,
+                    &[(size.rows, size.cols), (rows, cols)],
+                    |screen| {
+                        (screen.rows, screen.cols) == (rows, cols)
+                            && screen.contains("resize harness output before resize")
+                    },
+                    Duration::from_secs(5),
+                )?;
+                // The resize occurs during streaming. Finish that same response before the
+                // final Ctrl+C exits idle; a Ctrl+C while active only cancels its turn.
+                wait_for_frame(
+                    &output,
+                    &[(size.rows, size.cols), (rows, cols)],
+                    |screen| {
+                        (screen.rows, screen.cols) == (rows, cols)
+                            && screen.contains("resize harness output after resize")
+                            && screen.contains("Turn completed")
+                    },
+                    Duration::from_secs(5),
+                )?;
+                writer.write_all(b"\x03")?;
+                writer.flush()?;
+            }
+            PtyInteraction::WriteWaitForOutputThenCtrlC { bytes, marker } => {
+                wait_for_frame(
+                    &output,
+                    &[(size.rows, size.cols)],
+                    |_| true,
+                    Duration::from_secs(5),
+                )?;
+                if !bytes.is_empty() {
+                    writer.write_all(bytes)?;
+                    writer.flush()?;
+                }
+                wait_for_screen(
+                    &output,
+                    std::str::from_utf8(marker)?,
+                    size,
+                    Duration::from_secs(5),
+                )?;
+                writer.write_all(b"\x03")?;
+                writer.flush()?;
+            }
+            PtyInteraction::WaitForOutputWriteWaitForCleanScreenThenExit {
+                first_marker,
+                bytes,
+                second_marker,
+                typed_marker,
+                forbidden,
+                boundary_marker,
+            } => {
+                wait_for_screen(
+                    &output,
+                    std::str::from_utf8(first_marker)?,
+                    size,
+                    Duration::from_secs(5),
+                )?;
+                writer.write_all(bytes)?;
+                writer.flush()?;
+                wait_for_screen(&output, typed_marker, size, Duration::from_secs(5))?;
+                wait_for_screen(&output, forbidden, size, Duration::from_secs(5))?;
+                let assertion = assert_screen_text_above_boundary(
+                    &clone_output(&output)?,
+                    size,
+                    forbidden,
+                    boundary_marker,
+                )
+                .and_then(|()| {
+                    assert_screen_line_excludes(
+                        &clone_output(&output)?,
+                        size,
+                        typed_marker,
+                        forbidden,
+                    )
+                })
+                .and_then(|()| {
+                    wait_for_screen(
+                        &output,
+                        std::str::from_utf8(second_marker).map_err(io::Error::other)?,
+                        size,
+                        Duration::from_secs(5),
+                    )
+                });
+                writer.write_all(b"\x15")?;
+                writer.write_all(b"\x03\x03\x03\x03")?;
+                writer.flush()?;
+                assertion?;
+            }
+            PtyInteraction::WriteWaitForSubmittedPromptThenCancel {
+                bytes,
+                submitted_prompt,
+                provider_marker,
+                boundary_marker,
+            } => {
+                wait_for_frame(
+                    &output,
+                    &[(size.rows, size.cols)],
+                    |_| true,
+                    Duration::from_secs(5),
+                )?;
+                writer.write_all(bytes)?;
+                writer.flush()?;
+                wait_for_screen(&output, submitted_prompt, size, Duration::from_secs(5))?;
+                let snapshot = clone_output(&output)?;
+                assert_screen_text_above_boundary(
+                    &snapshot,
+                    size,
+                    submitted_prompt,
+                    boundary_marker,
+                )?;
+                assert_screen_text_not_below_boundary(
+                    &snapshot,
+                    size,
+                    submitted_prompt,
+                    boundary_marker,
+                )?;
+                if rendered_history_contains(&snapshot, provider_marker, size)? {
+                    return Err(io::Error::other(format!(
+                        "provider marker {:?} arrived before submit-clear assertion",
+                        String::from_utf8_lossy(provider_marker),
+                    ))
+                    .into());
+                }
+                writer.write_all(b"\x03")?;
+                writer.flush()?;
+                wait_for_screen(&output, "Turn cancelled", size, Duration::from_secs(5))?;
+                writer.write_all(b"\x03")?;
+                writer.flush()?;
+            }
+            PtyInteraction::WriteWaitForSlashOutputThenCtrlC {
+                bytes,
+                marker,
+                boundary_marker,
+            } => {
+                wait_for_frame(
+                    &output,
+                    &[(size.rows, size.cols)],
+                    |_| true,
+                    Duration::from_secs(5),
+                )?;
+                writer.write_all(bytes)?;
+                writer.flush()?;
+                wait_for_screen(&output, marker, size, Duration::from_secs(5))?;
+                let snapshot = clone_output(&output)?;
+                assert_screen_text_above_boundary(&snapshot, size, marker, boundary_marker)?;
+                assert_screen_text_not_below_boundary(&snapshot, size, marker, boundary_marker)?;
+                writer.write_all(b"\x03")?;
+                writer.flush()?;
+                writer.write_all(b"\x03")?;
+                writer.flush()?;
+            }
+        }
+
+        let status = wait_for_child(&mut *child, Duration::from_secs(5))?;
+        cleanup.armed = false;
+        reader_handle.join().map_err(thread_panic_error)??;
+        #[cfg(unix)]
+        {
+            let restored = pair
+                .master
+                .get_termios()
+                .ok_or("PTY termios unavailable after exit")?;
+            assert_eq!(
+                restored, initial_termios,
+                "actual terminal input attributes were not restored"
+            );
+        }
+        let output = clone_output(&output)?;
+        Lifecycle::from_output(&output, size.rows, size.cols).assert_restored()?;
+        let runtime = if child_env == PTY_APP_CHILD_ENV && status.success() {
+            Some(serde_json::from_slice(&std::fs::read(capture)?)?)
+        } else {
+            None
+        };
+        PtyRun {
+            status,
+            output,
+            runtime,
+        }
     };
-    Ok(PtyRun {
-        status,
-        output,
-        runtime,
-    })
+    drop(pty_test_guard);
+    Ok(run)
 }
 
 #[derive(Default)]
@@ -1764,8 +1807,22 @@ fn assert_screen_text_not_below_boundary(
     Ok(())
 }
 
-fn output_contains(output: &[u8], marker: &[u8]) -> bool {
-    output.windows(marker.len()).any(|window| window == marker)
+fn rendered_history_contains(output: &[u8], marker: &[u8], size: PtySizeSpec) -> io::Result<bool> {
+    let marker = std::str::from_utf8(marker).map_err(io::Error::other)?;
+    // Preserve the negative assertion across every published frame: a provider
+    // marker must not escape detection merely because a later redraw hid it.
+    for (index, bytes) in output.windows(retained_screen::FRAME_END.len()).enumerate() {
+        if bytes == retained_screen::FRAME_END
+            && let Some(screen) = retained_screen::latest(
+                &output[..index + retained_screen::FRAME_END.len()],
+                &[(size.rows, size.cols)],
+            )?
+            && screen.contains(marker)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn clone_output(output: &Arc<OutputBuffer>) -> io::Result<Vec<u8>> {
