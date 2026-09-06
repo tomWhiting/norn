@@ -10,7 +10,7 @@ pub const DEFAULT_HISTORY_EVENTS: usize = 20;
 pub const DEFAULT_BODY_BYTES: usize = 65_536;
 
 /// Frontend-local preferences; changing them cannot alter an agent request.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ViewConfig {
     history_events: usize,
     body_bytes: usize,

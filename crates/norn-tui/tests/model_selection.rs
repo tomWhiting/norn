@@ -409,6 +409,7 @@ async fn run_fixture(
     reservation.confirm()?;
     let (event_sender, agent_event_rx) = tokio::sync::broadcast::channel(8);
     Box::pin(norn_tui::run_app(TuiInputs {
+        frontend_preferences: norn_tui::frontend_preferences::FrontendPreferencesLaunch::run_only(),
         session_binding: Arc::new(norn::session::SessionBinding::ephemeral_root()),
         provider: Arc::clone(&provider) as Arc<dyn Provider>,
         executor: Arc::new(ToolRegistry::with_context(context)),

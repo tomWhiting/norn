@@ -122,6 +122,7 @@ fn handle_mid_turn_action(
             apply_edit_action(other, state, cols, guard.terminal_rows());
         }
     }
+    crate::app::frontend_preferences::edited(state)?;
     Ok(())
 }
 

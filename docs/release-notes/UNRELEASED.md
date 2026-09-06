@@ -56,4 +56,15 @@ Local validation passed against identical frozen source: 809 TUI unit tests, fou
 
 The release-profile sample measured preparation and comparison of a cached visible surface over 100 iterations: about 0.20–0.22 ms per frame at 120×40 and 0.85–0.88 ms at 240×80. A one-character change emitted 45 bytes; unchanged frames emitted none. This measures renderer work, not physical terminal latency, provider latency or history parsing. Actual terminal feel remains subject to user testing.
 
-[NUI-001](../design/norn-retained-tui/briefs/NUI-001.md) is installed as an authorized local preview, not landed on main or declared a public release. The exact-commit venue battery and independent review remain required for landing. Saved frontend preferences remain separate work for preview.3.
+[NUI-001](../design/norn-retained-tui/briefs/NUI-001.md) is installed as an authorized local preview, not landed on main or declared a public release. The exact-commit venue battery and independent review remain required for landing. Saved frontend preferences remain separate work for preview.4.
+
+## 0.1.0-preview.4 — saved frontend preferences (verification in progress)
+
+6 September 2026, Melbourne time. [NFP-001](../design/norn-frontend-preferences/briefs/NFP-001.md) adds saved pane visibility/split, tool detail, display toggles, history/body demand, clipboard policy and steer/queue input mode. The [preferences guide](../TUI-PREFERENCES.md) gives the exact JSON shape and commands. Ordinary preference changes automatically save to personal settings; `/view preferences run` makes subsequent changes temporary, and `/view preferences local` explicitly selects workspace-local saving. Write scope is process-local and starts as User on each CLI launch. Higher whole `tui` objects still shadow lower layers on restart.
+
+Saving uses the same locked atomic document writer as MCP configuration, preserving unrelated fields and refusing conflicting owned-key edits. One observed background save keeps input/rendering responsive; ordinary saves add no transcript rows. Startup uses the existing loaded settings without another read or lock. Failed or uncertain publication is reported with its actual state, and ordinary exit observes accepted saves. The preview.2 flicker and multiline-styling repairs and preview.3 reserved tool-description repair are included unchanged.
+
+The source is integrated on `codex/norn-frontend-preferences-integrated` and local verification is in progress. Preview.4 is not installed or landed. Exact-commit venue verification and independent review remain required for main; Iridium and live attach/detach remain separate work.
+
+
+NFP integration, 6 September 2026 (Melbourne): preview.4 now inherits installed preview.3. Four fresh-process CLI restart scenarios passed, covering automatic personal saving, temporary changes, workspace-local precedence, malformed settings before MCP/terminal startup and conflicting external edits. Full composed checks remain pending. The earlier full-workspace compile was intentionally interrupted for NUI-002 and retains its non-verdict receipt.

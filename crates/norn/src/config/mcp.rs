@@ -185,6 +185,8 @@ pub struct McpRuntimeOverrides {
 /// Merged settings plus provenance-preserving MCP resolution.
 #[derive(Clone, Debug)]
 pub struct ResolvedSettings {
+    /// Original opaque frontend layers captured by the existing disk read.
+    pub tui_preferences: super::tui_preferences_types::TuiPreferencesLayers,
     /// Canonical project root used for project-scoped approvals and roots.
     pub project_root: PathBuf,
     /// Effective general settings, including the effective MCP map.
@@ -218,6 +220,11 @@ pub(crate) fn load_resolved_settings_at_launch_root(
         mcp_servers: (!overrides.cli.is_empty()).then(|| overrides.cli.clone()),
         ..NornSettings::default()
     };
+    let tui_preferences = super::tui_preferences_types::TuiPreferencesLayers {
+        user: layers.user.tui.clone(),
+        project: layers.project.tui.clone(),
+        local: layers.local.tui.clone(),
+    };
     let mut merged = merge_settings(
         &mut layers.user,
         &mut layers.project,
@@ -227,6 +234,7 @@ pub(crate) fn load_resolved_settings_at_launch_root(
     merged.mcp_servers = mcp_servers.definitions();
     validate_settings(&merged)?;
     Ok(ResolvedSettings {
+        tui_preferences,
         project_root: project_root.to_path_buf(),
         settings: merged,
         mcp_servers,
@@ -345,8 +353,8 @@ pub(crate) fn fingerprint(
         .as_deref()
         .map(url::Url::parse)
         .transpose()
-        .map_err(|_parse_error| ConfigError::InvalidConfig {
-            reason: format!("mcp server '{name}' has an invalid URL"),
+        .map_err(|parse_error| ConfigError::InvalidConfig {
+            reason: format!("mcp server '{name}' has an invalid URL: {parse_error}"),
         })?
         .map(|parsed| parsed.to_string());
     let headers = definition

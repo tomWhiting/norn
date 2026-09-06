@@ -1,0 +1,23 @@
+{
+  "cluster": "norn-frontend-preferences",
+  "title": "Saved frontend preferences checklist",
+  "sections": [
+    {
+      "name": "Required checkpoint",
+      "items": [
+        {
+          "id": "C1",
+          "text": "One shared lock/atomic writer and retained tui snapshots"
+        },
+        {
+          "id": "C2",
+          "text": "Existing preferences restore/save with recorded automatic-personal assumption, explicit scopes, pending-state truth and unchanged appearance"
+        },
+        {
+          "id": "C3",
+          "text": "Actual process restart, concurrent MCP preservation and truthful failure proof"
+        }
+      ]
+    }
+  ]
+}

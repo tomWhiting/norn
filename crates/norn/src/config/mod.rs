@@ -31,14 +31,21 @@ mod mcp_local;
 mod mcp_patch;
 pub mod mcp_state;
 mod mcp_state_types;
-mod mcp_workspace_write;
 pub(crate) mod merge;
 pub mod paths;
 pub mod permissions;
+mod private_settings_document;
 mod provider_auth;
 mod provider_security;
+mod settings_document;
+mod settings_write;
+#[cfg(all(test, unix))]
+mod settings_write_process_tests;
+mod tui_preferences;
+mod tui_preferences_types;
 pub mod types;
 pub mod validate;
+mod workspace_settings_document;
 
 pub use channels::{ChannelOverflowSetting, ChannelPolicySetting, ChannelSettings};
 pub use loader::{local_settings_path, project_settings_path};
@@ -67,3 +74,9 @@ pub use types::{
     SessionSettings, SkillToolSettings, SkillsSettings, ToolSettings, WriteToolSettings,
 };
 pub use validate::validate_settings;
+
+pub use settings_write::{SettingsDocumentError, SettingsPublication};
+pub use tui_preferences_types::{
+    TuiPreferenceLayer, TuiPreferenceScope, TuiPreferencesChange, TuiPreferencesError,
+    TuiPreferencesLayers, TuiPreferencesSnapshot,
+};

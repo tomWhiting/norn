@@ -46,6 +46,10 @@ tracing-subscriber = { workspace = true }
 uuid = { version = "1", features = ["v7", "serde"] }
 
 [dev-dependencies]
+portable-pty = { workspace = true }
+vte = { workspace = true }
+unicode-segmentation = "1.13.2"
+unicode-width = "0.2"
 async-trait = { workspace = true }
 serial_test = { workspace = true }
 temp-env = { workspace = true }
@@ -56,4 +60,8 @@ workspace = true
 
 [[test]]
 name = "mcp_launch"
+harness = false
+
+[[test]]
+name = "frontend_preferences_restart"
 harness = false

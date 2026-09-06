@@ -8,6 +8,7 @@ mod error;
 pub mod agents;
 pub mod app;
 pub mod events;
+pub mod frontend_preferences;
 pub mod input;
 pub mod render;
 pub mod terminal;
@@ -40,6 +41,7 @@ use terminal::setup::TerminalGuard;
 /// meet minimum requirements, [`TuiError::Io`] on terminal I/O errors.
 pub fn run_tui() -> Result<(), TuiError> {
     TerminalCaps::check_hard_requirements()?;
-    let _guard = TerminalGuard::new()?;
+    let guard = TerminalGuard::new()?;
+    drop(guard);
     Ok(())
 }

@@ -8,7 +8,7 @@ use crate::app::state::AppState;
 use crate::render::layout::SplitPreference;
 use std::num::{NonZeroU16, NonZeroUsize};
 
-const HELP: &str = "View controls\n/view focus composer|conversation|changes|divider · F6 / Shift+F6 cycles visible regions\n/view pane open|close|toggle · F2 switches upper pane\n/view split <conversation-weight> <changes-weight> · arrows resize focused divider\n/view up|down · PgUp/PgDn browse; Up/Down select rows outside composer\n/view expand|collapse|toggle|reset · Enter toggles selected tool\n/view compact|detailed · Ctrl+O toggles global tool detail\n/view follow|pin · return to live tail or keep current position\n/view older · demand one older history page\n/view more · demand next bytes of selected item's bodies\n/view history <events> · /view body <bytes> · positive demand preferences\n/view select <body-index> [<start-byte> <end-byte>] · select a whole loaded original body or explicit grapheme range\n/view selection [clear] · inspect/reset selection; mouse drag selects text\n/view copy · F4 · /view clipboard unspecified|disabled|osc52\n/view search [loaded|selected|older] <literal> · F3 · older requests one page and configured body prefixes; unavailable suffixes stay explicit\n/view next|previous · select a retained search hit; stale/unloaded revisions are refused\n/view export [--replace] <path> · F5 · original selection, create-new by default; spaces belong to the path\n/view status · current model, session, effort, tier, usage and local reading settings\n/view help · frontend actions never enter steer/queue";
+const HELP: &str = "View controls\n/view focus composer|conversation|changes|divider · F6 / Shift+F6 cycles visible regions\n/view pane open|close|toggle · F2 switches upper pane\n/view split <conversation-weight> <changes-weight> · arrows resize focused divider\n/view up|down · PgUp/PgDn browse; Up/Down select rows outside composer\n/view expand|collapse|toggle|reset · Enter toggles selected tool\n/view compact|detailed · Ctrl+O toggles global tool detail\n/view follow|pin · return to live tail or keep current position\n/view older · demand one older history page\n/view more · demand next bytes of selected item's bodies\n/view history <events> · /view body <bytes> · positive demand preferences\n/view select <body-index> [<start-byte> <end-byte>] · select a whole loaded original body or explicit grapheme range\n/view selection [clear] · inspect/reset selection; mouse drag selects text\n/view copy · F4 · /view clipboard unspecified|disabled|osc52\n/view search [loaded|selected|older] <literal> · F3 · older requests one page and configured body prefixes; unavailable suffixes stay explicit\n/view next|previous · select a retained search hit; stale/unloaded revisions are refused\n/view export [--replace] <path> · F5 · original selection, create-new by default; spaces belong to the path\n/view status · current model, session, effort, tier, usage and local reading settings\n/view preferences status|run|user|local|save · remembered or temporary frontend choices\n/view help · frontend actions never enter steer/queue";
 
 /// Whether this exact input belongs to the shared TUI-only view command.
 pub(in crate::app) fn is_view(text: &str) -> bool {
@@ -18,6 +18,7 @@ pub(in crate::app) fn is_view(text: &str) -> bool {
 /// Execute a locally submitted command without admitting it to the agent.
 pub(in crate::app) fn command(text: &str, state: &mut AppState) -> Result<(), TuiError> {
     let result = execute(text, state);
+    crate::app::frontend_preferences::edited(state)?;
     state.screen.dirty = true;
     state.screen.allow_body_load = true;
     match result {
@@ -40,6 +41,13 @@ pub(in crate::app) fn command(text: &str, state: &mut AppState) -> Result<(), Tu
 }
 
 fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
+    if text == "preferences" || text.starts_with("preferences ") {
+        return crate::app::frontend_preferences::command(
+            text.strip_prefix("preferences").unwrap_or(text),
+            state,
+        )
+        .map_err(|error| error.to_string());
+    }
     if let Some(arguments) = text.strip_prefix("search ") {
         let (scope, query) = arguments.split_once(' ').unwrap_or(("loaded", arguments));
         let (scope, query) = match scope {

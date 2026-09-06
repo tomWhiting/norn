@@ -11,16 +11,24 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::process::Command;
 
+/// Fallible fixture result whose errors can cross worker boundaries.
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+/// Test-executable switch that starts the MCP peer instead of the harness.
 pub const FIXTURE_FLAG: &str = "--norn-launch-fixture";
+/// Argument containing shell syntax that the launcher must preserve literally.
 pub const LITERAL_ARGUMENT: &str = "spaces 'quotes' $(literal) ; no shell";
+/// Exact environment value required by the launched MCP peer.
 pub const ENV_VALUE: &str = "exact launch value $HOME and spaces";
+/// Channel notification sent before the initialization response.
 pub const STARTUP_MESSAGE: &str = "message before initialize response";
+/// External channel text sent while the reply tool is executing.
 pub const ACTIVE_MESSAGE: &str = "/model external-text-only during active tool call";
+/// Room identifier that the provider must preserve in its reply arguments.
 pub const CHAT_ID: &str = "room/42?seat=rust&turn=1";
-// Test-hang diagnostics and fixture frame quotas; never product defaults.
+/// Fixture hang-diagnostic deadline; never a product timeout default.
 pub const DEADLINE: Duration = Duration::from_secs(30);
 
+/// Runs the stdin/stdout MCP peer and records its exact launch configuration.
 pub fn run_mcp(arguments: &[String]) -> TestResult {
     let [report, literal, source] = arguments else {
         return Err("Rust launch fixture requires report, literal argument and source".into());
@@ -112,13 +120,18 @@ fn write_frame(output: &mut impl Write, value: &Value) -> TestResult {
     Ok(())
 }
 
+/// Isolated filesystem and process configuration for actual CLI fixtures.
 pub struct Sandbox {
+    /// Owned temporary root containing settings, work files and reports.
     pub root: tempfile::TempDir,
+    /// Isolated home used for both `HOME` and `NORN_HOME`.
     pub home: PathBuf,
+    /// Working directory supplied to the CLI and inherited by the MCP peer.
     pub work: PathBuf,
 }
 
 impl Sandbox {
+    /// Creates the isolated home and working directories.
     pub fn new() -> TestResult<Self> {
         let root = tempfile::tempdir()?;
         let home = root.path().join("home");
@@ -128,6 +141,7 @@ impl Sandbox {
         Ok(Self { root, home, work })
     }
 
+    /// Describes a named stdio MCP peer implemented by the current test executable.
     pub fn definition(&self, name: &str) -> TestResult<Value> {
         Ok(json!({
             "type": "stdio", "command": std::env::current_exe()?,
@@ -137,10 +151,12 @@ impl Sandbox {
         }))
     }
 
+    /// Returns the path where the named peer records its launch evidence.
     pub fn report(&self, name: &str) -> PathBuf {
         self.root.path().join(format!("{name}.json"))
     }
 
+    /// Configures the actual CLI with isolated settings and piped standard streams.
     pub fn command(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_norn"));
         command
@@ -156,6 +172,7 @@ impl Sandbox {
         command
     }
 
+    /// Adds the fixture model and explicit provider URL to an isolated CLI command.
     pub fn agent_command(&self, base_url: &str) -> Command {
         let mut command = self.command();
         command
@@ -176,6 +193,7 @@ impl Sandbox {
         command
     }
 
+    /// Checks the recorded arguments, environment and canonical working directory.
     pub fn assert_launch(&self, name: &str) -> TestResult {
         let report: Value = serde_json::from_slice(&std::fs::read(self.report(name))?)?;
         assert_eq!(
@@ -188,6 +206,7 @@ impl Sandbox {
     }
 }
 
+/// Adds the fixture's explicit wake policy and channel retention settings.
 pub fn channel_arguments(command: &mut Command) {
     command.args([
         "--channel",
@@ -201,18 +220,22 @@ pub fn channel_arguments(command: &mut Command) {
     ]);
 }
 
+/// Loopback provider that requests one MCP reply and then completes the turn.
 pub struct ModelStub {
     listener: TcpListener,
+    /// Provider API URL belonging to the already-bound loopback listener.
     pub base_url: String,
 }
 
 impl ModelStub {
+    /// Binds an available loopback port without a separate port-selection race.
     pub async fn bind() -> TestResult<Self> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let base_url = format!("http://{}/v1", listener.local_addr()?);
         Ok(Self { listener, base_url })
     }
 
+    /// Serves the two expected provider requests and returns their original JSON.
     pub async fn serve(self) -> TestResult<Vec<Value>> {
         let mut requests = Vec::new();
         for round in 0..2 {
@@ -284,13 +307,19 @@ async fn read_http(stream: &mut tokio::net::TcpStream) -> TestResult<Value> {
     Ok(serde_json::from_slice(&body)?)
 }
 
+/// Captured protocol and process outcome of a real driven CLI invocation.
 pub struct DrivenOutput {
+    /// Terminal JSON-RPC response to the requested run.
     pub response: Value,
+    /// JSON-RPC notifications received before the terminal response.
     pub notifications: Vec<Value>,
+    /// Actual exit status after the one-run process terminates.
     pub status: ExitStatus,
+    /// Complete diagnostic stream captured separately from protocol stdout.
     pub stderr: String,
 }
 
+/// Initializes and executes one driven run, requiring it to exit with stdin open.
 pub async fn driven(command: &mut Command) -> TestResult<DrivenOutput> {
     command.args(["--protocol", "jsonrpc"]);
     let mut child = command.spawn()?;
@@ -354,6 +383,7 @@ async fn next_rpc(
     Ok(value)
 }
 
+/// Proves saved next-turn delivery is refused before driven MCP startup.
 pub async fn persisted_next_turn_refusal() -> TestResult {
     let sandbox = Sandbox::new()?;
     let settings = serde_json::to_vec(&json!({
@@ -383,15 +413,18 @@ pub async fn persisted_next_turn_refusal() -> TestResult {
     Ok(())
 }
 
+/// Supported test-harness filtering and listing options for fixture executables.
 pub struct HarnessOptions {
     filter: Option<String>,
     exact: bool,
+    /// Whether selected test names should be listed without execution.
     pub list: bool,
     ignored_only: bool,
     skipped: Vec<String>,
 }
 
 impl HarnessOptions {
+    /// Parses supported harness flags and refuses unknown or conflicting arguments.
     pub fn parse(arguments: &[String]) -> TestResult<Self> {
         let mut options = Self {
             filter: None,
@@ -423,6 +456,7 @@ impl HarnessOptions {
         Ok(options)
     }
 
+    /// Applies the requested name filter and skips; these fixtures have no ignored tests.
     pub fn selects(&self, name: &str) -> bool {
         !self.ignored_only
             && !self.skipped.iter().any(|skip| name.contains(skip))

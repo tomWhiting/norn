@@ -37,6 +37,8 @@ use crate::config::{
 /// [`Self::model`] is the resolved model identifier (a copy of
 /// `profile.model`, kept after the profile is moved into the builder).
 pub struct ResolvedInvocation {
+    /// Frontend objects from the existing settings load, preserving whole-layer provenance.
+    pub tui_preferences: norn::config::TuiPreferencesLayers,
     /// The merged, validated settings both the provider construction and
     /// the builder's `load_runtime_base` consult.
     pub settings: NornSettings,
@@ -267,6 +269,7 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
 
     let model = profile.model.clone();
     Ok(ResolvedInvocation {
+        tui_preferences: resolved_settings.tui_preferences,
         settings,
         project_root: resolved_settings.project_root,
         mcp_servers: resolved_settings.mcp_servers,
@@ -331,9 +334,7 @@ fn resolve_debug_api_dir(value: &str) -> Result<std::path::PathBuf, BuildError> 
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, unsafe_code)]
 mod tests {
-    use std::ffi::OsString;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -344,31 +345,24 @@ mod tests {
     use norn::provider::mock::MockProvider;
     use norn::system_prompt::{PromptAuthority, PromptSource};
 
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
     struct IsolatedResolutionEnvironment {
-        previous_dir: PathBuf,
-        previous_norn_home: Option<OsString>,
         norn_home: tempfile::TempDir,
         working_dir: tempfile::TempDir,
     }
 
     impl IsolatedResolutionEnvironment {
-        fn new() -> Self {
-            let previous_dir = std::env::current_dir().unwrap();
-            let previous_norn_home = std::env::var_os("NORN_HOME");
-            let norn_home = tempfile::tempdir().unwrap();
-            let working_dir = tempfile::tempdir().unwrap();
-
-            // SAFETY: this test is serialised and the prior value is restored
-            // by Drop before the temporary directory is removed.
-            unsafe { std::env::set_var("NORN_HOME", norn_home.path()) };
-            std::env::set_current_dir(working_dir.path()).unwrap();
-
-            Self {
-                previous_dir,
-                previous_norn_home,
-                norn_home,
-                working_dir,
-            }
+        fn run(test: impl FnOnce(&Self) -> TestResult) -> TestResult {
+            let environment = Self {
+                norn_home: tempfile::tempdir()?,
+                working_dir: tempfile::tempdir()?,
+            };
+            temp_env::with_var("NORN_HOME", Some(environment.norn_home()), || {
+                let directory = ResolutionDirectory::enter(environment.working_dir())?;
+                let outcome = test(&environment);
+                directory.finish(outcome)
+            })
         }
 
         fn norn_home(&self) -> &std::path::Path {
@@ -380,14 +374,79 @@ mod tests {
         }
     }
 
-    impl Drop for IsolatedResolutionEnvironment {
-        fn drop(&mut self) {
-            std::env::set_current_dir(&self.previous_dir).unwrap();
-            match &self.previous_norn_home {
-                Some(value) => unsafe { std::env::set_var("NORN_HOME", value) },
-                None => unsafe { std::env::remove_var("NORN_HOME") },
+    struct ResolutionDirectory {
+        previous: Option<PathBuf>,
+    }
+
+    impl ResolutionDirectory {
+        fn enter(path: &std::path::Path) -> std::io::Result<Self> {
+            let previous = std::env::current_dir()?;
+            std::env::set_current_dir(path)?;
+            Ok(Self {
+                previous: Some(previous),
+            })
+        }
+
+        fn finish(mut self, outcome: TestResult) -> TestResult {
+            let previous = self.previous.take().ok_or_else(|| {
+                std::io::Error::other("resolution directory restoration was already consumed")
+            })?;
+            match std::env::set_current_dir(&previous) {
+                Ok(()) => outcome,
+                Err(source) => Err(Box::new(DirectoryRestoration {
+                    path: previous,
+                    source,
+                    test_error: outcome.err(),
+                })),
             }
         }
+    }
+
+    impl Drop for ResolutionDirectory {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous
+                && let Err(error) = std::env::set_current_dir(previous)
+            {
+                tracing::error!(path = %previous.display(), %error, "failed to restore resolution-test working directory during unwind");
+            }
+        }
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error(
+        "restoring resolution-test working directory {path}: {source}; test error: {test_error:?}"
+    )]
+    struct DirectoryRestoration {
+        path: PathBuf,
+        source: std::io::Error,
+        test_error: Option<Box<dyn std::error::Error>>,
+    }
+
+    #[test]
+    #[serial]
+    fn isolation_restores_working_directory_and_home_after_test_error() -> TestResult {
+        temp_env::with_var("NORN_HOME", Some("resolution-outer-value"), || {
+            let previous_dir = std::env::current_dir()?;
+            let previous_home = std::env::var_os("NORN_HOME");
+            let outcome = IsolatedResolutionEnvironment::run(|environment| {
+                assert_eq!(
+                    std::env::current_dir()?,
+                    environment.working_dir().canonicalize()?
+                );
+                assert_eq!(
+                    std::env::var_os("NORN_HOME"),
+                    Some(environment.norn_home().as_os_str().to_owned())
+                );
+                Err(std::io::Error::other("resolution fixture early error").into())
+            });
+            let error = outcome.err().ok_or_else(|| {
+                std::io::Error::other("resolution fixture unexpectedly discarded its early error")
+            })?;
+            assert_eq!(error.to_string(), "resolution fixture early error");
+            assert_eq!(std::env::current_dir()?, previous_dir);
+            assert_eq!(std::env::var_os("NORN_HOME"), previous_home);
+            Ok(())
+        })
     }
 
     #[test]
@@ -416,44 +475,48 @@ mod tests {
 
     #[test]
     #[serial]
-    fn resolve_invocation_canonicalizes_cli_model_catalog_alias() {
-        let _environment = IsolatedResolutionEnvironment::new();
-        let cli = Cli::try_parse_from(["norn", "--model", "sol"]).unwrap();
-        let resolved = resolve_invocation(&cli).unwrap();
+    fn resolve_invocation_canonicalizes_cli_model_catalog_alias() -> TestResult {
+        IsolatedResolutionEnvironment::run(|_| {
+            let cli = Cli::try_parse_from(["norn", "--model", "sol"])?;
+            let resolved = resolve_invocation(&cli)?;
 
-        assert_eq!(resolved.model, "gpt-5.6-sol");
-        assert_eq!(resolved.profile.model, "gpt-5.6-sol");
-        assert_eq!(resolved.provider_kind, ProviderKind::Openai);
+            assert_eq!(resolved.model, "gpt-5.6-sol");
+            assert_eq!(resolved.profile.model, "gpt-5.6-sol");
+            assert_eq!(resolved.provider_kind, ProviderKind::Openai);
+
+            Ok(())
+        })
     }
 
     #[test]
     #[serial]
     fn resolve_invocation_rejects_relative_norn_home_after_working_dir_change()
     -> Result<(), Box<dyn std::error::Error>> {
-        let environment = IsolatedResolutionEnvironment::new();
-        let repository_user_tier = environment.working_dir().join("repository-user-tier");
-        std::fs::create_dir(&repository_user_tier)?;
-        std::fs::write(
-            repository_user_tier.join("settings.json"),
-            r#"{"hooks":{"session_start":[{"command":"sentinel-relative-home-command","timeout":5}]}}"#,
-        )?;
-        // SAFETY: this test is serialised and the environment guard restores
-        // the original value on drop.
-        unsafe { std::env::set_var("NORN_HOME", "repository-user-tier") };
-        let working_dir = environment.working_dir().to_string_lossy().into_owned();
-        let cli = Cli::try_parse_from(["norn", "--working-dir", &working_dir, "--model", "sol"])?;
+        IsolatedResolutionEnvironment::run(|environment| {
+            let repository_user_tier = environment.working_dir().join("repository-user-tier");
+            std::fs::create_dir(&repository_user_tier)?;
+            std::fs::write(
+                repository_user_tier.join("settings.json"),
+                r#"{"hooks":{"session_start":[{"command":"sentinel-relative-home-command","timeout":5}]}}"#,
+            )?;
+            temp_env::with_var("NORN_HOME", Some("repository-user-tier"), || {
+                let working_dir = environment.working_dir().to_string_lossy().into_owned();
+                let cli =
+                    Cli::try_parse_from(["norn", "--working-dir", &working_dir, "--model", "sol"])?;
 
-        let Err(error) = resolve_invocation(&cli) else {
-            return Err(std::io::Error::other(
-                "relative NORN_HOME unexpectedly became user authority",
-            )
-            .into());
-        };
-        let error = error.to_string();
+                let Err(error) = resolve_invocation(&cli) else {
+                    return Err(std::io::Error::other(
+                        "relative NORN_HOME unexpectedly became user authority",
+                    )
+                    .into());
+                };
+                let error = error.to_string();
 
-        assert!(error.contains("NORN_HOME must be an absolute path"));
-        assert!(!error.contains("sentinel-relative-home-command"));
-        Ok(())
+                assert!(error.contains("NORN_HOME must be an absolute path"));
+                assert!(!error.contains("sentinel-relative-home-command"));
+                Ok(())
+            })
+        })
     }
 
     #[test]
@@ -540,24 +603,28 @@ mod tests {
                 "shell_execution\":true",
             ),
         ] {
-            let environment = IsolatedResolutionEnvironment::new();
-            let settings_dir = environment.working_dir().join(".norn");
-            std::fs::create_dir_all(&settings_dir)?;
-            std::fs::write(settings_dir.join(file_name), serde_json::to_vec(&document)?)?;
-            let cli = Cli::try_parse_from(["norn", "-c", "base_url=https://safe.example/v1"])?;
+            IsolatedResolutionEnvironment::run(|environment| {
+                let settings_dir = environment.working_dir().join(".norn");
+                std::fs::create_dir_all(&settings_dir)?;
+                std::fs::write(settings_dir.join(file_name), serde_json::to_vec(&document)?)?;
+                let cli = Cli::try_parse_from(["norn", "-c", "base_url=https://safe.example/v1"])?;
 
-            let Err(error) = resolve_invocation(&cli) else {
-                return Err(std::io::Error::other("working-directory field was accepted").into());
-            };
-            let rendered = error.to_string();
-            assert!(
-                rendered.contains(field),
-                "missing field in error: {rendered}"
-            );
-            assert!(
-                !rendered.contains(secret),
-                "secret leaked in error: {rendered}"
-            );
+                let Err(error) = resolve_invocation(&cli) else {
+                    return Err(
+                        std::io::Error::other("working-directory field was accepted").into(),
+                    );
+                };
+                let rendered = error.to_string();
+                assert!(
+                    rendered.contains(field),
+                    "missing field in error: {rendered}"
+                );
+                assert!(
+                    !rendered.contains(secret),
+                    "secret leaked in error: {rendered}"
+                );
+                Ok(())
+            })?;
         }
         Ok(())
     }
@@ -565,124 +632,127 @@ mod tests {
     #[test]
     #[serial]
     fn hostile_project_auth_value_is_not_rendered() -> Result<(), Box<dyn std::error::Error>> {
-        let environment = IsolatedResolutionEnvironment::new();
-        let settings_dir = environment.working_dir().join(".norn");
-        std::fs::create_dir_all(&settings_dir)?;
-        std::fs::write(
-            settings_dir.join("settings.json"),
-            r#"{"provider":{"auth":"AUTH_VALUE_MUST_NOT_APPEAR\u001b[31m"}}"#,
-        )?;
+        IsolatedResolutionEnvironment::run(|environment| {
+            let settings_dir = environment.working_dir().join(".norn");
+            std::fs::create_dir_all(&settings_dir)?;
+            std::fs::write(
+                settings_dir.join("settings.json"),
+                r#"{"provider":{"auth":"AUTH_VALUE_MUST_NOT_APPEAR\u001b[31m"}}"#,
+            )?;
 
-        let Err(error) = resolve_invocation(&Cli::try_parse_from(["norn"])?) else {
-            return Err(std::io::Error::other("hostile project auth mode was accepted").into());
-        };
-        let rendered = error.to_string();
-        assert!(rendered.contains("expected exactly oauth or api_key"));
-        assert!(!rendered.contains("AUTH_VALUE_MUST_NOT_APPEAR"));
-        assert!(!rendered.contains('\u{1b}'));
-        assert!(!rendered.contains("[31m"));
-        Ok(())
+            let Err(error) = resolve_invocation(&Cli::try_parse_from(["norn"])?) else {
+                return Err(std::io::Error::other("hostile project auth mode was accepted").into());
+            };
+            let rendered = error.to_string();
+            assert!(rendered.contains("expected exactly oauth or api_key"));
+            assert!(!rendered.contains("AUTH_VALUE_MUST_NOT_APPEAR"));
+            assert!(!rendered.contains('\u{1b}'));
+            assert!(!rendered.contains("[31m"));
+            Ok(())
+        })
     }
 
     #[test]
     #[serial]
     fn resolve_invocation_rejects_project_model_selecting_user_backend_alias()
     -> Result<(), Box<dyn std::error::Error>> {
-        let environment = IsolatedResolutionEnvironment::new();
-        std::fs::write(
-            environment.norn_home().join("settings.json"),
-            serde_json::to_vec(&serde_json::json!({
-                "model_aliases": {
-                    "private-alias": {
-                        "provider_profile": "private-deployment",
-                        "api_shape": "openai_responses",
-                        "model": "custom-model"
+        IsolatedResolutionEnvironment::run(|environment| {
+            std::fs::write(
+                environment.norn_home().join("settings.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "model_aliases": {
+                        "private-alias": {
+                            "provider_profile": "private-deployment",
+                            "api_shape": "openai_responses",
+                            "model": "custom-model"
+                        }
+                    },
+                    "provider_profiles": {
+                        "private-deployment": {
+                            "api_shape": "openai_responses",
+                            "base_url": "https://private.example/v1",
+                            "api_key_env": "PRIVATE_DEPLOYMENT_KEY"
+                        }
                     }
-                },
-                "provider_profiles": {
-                    "private-deployment": {
-                        "api_shape": "openai_responses",
-                        "base_url": "https://private.example/v1",
-                        "api_key_env": "PRIVATE_DEPLOYMENT_KEY"
-                    }
-                }
-            }))?,
-        )?;
-        let settings_dir = environment.working_dir().join(".norn");
-        std::fs::create_dir_all(&settings_dir)?;
-        std::fs::write(
-            settings_dir.join("settings.json"),
-            r#"{"model":"private-alias"}"#,
-        )?;
+                }))?,
+            )?;
+            let settings_dir = environment.working_dir().join(".norn");
+            std::fs::create_dir_all(&settings_dir)?;
+            std::fs::write(
+                settings_dir.join("settings.json"),
+                r#"{"model":"private-alias"}"#,
+            )?;
 
-        let Err(error) = resolve_invocation(&Cli::try_parse_from(["norn"])?) else {
-            return Err(std::io::Error::other("project selected a user backend alias").into());
-        };
-        let rendered = error.to_string();
-        assert!(rendered.contains("project"));
-        assert!(rendered.contains("model"));
-        for secret in [
-            "private-alias",
-            "private-deployment",
-            "private.example",
-            "PRIVATE_DEPLOYMENT_KEY",
-        ] {
-            assert!(!rendered.contains(secret));
-        }
-        Ok(())
+            let Err(error) = resolve_invocation(&Cli::try_parse_from(["norn"])?) else {
+                return Err(std::io::Error::other("project selected a user backend alias").into());
+            };
+            let rendered = error.to_string();
+            assert!(rendered.contains("project"));
+            assert!(rendered.contains("model"));
+            for secret in [
+                "private-alias",
+                "private-deployment",
+                "private.example",
+                "PRIVATE_DEPLOYMENT_KEY",
+            ] {
+                assert!(!rendered.contains(secret));
+            }
+            Ok(())
+        })
     }
 
     #[test]
     #[serial]
     fn resolve_invocation_allows_explicit_cli_selection_of_user_backend_alias()
     -> Result<(), Box<dyn std::error::Error>> {
-        let environment = IsolatedResolutionEnvironment::new();
-        std::fs::write(
-            environment.norn_home().join("settings.json"),
-            serde_json::to_vec(&serde_json::json!({
-                "agent": {"context_window": 272_000},
-                "model_aliases": {
-                    "private-alias": {
-                        "provider_profile": "private-deployment",
-                        "api_shape": "openai_responses",
-                        "model": "custom-model"
+        IsolatedResolutionEnvironment::run(|environment| {
+            std::fs::write(
+                environment.norn_home().join("settings.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "agent": {"context_window": 272_000},
+                    "model_aliases": {
+                        "private-alias": {
+                            "provider_profile": "private-deployment",
+                            "api_shape": "openai_responses",
+                            "model": "custom-model"
+                        }
+                    },
+                    "provider_profiles": {
+                        "private-deployment": {
+                            "api_shape": "openai_responses",
+                            "base_url": "https://private.example/v1",
+                            "api_key_env": "PRIVATE_DEPLOYMENT_KEY"
+                        }
                     }
-                },
-                "provider_profiles": {
-                    "private-deployment": {
-                        "api_shape": "openai_responses",
-                        "base_url": "https://private.example/v1",
-                        "api_key_env": "PRIVATE_DEPLOYMENT_KEY"
-                    }
-                }
-            }))?,
-        )?;
+                }))?,
+            )?;
 
-        let resolved =
-            resolve_invocation(&Cli::try_parse_from(["norn", "--model", "private-alias"])?)?;
-        assert_eq!(resolved.profile.model, "custom-model");
-        assert_eq!(resolved.provider_kind, ProviderKind::Openai);
-        assert_eq!(
-            resolved.provider_overrides.base_url.as_deref(),
-            Some("https://private.example/v1"),
-        );
-        assert_eq!(
-            resolved.provider_overrides.api_key_env.as_deref(),
-            Some("PRIVATE_DEPLOYMENT_KEY"),
-        );
-        Ok(())
+            let resolved =
+                resolve_invocation(&Cli::try_parse_from(["norn", "--model", "private-alias"])?)?;
+            assert_eq!(resolved.profile.model, "custom-model");
+            assert_eq!(resolved.provider_kind, ProviderKind::Openai);
+            assert_eq!(
+                resolved.provider_overrides.base_url.as_deref(),
+                Some("https://private.example/v1"),
+            );
+            assert_eq!(
+                resolved.provider_overrides.api_key_env.as_deref(),
+                Some("PRIVATE_DEPLOYMENT_KEY"),
+            );
+            Ok(())
+        })
     }
 
     #[test]
     #[serial]
     fn resolve_invocation_rejects_workspace_profile_prompt_commands_without_execution()
     -> Result<(), Box<dyn std::error::Error>> {
-        let environment = IsolatedResolutionEnvironment::new();
-        let profiles = environment.working_dir().join(".norn").join("profiles");
-        std::fs::create_dir_all(&profiles)?;
-        std::fs::write(
-            profiles.join("hostile.json"),
-            r#"{
+        IsolatedResolutionEnvironment::run(|environment| {
+            let profiles = environment.working_dir().join(".norn").join("profiles");
+            std::fs::create_dir_all(&profiles)?;
+            std::fs::write(
+                profiles.join("hostile.json"),
+                r#"{
                 "name": "hostile",
                 "model": "gpt-5.6-sol",
                 "prompt_commands": [{
@@ -691,191 +761,198 @@ mod tests {
                     "cache_ttl": null
                 }]
             }"#,
-        )?;
+            )?;
 
-        let Err(error) =
-            resolve_invocation(&Cli::try_parse_from(["norn", "--profile", "hostile"])?)
-        else {
-            return Err(std::io::Error::other("workspace prompt command was accepted").into());
-        };
-        let rendered = error.to_string();
-        assert!(rendered.contains("prompt_commands"));
-        assert!(!rendered.contains("profile-command-secret"));
-        assert!(
-            !environment
-                .working_dir()
-                .join("profile-command-secret")
-                .exists()
-        );
-        Ok(())
+            let Err(error) =
+                resolve_invocation(&Cli::try_parse_from(["norn", "--profile", "hostile"])?)
+            else {
+                return Err(std::io::Error::other("workspace prompt command was accepted").into());
+            };
+            let rendered = error.to_string();
+            assert!(rendered.contains("prompt_commands"));
+            assert!(!rendered.contains("profile-command-secret"));
+            assert!(
+                !environment
+                    .working_dir()
+                    .join("profile-command-secret")
+                    .exists()
+            );
+            Ok(())
+        })
     }
 
     #[test]
     #[serial]
     fn workspace_profile_stays_user_authority_through_cli_assembly()
     -> Result<(), Box<dyn std::error::Error>> {
-        let environment = IsolatedResolutionEnvironment::new();
-        let profiles = environment.working_dir().join(".norn").join("profiles");
-        std::fs::create_dir_all(&profiles)?;
-        std::fs::write(
-            profiles.join("workspace.json"),
-            serde_json::json!({
-                "name": "workspace",
-                "model": "gpt-5.6-sol",
-                "system_instructions": ["WORKSPACE_PROFILE_AUTHORITY_SENTINEL"]
-            })
-            .to_string(),
-        )?;
-        let cli = Cli::try_parse_from(["norn", "--profile", "workspace", "--no-session"])?;
-        let resolved = resolve_invocation(&cli)?;
-        assert_eq!(
-            resolved.profile_source,
-            CliProfileSource::Discovered(norn::profile::ProfileOrigin::WorkingDirectory)
-        );
+        IsolatedResolutionEnvironment::run(|environment| {
+            let profiles = environment.working_dir().join(".norn").join("profiles");
+            std::fs::create_dir_all(&profiles)?;
+            std::fs::write(
+                profiles.join("workspace.json"),
+                serde_json::json!({
+                    "name": "workspace",
+                    "model": "gpt-5.6-sol",
+                    "system_instructions": ["WORKSPACE_PROFILE_AUTHORITY_SENTINEL"]
+                })
+                .to_string(),
+            )?;
+            let cli = Cli::try_parse_from(["norn", "--profile", "workspace", "--no-session"])?;
+            let resolved = resolve_invocation(&cli)?;
+            assert_eq!(
+                resolved.profile_source,
+                CliProfileSource::Discovered(norn::profile::ProfileOrigin::WorkingDirectory)
+            );
 
-        let parts = crate::runtime::builder_from_cli(
-            &cli,
-            Arc::new(MockProvider::new(Vec::new())),
-            resolved.profile,
-            resolved.profile_source,
-            &resolved.settings,
-            &resolved.applied,
-        )?
-        .build()?
-        .into_parts();
-        let plan = parts
-            .loop_context
-            .stable_prompt_plan()
-            .ok_or_else(|| std::io::Error::other("CLI assembly omitted the typed prompt plan"))?;
-        let workspace_fragment = plan
-            .fragments()
-            .iter()
-            .find(|fragment| fragment.source() == PromptSource::WorkspaceProfile)
-            .ok_or_else(|| std::io::Error::other("workspace profile fragment was not preserved"))?;
-        assert_eq!(workspace_fragment.authority(), PromptAuthority::User);
-        assert_eq!(
-            workspace_fragment.content(),
-            "WORKSPACE_PROFILE_AUTHORITY_SENTINEL"
-        );
-        assert!(plan.fragments().iter().all(|fragment| {
-            fragment.authority() == PromptAuthority::User
-                || !fragment
-                    .content()
-                    .contains("WORKSPACE_PROFILE_AUTHORITY_SENTINEL")
-        }));
-        Ok(())
+            let parts = crate::runtime::builder_from_cli(
+                &cli,
+                Arc::new(MockProvider::new(Vec::new())),
+                resolved.profile,
+                resolved.profile_source,
+                &resolved.settings,
+                &resolved.applied,
+            )?
+            .build()?
+            .into_parts();
+            let plan = parts.loop_context.stable_prompt_plan().ok_or_else(|| {
+                std::io::Error::other("CLI assembly omitted the typed prompt plan")
+            })?;
+            let workspace_fragment = plan
+                .fragments()
+                .iter()
+                .find(|fragment| fragment.source() == PromptSource::WorkspaceProfile)
+                .ok_or_else(|| {
+                    std::io::Error::other("workspace profile fragment was not preserved")
+                })?;
+            assert_eq!(workspace_fragment.authority(), PromptAuthority::User);
+            assert_eq!(
+                workspace_fragment.content(),
+                "WORKSPACE_PROFILE_AUTHORITY_SENTINEL"
+            );
+            assert!(plan.fragments().iter().all(|fragment| {
+                fragment.authority() == PromptAuthority::User
+                    || !fragment
+                        .content()
+                        .contains("WORKSPACE_PROFILE_AUTHORITY_SENTINEL")
+            }));
+            Ok(())
+        })
     }
 
     #[test]
     #[serial]
     fn workspace_profile_model_cannot_implicitly_select_user_backend_alias()
     -> Result<(), Box<dyn std::error::Error>> {
-        let environment = IsolatedResolutionEnvironment::new();
-        std::fs::write(
-            environment.norn_home().join("settings.json"),
-            serde_json::to_vec(&serde_json::json!({
-                "agent": {"context_window": 272_000},
-                "model_aliases": {
-                    "private-alias": {
-                        "provider_profile": "private-deployment",
-                        "api_shape": "openai_responses",
-                        "model": "custom-model"
+        IsolatedResolutionEnvironment::run(|environment| {
+            std::fs::write(
+                environment.norn_home().join("settings.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "agent": {"context_window": 272_000},
+                    "model_aliases": {
+                        "private-alias": {
+                            "provider_profile": "private-deployment",
+                            "api_shape": "openai_responses",
+                            "model": "custom-model"
+                        }
+                    },
+                    "provider_profiles": {
+                        "private-deployment": {
+                            "api_shape": "openai_responses",
+                            "base_url": "https://private.example/v1",
+                            "api_key_env": "PRIVATE_DEPLOYMENT_KEY"
+                        }
                     }
-                },
-                "provider_profiles": {
-                    "private-deployment": {
-                        "api_shape": "openai_responses",
-                        "base_url": "https://private.example/v1",
-                        "api_key_env": "PRIVATE_DEPLOYMENT_KEY"
-                    }
-                }
-            }))?,
-        )?;
-        let profiles = environment.working_dir().join(".norn").join("profiles");
-        std::fs::create_dir_all(&profiles)?;
-        std::fs::write(
-            profiles.join("workspace.json"),
-            r#"{"name":"workspace","model":"private-alias"}"#,
-        )?;
+                }))?,
+            )?;
+            let profiles = environment.working_dir().join(".norn").join("profiles");
+            std::fs::create_dir_all(&profiles)?;
+            std::fs::write(
+                profiles.join("workspace.json"),
+                r#"{"name":"workspace","model":"private-alias"}"#,
+            )?;
 
-        let Err(error) =
-            resolve_invocation(&Cli::try_parse_from(["norn", "--profile", "workspace"])?)
-        else {
-            return Err(std::io::Error::other("workspace profile selected a user backend").into());
-        };
-        let rendered = error.to_string();
-        assert!(rendered.contains("working-directory profile"));
-        assert!(!rendered.contains("private-alias"));
-        assert!(!rendered.contains("private-deployment"));
+            let Err(error) =
+                resolve_invocation(&Cli::try_parse_from(["norn", "--profile", "workspace"])?)
+            else {
+                return Err(
+                    std::io::Error::other("workspace profile selected a user backend").into(),
+                );
+            };
+            let rendered = error.to_string();
+            assert!(rendered.contains("working-directory profile"));
+            assert!(!rendered.contains("private-alias"));
+            assert!(!rendered.contains("private-deployment"));
 
-        let explicit = resolve_invocation(&Cli::try_parse_from([
-            "norn",
-            "--profile",
-            "workspace",
-            "--model",
-            "private-alias",
-        ])?)?;
-        assert_eq!(explicit.profile.model, "custom-model");
-        assert_eq!(
-            explicit.provider_overrides.base_url.as_deref(),
-            Some("https://private.example/v1"),
-        );
-        Ok(())
+            let explicit = resolve_invocation(&Cli::try_parse_from([
+                "norn",
+                "--profile",
+                "workspace",
+                "--model",
+                "private-alias",
+            ])?)?;
+            assert_eq!(explicit.profile.model, "custom-model");
+            assert_eq!(
+                explicit.provider_overrides.base_url.as_deref(),
+                Some("https://private.example/v1"),
+            );
+            Ok(())
+        })
     }
 
     #[test]
     #[serial]
     fn resolve_invocation_allows_trusted_user_and_cli_provider_authority()
     -> Result<(), Box<dyn std::error::Error>> {
-        let environment = IsolatedResolutionEnvironment::new();
-        std::fs::write(
-            environment.norn_home().join("settings.json"),
-            serde_json::to_vec(&serde_json::json!({
-                "agent": {"context_window": 272_000},
-                "provider": {
-                    "base_url": "https://user.example/v1",
-                    "api_key_env": "USER_API_KEY",
-                    "debug_dump_dir": "/tmp/user-debug"
-                }
-            }))?,
-        )?;
+        IsolatedResolutionEnvironment::run(|environment| {
+            std::fs::write(
+                environment.norn_home().join("settings.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "agent": {"context_window": 272_000},
+                    "provider": {
+                        "base_url": "https://user.example/v1",
+                        "api_key_env": "USER_API_KEY",
+                        "debug_dump_dir": "/tmp/user-debug"
+                    }
+                }))?,
+            )?;
 
-        let user = resolve_invocation(&Cli::try_parse_from(["norn"])?)?;
-        assert_eq!(
-            user.provider_overrides.base_url.as_deref(),
-            Some("https://user.example/v1"),
-        );
-        assert_eq!(
-            user.provider_overrides.api_key_env.as_deref(),
-            Some("USER_API_KEY"),
-        );
-        assert_eq!(
-            user.provider_overrides.debug_dump_dir.as_deref(),
-            Some(std::path::Path::new("/tmp/user-debug")),
-        );
+            let user = resolve_invocation(&Cli::try_parse_from(["norn"])?)?;
+            assert_eq!(
+                user.provider_overrides.base_url.as_deref(),
+                Some("https://user.example/v1"),
+            );
+            assert_eq!(
+                user.provider_overrides.api_key_env.as_deref(),
+                Some("USER_API_KEY"),
+            );
+            assert_eq!(
+                user.provider_overrides.debug_dump_dir.as_deref(),
+                Some(std::path::Path::new("/tmp/user-debug")),
+            );
 
-        let cli = Cli::try_parse_from([
-            "norn",
-            "-c",
-            "base_url=https://cli.example/v1",
-            "-c",
-            "api_key_env=CLI_API_KEY",
-            "-c",
-            "debug_api=/tmp/cli-debug",
-        ])?;
-        let cli_resolved = resolve_invocation(&cli)?;
-        assert_eq!(
-            cli_resolved.provider_overrides.base_url.as_deref(),
-            Some("https://cli.example/v1"),
-        );
-        assert_eq!(
-            cli_resolved.provider_overrides.api_key_env.as_deref(),
-            Some("CLI_API_KEY"),
-        );
-        assert_eq!(
-            cli_resolved.provider_overrides.debug_dump_dir.as_deref(),
-            Some(std::path::Path::new("/tmp/cli-debug")),
-        );
-        Ok(())
+            let cli = Cli::try_parse_from([
+                "norn",
+                "-c",
+                "base_url=https://cli.example/v1",
+                "-c",
+                "api_key_env=CLI_API_KEY",
+                "-c",
+                "debug_api=/tmp/cli-debug",
+            ])?;
+            let cli_resolved = resolve_invocation(&cli)?;
+            assert_eq!(
+                cli_resolved.provider_overrides.base_url.as_deref(),
+                Some("https://cli.example/v1"),
+            );
+            assert_eq!(
+                cli_resolved.provider_overrides.api_key_env.as_deref(),
+                Some("CLI_API_KEY"),
+            );
+            assert_eq!(
+                cli_resolved.provider_overrides.debug_dump_dir.as_deref(),
+                Some(std::path::Path::new("/tmp/cli-debug")),
+            );
+            Ok(())
+        })
     }
 }

@@ -13,7 +13,13 @@ use crate::render::layout::{Layout, Rect, SplitPreference, UpperLayout, UpperPan
 use super::{browse_rows, expand, pin_visible, select_hit};
 
 pub(in crate::app) fn mouse(event: MouseEvent, state: &mut AppState) -> bool {
-    match apply_mouse(event, state) {
+    let result = apply_mouse(event, state).and_then(|handled| {
+        if handled {
+            crate::app::frontend_preferences::edited(state)?;
+        }
+        Ok(handled)
+    });
+    match result {
         Ok(handled) => {
             if handled {
                 state.screen.dirty = true;

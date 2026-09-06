@@ -74,6 +74,11 @@ impl InFlightInputState {
         self.mode
     }
 
+    /// Apply the saved mode preference without modifying pending input.
+    pub fn set_mode(&mut self, mode: InFlightSubmitMode) {
+        self.mode = mode;
+    }
+
     /// Whether a root turn is currently running.
     #[must_use]
     pub const fn is_running(&self) -> bool {

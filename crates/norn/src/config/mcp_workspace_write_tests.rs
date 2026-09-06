@@ -9,9 +9,11 @@ fn creates_and_atomically_replaces_shared_settings() -> Result<(), Box<dyn std::
     let document = WorkspaceSettingsDocument::open(&canonical, WorkspaceSettingsFile::Shared)?;
 
     assert!(document.read()?.is_none());
-    document.replace(b"{\"first\":true}\n")?;
+    document.replace(b"{\"first\":true}\n")?.require_durable()?;
     assert_eq!(document.read()?.as_deref(), Some("{\"first\":true}\n"));
-    document.replace(b"{\"second\":true}\n")?;
+    document
+        .replace(b"{\"second\":true}\n")?
+        .require_durable()?;
     assert_eq!(document.read()?.as_deref(), Some("{\"second\":true}\n"));
     Ok(())
 }
@@ -48,7 +50,9 @@ fn replacement_preserves_existing_project_file_mode() -> Result<(), Box<dyn std:
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640))?;
     let document = WorkspaceSettingsDocument::open(&canonical, WorkspaceSettingsFile::Shared)?;
 
-    document.replace(b"{\"changed\":true}\n")?;
+    document
+        .replace(b"{\"changed\":true}\n")?
+        .require_durable()?;
 
     assert_eq!(std::fs::metadata(path)?.mode() & 0o777, 0o640);
     Ok(())
@@ -85,7 +89,9 @@ fn pinned_directory_survives_workspace_path_replacement() -> Result<(), Box<dyn 
     std::fs::rename(&project, &parked)?;
     std::fs::create_dir(&project)?;
 
-    document.replace(b"{\"pinned\":true}\n")?;
+    document
+        .replace(b"{\"pinned\":true}\n")?
+        .require_durable()?;
 
     assert_eq!(
         std::fs::read_to_string(parked.join(".norn/settings.json"))?,

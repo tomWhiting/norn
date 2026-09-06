@@ -1,7 +1,9 @@
-//! No-follow atomic mutation of the two workspace MCP settings documents.
+//! Descriptor-pinned workspace settings shared by MCP and frontend preference writers.
 
 use std::io;
 use std::path::Path;
+
+use super::settings_write::SettingsPublication;
 
 #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
 use std::fs::File;
@@ -51,7 +53,7 @@ impl WorkspaceSettingsDocument {
         read_document(self)
     }
 
-    pub(super) fn replace(&self, bytes: &[u8]) -> io::Result<()> {
+    pub(super) fn replace(&self, bytes: &[u8]) -> io::Result<SettingsPublication> {
         replace_document(self, bytes)
     }
 }
@@ -122,6 +124,11 @@ fn open_document(
         Err(error) => return Err(io::Error::from(error)),
     };
     let lock = File::from(rustix::io::fcntl_dupfd_cloexec(&directory, 0).map_err(io::Error::from)?);
+    #[cfg(test)]
+    super::settings_write_process_tests::before_lock(
+        &lock,
+        &project_root.join(".norn").join(kind.file_name()),
+    )?;
     lock.lock()?;
     Ok(WorkspaceSettingsDocument {
         project_root: project_root.to_path_buf(),
@@ -136,8 +143,15 @@ fn open_document(
     project_root: &Path,
     kind: WorkspaceSettingsFile,
 ) -> io::Result<WorkspaceSettingsDocument> {
-    let _unused = (project_root, kind);
-    Err(unsupported())
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!(
+            "cannot open {}/.norn/{}: {}",
+            project_root.display(),
+            kind.file_name(),
+            unsupported()
+        ),
+    ))
 }
 
 #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
@@ -165,12 +179,22 @@ fn read_document(document: &WorkspaceSettingsDocument) -> io::Result<Option<Stri
 }
 
 #[cfg(any(not(unix), target_os = "redox", target_os = "espidf"))]
-fn read_document(_document: &WorkspaceSettingsDocument) -> io::Result<Option<String>> {
-    Err(unsupported())
+fn read_document(document: &WorkspaceSettingsDocument) -> io::Result<Option<String>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!(
+            "cannot read {}: {}",
+            document.display_path().display(),
+            unsupported()
+        ),
+    ))
 }
 
 #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
-fn replace_document(document: &WorkspaceSettingsDocument, bytes: &[u8]) -> io::Result<()> {
+fn replace_document(
+    document: &WorkspaceSettingsDocument,
+    bytes: &[u8],
+) -> io::Result<SettingsPublication> {
     use rustix::fs::{AtFlags, Mode, OFlags, fchmod, fstat, openat, renameat, unlinkat};
     use rustix::io::Errno;
 
@@ -217,10 +241,14 @@ fn replace_document(document: &WorkspaceSettingsDocument, bytes: &[u8]) -> io::R
             target_name,
         )
         .map_err(io::Error::from)?;
-        File::from(
-            rustix::io::fcntl_dupfd_cloexec(&document.directory, 0).map_err(io::Error::from)?,
-        )
-        .sync_all()
+        let sync = rustix::io::fcntl_dupfd_cloexec(&document.directory, 0)
+            .map_err(io::Error::from)
+            .map(File::from)
+            .and_then(|file| file.sync_all());
+        Ok(SettingsPublication::after_directory_sync(
+            &document.display_path(),
+            sync,
+        ))
     })();
     if result.is_err()
         && let Err(error) = unlinkat(&document.directory, temporary.as_str(), AtFlags::empty())
@@ -237,8 +265,19 @@ fn replace_document(document: &WorkspaceSettingsDocument, bytes: &[u8]) -> io::R
 }
 
 #[cfg(any(not(unix), target_os = "redox", target_os = "espidf"))]
-fn replace_document(_document: &WorkspaceSettingsDocument, _bytes: &[u8]) -> io::Result<()> {
-    Err(unsupported())
+fn replace_document(
+    document: &WorkspaceSettingsDocument,
+    bytes: &[u8],
+) -> io::Result<SettingsPublication> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!(
+            "cannot publish {} bytes to {}: {}",
+            bytes.len(),
+            document.display_path().display(),
+            unsupported()
+        ),
+    ))
 }
 
 #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]

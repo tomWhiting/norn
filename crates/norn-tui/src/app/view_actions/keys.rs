@@ -117,6 +117,7 @@ fn apply_key(key: KeyEvent, state: &mut AppState) -> Result<bool, TuiError> {
         _ => false,
     };
     if handled {
+        crate::app::frontend_preferences::edited(state)?;
         state.screen.dirty = true;
         state.screen.allow_body_load = true;
     }

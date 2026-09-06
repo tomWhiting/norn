@@ -436,6 +436,7 @@ async fn run_turn(
                     state.transcript.finish_input(result)?;
                     state.screen.allow_body_load = true;
                 }
+                result = crate::app::frontend_preferences::wait(&mut state.preferences) => { crate::app::frontend_preferences::finish(state, result)?; }
                 Some(result) = state.export_tasks.join_next() => {
                     crate::app::view_actions::reading::finish_export(state, result)?;
                 }

@@ -99,6 +99,11 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     startup_trace.mark("lsp_workspace_ready");
 
     let resolved = resolve_invocation(cli)?;
+    let frontend_preferences =
+        norn_tui::frontend_preferences::FrontendPreferencesLaunch::from_layers(
+            &resolved.tui_preferences,
+            &resolved.project_root,
+        )?;
     crate::runtime::channel_config::validate_resolved_channel_mode(
         resolved.channel_config.as_ref(),
         cli.protocol,
@@ -291,6 +296,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         .map(|infra| Arc::clone(&infra.session))
         .ok_or_else(|| format!("TUI root {} has no assembled session binding", parts.id))?;
     let tui_inputs = TuiInputs {
+        frontend_preferences,
         provider: Arc::clone(&parts.provider),
         executor,
         store: Arc::clone(&parts.event_store),

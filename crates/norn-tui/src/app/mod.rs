@@ -9,6 +9,7 @@ pub mod edit;
 pub mod event_loop;
 mod export;
 mod focus;
+mod frontend_preferences;
 pub mod helpers;
 mod mcp_slash;
 mod model_selection;

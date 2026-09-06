@@ -59,6 +59,7 @@ fn estimated_tokens(bytes: usize) -> u64 {
 /// constructed once at startup and threaded through the event loop by
 /// `&mut`.
 pub struct AppState {
+    pub(super) preferences: super::frontend_preferences::PreferenceOwner,
     /// Retained semantic state bound to the actual store/agent source.
     pub transcript: Transcript,
     /// Retained full-screen geometry, focus and presentation cache.
@@ -152,6 +153,9 @@ impl AppState {
     ) -> Self {
         let root_id = source.agent_id;
         Self {
+            preferences: super::frontend_preferences::PreferenceOwner::new(
+                crate::frontend_preferences::FrontendPreferencesLaunch::run_only(),
+            ),
             transcript: Transcript::new(source.clone()),
             screen: super::render::ScreenState::new(source),
             export_tasks: tokio::task::JoinSet::new(),

@@ -102,6 +102,7 @@ pub async fn run(case: &str, address: &str) -> Result<(), TestError> {
     ));
     let (sender, agent_event_rx) = tokio::sync::broadcast::channel(16);
     let result = Box::pin(norn_tui::run_app(TuiInputs {
+        frontend_preferences: norn_tui::frontend_preferences::FrontendPreferencesLaunch::run_only(),
         session_binding: Arc::new(norn::session::SessionBinding::ephemeral_root()),
         model_selection: norn::model_selection::ModelRuntime::new(
             provider.model_catalog_backend(),

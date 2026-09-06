@@ -53,6 +53,8 @@ use super::turn::{
 /// `clippy::too_many_arguments` budget and isolates the TUI from the
 /// norn-cli crate's concrete builder types.
 pub struct TuiInputs {
+    /// Validated frontend choices and immutable save authority, loaded by the caller.
+    pub frontend_preferences: crate::frontend_preferences::FrontendPreferencesLaunch,
     /// Concrete provider built by `norn-cli::print::build_provider`.
     pub provider: Arc<dyn Provider>,
     /// Tool executor (the gated `ToolRegistry` from the agent's `AgentParts`).
@@ -219,6 +221,7 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         source,
         inputs.status_bar,
     );
+    super::frontend_preferences::install(&mut state, inputs.frontend_preferences);
     state.agent_panel.set_pending_messages(pending_messages);
 
     replay_visible_session_history(&mut state, &inputs.store).await?;
@@ -292,8 +295,9 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         .await
     }
     .await;
-    super::view_actions::reading::drain_exports(&mut state).await?;
-    outcome
+    let saves = super::frontend_preferences::drain(&mut state).await;
+    let exports = super::view_actions::reading::drain_exports(&mut state).await;
+    super::frontend_preferences::exit_outcome(outcome, saves, exports)
 }
 
 /// Spawn the dedicated OS thread that reads terminal events.
@@ -427,6 +431,9 @@ async fn outer_loop(
                         super::notices::notice(state, "Live event source closed", None)?;
                     }
                 }
+            }
+            result = super::frontend_preferences::wait(&mut state.preferences) => {
+                super::frontend_preferences::finish(state, result)?;
             }
             Some(result) = state.export_tasks.join_next() => {
                     crate::app::view_actions::reading::finish_export(state, result)?;
@@ -662,6 +669,7 @@ async fn handle_action(
             apply_edit_action(other, state, cols, guard.terminal_rows());
         }
     }
+    super::frontend_preferences::edited(state)?;
     sync_input_for_current_geometry(state, guard);
     redraw_all(state, guard)?;
     Ok(outcome)
@@ -945,15 +953,6 @@ mod tests {
             descendant.is_cancelled(),
             "no descendant retry loop may outlive the app",
         );
-    }
-
-    #[test]
-    fn types_compile() {
-        // Surface-level type checks: TuiInputs and RuntimeRefs are
-        // structurally honest. We cannot run the loop without a real
-        // terminal, so we settle for this.
-        let _ = std::mem::size_of::<TuiInputs>();
-        let _ = std::mem::size_of::<RuntimeRefs>();
     }
 
     use termina::event::{KeyEvent, KeyEventState};
