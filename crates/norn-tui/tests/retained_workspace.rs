@@ -441,7 +441,9 @@ fn collapsed_recorded_tool_header_and_real_diff_rows_are_selectable_without_expa
         );
         app.assert_last_copy(support::TOOL_DESCRIPTION)?;
         app.command("/view focus composer", support::TOOL_DESCRIPTION)?;
-        let diff = app.command("/pane diff", "Requested edit fragment")?;
+        // The heading exists before approved argument bytes finish loading.
+        let diff = app.command("/pane diff", "old fixture text")?;
+        assert!(diff.contains("Requested edit fragment"));
         assert!(diff.contains("Changes · recorded call only"));
         let start = locate(&diff, "old fixture text")?;
         let end = (start.0 + 16, start.1);
