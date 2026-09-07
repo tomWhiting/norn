@@ -1,16 +1,14 @@
 # MCP launch configuration and Channels
 
-5 September 2026, Melbourne time. This guide describes the startup interface available in this source under [NML-001](design/norn-mcp-launch/briefs/NML-001.md).
+Updated 8 September 2026, Melbourne time. This guide describes the current startup interface from [NML-001](design/norn-mcp-launch/briefs/NML-001.md) and [NCS-001](design/norn-channel-settings/briefs/NCS-001.md).
 
-## Historical installation checkpoint
+## Current interface
 
-The historical NML-001/NV-002 installation at 20:15 Melbourne on 5 September 2026 used exact commit `5227db49d805a4c0729912dca3832c842c8f39e1`, installed at 20:15:11 Melbourne on 5 September 2026 and merged to local/remote main. Installed SHA-256: `dc61b730918db4928e5e9ff0cf1194f7ed0fdfcf0d010286ab87f8d2d26e0a19`. Its exact 205 battery passed all six declared legs with 14 venue bindings; native build and installed help/list/redacted-error checks passed. Proof: `/private/tmp/nwp-04-proof/exact-battery-2/execution-result.json` and `/private/tmp/nwp-04-proof/native-release-2/installation.json`. Fresh Fable re-review remains pending; no new review pass or waiver is claimed.
+Norn `0.1.0-preview.8` includes inline/file MCP launch configuration, saved channel policies, `-c channels=JSON`, optional default delivery, and named `off`. These work with the interactive TUI and with the active-run limits described below. The [README](../README.md) has a complete launch example and the [latest preview record](design/norn-retained-tui/briefs/NUI-005.md) records installation and verification limits. Implementation availability does not imply a completed venue battery or independent review.
 
-The historical `3964799` battery remains red: five green legs and tests exit 101. Its detailed cancellation error was not retained. NV-002 changed only two test cleanup waits; the green repaired-candidate receipt does not identify the old failure cause or relabel the old result. The earlier 18:09 `450bb7a` defaults installation and the `911eddd` receipt remain historical.
+Norn accepts the empty `claude/channel` experimental capability and `notifications/claude/channel` messages from admitted stdio sources. This wire contract does not require a JavaScript runtime. Ordinary MCP tools servers must implement that contract to send channel input. Optional permission relay and persistent attachment remain separate. A channel message never grants tool approval.
 
-Ordinary Claude-style Channels message push is implemented. Norn accepts `claude/channel` and `notifications/claude/channel` from enabled stdio sources; Rust stdio and TUI fixtures passed without a JavaScript runtime requirement. Tom reported a successful real Hammerbarn inline launch on 5 September 2026. That owner report is distinct from captured fixture/receipt evidence and does not certify live Cambium or every adapter. Optional permission relay and persistent attachment remain separate. A channel message never grants tool approval.
-
-That recorded build includes `--mcp-config JSON|PATH` and `--extension`. The stdio URI form of `--extension NAME=stdio:///absolute/executable` supplies an executable only; full definitions carry args/env/headers. **Persisted channel policy, `-c channels=JSON`, optional default delivery and named `off` are implemented in this source under [NCS-001](design/norn-channel-settings/briefs/NCS-001.md). Verification is in progress. The historical `5227db4` build predates these settings features; its receipt does not verify NCS-001. Exact candidate, check results and installation identity are tracked in `/private/tmp/ncs-001-proof` and the external Norn programme.**
+The repeatable `--mcp-config JSON|PATH` flag supplies complete definitions. The stdio URI form of `--extension NAME=stdio:///absolute/executable` supplies an executable only; use full definitions for args/env/headers.
 
 ## Inline JSON or a file
 
@@ -125,6 +123,16 @@ norn --protocol jsonrpc --mcp-config ./mcp-bridge.json \
 
 The peer still sends `initialize` and one `run/execute` with its prompt. MCP definitions are launch flags, not new request parameters. They add no dynamic MCP mutation method, permission-relay endpoint, idle daemon or second run. JSON-RPC stdout stays protocol-only. See [the driven contract](design/norn-cli/DRIVEN-PROTOCOL.md).
 
-## Recorded verification
+## Historical verification
 
-At the NML-001 checkpoint, twelve parser tests and six real-process cases passed natively. The process cases cover inline print launches and preserved disk settings, relative document/executable paths in driven mode with active channel events and one-shot exit, interactive reload retention, id-matched driven refusal, print exit 2 and public TUI startup exit 2 before terminal setup or MCP launch. Formatting and strict release-profile workspace/all-targets Clippy, including the live-smoke feature, also passed. These are local diagnostics, not a full-suite or live-provider claim. Those NML diagnostics are supplemented by the historical exact `5227db4` receipt and installation above. They do not verify NCS-001. The settings implementation is undergoing typed-layer, stdio/process, strict lint, source-review and exact candidate verification. `/private/tmp/ncs-001-proof` and the external programme record the actual completed checks and any later installation. This source guide does not declare an NCS battery pass or installed-artifact result; fresh external review is recorded separately.
+These are dated implementation checkpoints, not the current installation identity. See the [preview.8 record](design/norn-retained-tui/briefs/NUI-005.md) for the later installed source and open findings.
+
+### NML-001 installation checkpoint
+
+The historical NML-001/NV-002 installation at 20:15 Melbourne on 5 September 2026 used exact commit `5227db49d805a4c0729912dca3832c842c8f39e1`, installed at 20:15:11 Melbourne on 5 September 2026 and merged to local/remote main. Installed SHA-256: `dc61b730918db4928e5e9ff0cf1194f7ed0fdfcf0d010286ab87f8d2d26e0a19`. Its exact 205 battery passed all six declared legs with 14 venue bindings; native build and installed help/list/redacted-error checks passed. Proof: `/private/tmp/nwp-04-proof/exact-battery-2/execution-result.json` and `/private/tmp/nwp-04-proof/native-release-2/installation.json`. Fresh Fable re-review remains pending; no new review pass or waiver is claimed.
+
+The historical `3964799` battery remains red: five green legs and tests exit 101. Its detailed cancellation error was not retained. NV-002 changed only two test cleanup waits; the green repaired-candidate receipt does not identify the old failure cause or relabel the old result. The earlier 18:09 `450bb7a` defaults installation and the `911eddd` receipt remain historical.
+
+At that checkpoint, Rust stdio and TUI channel fixtures passed without a JavaScript runtime requirement. Tom reported a successful real Hammerbarn inline launch on 5 September 2026; that report is distinct from captured fixture evidence and does not certify live Cambium or every adapter.
+
+At the NML-001 checkpoint, twelve parser tests and six real-process cases passed natively. The process cases cover inline print launches and preserved disk settings, relative document/executable paths in driven mode with active channel events and one-shot exit, interactive reload retention, id-matched driven refusal, print exit 2 and public TUI startup exit 2 before terminal setup or MCP launch. Formatting and strict release-profile workspace/all-targets Clippy, including the live-smoke feature, also passed. These are local diagnostics, not a full-suite or live-provider claim. Those NML diagnostics are supplemented by the historical exact `5227db4` receipt and installation above. They do not verify NCS-001. The historical NCS candidate evidence was tracked in `/private/tmp/ncs-001-proof` and the external programme. Later installation records supersede the old work-in-progress status; none retroactively declares an NCS battery or independent-review pass.

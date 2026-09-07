@@ -1,14 +1,15 @@
 # TUI preferences
 
-Saved frontend preferences are installed locally in **Norn 0.1.0-preview.4**. Start a fresh session to use them. This version includes the earlier layout, flicker and tool-description fixes. Main-branch venue verification and independent review remain pending; exact local evidence is recorded in [NFP-001](design/norn-frontend-preferences/briefs/NFP-001.md).
+Updated 8 September 2026, Melbourne time, for **Norn 0.1.0-preview.8**. The retained TUI uses an Iridium composer, saved send-key choices, and editable view shortcuts. See [NUI-005](design/norn-retained-tui/briefs/NUI-005.md) for the current installation and verification limits; [NFP-001](design/norn-frontend-preferences/briefs/NFP-001.md) records the earlier preference implementation.
 
 ## Choose where changes are saved
 
-Each CLI launch starts with **personal automatic saving**. This is the implementation's working assumption, chosen from the request that settings be remembered; it is not a quoted or confirmed user ruling. Opening Norn alone does not write preferences. Changing a saved view, display, input or composer preference starts a save.
+Each CLI launch starts with **personal automatic saving**. Opening Norn alone does not write preferences. Changing a saved view, display, input or composer preference starts a save.
 
 | Command | Effect |
 | --- | --- |
 | `/view composer send-key enter` | Enter sends; Alt+Enter inserts a newline. This is the default. |
+| `/view composer send-key shift-enter` | Shift+Enter sends; Enter inserts a newline. Requires distinguishable modifier reporting. |
 | `/view composer send-key alt-enter` | Alt+Enter sends; Enter inserts a newline. |
 | `/view preferences status` | Show active values, target, pending/failed/saved outcome and the captured winning settings layer. `/view preferences` also shows status. |
 | `/view preferences run` | Keep subsequent preference changes temporary for this process. |
@@ -30,7 +31,7 @@ A successful personal save can therefore be **saved but shadowed on restart**. T
 
 ## JSON fields
 
-This is the current default projection. Add or edit the `tui` member in the chosen settings document while preserving its other settings; do not replace the whole file with this example if it already contains other configuration.
+This example uses the declared defaults and omits optional shortcut overrides. Add or edit the `tui` member in the chosen settings document while preserving its other settings; do not replace the whole file with this example if it already contains other configuration.
 
 ```json
 {
@@ -58,12 +59,48 @@ This is the current default projection. Add or edit the `tui` member in the chos
 - `history_events` and `body_bytes` are positive machine-sized integers controlling requested history/body loads. They are not retention or model limits.
 - `clipboard` is `unspecified`, `disabled` or `osc52`. This records transport intent, not proof that the terminal accepts clipboard writes.
 - `input.submit_mode` is `steer` or `queue` for input submitted during agent work. Ctrl+T changes this delivery choice.
-- `composer.send_key` is `enter` (default) or `alt-enter`; it selects the physical send key independently of steer/queue. Change it with `/view composer send-key enter|alt-enter` or the existing last-row send-key control. A visible completion popup takes bare Enter/Tab first. Reported Shift+Enter inserts a newline; terminals that cannot distinguish it from Enter still follow their reported key. The setting does not enable unsupported terminal modifiers.
+- `composer.send_key` is `enter` (default), `shift-enter`, or `alt-enter`; it selects the physical send key independently of steer/queue. Change it with `/view composer send-key enter|shift-enter|alt-enter`, Option/Alt+S, or the last-row send-key control. A visible completion popup takes bare Enter/Tab first. In Shift+Enter or Alt+Enter mode, bare Enter inserts a newline. The terminal must distinguish the chosen modifier; the control reports unconfirmed modifier support where applicable. A setting cannot enable unsupported terminal reporting.
 - Boolean fields require JSON booleans. Fields may be omitted to use the declared defaults within the winning object.
 
 The frontend owns `tui.view`, `tui.display`, `tui.input` and `tui.composer`. `composer` is a strict object containing only `send_key`; unknown fields such as `composer.future` are refused. Saves preserve unrelated document keys and unowned `tui` siblings such as `extension_data`. They do not save drafts, selections, viewport positions, transcript IDs, queued messages or terminal capability replies.
 
 Malformed values and unknown fields inside an owned section are refused with the document and dotted field name, rather than silently replaced. Each loaded layer is validated, including a shadowed layer. Correct the named field and restart. Unknown top-level `tui` siblings remain available to their separate owners.
+
+## Editable view shortcuts
+
+`/view keys` shows the active bindings. These frontend actions do not send a message to the model:
+
+| Action | Default keys |
+| --- | --- |
+| `pane_toggle` | Option/Alt+P, F7 |
+| `pane_diff` | Option/Alt+D, F8 |
+| `pane_agents` | Option/Alt+A, F9 |
+| `send_key_cycle` | Option/Alt+S, F10 |
+| `upper_switch` | F2 |
+| `search` | F3 |
+| `copy` | F4 |
+| `export` | F5 |
+| `focus_next` / `focus_previous` | F6 / Shift+F6 |
+
+For example, `/view keys set pane_toggle alt+q` replaces the toggle bindings with Option/Alt+Q. `/view keys set pane_toggle alt+p alt+q` assigns both; `/view keys clear pane_toggle` removes its shortcuts. The slash commands and clickable controls remain available. These edits use the same selected save scope as other frontend preferences.
+
+The equivalent settings field is `tui.input.bindings`. This partial example overrides three actions; omitted actions retain their declared bindings. Add the member to the existing winning `tui.input` object:
+
+```json
+{
+  "tui": {
+    "input": {
+      "bindings": {
+        "pane_toggle": ["alt+q"],
+        "pane_diff": ["alt+d"],
+        "pane_agents": []
+      }
+    }
+  }
+}
+```
+
+Each action maps to an array of key strokes. An empty array explicitly unbinds it. Invalid, reserved, or conflicting shortcuts are refused before replacing the active bindings. Option-based bindings require the terminal to send Alt. Use `/view keys` to check the effective choices after loading settings.
 
 ## Pending writes, conflicts and failures
 
@@ -75,4 +112,4 @@ A failure before publication leaves the run values intact and stops automatic re
 
 “Published; durability uncertain” means the settings reached the document but durable directory sync was not confirmed. It is not a rollback. A save task ending without a known outcome also cannot be treated as a failed write: further saves are blocked until you inspect the settings and restart. Do not assume either case requires repeating an already-published write.
 
-The [preference brief](design/norn-frontend-preferences/briefs/NFP-001.md) records the existing save owner and verification; [NCP-001](design/norn-iridium-composer/briefs/NCP-001.md) adds the composer send-key preference. The composer changes are under implementation and are not part of the installed preview.4 described above. The installed local preview does not constitute venue approval or a public release.
+The [preference brief](design/norn-frontend-preferences/briefs/NFP-001.md) records the existing save owner and verification; [NCP-001](design/norn-iridium-composer/briefs/NCP-001.md) adds the composer send-key preference. Composer integration and the three send-key policies are included in the current preview. The installed local preview does not constitute venue approval or a stable release.
