@@ -39,3 +39,11 @@
 - [ ] **C25** — Ordered scroll/Latest interaction after mandatory isolated ScreenState extraction; inherited R1-R3 preserved
 - [ ] **C26** — Record the installed preview.6 and focused local preview.7 checkpoint accurately
 - [ ] **C27** — Editable exact view shortcuts persist through the existing settings owner and keep hints/input semantics truthful
+
+## Tool and retained activity repair
+
+- [ ] **C28** — Shared per-item detail policy and readable lifecycle styling — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.
+- [ ] **C29** — Bind accepted canonical tool calls to the exact publication attempt — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.
+- [ ] **C30** — Present producer-bound notifications without exposing raw audit records by default — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.
+- [ ] **C31** — Show actual compaction progress and current context use — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.
+- [ ] **C32** — Record one checked version for integration and local installation — preview.8 code checks recorded with source-drift and failed-repeat limits; release rebuild, main and installation pending.

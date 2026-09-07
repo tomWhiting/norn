@@ -29,3 +29,11 @@
 **S13.** I can distinguish a candidate from my verified installed preview, see its actual feature scope, recover the prior binary and hear Norn updated only after a successful checked local update. Implemented and locally verified in preview.6; recorded source d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8. Main landing and review remain separate. Preview.7 is a separately authorized focused local candidate; its exact checks, omissions, rollback and installation receipt must be recorded without treating it as a full release.
 
 **S14.** I can use Option or Control combinations for pane/view actions, edit and remember those bindings, disable unwanted bindings, and trust the displayed hints without losing ordinary typing, draft, popup or send behavior.
+
+**S15.** I can keep compaction details collapsed until I expand them and read tool state/expanded output without losing original selection or navigation. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.
+
+**S16.** I can see the accepted tool invocation and its result as one correctly associated item, even when publication/history and live events arrive in a different order. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.
+
+**S17.** I can read a compact process/watch/delivery notification when its producer binding is proven, inspect its exact original bytes on demand, and still see unbound input as ordinary untrusted input. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.
+
+**S18.** I can distinguish actual ongoing compaction from completed, failed, cancelled or uncertain work, and see current context usage against the effective model limit without confusing it with cumulative billing. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.

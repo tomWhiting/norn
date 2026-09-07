@@ -295,6 +295,10 @@ async fn handle_new(
     runtime.session_binding = new_binding;
     let config = state.transcript.config.clone();
     state.transcript = super::transcript::Transcript::new(new_source);
+    state.context_status.clear_activity();
+    state
+        .context_status
+        .set_window(runtime.agent_config.context_window_limit);
     state.transcript.config = config;
     state
         .screen
@@ -347,12 +351,30 @@ async fn handle_compact(
         return Ok(LocalCommandOutcome::Rejected);
     };
 
+    let operation_id = uuid::Uuid::new_v4();
+    state.context_status.record(
+        &norn::provider::AgentCompactionProgress {
+            operation_id,
+            phase: norn::provider::CompactionPhase::Started,
+        },
+        std::time::Instant::now(),
+    );
     match edits.auto_compact_keeping_recent_turns(
         &runtime.store,
         keep,
         estimate.token_estimate_freed,
     ) {
-        Ok(Some(_)) => {
+        Ok(Some(outcome)) => {
+            state.context_status.record(
+                &norn::provider::AgentCompactionProgress {
+                    operation_id,
+                    phase: norn::provider::CompactionPhase::Finished {
+                        compaction_id: outcome.compaction_id,
+                        mechanical_fallback: false,
+                    },
+                },
+                std::time::Instant::now(),
+            );
             let line = format!(
                 "Compacted older turns, freed ~{} tokens (keeping {keep} most recent).",
                 estimate.token_estimate_freed,
@@ -372,10 +394,18 @@ async fn handle_compact(
             Ok(LocalCommandOutcome::after_acceptance(reporting))
         }
         Ok(None) => {
+            state.context_status.clear_activity();
             write_dim_line("Nothing to compact.", state)?;
             Ok(LocalCommandOutcome::Accepted)
         }
         Err(err) => {
+            state.context_status.record(
+                &norn::provider::AgentCompactionProgress {
+                    operation_id,
+                    phase: norn::provider::CompactionPhase::Failed,
+                },
+                std::time::Instant::now(),
+            );
             let line = format!("Compact failed: {err}");
             write_error_line(state, &line)?;
             Ok(LocalCommandOutcome::Rejected)

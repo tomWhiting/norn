@@ -424,6 +424,14 @@ pub fn known_lifecycle(event_type: &str) -> bool {
     )
 }
 
+#[derive(serde::Serialize)]
+struct BoundAudit<'a> {
+    #[serde(flatten)]
+    lifecycle: &'a AgentMessageLifecycle,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_event_id: Option<&'a serde_json::Value>,
+}
+
 fn lifecycle_body(event: &SessionEvent, value: &serde_json::Value) -> Result<String, ViewError> {
     let SessionEvent::Custom { event_type, .. } = event else {
         return Err(ViewError::FieldUnavailable {
@@ -449,7 +457,10 @@ fn lifecycle_body(event: &SessionEvent, value: &serde_json::Value) -> Result<Str
                     event_id: event.base().id.clone(),
                 });
             }
-            serde_json::to_string(&decoded)
+            serde_json::to_string(&BoundAudit {
+                lifecycle: &decoded,
+                user_event_id: value.get("user_event_id"),
+            })
         }
         COMPACTION_EVENT_TYPE => serde_json::from_value::<AgentCompaction>(value.clone())
             .and_then(|event| serde_json::to_string(&event)),

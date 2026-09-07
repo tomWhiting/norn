@@ -127,6 +127,11 @@ pub fn handle_agent_event(state: &mut AppState, agent_event: AgentEvent) -> Resu
                 state.set_root_input_estimate(estimate.input_tokens);
             }
         }
+        AgentEventKind::CompactionProgress(progress) => {
+            if agent_event.agent_id == root_id {
+                state.context_status.record(&progress, Instant::now());
+            }
+        }
         // Provider stream retry: the replay re-streams the whole turn.
         // The TUI paints deltas append-only into the scroll region, so
         // there is no buffered partial to reset — but the wait itself

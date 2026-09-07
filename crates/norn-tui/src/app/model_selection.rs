@@ -74,7 +74,7 @@ fn apply_runtime_change(
     runtime: &mut RuntimeRefs,
     change: SelectionChange<'_>,
 ) -> Result<ClearedPolicy, ConfigError> {
-    apply_change(
+    let cleared = apply_change(
         &mut runtime.model_selection,
         &mut PublicationTarget {
             model: &mut runtime.model,
@@ -84,7 +84,11 @@ fn apply_runtime_change(
             status: state.fixed_panel.status_bar_mut(),
         },
         change,
-    )
+    )?;
+    state
+        .context_status
+        .set_window(runtime.agent_config.context_window_limit);
+    Ok(cleared)
 }
 
 pub(super) fn handle_model(

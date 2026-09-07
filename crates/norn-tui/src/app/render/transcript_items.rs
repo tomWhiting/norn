@@ -28,14 +28,23 @@ pub(super) fn item_groups(
     secondary_fields: bool,
     separator: bool,
 ) -> Result<Vec<RowGroup>, TuiError> {
-    let expanded = screen
-        .tool_overrides
-        .get(&item.id)
-        .copied()
-        .unwrap_or(transcript.config.expanded_tools);
+    let expanded = screen.tool_overrides.get(&item.id).copied().unwrap_or(
+        crate::app::view_actions::default_expanded(&item.kind, transcript.config.expanded_tools),
+    );
+    let bound_notification = transcript.projection.is_bound_notification(&item.id);
     let label = match &item.kind {
         ViewItemKind::Tool(tool) => crate::app::tool_calls::label(tool, expanded),
         ViewItemKind::Input | ViewItemKind::Text | ViewItemKind::Structured => String::new(),
+        ViewItemKind::ExternalInput if bound_notification => format!(
+            "{} {}",
+            if expanded { "▾" } else { "▸" },
+            item.label.as_str()
+        ),
+        ViewItemKind::Context => format!(
+            "{} {}",
+            if expanded { "▾" } else { "▸" },
+            item.label.as_str()
+        ),
         _ => item.label.as_str().to_owned(),
     };
     let mut groups = Vec::new();
@@ -49,7 +58,8 @@ pub(super) fn item_groups(
         header.text = Arc::new(header_text(&label, &item.kind)?);
         groups.push(header);
     }
-    if (matches!(&item.kind, ViewItemKind::Tool(_)) && !expanded)
+    if ((matches!(&item.kind, ViewItemKind::Tool(_) | ViewItemKind::Context) || bound_notification)
+        && !expanded)
         || (transcript.completion_compact(&item.id)
             && !screen
                 .tool_overrides
@@ -169,6 +179,10 @@ fn local_group(
 // Existing Norn tool/error palette from tools/helpers.rs, expressed as typed spans.
 const ERROR_RED: [u8; 3] = [200, 80, 80];
 const WARNING_AMBER: [u8; 3] = [215, 175, 0];
+const ACTIVE_BLUE: [u8; 3] = [110, 175, 220];
+const SUCCESS_GREEN: [u8; 3] = [125, 185, 145];
+const QUIET_GREY: [u8; 3] = [150, 155, 165];
+const TOOL_BACKGROUND: [u8; 3] = [30, 34, 40];
 
 fn body_style(kind: &ViewItemKind) -> TextStyle {
     let dim = TextAttributes::default().with(TextAttribute::Dim);
@@ -181,8 +195,12 @@ fn body_style(kind: &ViewItemKind) -> TextStyle {
             foreground: Some(ERROR_RED),
             ..TextStyle::default()
         },
-        ViewItemKind::Tool(_)
-        | ViewItemKind::Notice
+        ViewItemKind::Tool(_) => TextStyle {
+            foreground: Some([185, 195, 205]),
+            background: Some(TOOL_BACKGROUND),
+            ..TextStyle::default()
+        },
+        ViewItemKind::Notice
         | ViewItemKind::Metadata
         | ViewItemKind::Context
         | ViewItemKind::ModelChange { .. } => TextStyle {
@@ -193,17 +211,16 @@ fn body_style(kind: &ViewItemKind) -> TextStyle {
     }
 }
 
-fn tool_colour(tool: &norn::session_view::ToolView) -> Option<[u8; 3]> {
-    let states = [Some(tool.state), tool.result_state];
-    if states.contains(&Some(ToolState::Failed)) {
-        Some(ERROR_RED)
-    } else if states
-        .iter()
-        .any(|state| matches!(state, Some(ToolState::Blocked | ToolState::Incomplete)))
-    {
-        Some(WARNING_AMBER)
-    } else {
-        None
+fn tool_colour(tool: &norn::session_view::ToolView) -> [u8; 3] {
+    if tool.state == ToolState::Failed || tool.result_state == Some(ToolState::Failed) {
+        return ERROR_RED;
+    }
+    match tool.result_state.unwrap_or(tool.state) {
+        ToolState::Failed => ERROR_RED,
+        ToolState::Blocked | ToolState::Incomplete => WARNING_AMBER,
+        ToolState::Assembling | ToolState::Running => ACTIVE_BLUE,
+        ToolState::Completed => SUCCESS_GREEN,
+        ToolState::Cancelled => QUIET_GREY,
     }
 }
 
@@ -217,7 +234,7 @@ fn header_text(label: &str, kind: &ViewItemKind) -> Result<RenderedMarkdown, Tui
         span.source = SourceMapping::Generated;
     }
     let name_end = if let ViewItemKind::Tool(tool) = kind {
-        base.foreground = tool_colour(tool);
+        base.foreground = Some(tool_colour(tool));
         crate::tools::summary::summarize(tool, false)
             .name_label()
             .len()
@@ -293,105 +310,5 @@ fn with_base_style(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use norn::session_view::{DisplayText, ToolView};
-
-    type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-    fn tool() -> ToolView {
-        ToolView {
-            call_id: Some("presentation-call".to_owned()),
-            stream_item_id: None,
-            name: Some(DisplayText::new("read")),
-            description: Some(DisplayText::new(
-                "Inspect the word failed without treating it as an outcome",
-            )),
-            description_error: None,
-            kind: None,
-            arguments: None,
-            result: None,
-            invocation_event: None,
-            invocation_attempt: None,
-            result_event: None,
-            result_parent: None,
-            state: ToolState::Running,
-            result_state: None,
-            duration_ms: None,
-            committed: None,
-        }
-    }
-
-    #[test]
-    fn thinking_styles_preserve_exact_mapping_markdown_emphasis_and_code_colour() -> TestResult {
-        let original = "Reason **carefully** about `let α = 1;`";
-        let rendered = render_markdown(original, &crate::render::syntax::SyntaxHighlighter::new())?;
-        let before = rendered.clone();
-        let styled = with_base_style(rendered, body_style(&ViewItemKind::Thinking))?;
-        assert_eq!(styled.styled.text(), before.styled.text());
-        assert_eq!(styled.spans, before.spans);
-        assert!(styled.styled.spans().iter().all(|span| {
-            span.style.attributes.contains(TextAttribute::Dim)
-                && span.style.attributes.contains(TextAttribute::Italic)
-        }));
-        for span in before.styled.spans() {
-            let actual = styled
-                .styled
-                .spans()
-                .iter()
-                .find(|current| current.range == span.range)
-                .ok_or("styled source span missing")?;
-            assert_eq!(actual.style.foreground, span.style.foreground);
-            if span.style.attributes.contains(TextAttribute::Bold) {
-                assert!(actual.style.attributes.contains(TextAttribute::Bold));
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn tool_styles_use_typed_outcomes_and_generated_labels_keep_no_original_authority() -> TestResult
-    {
-        let mut tool = tool();
-        assert_eq!(tool_colour(&tool), None);
-        tool.result_state = Some(ToolState::Blocked);
-        assert_eq!(tool_colour(&tool), Some(WARNING_AMBER));
-        tool.state = ToolState::Failed;
-        assert_eq!(tool_colour(&tool), Some(ERROR_RED));
-        let label = crate::tools::summary::summarize(&tool, false).header();
-        let rendered = header_text(&label, &ViewItemKind::Tool(Box::new(tool)))?;
-        assert_eq!(rendered.styled.text(), label);
-        assert!(
-            rendered
-                .spans
-                .iter()
-                .all(|span| span.source == SourceMapping::Generated)
-        );
-        let first = rendered
-            .styled
-            .spans()
-            .first()
-            .ok_or("tool name style absent")?;
-        assert_eq!(first.range, 0.."read".len());
-        assert!(first.style.attributes.contains(TextAttribute::Bold));
-        assert!(
-            rendered
-                .styled
-                .spans()
-                .iter()
-                .all(|span| span.style.foreground == Some(ERROR_RED))
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn generated_separator_has_no_body_capability_or_mapped_bytes() -> TestResult {
-        let group = local_group("", 80, None)?;
-        assert!(group.reference.is_none());
-        assert!(group.fixed_offset.is_none());
-        assert!(group.text.spans.is_empty());
-        assert_eq!(group.rows.len(), 1);
-        assert!(group.rows[0].bytes().is_empty());
-        Ok(())
-    }
-}
+#[path = "transcript_items_tests.rs"]
+mod tests;

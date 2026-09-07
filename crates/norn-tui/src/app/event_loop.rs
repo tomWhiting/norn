@@ -220,6 +220,9 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         inputs.status_bar,
     );
     super::frontend_preferences::install(&mut state, inputs.frontend_preferences);
+    state
+        .context_status
+        .set_window(inputs.agent_config.context_window_limit);
     state.agent_panel.set_pending_messages(pending_messages);
 
     replay_visible_session_history(&mut state, &inputs.store).await?;
@@ -423,10 +426,10 @@ async fn outer_loop(
             event = agent_event_rx.recv(), if !events_closed => {
                 match event {
                     Ok(event) => { handle_agent_event(state, event)?; state.screen.allow_body_load = true; }
-                    Err(broadcast::error::RecvError::Lagged(missed)) => { state.transcript.projection.mark_lagged(missed)?; }
+                    Err(broadcast::error::RecvError::Lagged(missed)) => { state.mark_live_events_lagged(missed)?; }
                     Err(broadcast::error::RecvError::Closed) => {
                         events_closed = true;
-                        super::notices::notice(state, "Live event source closed", None)?;
+                        state.close_live_events("Live event source closed")?;
                     }
                 }
             }

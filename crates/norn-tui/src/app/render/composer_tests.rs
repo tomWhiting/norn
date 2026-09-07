@@ -364,3 +364,57 @@ fn send_key_hint_uses_the_current_cached_bindings_and_shows_explicit_unbinding()
     );
     Ok(())
 }
+
+#[test]
+fn compaction_and_current_context_use_existing_chrome_without_changing_composer_geometry()
+-> TestResult {
+    let mut state = AppState::new(
+        TerminalCaps::baseline(),
+        crate::input::history::InputHistory::in_memory(),
+        norn::agent::registry::AgentRegistry::shared(),
+        crate::app::state::test_view_source(uuid::Uuid::new_v4()),
+        crate::render::fixed_panel::StatusBar::default(),
+    );
+    state.input_editor.paste_cells("draft remains here")?;
+    state.context_status.set_window(Some(1_000));
+    state.set_root_input_estimate(250);
+    let baseline = super::super::prepare(&mut state, 120, 24)?;
+    state.context_status.record(
+        &norn::provider::AgentCompactionProgress {
+            operation_id: uuid::Uuid::new_v4(),
+            phase: norn::provider::CompactionPhase::Started,
+        },
+        std::time::Instant::now(),
+    );
+    let active = super::super::prepare(&mut state, 120, 24)?;
+    assert_eq!(baseline.layout, active.layout);
+    assert_eq!(baseline.rows.len(), active.rows.len());
+    assert!(
+        active
+            .rows
+            .iter()
+            .any(|row| row.text.styled.text().contains("~25% context")
+                && row.text.styled.text().contains("compacting"))
+    );
+    assert_eq!(state.input_editor.text(), "draft remains here");
+    active.prepare(&TerminalCaps::baseline())?;
+    for columns in [1, 8, 20] {
+        let narrow = super::super::prepare(&mut state, columns, 10)?;
+        narrow.prepare(&TerminalCaps::baseline())?;
+    }
+    state.context_status.observation_lost();
+    let lost = super::super::prepare(&mut state, 120, 24)?;
+    assert!(lost.rows.iter().any(|row| {
+        row.text
+            .styled
+            .text()
+            .contains("compaction status unavailable")
+    }));
+    assert!(
+        !lost
+            .rows
+            .iter()
+            .any(|row| row.text.styled.text().contains("compacting"))
+    );
+    Ok(())
+}

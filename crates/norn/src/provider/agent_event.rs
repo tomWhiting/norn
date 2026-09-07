@@ -433,6 +433,35 @@ pub struct AgentCompaction {
     pub compacted_at: DateTime<Utc>,
 }
 
+/// Actual lifetime of one admitted local compaction operation.
+/// This status contains no summary text or provider-private payload.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub enum CompactionPhase {
+    /// Planning and hooks admitted the operation; summarization/commit is running.
+    Started,
+    /// The compaction was committed, independently of later audit reporting.
+    Finished {
+        /// Exact event accepted by the session store.
+        compaction_id: EventId,
+        /// The stored summary is the explicitly marked mechanical fallback.
+        mechanical_fallback: bool,
+    },
+    /// The operation returned an error before its compaction commit succeeded.
+    Failed,
+    /// The operation was cancelled or its owning future was abandoned before commit.
+    Cancelled,
+}
+
+/// Source-tagged status of one actual compaction, distinct from billing accounting.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentCompactionProgress {
+    /// Identity minted by the owner when actual work is admitted.
+    pub operation_id: Uuid,
+    /// Latest factual transition of that operation.
+    pub phase: CompactionPhase,
+}
+
 /// The payload of an [`AgentEvent`]: a raw provider stream event, a
 /// typed subagent lifecycle event, typed usage telemetry, a typed
 /// inter-agent message event, or a typed context-compaction event.
@@ -461,6 +490,8 @@ pub enum AgentEventKind {
     StreamRetry(AgentStreamRetry),
     /// A completed automatic context compaction on the tagged agent's loop.
     Compaction(AgentCompaction),
+    /// Actual begin/commit/failure/cancellation of an admitted local compaction.
+    CompactionProgress(AgentCompactionProgress),
 }
 
 /// An [`AgentEventKind`] tagged with the identity of the agent it
@@ -579,6 +610,11 @@ impl AgentEventSender {
     /// rewrite and account for the summarization spend.
     pub fn send_compaction(&self, compaction: AgentCompaction) {
         self.emit(AgentEventKind::Compaction(compaction));
+    }
+
+    /// Publish an actual transition from the compaction owner.
+    pub fn send_compaction_progress(&self, progress: AgentCompactionProgress) {
+        self.emit(AgentEventKind::CompactionProgress(progress));
     }
 
     /// Create a child sender sharing the same broadcast channel but
@@ -784,6 +820,7 @@ mod tests {
             | AgentEventKind::UsageEstimate(_)
             | AgentEventKind::StreamRetry(_)
             | AgentEventKind::Compaction(_)
+            | AgentEventKind::CompactionProgress(_)
             | AgentEventKind::Observed(_) => {
                 return Err("expected subagent lifecycle event".into());
             }

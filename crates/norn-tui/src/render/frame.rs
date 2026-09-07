@@ -146,6 +146,29 @@ fn paint_row(
         return Err(TuiError::FrameBounds);
     }
     let mut bytes = Vec::new();
+    let mut cached_style: Option<(TextStyle, bool, Vec<u8>)> = None;
+    let mut emit_style =
+        |output: &mut Vec<u8>, text: TextStyle, highlighted: bool| -> io::Result<()> {
+            if cached_style
+                .as_ref()
+                .is_none_or(|(cached, selected, _)| *cached != text || *selected != highlighted)
+            {
+                let mut encoded = Vec::new();
+                style(
+                    &mut encoded,
+                    text,
+                    row.composer,
+                    row.selected,
+                    highlighted,
+                    caps,
+                )?;
+                cached_style = Some((text, highlighted, encoded));
+            }
+            if let Some((_, _, encoded)) = &cached_style {
+                output.extend_from_slice(encoded);
+            }
+            Ok(())
+        };
     for atom in row.geometry.clip(0, usize::from(row.area.width))? {
         if atom.kind == AtomKind::Invisible {
             continue;
@@ -156,14 +179,13 @@ fn paint_row(
             .iter()
             .any(|range| range.start < atom.bytes.end && atom.bytes.start < range.end);
         if matches!(atom.kind, AtomKind::Unpaintable | AtomKind::Tab) {
-            style(
-                &mut bytes,
-                TextStyle::default(),
-                row.composer,
-                row.selected,
-                highlighted,
-                caps,
-            )?;
+            let spans = row.text.styled.spans();
+            let index = spans.partition_point(|span| span.range.end <= atom.bytes.start);
+            let text_style = spans
+                .get(index)
+                .filter(|span| span.range.contains(&atom.bytes.start))
+                .map_or(TextStyle::default(), |span| span.style);
+            emit_style(&mut bytes, text_style, highlighted)?;
             bytes.extend(std::iter::repeat_n(b' ', atom.width));
         } else {
             let mut byte = atom.bytes.start;
@@ -181,14 +203,7 @@ fn paint_row(
                     Some(span) => (span.range.start.min(atom.bytes.end), TextStyle::default()),
                     None => (atom.bytes.end, TextStyle::default()),
                 };
-                style(
-                    &mut bytes,
-                    selected,
-                    row.composer,
-                    row.selected,
-                    highlighted,
-                    caps,
-                )?;
+                emit_style(&mut bytes, selected, highlighted)?;
                 bytes.extend_from_slice(
                     row.text
                         .styled
@@ -239,17 +254,31 @@ fn style(
     if composer {
         output.extend_from_slice(b"\x1b[39;49m");
     }
+    let background = if selected {
+        Some([48, 58, 70])
+    } else {
+        text.background
+    };
     if caps.true_colour {
         if let Some([red, green, blue]) = text.foreground {
             write!(output, "\x1b[38;2;{red};{green};{blue}m")?;
         }
-        if let Some([red, green, blue]) = text.background {
+        if let Some([red, green, blue]) = background {
             write!(output, "\x1b[48;2;{red};{green};{blue}m")?;
         }
-    } else if let Some([red, green, blue]) = text.foreground {
-        let colour =
-            crate::render::style::colour_for(termina::style::RgbColor::new(red, green, blue), caps);
-        output.extend_from_slice(colour.as_bytes());
+    } else {
+        if let Some([red, green, blue]) = text.foreground {
+            let colour = crate::render::style::colour_for(
+                termina::style::RgbColor::new(red, green, blue),
+                caps,
+            );
+            output.extend_from_slice(colour.as_bytes());
+        }
+        if let Some([red, green, blue]) = background {
+            let index =
+                crate::render::style::nearest_256(termina::style::RgbColor::new(red, green, blue));
+            write!(output, "\x1b[48;5;{index}m")?;
+        }
     }
     if selected {
         output.extend_from_slice(b"\x1b[1m");

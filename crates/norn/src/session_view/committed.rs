@@ -57,6 +57,7 @@ pub(crate) fn project_committed(
         items,
         assistant: matches!(event, SessionEvent::AssistantMessage { .. }),
         parts,
+        notification: super::notifications::NotificationRecord::from_event(event).map(Box::new),
     })
 }
 

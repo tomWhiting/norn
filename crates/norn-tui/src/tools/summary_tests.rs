@@ -41,7 +41,7 @@ fn known_and_unknown_calls_keep_missing_description_compact_and_facts_in_details
         assert_eq!(summary.call_id, Some("call-7"));
         assert!(summary.description.is_none());
         let header = summary.header();
-        assert_eq!(header, format!("{name}: description unavailable · running"));
+        assert_eq!(header, format!("{name} · running"));
         let details = summary.details_header();
         for fragment in [
             name,
@@ -91,10 +91,7 @@ fn assembling_alias_is_not_presented_as_a_call_id() {
     view.state = ToolState::Assembling;
     let summary = summarize(&view, false);
     let header = summary.header();
-    assert_eq!(
-        header,
-        "tool name unavailable: description unavailable · assembling"
-    );
+    assert_eq!(header, "tool name unavailable · assembling");
     let details = summary.details_header();
     assert!(details.contains("call ID unavailable"));
     assert!(!details.contains("stream-only"));
@@ -125,10 +122,7 @@ fn incomplete_invocation_preserves_independent_result_outcome() {
     view.description_error = Some(DisplayText::new("malformed arguments at line 1"));
     let summary = summarize(&view, false);
     let header = summary.header();
-    assert_eq!(
-        header,
-        "edit: description unavailable · incomplete · result blocked"
-    );
+    assert_eq!(header, "edit · result blocked");
     let details = summary.details_header();
     assert!(details.contains("incomplete · not committed"));
     assert!(header.contains("result blocked"));

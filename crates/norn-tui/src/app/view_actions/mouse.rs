@@ -269,7 +269,11 @@ fn extend_display(state: &mut AppState, event: MouseEvent) -> Result<(), TuiErro
                     .projection
                     .item(&hit.anchor.item)
                     .is_some_and(|item| {
-                        matches!(item.kind, norn::session_view::ViewItemKind::Tool(_))
+                        matches!(
+                            item.kind,
+                            norn::session_view::ViewItemKind::Tool(_)
+                                | norn::session_view::ViewItemKind::Context
+                        ) || state.transcript.projection.is_bound_notification(&item.id)
                     })
         })
     {

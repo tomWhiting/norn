@@ -9,7 +9,9 @@ use crate::provider::agent_event::{
 use crate::provider::events::ProviderEvent;
 use crate::session::events::EventId;
 
-use super::contract::{AttemptKey, CoverageGap, HistoryPosition, ItemId, ViewItemKind};
+use super::contract::{
+    AttemptKey, CoverageGap, HistoryPosition, HistoryRecord, ItemId, ViewItemKind,
+};
 use super::error::ViewError;
 use super::projection::SessionProjection;
 
@@ -95,6 +97,7 @@ impl SessionProjection {
                         event_id: event_id.clone(),
                     });
                 }
+                self.check_published_tool_owners(attempt, record)?;
                 Retirement::Accepted(event_id.clone())
             }
             PublicationResolution::NotAccepted(_) => Retirement::NotAccepted,
@@ -126,6 +129,7 @@ impl SessionProjection {
                 } else {
                     self.reconcile_history_record(attempt, record)?;
                 }
+                self.bind_published_tools(attempt, record)?;
             }
             PublicationResolution::NotAccepted(reason) => {
                 self.items.forget_completions(attempt);
@@ -155,6 +159,65 @@ impl SessionProjection {
         self.publication.lagged.remove(attempt);
         self.publication.ended.remove(attempt);
         Ok(true)
+    }
+
+    // A publication ticket proves ownership even when every live call fragment was
+    // still queued. Check all existing canonical rows before reconciliation mutates
+    // aliases or metadata; a second ticket cannot relabel an accepted invocation.
+    fn check_published_tool_owners(
+        &self,
+        attempt: &AttemptKey,
+        record: &HistoryRecord,
+    ) -> Result<(), ViewError> {
+        for accepted in &record.items {
+            if let Some(row) = self.items.get(&accepted.id)
+                && let ViewItemKind::Tool(tool) = &row.kind
+                && let Some(previous) = &tool.invocation_attempt
+                && previous != attempt
+            {
+                let HistoryPosition::Event { event_id, .. } = record.cursor().position() else {
+                    return Err(ViewError::AttemptMismatch);
+                };
+                return Err(ViewError::PublicationConflict {
+                    attempt: Box::new(attempt.clone()),
+                    event_id: event_id.clone(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn bind_published_tools(
+        &mut self,
+        attempt: &AttemptKey,
+        record: &HistoryRecord,
+    ) -> Result<(), ViewError> {
+        let mut changed = false;
+        for accepted in &record.items {
+            if !matches!(accepted.kind, ViewItemKind::Tool(_)) {
+                continue;
+            }
+            let mut row = self
+                .items
+                .get(&accepted.id)
+                .cloned()
+                .ok_or(ViewError::AttemptMismatch)?;
+            let ViewItemKind::Tool(tool) = &mut row.kind else {
+                return Err(ViewError::AttemptMismatch);
+            };
+            if tool.invocation_attempt.as_ref() == Some(attempt) {
+                continue;
+            }
+            tool.invocation_attempt = Some(attempt.clone());
+            // Insertion owns all execution/pending-call index maintenance and keeps
+            // the canonical body and any already-joined result unchanged.
+            self.items.insert(row)?;
+            changed = true;
+        }
+        if changed {
+            self.bump()?;
+        }
+        Ok(())
     }
 
     pub(super) fn validate_live_envelope(&self, event: &AgentEventKind) -> Result<(), ViewError> {

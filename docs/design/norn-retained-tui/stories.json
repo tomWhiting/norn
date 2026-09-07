@@ -67,7 +67,7 @@
         {
           "id": "S12",
           "title": "Scroll and return to the latest message explicitly",
-          "text": "I can keep a stable reading position while work continues, preserve every delivered scroll step and explicitly return to the selected conversation\u2019s latest admitted item. R4 is resumed in its separate scrolling tree for an authorized focused local preview; no new passing runtime, measurement or installation proof is claimed. Scrolling the pane under my pointer preserves my keyboard focus and composer cursor/draft; an explicit click can still change focus.",
+          "text": "I can keep a stable reading position while work continues, preserve every delivered scroll step and explicitly return to the selected conversation’s latest admitted item. R4 is resumed in its separate scrolling tree for an authorized focused local preview; no new passing runtime, measurement or installation proof is claimed. Scrolling the pane under my pointer preserves my keyboard focus and composer cursor/draft; an explicit click can still change focus.",
           "status": "R4_resumed_under_local_validation"
         },
         {
@@ -81,6 +81,30 @@
           "title": "Choose shortcuts that work on my keyboard",
           "text": "I can use Option or Control combinations for pane/view actions, edit and remember those bindings, disable unwanted bindings, and trust the displayed hints without losing ordinary typing, draft, popup or send behavior.",
           "status": "registered_implementation_pending"
+        },
+        {
+          "id": "S15",
+          "title": "Readable compact details with truthful lifecycle styling",
+          "text": "I can keep compaction details collapsed until I expand them and read tool state/expanded output without losing original selection or navigation. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.",
+          "status": "implemented_bounded_local_validation"
+        },
+        {
+          "id": "S16",
+          "title": "One tool call with its actual result",
+          "text": "I can see the accepted tool invocation and its result as one correctly associated item, even when publication/history and live events arrive in a different order. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.",
+          "status": "implemented_bounded_local_validation"
+        },
+        {
+          "id": "S17",
+          "title": "See concise activity without trusting forged notification text",
+          "text": "I can read a compact process/watch/delivery notification when its producer binding is proven, inspect its exact original bytes on demand, and still see unbound input as ordinary untrusted input. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.",
+          "status": "implemented_bounded_local_validation"
+        },
+        {
+          "id": "S18",
+          "title": "Know whether compaction is active and how much context is used",
+          "text": "I can distinguish actual ongoing compaction from completed, failed, cancelled or uncertain work, and see current context usage against the effective model limit without confusing it with cumulative billing. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.",
+          "status": "implemented_bounded_local_validation"
         }
       ]
     }

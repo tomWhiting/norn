@@ -9,6 +9,7 @@ use crate::provider::request::{Message, MessageRole};
 use crate::session::events::{EventBase, EventId, SessionEvent};
 use crate::session::store::EventStore;
 
+use super::delivery::BoundDelivery;
 use super::helpers::append_and_notify;
 use super::loop_context::LoopContext;
 
@@ -71,7 +72,7 @@ pub(super) async fn flush_pending_agent_messages(
         // No await is permitted between the authoritative append and queue
         // consumption. Cancellation can omit only secondary observations.
         pending.commit_delivery(agent_id, prepared.message.id, &prepared.framed_content)?;
-        delivered_ids.push(user_event_id);
+        delivered_ids.push(user_event_id.clone());
         messages.push(Message {
             response_items: Vec::new(),
             role: MessageRole::User,
@@ -102,7 +103,14 @@ pub(super) async fn flush_pending_agent_messages(
         if let Some(hooks) = loop_context.hooks.as_deref() {
             hooks.run_on_event(&prepared.delivery_event).await;
         }
-        emit_delivered_observation(store, loop_context, event_tx, &prepared.message).await;
+        emit_delivered_observation(
+            store,
+            loop_context,
+            event_tx,
+            &prepared.message,
+            &user_event_id,
+        )
+        .await;
     }
     Ok(delivered_ids)
 }
@@ -112,6 +120,7 @@ async fn emit_delivered_observation(
     loop_context: &LoopContext,
     event_tx: Option<&AgentEventSender>,
     message: &crate::r#loop::inbound::ChannelMessage,
+    user_event_id: &EventId,
 ) {
     let delivered = AgentMessageLifecycle::Delivered {
         message_id: message.id,
@@ -121,7 +130,10 @@ async fn emit_delivered_observation(
         seq: message.seq,
         delivered_at: chrono::Utc::now(),
     };
-    match serde_json::to_value(&delivered) {
+    match serde_json::to_value(BoundDelivery {
+        lifecycle: &delivered,
+        user_event_id,
+    }) {
         Ok(data) => {
             if let Err(error) = append_and_notify(
                 store,
@@ -152,5 +164,81 @@ async fn emit_delivered_observation(
     }
     if let Some(event_tx) = event_tx {
         event_tx.send_message(delivered);
+    }
+}
+
+#[cfg(test)]
+mod notification_binding_tests {
+    use std::sync::Arc;
+
+    use super::{EventStore, LoopContext, SessionEvent, flush_pending_agent_messages};
+    use crate::agent::{PendingAgentMessage, PendingAgentMessages, PendingMailboxLease};
+    use crate::r#loop::inbound::{ChannelMessage, MessageKind};
+    use crate::session::SessionBinding;
+
+    #[tokio::test]
+    async fn pending_delivered_audit_binds_input_instead_of_dequeue_audit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let recipient = uuid::Uuid::new_v4();
+        let store = Arc::new(EventStore::new());
+        let pending = Arc::new(PendingAgentMessages::new());
+        let lease = Arc::new(PendingMailboxLease::new());
+        pending.register_child_mailbox(
+            recipient,
+            SessionBinding::ephemeral_root().mailbox_id(),
+            &store,
+            &lease,
+        )?;
+        let message = ChannelMessage {
+            id: uuid::Uuid::new_v4(),
+            sender_id: uuid::Uuid::nil(),
+            from: "norn:watch".to_owned(),
+            role: None,
+            to_id: recipient,
+            content: "pending original body".to_owned(),
+            kind: MessageKind::Update,
+            seq: Some(9),
+            timestamp: chrono::Utc::now(),
+        };
+        let queued_at = message.timestamp;
+        let mut queued = PendingAgentMessage::new(message, recipient.to_string(), queued_at);
+        pending.persist_for_registered_store(&store, &mut queued)?;
+        let mut context = LoopContext::new("fixture");
+        context.agent_id = Some(recipient);
+        context.pending_agent_messages = Some(Arc::clone(&pending));
+        let mut prompt = Vec::new();
+        let ids = flush_pending_agent_messages(&store, &mut prompt, &context, None).await?;
+        let [input_id] = ids.as_slice() else {
+            return Err("expected one pending delivery".into());
+        };
+        assert!(matches!(
+            store.get(input_id),
+            Some(SessionEvent::UserMessage { .. })
+        ));
+        let events = store.events();
+        let delivered = events
+            .iter()
+            .find_map(|event| match event {
+                SessionEvent::Custom {
+                    event_type, data, ..
+                } if event_type == "agent_message.delivered" => Some(data),
+                _ => None,
+            })
+            .ok_or("delivered audit missing")?;
+        assert_eq!(delivered["user_event_id"], serde_json::json!(input_id));
+        let dequeued = events.iter().position(|event| matches!(event, SessionEvent::Custom { event_type, .. } if event_type == "agent_message.dequeued")).ok_or("dequeue audit missing")?;
+        let input = events
+            .iter()
+            .position(|event| &event.base().id == input_id)
+            .ok_or("input missing")?;
+        assert!(dequeued > input);
+        assert_eq!(pending.pending_for(recipient), 0);
+        assert_eq!(prompt.len(), 1);
+        assert!(
+            flush_pending_agent_messages(&store, &mut prompt, &context, None)
+                .await?
+                .is_empty()
+        );
+        Ok(())
     }
 }

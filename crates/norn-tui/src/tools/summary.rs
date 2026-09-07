@@ -52,15 +52,17 @@ impl ToolSummary<'_> {
             return self.details_header();
         }
         let name = self.name_label();
-        let description = self.description.map_or_else(
-            || "description unavailable".to_owned(),
-            |description| single_line(description.as_str()),
+        let title = self.description.map_or_else(
+            || name.clone(),
+            |description| format!("{name}: {}", single_line(description.as_str())),
         );
-        let mut parts = vec![
-            format!("{name}: {description}"),
-            state_label(self.state).to_owned(),
-        ];
-        if let Some(result) = self.result_state
+        let outcome = match (self.state, self.result_state) {
+            (ToolState::Incomplete, Some(result)) => format!("result {}", state_label(result)),
+            _ => state_label(self.state).to_owned(),
+        };
+        let mut parts = vec![title, outcome];
+        if self.state != ToolState::Incomplete
+            && let Some(result) = self.result_state
             && result != self.state
         {
             parts.push(format!("result {}", state_label(result)));

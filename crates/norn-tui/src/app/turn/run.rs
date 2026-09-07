@@ -424,12 +424,12 @@ async fn run_turn(
                         handle_mid_turn_agent_event(state, agent_ev)?;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
-                        state.transcript.projection.mark_lagged(n)?;
+                        state.mark_live_events_lagged(n)?;
                         tracing::warn!(missed = n, "agent event receiver lagged — {n} events dropped");
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         events_closed = true;
-                        crate::app::notices::notice(state, "Live event source closed during execution", None)?;
+                        state.close_live_events("Live event source closed during execution")?;
                     },
                 },
                 () = async { match &observation { Some(owner) => owner.changed().await, None => std::future::pending().await } } => {
@@ -470,11 +470,11 @@ async fn run_turn(
         match agent_event_rx.try_recv() {
             Ok(agent_ev) => handle_mid_turn_agent_event(state, agent_ev)?,
             Err(broadcast::error::TryRecvError::Lagged(missed)) => {
-                state.transcript.projection.mark_lagged(missed)?;
+                state.mark_live_events_lagged(missed)?;
             }
             Err(broadcast::error::TryRecvError::Empty) => break,
             Err(broadcast::error::TryRecvError::Closed) => {
-                crate::app::notices::notice(state, "Live event source closed", None)?;
+                state.close_live_events("Live event source closed")?;
                 break;
             }
         }
@@ -491,7 +491,7 @@ async fn run_turn(
     if interrupt_prompt.is_none() && !cancel_requested {
         state.in_flight_input.requeue_pending_steers();
     }
-    state.in_flight_input.set_running(false);
+    state.stop_live_phase();
     runtime.loop_context.active_input_rx = None;
 
     if cancel_requested {

@@ -24,6 +24,7 @@
 
 use crate::error::SessionError;
 use crate::integration::hooks::{HookOutcome, HookRegistry};
+use crate::r#loop::compaction_progress::CompactionProgressGuard;
 use crate::r#loop::retry::RetryPolicy;
 use crate::r#loop::summarization::{
     SummarizationOutcome, SummarizationRetry, request_compaction_summary,
@@ -346,6 +347,8 @@ pub async fn maybe_auto_compact(
         return Ok(AutoCompactDecision::NotFired);
     }
 
+    let mut progress = CompactionProgressGuard::start(args.event_tx);
+
     // Freed estimate anchors on the same effective count as the trigger:
     // with a floor above the estimate (the incident shape), an
     // estimate-based value would be zero despite a genuinely oversized
@@ -379,23 +382,22 @@ pub async fn maybe_auto_compact(
                         cancel: args.cancel,
                         event_tx: args.event_tx,
                     },
-                }) => result?,
+                }) => result.inspect_err(|_| progress.failed())?,
             }
         }
-        None => {
-            summarize_or_fall_back(SummarizeArgs {
-                provider: args.provider,
-                model: args.model,
-                elided,
-                token_estimate_freed,
-                retry: SummarizationRetry {
-                    policy: args.retry_policy,
-                    cancel: None,
-                    event_tx: args.event_tx,
-                },
-            })
-            .await?
-        }
+        None => summarize_or_fall_back(SummarizeArgs {
+            provider: args.provider,
+            model: args.model,
+            elided,
+            token_estimate_freed,
+            retry: SummarizationRetry {
+                policy: args.retry_policy,
+                cancel: None,
+                event_tx: args.event_tx,
+            },
+        })
+        .await
+        .inspect_err(|_| progress.failed())?,
     };
     let Some((summary, summary_source, summarization_usage)) = summarized else {
         tracing::info!(
@@ -405,7 +407,16 @@ pub async fn maybe_auto_compact(
         return Ok(AutoCompactDecision::Cancelled);
     };
 
-    let outcome = edits.commit_compaction_plan(args.store, plan, summary)?;
+    let outcome = edits
+        .commit_compaction_plan(args.store, plan, summary)
+        .inspect_err(|_| progress.failed())?;
+    progress.finished(
+        outcome.compaction_id.clone(),
+        matches!(
+            summary_source,
+            CompactionSummarySource::MechanicalDigestFallback { .. }
+        ),
+    );
     args.state.fired = true;
     Ok(AutoCompactDecision::Fired(Box::new(AutoCompactionRun {
         outcome,

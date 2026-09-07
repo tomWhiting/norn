@@ -102,3 +102,13 @@ Installed locally at 12:46:47 Melbourne on 6 September 2026 from commit `fe6af32
 
 
 NFP integration, 6 September 2026 (Melbourne): preview.4 now inherits installed preview.3. Four fresh-process CLI restart scenarios passed, covering automatic personal saving, temporary changes, workspace-local precedence, malformed settings before MCP/terminal startup and conflicting external edits. Final composed checks passed after repairing an invalid MCP field in the concurrency test fixture and preserving child failure diagnostics. The earlier interrupted compile and failed fixture trial retain their original receipts.
+
+## 0.1.0-preview.8 — retained transcript repairs
+
+- Accepted tool calls retain their exact attempt identity even when the receipt arrives before live UI events. Later results stay attached to the supplied tool name, description and arguments.
+- Compact tool rows show actual outcomes without repeating missing-description bookkeeping. Expanded details retain missing evidence. Tool states have distinct colours, tool bodies have background shading, and selected rows have a separate highlight; source selection and cached layout are preserved.
+- Compaction summaries and producer-bound notifications expand on explicit click or toggle. Process/watch input has compact summaries, while original message bodies and audit records remain available. Legacy unbound input remains ordinary input; XML-looking text alone never establishes provenance.
+- The existing status line shows approximate context usage against the active configured window, independently of cumulative token spending. Real automatic compaction has operation-bound progress and cancellation/failure handling. Manual compaction remains synchronous; no artificial animation delay is added.
+- Notification metadata is deserialized from borrowed JSON, avoiding a copy of unrelated custom-event payloads.
+
+NUI-005 records local verification and its limits. Existing compaction-test policy debt remains open; this release does not claim a venue-205 battery or Fable approval.

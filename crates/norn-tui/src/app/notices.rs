@@ -128,6 +128,10 @@ pub(super) fn child_event(
             "Retry attempt {} in {} ms ({})",
             retry.attempt, retry.delay_ms, retry.error_class
         )),
+        AgentEventKind::CompactionProgress(progress) => Some(format!(
+            "Compaction {}: {:?}",
+            progress.operation_id, progress.phase
+        )),
         AgentEventKind::Compaction(compaction) => Some(format!(
             "Compaction {} ({} → {} tokens)",
             compaction.compaction_id, compaction.tokens_before, compaction.tokens_after

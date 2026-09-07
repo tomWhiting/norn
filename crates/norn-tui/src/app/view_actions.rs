@@ -109,6 +109,13 @@ fn ensure_selected(state: &mut AppState) -> Result<(), TuiError> {
     Ok(())
 }
 
+pub(super) const fn default_expanded(
+    kind: &norn::session_view::ViewItemKind,
+    global: bool,
+) -> bool {
+    matches!(kind, norn::session_view::ViewItemKind::Tool(_)) && global
+}
+
 fn expand(state: &mut AppState, explicit: Option<bool>) -> Result<(), TuiError> {
     ensure_selected(state)?;
     if let Some(item) = state.screen.viewport.selected() {
@@ -117,7 +124,11 @@ fn expand(state: &mut AppState, explicit: Option<bool>) -> Result<(), TuiError> 
             .tool_overrides
             .get(item)
             .copied()
-            .unwrap_or(state.transcript.config.expanded_tools);
+            .unwrap_or_else(|| {
+                state.transcript.projection.item(item).is_some_and(|item| {
+                    default_expanded(&item.kind, state.transcript.config.expanded_tools)
+                })
+            });
         state
             .screen
             .tool_overrides

@@ -305,6 +305,7 @@ pub struct HistoryRecord {
     pub(crate) items: Vec<ViewItem>,
     pub(crate) assistant: bool,
     pub(crate) parts: Vec<CommittedPartIdentity>,
+    pub(crate) notification: Option<Box<super::notifications::NotificationRecord>>,
 }
 
 impl HistoryRecord {

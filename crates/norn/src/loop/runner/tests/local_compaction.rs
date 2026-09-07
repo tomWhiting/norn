@@ -492,3 +492,163 @@ async fn summarization_failure_falls_back_without_aborting_the_step() -> TestRes
     assert_eq!(audit["summary_kind"], "mechanical_digest_fallback");
     Ok(())
 }
+
+struct PendingCompactionProvider;
+
+impl Provider for PendingCompactionProvider {
+    fn stream(&self, _: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+        Ok(Box::pin(futures_util::stream::pending()))
+    }
+}
+
+struct RejectCompactionSink;
+
+impl crate::session::store::PersistenceSink for RejectCompactionSink {
+    fn persist(&mut self, event: &SessionEvent) -> Result<(), crate::session::SessionPersistError> {
+        if matches!(event, SessionEvent::Compaction { .. }) {
+            return Err(crate::session::SessionPersistError::Io(
+                std::io::Error::other("fixture compaction append rejected"),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn progress_events(
+    rx: &mut tokio::sync::broadcast::Receiver<crate::provider::AgentEvent>,
+) -> Result<Vec<crate::provider::AgentCompactionProgress>, Box<dyn std::error::Error + Send + Sync>>
+{
+    let mut result = Vec::new();
+    loop {
+        match rx.try_recv() {
+            Ok(event) => {
+                if let crate::provider::AgentEventKind::CompactionProgress(progress) = event.event {
+                    result.push(progress);
+                }
+            }
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => return Ok(result),
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+#[tokio::test]
+async fn actual_pending_compaction_announces_start_and_cancellation_or_drop() -> TestResult {
+    use crate::r#loop::compaction::{
+        AutoCompactArgs, AutoCompactDecision, CompactionState, maybe_auto_compact,
+    };
+    use crate::provider::CompactionPhase;
+    for abandon in [false, true] {
+        let store = EventStore::new();
+        seed_compaction_history(&store)?;
+        let mut edits = crate::session::context_edit::ContextEdits::new();
+        let mut state = CompactionState::new();
+        let retry = crate::r#loop::retry::RetryPolicy::default();
+        let cancel = CancellationToken::new();
+        let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+        let sender = AgentEventSender::new(tx, uuid::Uuid::new_v4(), "root".into());
+        let mut future = Box::pin(maybe_auto_compact(AutoCompactArgs {
+            state: &mut state,
+            edits: Some(&mut edits),
+            store: &store,
+            provider: &PendingCompactionProvider,
+            model: "fixture",
+            estimated_tokens: 200,
+            usage_floor: None,
+            context_window_limit: Some(100),
+            reserve_tokens: Some(50),
+            keep_recent_turns: 1,
+            hooks: None,
+            cancel: Some(&cancel),
+            retry_policy: &retry,
+            event_tx: Some(&sender),
+        }));
+        assert!(futures_util::poll!(future.as_mut()).is_pending());
+        let started = progress_events(&mut rx)?;
+        assert_eq!(started.len(), 1);
+        assert_eq!(started[0].phase, CompactionPhase::Started);
+        if abandon {
+            drop(future);
+        } else {
+            cancel.cancel();
+            assert!(matches!(future.await?, AutoCompactDecision::Cancelled));
+        }
+        let ended = progress_events(&mut rx)?;
+        assert_eq!(ended.len(), 1);
+        assert_eq!(ended[0].operation_id, started[0].operation_id);
+        assert_eq!(ended[0].phase, CompactionPhase::Cancelled);
+        assert!(!state.has_fired());
+        assert!(
+            store
+                .events()
+                .iter()
+                .all(|event| !matches!(event, SessionEvent::Compaction { .. }))
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn actual_compaction_commit_and_rejected_sink_have_distinct_terminal_progress() -> TestResult
+{
+    use crate::r#loop::compaction::{
+        AutoCompactArgs, AutoCompactDecision, CompactionState, maybe_auto_compact,
+    };
+    use crate::provider::CompactionPhase;
+    for rejected in [false, true] {
+        let store = if rejected {
+            EventStore::with_sink(Box::new(RejectCompactionSink))
+        } else {
+            EventStore::new()
+        };
+        seed_compaction_history(&store)?;
+        let provider = MockProvider::new(vec![vec![
+            text_delta("real summary"),
+            done_event(StopReason::EndTurn),
+        ]]);
+        let mut edits = crate::session::context_edit::ContextEdits::new();
+        let mut state = CompactionState::new();
+        let retry = crate::r#loop::retry::RetryPolicy::default();
+        let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+        let sender = AgentEventSender::new(tx, uuid::Uuid::new_v4(), "root".into());
+        let result = maybe_auto_compact(AutoCompactArgs {
+            state: &mut state,
+            edits: Some(&mut edits),
+            store: &store,
+            provider: &provider,
+            model: "fixture",
+            estimated_tokens: 200,
+            usage_floor: None,
+            context_window_limit: Some(100),
+            reserve_tokens: Some(50),
+            keep_recent_turns: 1,
+            hooks: None,
+            cancel: None,
+            retry_policy: &retry,
+            event_tx: Some(&sender),
+        })
+        .await;
+        let progress = progress_events(&mut rx)?;
+        assert_eq!(progress.len(), 2);
+        assert_eq!(progress[0].phase, CompactionPhase::Started);
+        assert_eq!(progress[0].operation_id, progress[1].operation_id);
+        if rejected {
+            assert!(result.is_err());
+            assert_eq!(progress[1].phase, CompactionPhase::Failed);
+            assert!(!state.has_fired());
+        } else {
+            let AutoCompactDecision::Fired(run) = result? else {
+                return Err("compaction did not commit".into());
+            };
+            assert_eq!(
+                progress[1].phase,
+                CompactionPhase::Finished {
+                    compaction_id: run.outcome.compaction_id,
+                    mechanical_fallback: false
+                }
+            );
+            assert!(state.has_fired());
+        }
+    }
+    Ok(())
+}

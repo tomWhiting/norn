@@ -20,6 +20,14 @@ use crate::session::store::EventStore;
 
 use super::helpers::{append_and_notify, append_off_executor};
 
+/// Secondary audit explicitly bound to the already accepted input event.
+#[derive(serde::Serialize)]
+pub(super) struct BoundDelivery<'a> {
+    #[serde(flatten)]
+    pub lifecycle: &'a AgentMessageLifecycle,
+    pub user_event_id: &'a EventId,
+}
+
 pub(super) use super::delivery_inputs::{drain_child_results, flush_active_inputs};
 pub(super) use super::delivery_pending::flush_pending_agent_messages;
 
@@ -61,8 +69,8 @@ pub(super) fn drain_and_partition(
 /// unsequenced harness sources (schedule/cron `norn:cron`, process-manager
 /// completions `norn:process-manager`, watch alerts `norn:watch`, and generic
 /// embedder injections) — appends an [`AgentMessageLifecycle::Delivered`]
-/// audit event immediately **after** its framed `UserMessage` (adjacent
-/// events, same parent chain) so the store records the delivery, and — when
+/// audit event after its framed `UserMessage`, explicitly carrying its
+/// `user_event_id` even when hooks append intervening records, and — when
 /// the step has a live event channel — broadcasts the same `Delivered` via
 /// [`AgentEventSender::send_message`] so an embedder never sees a response to
 /// an invisible stimulus. Router traffic carries `seq: Some(..)` and pairs
@@ -129,7 +137,10 @@ pub(super) async fn inject_inbound_messages(
             delivered_at: chrono::Utc::now(),
         };
 
-        match serde_json::to_value(&delivered) {
+        match serde_json::to_value(BoundDelivery {
+            lifecycle: &delivered,
+            user_event_id: &user_event_id,
+        }) {
             Ok(data) => {
                 // DELIBERATELY best-effort — the one secondary append that
                 // stays so (session-fidelity inventory, Gap 10: documented
@@ -396,5 +407,88 @@ pub(crate) fn requeue_undelivered_inbound(
     match first_error {
         Some(error) => Err(error),
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod notification_binding_tests {
+    use std::sync::Arc;
+
+    use parking_lot::Mutex;
+
+    use super::{
+        ChannelMessage, EventBase, EventId, EventStore, MessageKind, SessionError, SessionEvent,
+        inject_inbound_messages,
+    };
+    use crate::integration::hooks::{Hook, HookRegistry, SessionEventHook};
+
+    struct InterleavingHook {
+        store: Arc<EventStore>,
+        appended: Arc<Mutex<Option<Result<EventId, SessionError>>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl SessionEventHook for InterleavingHook {
+        async fn on_event(&self, event: &SessionEvent) {
+            if matches!(event, SessionEvent::UserMessage { .. }) {
+                *self.appended.lock() = Some(self.store.append(SessionEvent::Custom {
+                    base: EventBase::new(self.store.last_event_id()),
+                    event_type: "fixture.intervening".to_owned(),
+                    data: serde_json::json!({}),
+                }));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn delivered_audit_binds_actual_input_across_intervening_hook_append()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store = Arc::new(EventStore::new());
+        let appended = Arc::new(Mutex::new(None));
+        let mut hooks = HookRegistry::new();
+        hooks.register(Hook::SessionEvent(Box::new(InterleavingHook {
+            store: Arc::clone(&store),
+            appended: Arc::clone(&appended),
+        })));
+        let mut inbound = vec![ChannelMessage {
+            id: uuid::Uuid::new_v4(),
+            sender_id: uuid::Uuid::nil(),
+            from: "norn:process-manager".to_owned(),
+            role: None,
+            to_id: uuid::Uuid::new_v4(),
+            content: "exact original body".to_owned(),
+            kind: MessageKind::Steer,
+            seq: None,
+            timestamp: chrono::Utc::now(),
+        }];
+        let mut prompt = Vec::new();
+        let ids =
+            inject_inbound_messages(&store, &mut prompt, &mut inbound, Some(&hooks), None).await?;
+        let intervening = appended.lock().take().ok_or("hook did not append")??;
+        let [input_id] = ids.as_slice() else {
+            return Err("expected one accepted input".into());
+        };
+        assert_ne!(input_id, &intervening);
+        assert!(matches!(
+            store.get(input_id),
+            Some(SessionEvent::UserMessage { .. })
+        ));
+        let events = store.events();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[1].base().id, intervening);
+        let SessionEvent::Custom {
+            event_type, data, ..
+        } = &events[2]
+        else {
+            return Err("delivered audit missing".into());
+        };
+        assert_eq!(event_type, "agent_message.delivered");
+        assert_eq!(data["user_event_id"], serde_json::json!(input_id));
+        let lifecycle: crate::provider::agent_event::AgentMessageLifecycle =
+            serde_json::from_value(data.clone())?;
+        assert_eq!(lifecycle.session_event_type(), event_type);
+        assert_eq!(prompt.len(), 1);
+        assert!(inbound.is_empty());
+        Ok(())
     }
 }

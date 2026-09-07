@@ -1,10 +1,11 @@
 //! LLM provider abstraction and implementations.
 
 pub use self::agent_event::{
-    AGENT_MESSAGE_DELIVERED_EVENT_TYPE, AGENT_MESSAGE_SENT_EVENT_TYPE, AgentEvent, AgentEventKind,
-    AgentEventSender, AgentMessageLifecycle, AgentStreamRetry, AgentUsageEstimate,
-    SUBAGENT_COMPLETED_EVENT_TYPE, SUBAGENT_STARTED_EVENT_TYPE, SharedAgentEventChannel,
-    SubagentDescriptor, SubagentKind, SubagentLifecycle,
+    AGENT_MESSAGE_DELIVERED_EVENT_TYPE, AGENT_MESSAGE_SENT_EVENT_TYPE, AgentCompactionProgress,
+    AgentEvent, AgentEventKind, AgentEventSender, AgentMessageLifecycle, AgentStreamRetry,
+    AgentUsageEstimate, CompactionPhase, SUBAGENT_COMPLETED_EVENT_TYPE,
+    SUBAGENT_STARTED_EVENT_TYPE, SharedAgentEventChannel, SubagentDescriptor, SubagentKind,
+    SubagentLifecycle,
 };
 pub use self::api_shape::{
     ApiShape, ApiShapeParseError, ProviderProfileId, ProviderProfileIdError,

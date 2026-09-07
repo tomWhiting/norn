@@ -75,6 +75,7 @@ pub struct SessionProjection {
     pub(super) events: HashMap<EventId, usize>,
     pub(super) complete_prefix: usize,
     pub(super) event_observations: HashMap<EventId, ItemId>,
+    pub(super) notifications: super::notifications::NotificationState,
     pub(super) execution: Option<Execution>,
     pub(super) publication: PublicationState,
     pub(super) completion_item: Option<ItemId>,
@@ -103,6 +104,7 @@ impl SessionProjection {
             events: HashMap::new(),
             complete_prefix: 0,
             event_observations: HashMap::new(),
+            notifications: super::notifications::NotificationState::default(),
             execution: None,
             publication: PublicationState::new(),
             completion_item: None,
@@ -267,6 +269,7 @@ impl SessionProjection {
         self.events.insert(event_id.clone(), *ordinal);
         self.ordinals.insert(*ordinal, event_id.clone());
         self.merge_observation(event_id, cursor)?;
+        self.apply_notification_record(record)?;
         let prior_prefix = self.complete_prefix;
         while self.ordinals.contains_key(&self.complete_prefix) {
             self.complete_prefix =

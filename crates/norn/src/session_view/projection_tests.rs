@@ -1197,6 +1197,7 @@ fn all_unscoped_agent_variants_keep_identity_and_channel_text_has_no_operator_au
             AgentEventKind::UsageEstimate(_) => "usage",
             AgentEventKind::StreamRetry(_) => "retry",
             AgentEventKind::Compaction(_) => "compaction",
+            AgentEventKind::CompactionProgress(_) => "compaction progress",
             AgentEventKind::Observed(_) => {
                 return Err(
                     "observed envelopes require the producer-owned publication fixture".into(),

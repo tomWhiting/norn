@@ -654,3 +654,358 @@ fn exact_done_relocates_after_its_accepted_answer_in_both_history_and_fragment_o
     }
     Ok(())
 }
+
+#[derive(Clone, Copy)]
+enum ToolLiveOrder {
+    Queued,
+    GenericText,
+    Complete,
+}
+
+fn accepted_search(canonical: bool) -> Result<SessionEvent, TestError> {
+    let arguments = serde_json::json!({"tool_use_description":"Find the declared configuration", "query":"configuration"});
+    let items = if canonical {
+        vec![super::contract_tests::response(serde_json::json!({
+            "type":"function_call", "id":"provider-item", "call_id":"search-call",
+            "name":"search", "arguments":serde_json::to_string(&arguments)?
+        }))?]
+    } else {
+        Vec::new()
+    };
+    Ok(super::contract_tests::assistant(
+        items,
+        vec![super::contract_tests::call(
+            "search-call",
+            "search",
+            arguments,
+            crate::provider::request::ToolCallKind::Function,
+        )],
+    ))
+}
+
+fn accept_search(
+    fixture: &mut Fixture,
+    execution: &AgentEventSender,
+    response_number: u64,
+    order: ToolLiveOrder,
+    history_first: bool,
+    canonical: bool,
+) -> Result<(ItemId, AttemptObservation), TestError> {
+    let (response, publication) = execution.observe_response(response_number)?;
+    let (attempt, owner) = response.observe_attempt(1)?;
+    let buffered = fixture.event(&attempt, ProviderEvent::ToolCallComplete {
+        call_id: "search-call".to_owned(), name: "search".to_owned(),
+        arguments: serde_json::json!({"tool_use_description":"Find the declared configuration", "query":"configuration"}).to_string(),
+        kind: crate::provider::request::ToolCallKind::Function,
+    })?;
+    let ticket = event_ticket(&buffered)?;
+    match order {
+        ToolLiveOrder::Queued => {}
+        ToolLiveOrder::GenericText => {
+            let text = fixture.text_event(&attempt)?;
+            fixture.view.apply_live(&text)?;
+        }
+        ToolLiveOrder::Complete => {
+            fixture.view.apply_live(&buffered)?;
+        }
+    }
+    let event_id = fixture.store.append(accepted_search(canonical)?)?;
+    let record = fixture.store.history_record(&fixture.source, &event_id)?;
+    let item = record
+        .items()
+        .iter()
+        .find(|row| matches!(row.kind, ViewItemKind::Tool(_)))
+        .ok_or("canonical tool absent")?
+        .id
+        .clone();
+    if history_first {
+        fixture.view.apply_history_record(&record)?;
+    }
+    owner.ok_or("search attempt owner missing")?.assembled()?;
+    publication
+        .ok_or("search response owner missing")?
+        .into_publication()?
+        .appended(&fixture.store, Ok(&event_id))?;
+    assert!(fixture.view.reconcile_attempt(&ticket)?);
+    assert!(
+        fixture.view.apply_live(&buffered)?.metadata_only,
+        "accepted buffered calls must not recreate provisional rows"
+    );
+    fixture.view.apply_history_record(&record)?;
+    assert!(fixture.view.reconcile_attempt(&ticket)?);
+    Ok((item, ticket))
+}
+
+fn search_result(fixture: &mut Fixture, execution: &AgentEventSender) -> Result<(), TestError> {
+    let event = fixture.event(
+        execution,
+        ProviderEvent::ToolResult {
+            tool_call_id: "search-call".to_owned(),
+            tool_name: "search".to_owned(),
+            output: serde_json::json!({"matches":1}),
+            duration_ms: 1,
+        },
+    )?;
+    fixture.view.apply_live(&event)?;
+    Ok(())
+}
+
+fn tool_at<'a>(fixture: &'a Fixture, id: &ItemId) -> Result<&'a super::ToolView, TestError> {
+    let row = fixture.view.item(id).ok_or("accepted tool row missing")?;
+    let ViewItemKind::Tool(tool) = &row.kind else {
+        return Err("accepted item is not a tool".into());
+    };
+    Ok(tool)
+}
+
+#[test]
+fn accepted_tool_receipts_bind_every_invocation_before_late_results_in_all_live_history_orders()
+-> TestResult {
+    for order in [
+        ToolLiveOrder::Queued,
+        ToolLiveOrder::GenericText,
+        ToolLiveOrder::Complete,
+    ] {
+        for history_first in [false, true] {
+            for canonical in [false, true] {
+                let mut fixture = Fixture::new()?;
+                let (execution, observation) = fixture.begin()?;
+                let (item, ticket) =
+                    accept_search(&mut fixture, &execution, 0, order, history_first, canonical)?;
+                let arguments = tool_at(&fixture, &item)?.arguments.clone();
+                assert!(arguments.is_some());
+                assert_eq!(
+                    tool_at(&fixture, &item)?.invocation_attempt.as_ref(),
+                    Some(ticket.attempt())
+                );
+                search_result(&mut fixture, &execution)?;
+                let tool = tool_at(&fixture, &item)?;
+                assert_eq!(tool.state, super::ToolState::Completed);
+                assert_eq!(tool.result_state, Some(super::ToolState::Completed));
+                assert_eq!(tool.duration_ms, Some(1));
+                assert_eq!(tool.arguments, arguments);
+                assert_eq!(
+                    tool.description.as_ref().map(super::DisplayText::as_str),
+                    Some("Find the declared configuration")
+                );
+                assert!(tool.result.is_some());
+                assert_eq!(
+                    fixture
+                        .view
+                        .items()
+                        .filter(|row| matches!(row.kind, ViewItemKind::Tool(_)))
+                        .count(),
+                    1
+                );
+                assert_eq!(ticket.execution(), observation.execution());
+                let parent = tool
+                    .invocation_event
+                    .clone()
+                    .ok_or("invocation event missing")?;
+                let result = fixture.store.append(SessionEvent::ToolResult {
+                    base: EventBase::new(Some(parent)),
+                    tool_call_id: "search-call".to_owned(),
+                    tool_name: "search".to_owned(),
+                    output: serde_json::json!({"matches":1}),
+                    spool_ref: None,
+                    duration_ms: 1,
+                })?;
+                fixture.view.apply_history_record(
+                    &fixture.store.history_record(&fixture.source, &result)?,
+                )?;
+                let tool = tool_at(&fixture, &item)?;
+                assert_eq!(tool.result_event.as_ref(), Some(&result));
+                assert_eq!(tool.arguments, arguments);
+                assert_eq!(tool.state, super::ToolState::Completed);
+                assert_eq!(
+                    fixture
+                        .view
+                        .items()
+                        .filter(|row| matches!(row.kind, ViewItemKind::Tool(_)))
+                        .count(),
+                    1
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn completed_accepted_calls_do_not_steal_reused_ids_in_later_responses() -> TestResult {
+    let mut fixture = Fixture::new()?;
+    let (execution, observation) = fixture.begin()?;
+    let (first, first_ticket) = accept_search(
+        &mut fixture,
+        &execution,
+        0,
+        ToolLiveOrder::Queued,
+        false,
+        true,
+    )?;
+    search_result(&mut fixture, &execution)?;
+    let prior_result = tool_at(&fixture, &first)?.result.clone();
+    let (second, second_ticket) = accept_search(
+        &mut fixture,
+        &execution,
+        1,
+        ToolLiveOrder::Queued,
+        true,
+        true,
+    )?;
+    search_result(&mut fixture, &execution)?;
+    assert_ne!(first_ticket.attempt(), second_ticket.attempt());
+    assert_eq!(tool_at(&fixture, &first)?.result, prior_result);
+    assert_eq!(
+        tool_at(&fixture, &first)?.state,
+        super::ToolState::Completed
+    );
+    assert_eq!(
+        tool_at(&fixture, &second)?.state,
+        super::ToolState::Completed
+    );
+    assert_eq!(
+        tool_at(&fixture, &second)?.invocation_attempt.as_ref(),
+        Some(second_ticket.attempt())
+    );
+    assert_eq!(observation.execution(), second_ticket.execution());
+    assert_eq!(
+        fixture
+            .view
+            .items()
+            .filter(|row| matches!(row.kind, ViewItemKind::Tool(_)))
+            .count(),
+        2
+    );
+    Ok(())
+}
+
+#[test]
+fn ambiguous_accepted_calls_remain_incomplete_without_choosing_the_latest_response() -> TestResult {
+    let mut fixture = Fixture::new()?;
+    let (execution, observation) = fixture.begin()?;
+    let (first, first_ticket) = accept_search(
+        &mut fixture,
+        &execution,
+        0,
+        ToolLiveOrder::Queued,
+        false,
+        true,
+    )?;
+    let (second, second_ticket) = accept_search(
+        &mut fixture,
+        &execution,
+        1,
+        ToolLiveOrder::Queued,
+        false,
+        true,
+    )?;
+    search_result(&mut fixture, &execution)?;
+    assert!(tool_at(&fixture, &first)?.result.is_none());
+    assert!(tool_at(&fixture, &second)?.result.is_none());
+    assert_ne!(first_ticket.attempt(), second_ticket.attempt());
+    assert_eq!(observation.execution(), second_ticket.execution());
+    let orphans: Vec<_> = fixture
+        .view
+        .items()
+        .filter(|row| {
+            matches!(row.id, ItemId::Local { .. }) && matches!(row.kind, ViewItemKind::Tool(_))
+        })
+        .collect();
+    assert_eq!(orphans.len(), 1);
+    let ViewItemKind::Tool(orphan) = &orphans[0].kind else {
+        return Err("orphan tool missing".into());
+    };
+    assert_eq!(orphan.state, super::ToolState::Incomplete);
+    assert_eq!(orphan.result_state, Some(super::ToolState::Completed));
+    assert!(orphan.description.is_none());
+    assert!(
+        fixture
+            .view
+            .coverage()
+            .gaps
+            .contains(&CoverageGap::IncompleteAssociation)
+    );
+    Ok(())
+}
+
+#[test]
+fn accepted_call_ownership_does_not_cross_executions() -> TestResult {
+    let mut fixture = Fixture::new()?;
+    let (first_execution, first_observation) = fixture.begin()?;
+    let (first, first_ticket) = accept_search(
+        &mut fixture,
+        &first_execution,
+        0,
+        ToolLiveOrder::Queued,
+        false,
+        true,
+    )?;
+    fixture.view.end_execution(false)?;
+    let (next_execution, next_observation) = fixture.begin()?;
+    let (next, next_ticket) = accept_search(
+        &mut fixture,
+        &next_execution,
+        0,
+        ToolLiveOrder::Queued,
+        true,
+        true,
+    )?;
+    search_result(&mut fixture, &next_execution)?;
+    assert_ne!(first_observation.execution(), next_observation.execution());
+    assert_eq!(
+        tool_at(&fixture, &first)?.invocation_attempt.as_ref(),
+        Some(first_ticket.attempt())
+    );
+    assert!(tool_at(&fixture, &first)?.result.is_none());
+    assert_eq!(
+        tool_at(&fixture, &next)?.invocation_attempt.as_ref(),
+        Some(next_ticket.attempt())
+    );
+    assert_eq!(tool_at(&fixture, &next)?.state, super::ToolState::Completed);
+    Ok(())
+}
+
+#[test]
+fn conflicting_ticket_cannot_relabel_an_already_owned_canonical_invocation() -> TestResult {
+    let mut fixture = Fixture::new()?;
+    let (execution, observation) = fixture.begin()?;
+    let (item, original) = accept_search(
+        &mut fixture,
+        &execution,
+        0,
+        ToolLiveOrder::Queued,
+        true,
+        true,
+    )?;
+    let event_id = tool_at(&fixture, &item)?
+        .invocation_event
+        .clone()
+        .ok_or("invocation ID missing")?;
+    let (response, publication) = execution.observe_response(1)?;
+    let (attempt, owner) = response.observe_attempt(1)?;
+    let event = fixture.text_event(&attempt)?;
+    let conflict = event_ticket(&event)?;
+    owner.ok_or("conflicting owner missing")?.assembled()?;
+    publication
+        .ok_or("conflicting publication missing")?
+        .into_publication()?
+        .appended(&fixture.store, Ok(&event_id))?;
+    let before = fixture.view.revision();
+    assert!(
+        matches!(fixture.view.reconcile_attempt(&conflict), Err(ViewError::PublicationConflict { attempt, event_id: actual }) if *attempt == *conflict.attempt() && actual == event_id)
+    );
+    assert_eq!(
+        fixture.view.revision(),
+        before,
+        "conflict must be checked before canonical mutation"
+    );
+    assert_eq!(
+        tool_at(&fixture, &item)?.invocation_attempt.as_ref(),
+        Some(original.attempt())
+    );
+    search_result(&mut fixture, &execution)?;
+    assert_eq!(tool_at(&fixture, &item)?.state, super::ToolState::Completed);
+    assert_eq!(observation.execution(), original.execution());
+    Ok(())
+}

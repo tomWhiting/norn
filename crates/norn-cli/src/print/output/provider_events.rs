@@ -30,7 +30,9 @@ fn agent_event_kind_method(event: &AgentEventKind) -> &'static str {
             | ProviderEvent::Error { .. } => "event/raw",
         },
         AgentEventKind::Message(_) | AgentEventKind::McpChannel(_) => "event/message",
-        AgentEventKind::UsageEstimate(_) | AgentEventKind::StreamRetry(_) => "event/progress",
+        AgentEventKind::UsageEstimate(_)
+        | AgentEventKind::StreamRetry(_)
+        | AgentEventKind::CompactionProgress(_) => "event/progress",
         AgentEventKind::Subagent(_) | AgentEventKind::Compaction(_) => "event/raw",
     }
 }

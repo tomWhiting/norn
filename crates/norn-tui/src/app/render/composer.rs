@@ -26,6 +26,13 @@ pub(super) fn paint_chrome(
     {
         write!(input, " • {}s", start.elapsed().as_secs()).map_err(interaction)?;
     }
+    write!(input, " • {}", state.context_status.context_label()).map_err(interaction)?;
+    if let Some(activity) = state
+        .context_status
+        .activity_label(std::time::Instant::now())
+    {
+        write!(input, " • {activity}").map_err(interaction)?;
+    }
     let mut metadata = vec![status.model_name.clone()];
     if let Some(tier) = &status.service_tier {
         metadata.push(format!("tier:{tier}"));

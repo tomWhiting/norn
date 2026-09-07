@@ -1,6 +1,6 @@
 //! Exhaustive live-event dispositions with volatile attempts and no provider-state bodies.
 
-use crate::provider::agent_event::{AgentEventKind, AgentMessageLifecycle, SubagentLifecycle};
+use crate::provider::agent_event::{AgentEventKind, SubagentLifecycle};
 use crate::provider::events::{ProviderEvent, StopReason};
 use crate::provider::reasoning::ReasoningSummaryPart;
 use crate::provider::response_audio::ResponseAudioEvent;
@@ -75,23 +75,7 @@ impl SessionProjection {
                 };
                 self.typed_local(ViewItemKind::Child, &label, lifecycle)?;
             }
-            AgentEventKind::Message(message) => {
-                let (agent, label) = match message {
-                    AgentMessageLifecycle::Sent {
-                        from_id, from, to, ..
-                    } => (*from_id, format!("Message sent from {from} to {to}")),
-                    AgentMessageLifecycle::Delivered { to_id, from, .. } => {
-                        (*to_id, format!("Message delivered from {from}"))
-                    }
-                };
-                if agent != self.source.agent_id {
-                    return Err(ViewError::AgentMismatch {
-                        expected: self.source.agent_id,
-                        actual: agent,
-                    });
-                }
-                self.typed_local(ViewItemKind::ExternalInput, &label, message)?;
-            }
+            AgentEventKind::Message(message) => self.observe_message_audit(message)?,
             AgentEventKind::McpChannel(message) => {
                 if message.recipient_id != self.source.agent_id {
                     return Err(ViewError::AgentMismatch {
@@ -108,6 +92,13 @@ impl SessionProjection {
                     ),
                     &message.content,
                     BodyRepresentation::Text,
+                )?;
+            }
+            AgentEventKind::CompactionProgress(progress) => {
+                self.typed_local(
+                    ViewItemKind::Metadata,
+                    "Context compaction progress",
+                    progress,
                 )?;
             }
             AgentEventKind::Compaction(compaction) => {

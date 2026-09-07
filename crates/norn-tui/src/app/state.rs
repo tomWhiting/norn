@@ -137,6 +137,8 @@ pub struct AppState {
     /// [`Self::usage_totals`], which is the session-cumulative ledger used
     /// for per-agent rows.
     live_root_usage: (u64, u64),
+    /// Current request occupancy and admitted compaction, separate from billing.
+    pub(super) context_status: super::context_status::ContextStatus,
     /// In-flight human input state for active-turn steering and queued
     /// follow-up prompts.
     pub in_flight_input: InFlightInputState,
@@ -185,6 +187,7 @@ impl AppState {
             activity_log: ActivityLog::new(),
             usage_totals: HashMap::new(),
             live_root_usage: (0, 0),
+            context_status: super::context_status::ContextStatus::default(),
             in_flight_input: InFlightInputState::default(),
             composer_send_key: crate::frontend_preferences::ComposerSendKey::default(),
             view_shortcuts: Arc::new(crate::input::view_shortcuts::ViewShortcuts::default()),
@@ -210,6 +213,7 @@ impl AppState {
     /// state, which is how the wait disappears the moment the next
     /// attempt produces anything.
     pub fn note_event_received(&mut self, now: Instant) {
+        self.context_status.normal_phase();
         let turn_boundary = !matches!(
             self.streaming_indicator,
             StreamingIndicator::Generating { .. }
@@ -377,9 +381,32 @@ impl AppState {
             .set_tokens(agent_id, input_tokens, output_tokens);
     }
 
+    /// Invalidate active status with the same loss that fences retained projection.
+    pub(super) fn mark_live_events_lagged(
+        &mut self,
+        missed: u64,
+    ) -> Result<(), norn::session_view::ViewError> {
+        self.context_status.observation_lost();
+        self.transcript.projection.mark_lagged(missed)
+    }
+
+    /// Stop the input phase and retire any status whose terminal observation was lost.
+    pub(super) fn stop_live_phase(&mut self) {
+        self.context_status.observation_lost();
+        self.in_flight_input.set_running(false);
+    }
+
+    /// Record stream closure without pretending that an unobserved operation completed.
+    pub(super) fn close_live_events(&mut self, message: &str) -> Result<(), crate::TuiError> {
+        self.context_status.observation_lost();
+        super::notices::notice(self, message, None)?;
+        Ok(())
+    }
+
     /// Show the estimated input size for the root provider request that is
     /// about to stream.
     pub fn set_root_input_estimate(&mut self, input_tokens: u64) {
+        self.context_status.estimate(input_tokens);
         let status = self.fixed_panel.status_bar_mut();
         status.input_tokens = self.live_root_usage.0.saturating_add(input_tokens);
         status.input_tokens_estimated = true;
@@ -430,6 +457,7 @@ impl AppState {
 
     /// Reset the top-chip live counters for a new root turn.
     pub fn reset_live_usage(&mut self) {
+        self.context_status.clear_activity();
         self.live_root_usage = (0, 0);
         let status = self.fixed_panel.status_bar_mut();
         status.input_tokens = 0;
@@ -735,7 +763,9 @@ mod tests {
         let mut state = fresh_state()?;
         let agent_id = state.tab_state.root_id();
         state.record_root_provider_usage(agent_id, 1_000, 2_000);
+        state.context_status.set_window(Some(100_000));
         state.set_root_input_estimate(12_345);
+        assert_eq!(state.context_status.context_label(), "~12% context");
 
         let status = state.fixed_panel.status_bar();
         assert_eq!(status.input_tokens, 13_345);

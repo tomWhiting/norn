@@ -417,6 +417,11 @@ fn agent_event_kind_to_value(
             "delay_ms": retry.delay_ms,
             "error_class": retry.error_class,
         })),
+        norn::provider::AgentEventKind::CompactionProgress(progress) => Some(json!({
+            "type": "compaction_progress",
+            "operation_id": progress.operation_id,
+            "status": progress.phase,
+        })),
         norn::provider::AgentEventKind::Compaction(compaction) => {
             // Serialize the typed payload verbatim, tagged for the driven
             // protocol like the other non-provider events. A serialization

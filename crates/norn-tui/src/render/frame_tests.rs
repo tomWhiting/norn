@@ -288,3 +288,94 @@ fn typed_composer_cells_are_below_popup_rows_and_confined_to_the_input_area()
     ));
     Ok(())
 }
+
+#[test]
+fn backgrounds_encode_in_both_colour_modes_and_selection_wins()
+-> Result<(), Box<dyn std::error::Error>> {
+    let text = TextStyle {
+        background: Some([30, 34, 40]),
+        ..TextStyle::default()
+    };
+    for true_colour in [false, true] {
+        let mut caps = TerminalCaps::baseline();
+        caps.true_colour = true_colour;
+        for selected in [false, true] {
+            let rgb = if selected { [48, 58, 70] } else { [30, 34, 40] };
+            let mut bytes = Vec::new();
+            style(&mut bytes, text, false, selected, true, &caps)?;
+            let encoded = String::from_utf8(bytes)?;
+            let expected = if true_colour {
+                format!("\x1b[48;2;{};{};{}m", rgb[0], rgb[1], rgb[2])
+            } else {
+                format!(
+                    "\x1b[48;5;{}m",
+                    crate::render::style::nearest_256(termina::style::RgbColor::new(
+                        rgb[0], rgb[1], rgb[2]
+                    ))
+                )
+            };
+            assert!(encoded.contains(&expected));
+            assert!(
+                encoded.contains("\x1b[7m"),
+                "original text selection remains visible"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn styled_tab_cells_keep_the_body_background() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::render::retained_text::{StyleSpan, StyledText};
+    let mut text = render_plain("a\tb")?;
+    text.styled = StyledText::new(
+        "a\tb".to_owned(),
+        vec![StyleSpan {
+            range: 0..3,
+            style: TextStyle {
+                background: Some([30, 34, 40]),
+                ..TextStyle::default()
+            },
+        }],
+    )?;
+    let TextLayout::Rows(rows) = text
+        .styled
+        .layout(20, NonZeroUsize::new(4).ok_or("tab width")?)?
+    else {
+        return Err("missing tab geometry".into());
+    };
+    let row = PaintRow {
+        area: Rect {
+            column: 0,
+            row: 0,
+            width: 20,
+            height: 1,
+        },
+        row: 0,
+        text: Arc::new(text),
+        geometry: rows.first().ok_or("tab row missing")?.clone(),
+        selected: false,
+        selection: Vec::new(),
+        composer: false,
+    };
+    for true_colour in [false, true] {
+        let mut caps = TerminalCaps::baseline();
+        caps.true_colour = true_colour;
+        let mut frame = PreparedFrame::new(20, 1, None);
+        paint_row(&mut frame, &row, &caps)?;
+        let encoded = String::from_utf8(frame.encode_delta(None)?)?;
+        let background = if true_colour {
+            "\x1b[48;2;30;34;40m".to_owned()
+        } else {
+            format!(
+                "\x1b[48;5;{}m",
+                crate::render::style::nearest_256(termina::style::RgbColor::new(30, 34, 40))
+            )
+        };
+        assert!(
+            encoded.contains(&format!("{background}   ")),
+            "tab cells must inherit background: {encoded:?}"
+        );
+    }
+    Ok(())
+}

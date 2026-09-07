@@ -1,0 +1,607 @@
+{
+  "id": "NUI-005",
+  "cluster": "norn-retained-tui",
+  "title": "Repair tool association and retained activity/context presentation",
+  "status": "implemented_preview8_bounded_local_validation_release_main_install_pending",
+  "baseline": "a929c647b91e69fbdc759a72aa5ef9dd734ddb0f",
+  "branch": "codex/norn-ui-repair",
+  "worktree": "/private/tmp/norn-ui-repair",
+  "written_at_melbourne": "2026-09-07T15:29:08.352238+10:00",
+  "design": "../design.json",
+  "depends_on": [
+    "NUI-004"
+  ],
+  "purpose": "Repair the user-reported incomplete tool association, raw process/watch and delivery records, compaction/spinner/context usage presentation and tool styling without redesigning the retained interface.",
+  "task": "The preview.8 R1-R4 repairs are implemented with bounded local validation. The first workspace library run reported 6,192 passes (4,702 core, 585 CLI, 905 TUI); its three-file compilation drift remains recorded. A repeat stopped after core tests with 4,701 passes and one unchanged Bash output failure; that exact test then passed in isolation. The repeat is not an all-green suite. Ten retained-workspace PTY tests passed; their only source drift was core notifications.rs, with UI files unchanged. Strict workspace/all-target/live-feature clippy-clean-source and fmt-final-4 both passed with unchanged final formatted source SHA256 fa3cb41cd30e024fcecf89e9a5812a1386e21d9e6279b5e5ffe6f95267b41e5f. The release-final-3 rebuild, main integration and installation remain pending.",
+  "checklist": [
+    "C28",
+    "C29",
+    "C30",
+    "C31",
+    "C32"
+  ],
+  "stories": [
+    "S15",
+    "S16",
+    "S17",
+    "S18",
+    "S13"
+  ],
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Shared per-item detail policy and readable lifecycle styling",
+      "owner": "root",
+      "status": "implemented_bounded_local_validation",
+      "depends_on": [],
+      "spec": "Use one per-item detail policy across retained painting and navigation: Context/compaction details remain collapsed until explicitly expanded, independent of row selection. Restore readable tool header/body lifecycle colours and backgrounds without changing original-body selection or the established layout.",
+      "files": {
+        "modify": [
+          "crates/norn-tui/src/app/render/transcript_items.rs",
+          "crates/norn-tui/src/app/render/transcript.rs",
+          "crates/norn-tui/src/app/render/navigation.rs",
+          "crates/norn-tui/src/tools/summary.rs",
+          "crates/norn-tui/src/tools/summary_tests.rs",
+          "crates/norn-tui/src/render/frame.rs",
+          "crates/norn-tui/src/render/frame_tests.rs",
+          "crates/norn-tui/src/app/view_actions/mouse.rs",
+          "crates/norn-tui/src/app/view_actions.rs"
+        ],
+        "create": [
+          "crates/norn-tui/src/app/render/transcript_items_tests.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "A shared typed per-item policy drives both visible groups and navigation row counts. Selecting a Context/compaction item does not expand its potentially large body; only the existing explicit expansion control does. Preserve compact labels, full retained metadata and original mapped body access when expanded.",
+        "Apply lifecycle colours from actual ToolState/result_state, never from text searches. Keep supplied tool name plus description. Expanded detail styles and selected-row background must remain legible while preserving Markdown/source styles, original mappings and display-selection scope.",
+        "Frame encoding handles selected background and the existing supported colour modes, including 256-colour background, with unchanged bounds and changed-cell publication semantics. Preserve wide/combining glyphs and no-paint behavior; no second terminal writer.",
+        "Tests cover Context collapsed/expanded independent of selection, matching paint/navigation row counts, tool lifecycle/expanded colours, original source map preservation and actual frame background encoding. New transcript_items_tests.rs may hold these tests; preserve existing assertions.",
+        "Preserve exact source/BodyRef/selection maps and typed retained rows; no ANSI roundtrip, global-height rewrite or whole-body parse on every paint. Keep each production file at most 500 nonblank/noncomment lines, module declarations thin, no suppressions, ignored tests, unwrap/expect/panic variants or swallowed Results. Root alone runs Cargo/builds and integration. Record actual formatter, strict Clippy, bounded AST/LOC and meaningful targeted/runtime checks; no unrun full-suite, venue or Fable success is inferred.",
+        "The existing header click currently toggles only Tool. Extend mouse.rs through the same explicit expansion owner to Context and producer-bound notification ExternalInput using R3 typed binding facts; do not collapse all ExternalInput or ordinary MCP/user content. No XML/text-prefix trust. Preserve source/pane/publication hit identity and original selection behavior.",
+        "Compact tool rows omit repetitive description-unavailable prose when absent; expanded details retain the explicit missing-description fact. Display actual result state without pretending an invocation was observed or matched. Supplied names/descriptions and unavailable identity remain truthful.",
+        "Use the existing public nearest_256 helper for colour conversion; no style.rs edit is registered.",
+        "The actual expansion action in app/view_actions.rs must use the same per-item default predicate as rendering/navigation: only Tool inherits global expanded_tools; Context and explicitly bound notification details default collapsed. With global tool details enabled, the first explicit Context click/toggle must open it and the next must close it. Preserve explicit per-item overrides and Tool behavior. Regression coverage may live in the already registered transcript_items_tests.rs or inline in view_actions.rs; no existing view_actions_tests.rs file was found, so no new separate test path is registered."
+      ],
+      "checklist": [
+        "C28"
+      ],
+      "stories": [
+        "S15"
+      ],
+      "design_refs": [
+        "D-NUI005-DETAILS"
+      ]
+    },
+    {
+      "id": "R2",
+      "title": "Bind accepted canonical tool calls to the exact publication attempt",
+      "owner": "norn_models",
+      "status": "implemented_bounded_local_validation",
+      "depends_on": [],
+      "spec": "During accepted reconcile_attempt, bind every canonical invocation in that owner-minted accepted HistoryRecord to its exact ticket AttemptKey, even when no provisional rows were observed. Insert/update through the item index so execution-scoped result lookup finds the pending call.",
+      "files": {
+        "modify": [
+          "crates/norn/src/session_view/publication.rs",
+          "crates/norn/src/session_view/publication_tests.rs"
+        ],
+        "create": [],
+        "delete": []
+      },
+      "acceptance": [
+        "An accepted receipt arriving before buffered call events still associates its canonical invocation with the exact ticket AttemptKey; the later execution-scoped result completes one described tool item. Page-first/receipt and live-first order remain idempotent.",
+        "Refuse conflicting existing attempt ownership. Never associate by tool name, description, content, arrival order or a guessed call identity. Reused call IDs across attempts/executions remain isolated; ambiguous execution-scoped results remain explicitly refused.",
+        "Preserve source-bound item/body identities and every index membership through the existing insertion owner. No extra transcript store, fabricated wrapper or provider/tool authority change.",
+        "Regression tests cover receipt-before-live, page-first/receipt, existing live-first order, reused IDs across attempts/executions and conflicting/ambiguous ownership.",
+        "Preserve exact source/BodyRef/selection maps and typed retained rows; no ANSI roundtrip, global-height rewrite or whole-body parse on every paint. Keep each production file at most 500 nonblank/noncomment lines, module declarations thin, no suppressions, ignored tests, unwrap/expect/panic variants or swallowed Results. Root alone runs Cargo/builds and integration. Record actual formatter, strict Clippy, bounded AST/LOC and meaningful targeted/runtime checks; no unrun full-suite, venue or Fable success is inferred.",
+        "Bind all canonical invocation rows in the accepted HistoryRecord, including when the provisional observation contained only generic text and no tool fragments. Prevalidate any different existing AttemptKey before mutation, then stamp/reinsert canonical rows through ordinary reconciliation/index ownership. Preserve existing missing-parent and reused-call ambiguity tests."
+      ],
+      "checklist": [
+        "C29"
+      ],
+      "stories": [
+        "S16"
+      ],
+      "design_refs": [
+        "D-NUI005-ASSOCIATION"
+      ]
+    },
+    {
+      "id": "R3",
+      "title": "Present producer-bound notifications without exposing raw audit records by default",
+      "owner": "review_child_context core producer/projection; root R1 TUI integration",
+      "status": "implemented_bounded_local_validation",
+      "depends_on": [],
+      "spec": "Bind delivered notifications to the actual appended UserMessage with explicit optional user_event_id in the Custom delivered audit. Project typed compact notification facts; retain raw audit/framed body bytes lazily and preserve unbound input as untrusted ordinary Input.",
+      "files": {
+        "modify": [
+          "crates/norn/src/loop/delivery.rs",
+          "crates/norn/src/loop/delivery_pending.rs",
+          "crates/norn/src/session_view/mod.rs",
+          "crates/norn/src/session_view/contract.rs",
+          "crates/norn/src/session_view/committed.rs",
+          "crates/norn/src/session_view/live.rs",
+          "crates/norn/src/session_view/projection.rs",
+          "crates/norn/src/session_view/body.rs"
+        ],
+        "create": [
+          "crates/norn/src/session_view/notifications.rs",
+          "crates/norn/src/session_view/notifications_tests.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "Serialize optional additional Custom delivered user_event_id from the exact actual appended UserMessage. Do not change the public lifecycle enum shape or rewrite existing durable records; no invented event sequence or inferred source identity.",
+        "HistoryRecord carries compact notification facts, retaining explicit binding when forming projection metadata and raw audit body capability. Typed Message live facts and committed delivered audits become Metadata and deduplicate only through exact phase/message_id/recipient identity.",
+        "A UserMessage with the explicit admitted producer binding becomes ExternalInput with a compact sender/process/watch summary. Original framed bytes remain lazy BodyRef content for explicit detail, copy and export. Legacy records lacking that binding remain ordinary Input; never trust XML framing, a prefix, plausible sender prose or content matching. Invalid/missing provenance remains visible untrusted input.",
+        "Use one deterministic source-bound reducer for out-of-order pages/live events and duplicate observation. No eager raw-body reads, whole-history scans, second transcript store or per-paint parsing. Source/view/item/body identities and unavailable ranges remain honest.",
+        "Coordinate R1 with a precise typed notification/binding predicate; ExternalInput kind alone cannot collapse unrelated ordinary MCP input. Context and bound-notification toggles remain root-owned TUI paths, outside this row.",
+        "Producer/body/projection regressions cover exact actual event binding, legacy and forged-prefix input, invalid provenance, process/watch/delivery summaries, duplicate/live/history order and lazy original-body preservation. No changed public lifecycle shape or unrelated execution policy.",
+        "Preserve exact source/BodyRef/selection maps and typed retained rows; no ANSI roundtrip, global-height rewrite or whole-body parse on every paint. Keep each production file at most 500 nonblank/noncomment lines, module declarations thin, no suppressions, ignored tests, unwrap/expect/panic variants or swallowed Results. Root alone runs Cargo/builds and integration. Record actual formatter, strict Clippy, bounded AST/LOC and meaningful targeted/runtime checks; no unrun full-suite, venue or Fable success is inferred."
+      ],
+      "checklist": [
+        "C30"
+      ],
+      "stories": [
+        "S17"
+      ],
+      "design_refs": [
+        "D-NUI005-NOTIFICATIONS"
+      ]
+    },
+    {
+      "id": "R4",
+      "title": "Show actual compaction progress and current context use",
+      "owner": "channels_compatibility; session_view/live.rs only after R3 owner handoff",
+      "status": "implemented_bounded_local_validation",
+      "depends_on": [],
+      "spec": "Publish typed lifecycle progress around actually admitted compaction work and render truthful status in the existing composer row. Track current-context estimate separately from cumulative billing tokens and use the actual effective model context limit for used percentage.",
+      "files": {
+        "modify": [
+          "crates/norn/src/provider/agent_event.rs",
+          "crates/norn/src/provider/mod.rs",
+          "crates/norn/src/loop/mod.rs",
+          "crates/norn/src/loop/compaction.rs",
+          "crates/norn/src/loop/runner/tests/local_compaction.rs",
+          "crates/norn/src/loop/runner/tests/streaming_nudge.rs",
+          "crates/norn/src/session_view/live.rs",
+          "crates/norn/src/session_view/projection_tests.rs",
+          "crates/norn-cli/src/print/output.rs",
+          "crates/norn-cli/src/print/output/provider_events.rs",
+          "crates/norn-tui/src/app/mod.rs",
+          "crates/norn-tui/src/app/state.rs",
+          "crates/norn-tui/src/app/dispatch.rs",
+          "crates/norn-tui/src/app/model_selection.rs",
+          "crates/norn-tui/src/app/event_loop.rs",
+          "crates/norn-tui/src/app/turn/run.rs",
+          "crates/norn-tui/src/app/slash.rs",
+          "crates/norn-tui/src/app/render/composer.rs",
+          "crates/norn-tui/src/app/render/composer_tests.rs",
+          "crates/norn-tui/src/app/notices.rs"
+        ],
+        "create": [
+          "crates/norn/src/loop/compaction_progress.rs",
+          "crates/norn-tui/src/app/context_status.rs"
+        ],
+        "delete": []
+      },
+      "acceptance": [
+        "The core compaction_progress owner supplies a typed operation guard and begin/commit/fail/cancel boundaries around the actual admitted compaction/summarization scope. No speculative start, extra provider call, invented operation identity, new timer, cap, queue or storage. Preserve existing AgentCompaction accounting and compaction policy.",
+        "Automatic compaction progress spans actual summarization awaits; cancellation/drop resolves its operation so a spinner cannot remain falsely active. Typed source/operation facts determine current progress. Root/child, stale operation, lag and terminal transitions cannot imply another execution is still compacting.",
+        "Manual handle_compact is synchronous with no terminal writer or await during its commit. Record factual start/end around the existing work and present finish/failure at the next frame; do not claim an animated/cancellable manual summary, insert an artificial delay, or start another service to create visible motion.",
+        "Use app/context_status.rs as the single UI status/current-context accounting owner. Do not display the summed lifetime billing ledger as current occupancy. Track source-proven current estimate separately; derive used percentage only with the actual effective context limit. Missing/stale numerator or undefined denominator is unavailable, never fabricated zero percent. Preserve billing totals and public controls.",
+        "Initialize and invalidate the estimate/limit from existing runtime settings and actual model/session transitions, including new/resumed sessions and effective model changes. No secondary startup filesystem read, guessed model window or silent carryover from another source.",
+        "Render actual active progress/context percentage in the existing composer/status row with the existing status cadence; no new global row, height change, polling or timer. Completion/failure/cancellation or lag uncertainty removes a false active indication. Root R1 separately controls Context body collapse and styles.",
+        "Thread the typed progress variant through the declared core provider/reexport, session projection, CLI structured output and TUI notices/exhaustive consumers. Preserve safe typed metadata descriptions and existing output protocol behavior; no wildcard swallowing or private-body exposure.",
+        "Focused tests cover actual blocked-summary progress, successful commit, failure and cancellation; separate context estimate versus cumulative accounting, unknown denominator, model/session invalidation and lag/terminal cleanup; existing-row spinner/percentage bounds and preserved composer layout. Preserve existing local-compaction and streaming-nudge assertions with explicit exhaustive variants.",
+        "R3 review_child_context owns session_view/live.rs first. Obtain explicit handoff before editing that shared file; other R4 paths may proceed after registration. Root owns R1 rendering files and final integration/Cargo. Any further exhaustive caller or production-size split must be named and registered before editing; no rotation.rs or unlisted helper is authorized.",
+        "Preserve exact source/BodyRef/selection maps and typed retained rows; no ANSI roundtrip, global-height rewrite or whole-body parse on every paint. Keep each production file at most 500 nonblank/noncomment lines, module declarations thin, no suppressions, ignored tests, unwrap/expect/panic variants or swallowed Results. Root alone runs Cargo/builds and integration. Record actual formatter, strict Clippy, bounded AST/LOC and meaningful targeted/runtime checks; no unrun full-suite, venue or Fable success is inferred."
+      ],
+      "checklist": [
+        "C31"
+      ],
+      "stories": [
+        "S18"
+      ],
+      "design_refs": [
+        "D-NUI005-COMPACTION-CONTEXT"
+      ]
+    },
+    {
+      "id": "R5",
+      "title": "Record one checked version for integration and local installation",
+      "owner": "root only",
+      "status": "preview8_release_main_install_pending",
+      "depends_on": [
+        "R1",
+        "R2",
+        "R3",
+        "R4"
+      ],
+      "spec": "Root records the actual repair version in the existing workspace metadata/release notes and uses that same checked source/version for the user-authorized main integration and local installation. No docs author edits manifests or claims a merge/install before receipts.",
+      "files": {
+        "modify": [
+          "Cargo.toml",
+          "Cargo.lock",
+          "docs/release-notes/UNRELEASED.md"
+        ],
+        "create": [],
+        "delete": []
+      },
+      "acceptance": [
+        "Root alone updates workspace.package.version and the four Norn workspace package version records in Cargo.lock if a repair version is assigned; no third-party dependency changes are authorized by this metadata row. Do not guess a version in registration.",
+        "Preserve historical attempts and installed checkpoints; release notes distinguish actual source features, measured checks and installation. Required checks precede integration/install. The same checked version is merged and installed as instructed by the user; no intermediate version mismatch or invented success.",
+        "Record actual source/manifest/check results, Git integration result, installed --version and SHA256, verified rollback and macOS say Norn updated outcome. Explicit user main-merge authority is recorded; it is not an invented venue205 or Fable pass. Unrun venue/review work stays explicit.",
+        "Preserve exact source/BodyRef/selection maps and typed retained rows; no ANSI roundtrip, global-height rewrite or whole-body parse on every paint. Keep each production file at most 500 nonblank/noncomment lines, module declarations thin, no suppressions, ignored tests, unwrap/expect/panic variants or swallowed Results. Root alone runs Cargo/builds and integration. Record actual formatter, strict Clippy, bounded AST/LOC and meaningful targeted/runtime checks; no unrun full-suite, venue or Fable success is inferred."
+      ],
+      "checklist": [
+        "C32"
+      ],
+      "stories": [
+        "S13"
+      ],
+      "design_refs": [
+        "D-NUI005-CHECKPOINT"
+      ]
+    }
+  ],
+  "documentation_wall": [
+    "docs/design/norn-retained-tui/design.json",
+    "docs/design/norn-retained-tui/DESIGN.md",
+    "docs/design/norn-retained-tui/checklist.json",
+    "docs/design/norn-retained-tui/CHECKLIST.md",
+    "docs/design/norn-retained-tui/stories.json",
+    "docs/design/norn-retained-tui/USER-STORIES.md",
+    "docs/design/norn-retained-tui/briefs/NUI-005.json",
+    "docs/design/norn-retained-tui/briefs/NUI-005.md"
+  ],
+  "pending_proposals": {},
+  "coordination": "Root owns R1 and shared rendering integration; norn_models owns R2 core association. Other source owners must wait for their exact row registration. Docs owner changes only the eight documentation paths. No shared-source concurrent writers. R3 owns session_view/live.rs first; a later R4 amendment touching that file must wait for explicit file handoff. Root owns R1 mouse.rs and all bound-notification TUI presentation. R4 channels_compatibility owns the typed lifecycle and UI estimate files; session_view/live.rs transfers only after R3 owner completes and acknowledges handoff.",
+  "boundaries": [
+    "Preserve exact source/BodyRef/selection maps and typed retained rows; no ANSI roundtrip, global-height rewrite or whole-body parse on every paint. Keep each production file at most 500 nonblank/noncomment lines, module declarations thin, no suppressions, ignored tests, unwrap/expect/panic variants or swallowed Results. Root alone runs Cargo/builds and integration. Record actual formatter, strict Clippy, bounded AST/LOC and meaningful targeted/runtime checks; no unrun full-suite, venue or Fable success is inferred.",
+    "Existing agent target viewing/messaging, editable workspace and hosted attach remain separate requirements; no passive status claim closes them."
+  ],
+  "verification": [
+    "Registration and render/coverage precede source edits.",
+    "Preserve exact source/BodyRef/selection maps and typed retained rows; no ANSI roundtrip, global-height rewrite or whole-body parse on every paint. Keep each production file at most 500 nonblank/noncomment lines, module declarations thin, no suppressions, ignored tests, unwrap/expect/panic variants or swallowed Results. Root alone runs Cargo/builds and integration. Record actual formatter, strict Clippy, bounded AST/LOC and meaningful targeted/runtime checks; no unrun full-suite, venue or Fable success is inferred.",
+    "User explicitly authorized fixes, main integration and installation after required checks using one version; no venue205 or Fable result is fabricated.",
+    "The preview.8 R1-R4 repairs are implemented with bounded local validation. The first workspace library run reported 6,192 passes (4,702 core, 585 CLI, 905 TUI); its three-file compilation drift remains recorded. A repeat stopped after core tests with 4,701 passes and one unchanged Bash output failure; that exact test then passed in isolation. The repeat is not an all-green suite. Ten retained-workspace PTY tests passed; their only source drift was core notifications.rs, with UI files unchanged. Strict workspace/all-target/live-feature clippy-clean-source and fmt-final-4 both passed with unchanged final formatted source SHA256 fa3cb41cd30e024fcecf89e9a5812a1386e21d9e6279b5e5ffe6f95267b41e5f. The release-final-3 rebuild, main integration and installation remain pending.",
+    "Final bounded AST/LOC receipts cover 41 changed Rust files with no new findings and no file above 500 production lines. Inherited compaction.rs policy debt remains open: two allow attributes (lines 535 and 1106), 60 expect calls and four panic macros, all matching baseline. Seven underscore/discard matches are inherited, including two ignored AgentStepResult test bindings. No overall AST-clean, exact-commit venue205 or Fable verdict is claimed.",
+    "Open independent Bash finding: the repeated output test observed 22,898 characters instead of 23,005. Source/log review identifies the unchanged two-second post-exit drain cutoff as a plausible load-sensitive cause, not a confirmed per-run cause. The direct Bash path is outside the repaired projection/rendering code. Its isolated pass does not prove the cutoff safe or close the finding; no Bash repair was made.",
+    "Current receipts: /private/tmp/nui-005-proof/{clippy-final-3,fmt-final-4,terminal-tests,unit-tests-isolated,unit-tests-final,bash-output-repro}.json and source-policy-final-3/FINAL.json. Failed/interrupted/drifted attempts are retained as history. Earlier release-final and release-final-2 receipts do not verify the final formatted source; release-final-3 is pending.",
+    "Exact final Clippy receipt: /private/tmp/nui-005-proof/clippy-clean-source.json; the earlier clippy-final-3 source-drift record remains historical."
+  ],
+  "updated_at_melbourne": "2026-09-07T16:09:18.894318+10:00",
+  "current_candidate": {
+    "recorded_at_melbourne": "2026-09-07T16:09:18.894318+10:00",
+    "status": "implemented_preview8_bounded_local_validation_release_main_install_pending",
+    "candidate_version": "0.1.0-preview.8",
+    "installed": false,
+    "main_merged": false,
+    "summary": "The preview.8 R1-R4 repairs are implemented with bounded local validation. The first workspace library run reported 6,192 passes (4,702 core, 585 CLI, 905 TUI); its three-file compilation drift remains recorded. A repeat stopped after core tests with 4,701 passes and one unchanged Bash output failure; that exact test then passed in isolation. The repeat is not an all-green suite. Ten retained-workspace PTY tests passed; their only source drift was core notifications.rs, with UI files unchanged. Strict workspace/all-target/live-feature clippy-clean-source and fmt-final-4 both passed with unchanged final formatted source SHA256 fa3cb41cd30e024fcecf89e9a5812a1386e21d9e6279b5e5ffe6f95267b41e5f. The release-final-3 rebuild, main integration and installation remain pending.",
+    "receipts": {
+      "unit-tests-isolated": {
+        "path": "/private/tmp/nui-005-proof/unit-tests-isolated.json",
+        "sha256": "09a35a0880a65c791179876bd3c1e1e209ab11d35a0f219c8c02c2a3266b5db4",
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "--workspace",
+          "--lib",
+          "-j2"
+        ],
+        "started_at_melbourne": "2026-09-07T15:46:50.051940+10:00",
+        "ended_at_melbourne": "2026-09-07T15:55:16.340658+10:00",
+        "exit_code": 0,
+        "source_unchanged": false,
+        "changed_during_run": [
+          "crates/norn-tui/src/app/render/transcript_items.rs",
+          "crates/norn-tui/src/app/render/transcript_items_tests.rs",
+          "crates/norn/src/session_view/notifications_tests.rs"
+        ],
+        "source_sha256": "ce748404f799c2ee53defc2aadf2c9465b77153375e7ecf135fade123645016b",
+        "log": "/private/tmp/nui-005-proof/unit-tests-isolated.log",
+        "log_sha256": "33668093bc766b49d490aff8a2565aa4d9d25624561bbad7108e8ad5fe7948be"
+      },
+      "unit-tests-final": {
+        "path": "/private/tmp/nui-005-proof/unit-tests-final.json",
+        "sha256": "09d4488676729f6a99eecaf1900600e9ceca231716b29383a9f0506dad1fe067",
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "--workspace",
+          "--lib",
+          "-j2"
+        ],
+        "started_at_melbourne": "2026-09-07T15:57:03.206985+10:00",
+        "ended_at_melbourne": "2026-09-07T16:04:34.022204+10:00",
+        "exit_code": 101,
+        "source_unchanged": false,
+        "changed_during_run": [
+          "crates/norn/src/session_view/notifications.rs"
+        ],
+        "source_sha256": "fa3cb41cd30e024fcecf89e9a5812a1386e21d9e6279b5e5ffe6f95267b41e5f",
+        "log": "/private/tmp/nui-005-proof/unit-tests-final.log",
+        "log_sha256": "416dbfdec4778abf73166b62689ad23534bf141ab4e90913170458b52388ddaf"
+      },
+      "bash-output-repro": {
+        "path": "/private/tmp/nui-005-proof/bash-output-repro.json",
+        "sha256": "f30f77ce671dd4800be0f1f0bcfae4a9d1999def67ac5f732c4c6eec94667309",
+        "command": [
+          "target/debug/deps/norn-5c37f693c814f7c5",
+          "--exact",
+          "tools::bash::tests::output_over_threshold_redirects_to_file_with_shape_and_content",
+          "--nocapture"
+        ],
+        "started_at_melbourne": "2026-09-07T16:05:53.952300+10:00",
+        "ended_at_melbourne": "2026-09-07T16:05:55.009194+10:00",
+        "exit_code": 0,
+        "source_unchanged": true,
+        "changed_during_run": [],
+        "source_sha256": "fa3cb41cd30e024fcecf89e9a5812a1386e21d9e6279b5e5ffe6f95267b41e5f",
+        "log": "/private/tmp/nui-005-proof/bash-output-repro.log",
+        "log_sha256": "0e63765b5c4e09e724d0bea6192cec446094d29857960f3c395dc9ea05fcc3ed"
+      },
+      "clippy-final-3": {
+        "path": "/private/tmp/nui-005-proof/clippy-final-3.json",
+        "sha256": "6f73f4ad604201064407b7716d01b511cd0dae7a4d1c8066aff690285985d308",
+        "command": [
+          "cargo",
+          "clippy",
+          "--locked",
+          "--workspace",
+          "--all-targets",
+          "--features",
+          "norn/live-api-smoke",
+          "-j2",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "started_at_melbourne": "2026-09-07T16:00:37.409448+10:00",
+        "ended_at_melbourne": "2026-09-07T16:05:50.482050+10:00",
+        "exit_code": 0,
+        "source_unchanged": false,
+        "changed_during_run": [
+          "crates/norn/src/session_view/notifications.rs"
+        ],
+        "source_sha256": "fa3cb41cd30e024fcecf89e9a5812a1386e21d9e6279b5e5ffe6f95267b41e5f",
+        "log": "/private/tmp/nui-005-proof/clippy-final-3.log",
+        "log_sha256": "fdd2a7a3d6f99db612fe787dec14684ef69fe810bb7d6a7411ed79232f8da930"
+      },
+      "fmt-final-4": {
+        "path": "/private/tmp/nui-005-proof/fmt-final-4.json",
+        "sha256": "3604879b7ad04548dbd78ff23f4605af1482dda23f2105db42a1b83c185f5eaa",
+        "command": [
+          "cargo",
+          "fmt",
+          "--all",
+          "--check"
+        ],
+        "started_at_melbourne": "2026-09-07T16:04:16.420383+10:00",
+        "ended_at_melbourne": "2026-09-07T16:04:33.409655+10:00",
+        "exit_code": 0,
+        "source_unchanged": true,
+        "changed_during_run": [],
+        "source_sha256": "fa3cb41cd30e024fcecf89e9a5812a1386e21d9e6279b5e5ffe6f95267b41e5f",
+        "log": "/private/tmp/nui-005-proof/fmt-final-4.log",
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "terminal-tests": {
+        "path": "/private/tmp/nui-005-proof/terminal-tests.json",
+        "sha256": "b710739ade91f71a219f798125cb99df9ae90e6c2fbd6f2a3786d742dddac59d",
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "norn-tui",
+          "--test",
+          "retained_workspace",
+          "-j2"
+        ],
+        "started_at_melbourne": "2026-09-07T15:56:17.326253+10:00",
+        "ended_at_melbourne": "2026-09-07T16:00:08.876532+10:00",
+        "exit_code": 0,
+        "source_unchanged": false,
+        "changed_during_run": [
+          "crates/norn/src/session_view/notifications.rs"
+        ],
+        "source_sha256": "d36390f14827cd1221a43ddb522c3b9cd5bd25c5383e164d296ef0fbd8790b94",
+        "log": "/private/tmp/nui-005-proof/terminal-tests.log",
+        "log_sha256": "4d234ad54d2bcbedd94606a0496c2bc5af0dec5c71b8c9b73997ba019eaf0e06"
+      },
+      "clippy-clean-source": {
+        "path": "/private/tmp/nui-005-proof/clippy-clean-source.json",
+        "sha256": "5f1d348ef0e295043a9b7d51bf7f76d66b9406743cdd1c89516bf50cd958db92",
+        "command": [
+          "cargo",
+          "clippy",
+          "--locked",
+          "--workspace",
+          "--all-targets",
+          "--features",
+          "norn/live-api-smoke",
+          "-j2",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "started_at_melbourne": "2026-09-07T16:07:49.100104+10:00",
+        "ended_at_melbourne": "2026-09-07T16:08:38.344332+10:00",
+        "exit_code": 0,
+        "source_unchanged": true,
+        "changed_during_run": [],
+        "source_sha256": "fa3cb41cd30e024fcecf89e9a5812a1386e21d9e6279b5e5ffe6f95267b41e5f",
+        "log": "/private/tmp/nui-005-proof/clippy-clean-source.log",
+        "log_sha256": "b33b83a880f276c8931056d35a7071a8805cabc1f0a6b7bebc2672199f50e4b4"
+      }
+    },
+    "first_library_counts": {
+      "core": 4702,
+      "CLI": 585,
+      "TUI": 905,
+      "total": 6192,
+      "failed": 0,
+      "ignored": 0,
+      "source_unchanged": false
+    },
+    "repeat_core_counts": {
+      "passed": 4701,
+      "failed": 1,
+      "ignored": 0,
+      "all_green": false
+    },
+    "isolated_exact_Bash_retry": "passed; finding remains open",
+    "PTY_counts": {
+      "passed": 10,
+      "failed": 0,
+      "ignored": 0,
+      "source_unchanged": false,
+      "UI_source_unchanged": true
+    },
+    "current_formatted_source_sha256": "fa3cb41cd30e024fcecf89e9a5812a1386e21d9e6279b5e5ffe6f95267b41e5f",
+    "release_rebuild": {
+      "name": "release-final-3",
+      "status": "running_no_terminal_receipt"
+    },
+    "source_policy": {
+      "path": "/private/tmp/nui-005-proof/source-policy-final-3/FINAL.json",
+      "sha256": "bab9aa67079ae42af8ce60db2fd208af6089083db09d3dafdaeca1bb99a36356",
+      "summary": "Final bounded AST/LOC receipts cover 41 changed Rust files with no new findings and no file above 500 production lines. Inherited compaction.rs policy debt remains open: two allow attributes (lines 535 and 1106), 60 expect calls and four panic macros, all matching baseline. Seven underscore/discard matches are inherited, including two ignored AgentStepResult test bindings. No overall AST-clean, exact-commit venue205 or Fable verdict is claimed.",
+      "overall_clean": false
+    },
+    "open_Bash_finding": {
+      "path": "/private/tmp/nui-005-proof/bash-tail-diagnosis.json",
+      "sha256": "fd51a38466ece7dc4fae18dc10e06996ee199da9d66e158444dfdc593810caf8",
+      "summary": "Open independent Bash finding: the repeated output test observed 22,898 characters instead of 23,005. Source/log review identifies the unchanged two-second post-exit drain cutoff as a plausible load-sensitive cause, not a confirmed per-run cause. The direct Bash path is outside the repaired projection/rendering code. Its isolated pass does not prove the cutoff safe or close the finding; no Bash repair was made.",
+      "fixed": false
+    },
+    "pending": [
+      "release-final-3 terminal/source proof",
+      "main integration",
+      "local install/version/hash/rollback/speech proof"
+    ],
+    "venue205": "not proven",
+    "Fable": "not proven"
+  },
+  "candidate_history": [
+    {
+      "recorded_at_melbourne": "2026-09-07T15:58:57.807671+10:00",
+      "status": "implemented_preview8_final_verification_pending",
+      "candidate_version": "0.1.0-preview.8",
+      "installed": false,
+      "main_merged": false,
+      "summary": "Current 0.1.0-preview.8 candidate: R1-R4 are implemented. Workspace library tests reported 6,192 passed (4,702 core, 585 CLI, 905 TUI), zero failed/ignored. The run changed three files during dependency compilation, so its receipt is not an unchanged-source pass. fmt-final-2 and release-final passed with unchanged source SHA256 ce748404f799c2ee53defc2aadf2c9465b77153375e7ecf135fade123645016b. Final strict Clippy and PTY checks, main integration and installation remain pending.",
+      "library_test_counts": {
+        "core": 4702,
+        "CLI": 585,
+        "TUI": 905,
+        "total": 6192,
+        "failed": 0,
+        "ignored": 0
+      },
+      "verification_receipts": {
+        "unit-tests-isolated": {
+          "path": "/private/tmp/nui-005-proof/unit-tests-isolated.json",
+          "sha256": "09a35a0880a65c791179876bd3c1e1e209ab11d35a0f219c8c02c2a3266b5db4",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--workspace",
+            "--lib",
+            "-j2"
+          ],
+          "started_at_melbourne": "2026-09-07T15:46:50.051940+10:00",
+          "ended_at_melbourne": "2026-09-07T15:55:16.340658+10:00",
+          "exit_code": 0,
+          "source_unchanged": false,
+          "changed_during_run": [
+            "crates/norn-tui/src/app/render/transcript_items.rs",
+            "crates/norn-tui/src/app/render/transcript_items_tests.rs",
+            "crates/norn/src/session_view/notifications_tests.rs"
+          ],
+          "source_sha256": "ce748404f799c2ee53defc2aadf2c9465b77153375e7ecf135fade123645016b",
+          "log": "/private/tmp/nui-005-proof/unit-tests-isolated.log",
+          "log_sha256": "33668093bc766b49d490aff8a2565aa4d9d25624561bbad7108e8ad5fe7948be",
+          "scope_after_followup": "Historical before notifications.rs borrowed-JSON correction; not current exact-source validation."
+        },
+        "fmt-final-2": {
+          "path": "/private/tmp/nui-005-proof/fmt-final-2.json",
+          "sha256": "48e4b688a30798fa0109585db702bfdc4a34fcccb8daed4b66c623f49571d6c0",
+          "command": [
+            "cargo",
+            "fmt",
+            "--all",
+            "--check"
+          ],
+          "started_at_melbourne": "2026-09-07T15:52:22.455310+10:00",
+          "ended_at_melbourne": "2026-09-07T15:52:25.325233+10:00",
+          "exit_code": 0,
+          "source_unchanged": true,
+          "changed_during_run": [],
+          "source_sha256": "ce748404f799c2ee53defc2aadf2c9465b77153375e7ecf135fade123645016b",
+          "log": "/private/tmp/nui-005-proof/fmt-final-2.log",
+          "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "scope_after_followup": "Historical before notifications.rs borrowed-JSON correction; not current exact-source validation."
+        },
+        "release-final": {
+          "path": "/private/tmp/nui-005-proof/release-final.json",
+          "sha256": "1f8734283ce7644ecc56b9f0370aef2e8e4c72a82f2773c06da4b30424a8ee20",
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "-p",
+            "norn-cli",
+            "--bin",
+            "norn",
+            "-j2"
+          ],
+          "started_at_melbourne": "2026-09-07T15:49:57.711497+10:00",
+          "ended_at_melbourne": "2026-09-07T15:51:23.758645+10:00",
+          "exit_code": 0,
+          "source_unchanged": true,
+          "changed_during_run": [],
+          "source_sha256": "ce748404f799c2ee53defc2aadf2c9465b77153375e7ecf135fade123645016b",
+          "log": "/private/tmp/nui-005-proof/release-final.log",
+          "log_sha256": "11d988258c79192601f4d47091a9cc7424c6781a6fffd67716965c42cab13b22",
+          "scope_after_followup": "Historical before notifications.rs borrowed-JSON correction; not current exact-source validation."
+        }
+      },
+      "source_change_limitation": {
+        "source_unchanged": false,
+        "changed_during_unit_run": [
+          "crates/norn-tui/src/app/render/transcript_items.rs",
+          "crates/norn-tui/src/app/render/transcript_items_tests.rs",
+          "crates/norn/src/session_view/notifications_tests.rs"
+        ],
+        "scope": "Library tests only; no all-target, integration, PTY or full workspace test claim."
+      },
+      "pending": [
+        "release rebuild and source verification after borrowed-JSON correction",
+        "final strict Clippy",
+        "PTY checks",
+        "main integration",
+        "local installation/version/hash/speech proof"
+      ],
+      "source_policy": {
+        "path": "/private/tmp/nui-005-proof/source-policy-final/FINAL.json",
+        "sha256": "7883107d604cbc8f220d1df727022b571ecedb4bcc22dd5e33b018d5eacb8a11",
+        "status": "new_code_checks_passed_inherited_policy_findings_open",
+        "summary": "Bounded AST/LOC covered 41 final changed Rust files: no new forbidden calls/attributes/underscore bindings and no file over 500 production lines (turn/run.rs is exactly 500). Overall policy clearance remains withheld: compaction.rs retains two allow attributes at lines 535 and 1106, 60 expect calls and four panic macros, all unchanged from baseline. Seven underscore/discard matches are inherited, including ignored AgentStepResult bindings in streaming_nudge.rs:23,74. No exact-commit venue205 or Fable proof is claimed."
+      },
+      "venue205": "not proven",
+      "Fable": "not proven",
+      "source_review_followup": {
+        "file": "crates/norn/src/session_view/notifications.rs",
+        "status": "borrowed_deserialization_written_rebuild_and_checks_pending",
+        "note": "Subsequent source review replaced a full cloned Custom payload in notifications.rs with borrowed-JSON deserialization. The recorded library/fmt/release passes above predate that correction; release rebuild and final checks on the corrected source are pending. This is an efficiency correction with no claimed semantic change."
+      }
+    }
+  ]
+}

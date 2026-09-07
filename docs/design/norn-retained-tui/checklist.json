@@ -39,7 +39,7 @@
         },
         {
           "id": "C8",
-          "text": "R4.layout \u2014 independent pure geometry foundation"
+          "text": "R4.layout — independent pure geometry foundation"
         },
         {
           "id": "C9",
@@ -612,6 +612,41 @@
           "done": false
         }
       ]
+    },
+    {
+      "name": "Tool and retained activity repair",
+      "items": [
+        {
+          "id": "C28",
+          "text": "Shared per-item detail policy and readable lifecycle styling — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.",
+          "status": "implemented_bounded_local_validation",
+          "done": false
+        },
+        {
+          "id": "C29",
+          "text": "Bind accepted canonical tool calls to the exact publication attempt — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.",
+          "status": "implemented_bounded_local_validation",
+          "done": false
+        },
+        {
+          "id": "C30",
+          "text": "Present producer-bound notifications without exposing raw audit records by default — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.",
+          "status": "implemented_bounded_local_validation",
+          "done": false
+        },
+        {
+          "id": "C31",
+          "text": "Show actual compaction progress and current context use — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.",
+          "status": "implemented_bounded_local_validation",
+          "done": false
+        },
+        {
+          "id": "C32",
+          "text": "Record one checked version for integration and local installation — preview.8 code checks recorded with source-drift and failed-repeat limits; release rebuild, main and installation pending.",
+          "status": "preview8_release_main_install_pending",
+          "done": false
+        }
+      ]
     }
   ],
   "ui_polish_local_checkpoint": {
@@ -704,5 +739,10 @@
       "Fable": false,
       "public_release": false
     }
+  },
+  "ui_repair_candidate": {
+    "status": "implemented_preview8_bounded_local_validation_release_main_install_pending",
+    "brief": "briefs/NUI-005.json",
+    "done": false
   }
 }
