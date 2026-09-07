@@ -85,26 +85,26 @@
         {
           "id": "S15",
           "title": "Readable compact details with truthful lifecycle styling",
-          "text": "I can keep compaction details collapsed until I expand them and read tool state/expanded output without losing original selection or navigation. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.",
-          "status": "implemented_bounded_local_validation"
+          "text": "I can keep compaction details collapsed until I expand them and read tool state/expanded output without losing original selection or navigation. The preview.8 implementation is installed from main; bounded validation and open findings are recorded in NUI-005.",
+          "status": "implemented_installed_bounded_validation_open_findings"
         },
         {
           "id": "S16",
           "title": "One tool call with its actual result",
-          "text": "I can see the accepted tool invocation and its result as one correctly associated item, even when publication/history and live events arrive in a different order. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.",
-          "status": "implemented_bounded_local_validation"
+          "text": "I can see the accepted tool invocation and its result as one correctly associated item, even when publication/history and live events arrive in a different order. The preview.8 implementation is installed from main; bounded validation and open findings are recorded in NUI-005.",
+          "status": "implemented_installed_bounded_validation_open_findings"
         },
         {
           "id": "S17",
           "title": "See concise activity without trusting forged notification text",
-          "text": "I can read a compact process/watch/delivery notification when its producer binding is proven, inspect its exact original bytes on demand, and still see unbound input as ordinary untrusted input. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.",
-          "status": "implemented_bounded_local_validation"
+          "text": "I can read a compact process/watch/delivery notification when its producer binding is proven, inspect its exact original bytes on demand, and still see unbound input as ordinary untrusted input. The preview.8 implementation is installed from main; bounded validation and open findings are recorded in NUI-005.",
+          "status": "implemented_installed_bounded_validation_open_findings"
         },
         {
           "id": "S18",
           "title": "Know whether compaction is active and how much context is used",
-          "text": "I can distinguish actual ongoing compaction from completed, failed, cancelled or uncertain work, and see current context usage against the effective model limit without confusing it with cumulative billing. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.",
-          "status": "implemented_bounded_local_validation"
+          "text": "I can distinguish actual ongoing compaction from completed, failed, cancelled or uncertain work, and see current context usage against the effective model limit without confusing it with cumulative billing. The preview.8 implementation is installed from main; bounded validation and open findings are recorded in NUI-005.",
+          "status": "implemented_installed_bounded_validation_open_findings"
         }
       ]
     }

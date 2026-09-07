@@ -618,33 +618,38 @@
       "items": [
         {
           "id": "C28",
-          "text": "Shared per-item detail policy and readable lifecycle styling — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.",
-          "status": "implemented_bounded_local_validation",
-          "done": false
+          "text": "Shared per-item detail policy and readable lifecycle styling — implemented and installed in preview.8; bounded checks recorded, inherited/open findings remain.",
+          "status": "implemented_installed_bounded_validation_open_findings",
+          "done": false,
+          "local_checkpoint_closed": true
         },
         {
           "id": "C29",
-          "text": "Bind accepted canonical tool calls to the exact publication attempt — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.",
-          "status": "implemented_bounded_local_validation",
-          "done": false
+          "text": "Bind accepted canonical tool calls to the exact publication attempt — implemented and installed in preview.8; bounded checks recorded, inherited/open findings remain.",
+          "status": "implemented_installed_bounded_validation_open_findings",
+          "done": false,
+          "local_checkpoint_closed": true
         },
         {
           "id": "C30",
-          "text": "Present producer-bound notifications without exposing raw audit records by default — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.",
-          "status": "implemented_bounded_local_validation",
-          "done": false
+          "text": "Present producer-bound notifications without exposing raw audit records by default — implemented and installed in preview.8; bounded checks recorded, inherited/open findings remain.",
+          "status": "implemented_installed_bounded_validation_open_findings",
+          "done": false,
+          "local_checkpoint_closed": true
         },
         {
           "id": "C31",
-          "text": "Show actual compaction progress and current context use — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.",
-          "status": "implemented_bounded_local_validation",
-          "done": false
+          "text": "Show actual compaction progress and current context use — implemented and installed in preview.8; bounded checks recorded, inherited/open findings remain.",
+          "status": "implemented_installed_bounded_validation_open_findings",
+          "done": false,
+          "local_checkpoint_closed": true
         },
         {
           "id": "C32",
-          "text": "Record one checked version for integration and local installation — preview.8 code checks recorded with source-drift and failed-repeat limits; release rebuild, main and installation pending.",
-          "status": "preview8_release_main_install_pending",
-          "done": false
+          "text": "Record one checked version for integration and local installation — preview.8 main/install checkpoint closed with artifact and rollback hashes verified; policy and venue/review findings remain open.",
+          "status": "local_main_install_checkpoint_closed_open_findings",
+          "done": false,
+          "local_checkpoint_closed": true
         }
       ]
     }
@@ -741,8 +746,9 @@
     }
   },
   "ui_repair_candidate": {
-    "status": "implemented_preview8_bounded_local_validation_release_main_install_pending",
+    "status": "installed_main_checkpoint_closed_open_findings",
     "brief": "briefs/NUI-005.json",
-    "done": false
+    "local_checkpoint_closed": true,
+    "policy_clearance": false
   }
 }

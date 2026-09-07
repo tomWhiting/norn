@@ -42,8 +42,8 @@
 
 ## Tool and retained activity repair
 
-- [ ] **C28** — Shared per-item detail policy and readable lifecycle styling — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.
-- [ ] **C29** — Bind accepted canonical tool calls to the exact publication attempt — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.
-- [ ] **C30** — Present producer-bound notifications without exposing raw audit records by default — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.
-- [ ] **C31** — Show actual compaction progress and current context use — preview.8 implementation and bounded local checks recorded; inherited/open findings and final delivery remain tracked.
-- [ ] **C32** — Record one checked version for integration and local installation — preview.8 code checks recorded with source-drift and failed-repeat limits; release rebuild, main and installation pending.
+- [ ] **C28** — Shared per-item detail policy and readable lifecycle styling — implemented and installed in preview.8; bounded checks recorded, inherited/open findings remain.
+- [ ] **C29** — Bind accepted canonical tool calls to the exact publication attempt — implemented and installed in preview.8; bounded checks recorded, inherited/open findings remain.
+- [ ] **C30** — Present producer-bound notifications without exposing raw audit records by default — implemented and installed in preview.8; bounded checks recorded, inherited/open findings remain.
+- [ ] **C31** — Show actual compaction progress and current context use — implemented and installed in preview.8; bounded checks recorded, inherited/open findings remain.
+- [ ] **C32** — Record one checked version for integration and local installation — preview.8 main/install checkpoint closed with artifact and rollback hashes verified; policy and venue/review findings remain open.

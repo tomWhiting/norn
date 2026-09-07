@@ -30,10 +30,10 @@
 
 **S14.** I can use Option or Control combinations for pane/view actions, edit and remember those bindings, disable unwanted bindings, and trust the displayed hints without losing ordinary typing, draft, popup or send behavior.
 
-**S15.** I can keep compaction details collapsed until I expand them and read tool state/expanded output without losing original selection or navigation. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.
+**S15.** I can keep compaction details collapsed until I expand them and read tool state/expanded output without losing original selection or navigation. The preview.8 implementation is installed from main; bounded validation and open findings are recorded in NUI-005.
 
-**S16.** I can see the accepted tool invocation and its result as one correctly associated item, even when publication/history and live events arrive in a different order. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.
+**S16.** I can see the accepted tool invocation and its result as one correctly associated item, even when publication/history and live events arrive in a different order. The preview.8 implementation is installed from main; bounded validation and open findings are recorded in NUI-005.
 
-**S17.** I can read a compact process/watch/delivery notification when its producer binding is proven, inspect its exact original bytes on demand, and still see unbound input as ordinary untrusted input. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.
+**S17.** I can read a compact process/watch/delivery notification when its producer binding is proven, inspect its exact original bytes on demand, and still see unbound input as ordinary untrusted input. The preview.8 implementation is installed from main; bounded validation and open findings are recorded in NUI-005.
 
-**S18.** I can distinguish actual ongoing compaction from completed, failed, cancelled or uncertain work, and see current context usage against the effective model limit without confusing it with cumulative billing. The preview.8 implementation has bounded local checks recorded; final build, main integration and installation remain pending.
+**S18.** I can distinguish actual ongoing compaction from completed, failed, cancelled or uncertain work, and see current context usage against the effective model limit without confusing it with cumulative billing. The preview.8 implementation is installed from main; bounded validation and open findings are recorded in NUI-005.
