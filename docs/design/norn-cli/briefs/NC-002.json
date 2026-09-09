@@ -2,10 +2,26 @@
   "id": "NC-002",
   "cluster": "norn-cli",
   "title": "Session persistence layer",
-  "depends_on": ["NC-001"],
+  "depends_on": [
+    "NC-001"
+  ],
   "blocked_by": [],
-  "checklist": ["C36", "C37", "C38", "C39", "C40", "C41", "C42", "C43"],
-  "stories": ["S9", "S10", "S11", "S12", "S14"],
+  "checklist": [
+    "C36",
+    "C37",
+    "C38",
+    "C39",
+    "C40",
+    "C41",
+    "C42",
+    "C43"
+  ],
+  "stories": [
+    "S9",
+    "S10",
+    "S11",
+    "S12"
+  ],
   "purpose": "Without persistence, every conversation vanishes when the process exits. This brief builds the JSONL-based persistence layer that serializes SessionEvent records to disk, maintains a session index for listing and lookup, and provides resume and fork operations that reconstruct an EventStore from a saved file. This is the storage engine that session subcommands (NC-008) and the REPL's auto-save depend on.",
   "task": "Implement JSONL serialization and deserialization of SessionEvent records, a session index file, XDG-compliant path resolution (with macOS fallback), an append protocol that flushes events after each run_agent_step call, resume from a JSONL file that reconstructs an EventStore, and fork that copies events into a new session with a Fork event appended. All paths must respect XDG_DATA_HOME and fall back to ~/Library/Application Support/norn/ on macOS when XDG vars are unset.",
   "requirements": [
@@ -25,7 +41,10 @@
           "crates/norn-cli/src/paths.rs"
         ]
       },
-      "checklist": ["C42", "C43"],
+      "checklist": [
+        "C42",
+        "C43"
+      ],
       "stories": []
     },
     {
@@ -43,8 +62,12 @@
           "crates/norn-cli/src/session.rs"
         ]
       },
-      "checklist": ["C36"],
-      "stories": ["S9"]
+      "checklist": [
+        "C36"
+      ],
+      "stories": [
+        "S9"
+      ]
     },
     {
       "id": "R3",
@@ -52,7 +75,7 @@
       "spec": "THE SYSTEM SHALL maintain an index file at {session_data_dir}/index.jsonl where each line is a JSON object containing: id (UUID v7 string), name (optional string), model (string), working_dir (string), created_at (ISO 8601 timestamp), updated_at (ISO 8601 timestamp), event_count (u64), and status (active | completed). WHEN a new session is created, THE SYSTEM SHALL append a new index entry. WHEN events are appended to a session, THE SYSTEM SHALL rewrite the index file atomically (write to a .tmp file, then rename) with the updated entry. WHEN a session is removed, THE SYSTEM SHALL rewrite the index file without the removed entry.",
       "acceptance": [
         "After creating a session and appending 3 events, the index file contains exactly one entry with event_count = 3",
-        "The index file is valid JSONL — each line parses as a SessionIndexEntry",
+        "The index file is valid JSONL \u2014 each line parses as a SessionIndexEntry",
         "Atomic write: if the process crashes mid-update, the index file still contains the previous valid state (verified by checking .tmp file is used)",
         "A test creates 3 sessions and verifies the index lists all 3 with correct metadata"
       ],
@@ -61,8 +84,13 @@
           "crates/norn-cli/src/session.rs"
         ]
       },
-      "checklist": ["C37", "C39"],
-      "stories": ["S11"]
+      "checklist": [
+        "C37",
+        "C39"
+      ],
+      "stories": [
+        "S11"
+      ]
     },
     {
       "id": "R4",
@@ -80,8 +108,12 @@
           "crates/norn-cli/src/session.rs"
         ]
       },
-      "checklist": ["C38"],
-      "stories": ["S9"]
+      "checklist": [
+        "C38"
+      ],
+      "stories": [
+        "S9"
+      ]
     },
     {
       "id": "R5",
@@ -100,8 +132,12 @@
           "crates/norn-cli/src/session.rs"
         ]
       },
-      "checklist": ["C40"],
-      "stories": ["S10"]
+      "checklist": [
+        "C40"
+      ],
+      "stories": [
+        "S10"
+      ]
     },
     {
       "id": "R6",
@@ -120,16 +156,20 @@
           "crates/norn-cli/src/session.rs"
         ]
       },
-      "checklist": ["C41"],
-      "stories": ["S12"]
+      "checklist": [
+        "C41"
+      ],
+      "stories": [
+        "S12"
+      ]
     }
   ],
   "boundaries": [
-    "SHALL NOT implement session subcommands (list, show, export, remove) — those are in NC-008",
-    "SHALL NOT implement slash commands for session naming (/name) — those are in the REPL brief",
-    "SHALL NOT implement session export to markdown or JSON formats — export is in NC-008",
-    "SHALL NOT add any provider or agent-loop calls — this is pure I/O and data structure work",
-    "SHALL NOT implement REPL integration — the persistence layer exposes functions that the REPL brief will call"
+    "SHALL NOT implement session subcommands (list, show, export, remove) \u2014 those are in NC-008",
+    "SHALL NOT implement slash commands for session naming (/name) \u2014 those are in the REPL brief",
+    "SHALL NOT implement session export to markdown or JSON formats \u2014 export is in NC-008",
+    "SHALL NOT add any provider or agent-loop calls \u2014 this is pure I/O and data structure work",
+    "SHALL NOT implement REPL integration \u2014 the persistence layer exposes functions that the REPL brief will call"
   ],
   "verification": [
     "cargo check -p norn-cli succeeds",

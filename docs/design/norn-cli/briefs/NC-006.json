@@ -2,10 +2,35 @@
   "id": "NC-006",
   "cluster": "norn-cli",
   "title": "Slash commands",
-  "depends_on": ["NC-001", "NC-004"],
+  "depends_on": [
+    "NC-001",
+    "NC-004"
+  ],
   "blocked_by": [],
-  "checklist": ["C57", "C58", "C59", "C60", "C61", "C62", "C63", "C64", "C65", "C66", "C67", "C68"],
-  "stories": ["S3", "S4", "S13", "S15", "S23", "S47", "S48"],
+  "checklist": [
+    "C57",
+    "C58",
+    "C59",
+    "C60",
+    "C61",
+    "C62",
+    "C63",
+    "C64",
+    "C65",
+    "C66",
+    "C67",
+    "C68"
+  ],
+  "stories": [
+    "S3",
+    "S4",
+    "S13",
+    "S15",
+    "S23",
+    "S47",
+    "S48",
+    "S50"
+  ],
   "purpose": "Slash commands are the primary in-session control interface. They let users inspect and modify agent state (model, schema, session info, variables) without leaving the conversation. This brief registers all CLI built-in slash commands in the SlashCommandRegistry, implements their handlers, loads profile-registered commands, and ensures preprocess_input() is called in both REPL and print mode so slash commands work everywhere.",
   "task": "Create a commands module that registers CLI-specific slash command handlers in the SlashCommandRegistry. Each command uses SlashCommandHandler::Custom with a closure that performs the action and returns appropriate messages. /help lists all registered commands. /tools lists tools from the ToolRegistry. /model shows or switches the active model. /schema shows or sets the output schema. /compact triggers real compaction via ContextEdits::auto_compact_keeping_recent_turns. /clear resets the EventStore. /session shows session metadata. /name sets the session name. /variables lists session variables. /exit and /quit signal REPL exit. Profile-registered slash commands are loaded from the profile's SlashCommandRegistry and merged. Wire preprocess_input() into both the REPL input path and the print mode input path.",
   "requirements": [
@@ -26,7 +51,9 @@
           "crates/norn-cli/src/mod.rs"
         ]
       },
-      "checklist": ["C57"],
+      "checklist": [
+        "C57"
+      ],
       "stories": []
     },
     {
@@ -44,8 +71,12 @@
           "crates/norn-cli/src/commands.rs"
         ]
       },
-      "checklist": ["C58"],
-      "stories": ["S3"]
+      "checklist": [
+        "C58"
+      ],
+      "stories": [
+        "S3"
+      ]
     },
     {
       "id": "R3",
@@ -61,8 +92,12 @@
           "crates/norn-cli/src/commands.rs"
         ]
       },
-      "checklist": ["C59"],
-      "stories": ["S3"]
+      "checklist": [
+        "C59"
+      ],
+      "stories": [
+        "S3"
+      ]
     },
     {
       "id": "R4",
@@ -78,8 +113,12 @@
           "crates/norn-cli/src/commands.rs"
         ]
       },
-      "checklist": ["C60"],
-      "stories": ["S4"]
+      "checklist": [
+        "C60"
+      ],
+      "stories": [
+        "S4"
+      ]
     },
     {
       "id": "R5",
@@ -96,8 +135,13 @@
           "crates/norn-cli/src/commands.rs"
         ]
       },
-      "checklist": ["C61"],
-      "stories": ["S47", "S48"]
+      "checklist": [
+        "C61"
+      ],
+      "stories": [
+        "S47",
+        "S48"
+      ]
     },
     {
       "id": "R6",
@@ -114,8 +158,12 @@
           "crates/norn-cli/src/commands.rs"
         ]
       },
-      "checklist": ["C62"],
-      "stories": ["S15"]
+      "checklist": [
+        "C62"
+      ],
+      "stories": [
+        "S15"
+      ]
     },
     {
       "id": "R7",
@@ -132,7 +180,9 @@
           "crates/norn-cli/src/commands.rs"
         ]
       },
-      "checklist": ["C63"],
+      "checklist": [
+        "C63"
+      ],
       "stories": []
     },
     {
@@ -149,8 +199,12 @@
           "crates/norn-cli/src/commands.rs"
         ]
       },
-      "checklist": ["C64"],
-      "stories": ["S50"]
+      "checklist": [
+        "C64"
+      ],
+      "stories": [
+        "S50"
+      ]
     },
     {
       "id": "R9",
@@ -167,8 +221,12 @@
           "crates/norn-cli/src/commands.rs"
         ]
       },
-      "checklist": ["C65"],
-      "stories": ["S13"]
+      "checklist": [
+        "C65"
+      ],
+      "stories": [
+        "S13"
+      ]
     },
     {
       "id": "R10",
@@ -184,7 +242,9 @@
           "crates/norn-cli/src/commands.rs"
         ]
       },
-      "checklist": ["C66"],
+      "checklist": [
+        "C66"
+      ],
       "stories": []
     },
     {
@@ -202,7 +262,9 @@
           "crates/norn-cli/src/commands.rs"
         ]
       },
-      "checklist": ["C67"],
+      "checklist": [
+        "C67"
+      ],
       "stories": []
     },
     {
@@ -220,7 +282,9 @@
           "crates/norn-cli/src/commands.rs"
         ]
       },
-      "checklist": ["C68"],
+      "checklist": [
+        "C68"
+      ],
       "stories": []
     },
     {
@@ -238,8 +302,12 @@
           "crates/norn-cli/src/main.rs"
         ]
       },
-      "checklist": ["C57"],
-      "stories": ["S23"]
+      "checklist": [
+        "C57"
+      ],
+      "stories": [
+        "S23"
+      ]
     }
   ],
   "boundaries": [

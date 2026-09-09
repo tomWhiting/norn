@@ -117,7 +117,7 @@ norn --mcp-config ./mcp-servers.json \
 
 Channels are disabled without an active policy. Active policies require both positive quotas and the explicit overflow action, supplied through settings or flags. `hold` is not exposed by the CLI: interactive inbox release/deny controls are not implemented.
 
-In the **TUI**, `wake` can start a turn while idle without losing the composer draft. In **print and driven modes**, `wake` joins only the active run; it does not keep Norn alive after completion. `next-turn` is interactive-only. Ordinary message push is implemented; permission relay and live detach/reattach are separate work.
+In the **TUI**, `wake` can start a turn while idle without losing the composer draft. In **print and default one-shot driven modes**, `wake` joins only the active run. Opted-in persistent driven mode retains its runtime across sequential requests, but channel traffic does not independently start an idle run. `next-turn` is interactive-only. Ordinary message push is implemented; permission relay and live detach/reattach are separate work.
 
 If startup reports `unknown MCP source`, check the exact JSON key. If it reports `server closed stdout`, the server exited or closed its MCP transport: check its executable, args, working directory, required environment, and server-side diagnostics. A withheld stderr line is not proof of the underlying cause.
 
@@ -160,7 +160,7 @@ For bidirectional integration:
 norn --protocol jsonrpc --mcp-config ./mcp-servers.json
 ```
 
-The peer sends `initialize`, then one `run/execute`; Norn streams `event/*` notifications and returns the final result. Stdout contains protocol messages and stderr contains logs. Saved channel settings and the same channel flags apply. This is a single-run protocol, not an idle daemon or live session attachment endpoint. See the [driven-mode guide](docs/DRIVEN-MODE-GUIDE.md) and [wire contract](docs/design/norn-cli/DRIVEN-PROTOCOL.md).
+By default the peer sends `initialize`, then one `run/execute`; Norn streams `event/*`, returns the terminal result and closes stdout without requiring stdin EOF. To reuse one process and conversation, initialize with `params: {"runLifecycle":"persistent"}`, verify the selected capability, then send each request after the prior terminal response. Close stdin or send `/exit` when finished. In persistent mode `/clear` returns a replacement session ID with `connection.reason: "session_rotated"` and closes. Stdout contains protocol messages and stderr contains logs. Saved channel settings and the same channel flags apply. This provides sequential driven execution; live session attachment remains separate. See the [driven-mode guide](docs/DRIVEN-MODE-GUIDE.md) and [wire contract](docs/design/norn-cli/DRIVEN-PROTOCOL.md).
 
 Use `norn session --help`, `norn auth --help`, `norn mcp --help`, and `norn completion --help` for subcommand details. `norn doctor` checks setup; `norn mcp serve` exposes Norn as an MCP server. Alternative provider configuration is described in [provider backends](docs/provider-backends.md).
 
