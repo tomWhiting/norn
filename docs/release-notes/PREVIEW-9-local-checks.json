@@ -3,7 +3,7 @@
   "version": "0.1.0-preview.9",
   "recorded_at_melbourne": "2026-09-09T15:12:11.913727+10:00",
   "scope": "Local combined candidate checks; not a venue battery, live provider or live playback proof.",
-  "source_binding": "Hashes identify every changed Rust source and manifest against d9873d0. TUI and socket checks preceded a three-file CLI-only capability cleanup; those trees were hash-checked unchanged, then CLI and strict workspace Clippy were rerun.",
+  "source_binding": "Checked source commit: b3547a4e82bec909cfcd0f2bf19ef7e528ee5e69. Hashes identify every changed Rust source and manifest against d9873d0. TUI and socket checks preceded a three-file CLI-only capability cleanup; those trees were hash-checked unchanged, then CLI and strict workspace Clippy were rerun.",
   "source_sha256": {
     "Cargo.lock": "1a926e1f05a3bff756ccd1432ad348b8f2de9b2b941bc1072060bea6a54978de",
     "Cargo.toml": "ba18050e26b2f21a0140e04a7a17ba95f2237fcee7f1249bc81bbea7bb8af57c",

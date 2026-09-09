@@ -52,7 +52,11 @@ Strict workspace/all-target Clippy including `norn/live-api-smoke`, formatting,
 9 native voice socket tests passed. The final CLI-only capability cleanup was
 followed by the CLI suite and strict Clippy again; the TUI and core source
 remained unchanged. [Exact commands, output and changed-source hashes](PREVIEW-9-local-checks.json)
-record that boundary. No live provider or audible playback was exercised.
+record that boundary. No live provider or audible playback was exercised. The initial
+combined record belongs to `b3547a4e82bec909cfcd0f2bf19ef7e528ee5e69`;
+`run.rs` and `capabilities.rs` are re-hashed in the
+[extraction record](PREVIEW-9-extraction-checks.json), including its final
+wording-check section.
 
 ## Structural policy correction
 
