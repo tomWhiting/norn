@@ -34,8 +34,10 @@ the JSON-RPC envelope framing, NOT this contract; consumers gate on
 
 ## Initialize and capabilities
 
-`initialize` (request) may be sent at any time, including mid-run — it is
-idempotent and read-only. The result:
+`initialize` (request) may be sent at any time, including mid-run. Without
+parameters it is idempotent and read-only. Before the first execution, the
+caller can select `params.runLifecycle: "persistent"`; omission preserves the
+one-shot default. The default result:
 
 ```json
 {
@@ -48,7 +50,9 @@ idempotent and read-only. The result:
       "event/progress", "event/stop", "event/raw"
     ],
     "interventions": ["inject_message", "cancel"],
-    "runLifecycle": "one_shot"
+    "runLifecycle": "one_shot",
+    "runLifecycles": ["one_shot", "persistent"],
+    "sessionRotation": "close_with_receipt"
   }
 }
 ```
@@ -59,13 +63,28 @@ idempotent and read-only. The result:
   serve mid-run. Primitives not listed (e.g. `pause_resume`,
   `update_budget`, `respond_to_approval`) are unsupported and answered
   `-32601` — the capability gate.
-- `capabilities.runLifecycle: "one_shot"`: the channel serves exactly one
-  `run/execute` per process (see below).
+- `capabilities.runLifecycle` reports the selected lifecycle. `one_shot` is
+  the default: exactly one accepted run is answered, then the process drains
+  stdout and exits even if the caller keeps stdin open. Existing Aion consumers
+  require no change.
+- `capabilities.runLifecycles` advertises the available selections. To opt in,
+  send `initialize` with `params: {"runLifecycle":"persistent"}` and verify
+  the returned selected lifecycle before using sequential runs.
+- `capabilities.sessionRotation: "close_with_receipt"`: `/clear` explicitly
+  rotates the session and closes this connection with the receipt below.
+  Consumers must inspect these capabilities; historical `norn-driven/1`
+  implementations supported only `one_shot` and exited after each run.
+- Unknown lifecycle values receive `-32600`. The selection cannot change
+  after the first accepted run (`-32000`); later parameterless `initialize`
+  calls report the existing selection without resetting it.
 
-## One-shot run lifecycle
+## Persistent run lifecycle
 
-1. The peer sends `initialize` (recommended, not required) and then exactly
-   one `run/execute` request. Params: `{ "prompt": "<string>" }` (`input`
+This section applies only after explicit persistent negotiation. Without it,
+the original one-run-and-exit behavior remains unchanged.
+
+1. The peer sends `initialize` (recommended, not required) and then a
+   `run/execute` request. Params: `{ "prompt": "<string>" }` (`input`
    is accepted as an alias). stdin is the JSON-RPC channel, so it is never
    read as a prompt in driven mode.
 2. The agent runs. While it is in flight, the channel streams `event/*`
@@ -74,8 +93,13 @@ idempotent and read-only. The result:
    matches the `run/execute` request**, and only as that response — never
    as a notification. It is emitted after every `event/*` notification of
    the run is on the wire.
-4. The process then drains its writer and exits. The channel is one-shot:
-   there is no second run on the same process.
+4. The channel returns to idle. The peer can send another `run/execute`
+   after receiving the terminal response. The runtime is retained in memory;
+   Norn neither starts another process nor replays a session between turns.
+5. EOF closes the connection after an accepted run finishes. `/exit` and
+   `/quit` close it explicitly after their matching null response. Runtime
+   failures close it after the matching error response; a cancelled run is
+   a normal terminal outcome and permits another request on the same connection.
 
 Guarantees on the acceptance boundary:
 
@@ -91,13 +115,34 @@ Guarantees on the acceptance boundary:
   pre-run loop keeps serving (the request was not accepted).
 - A prompt that resolves entirely to a local slash command (no agent call)
   is answered with a success Response whose `result` is `null` — the run
-  was accepted and served, but there is no step envelope to report.
+  was accepted and served, but there is no step envelope to report. Session
+  rotation is the explicit exception described below.
 - A **second** `run/execute` while a run is in flight is answered with the
   invalid-state error `-32000` ("run already active …"), never `-32601`:
-  the method exists, the channel is busy. After the terminal response the
-  process is exiting; further requests are not read.
+  the method exists, the channel is busy. The busy interval includes runtime
+  assembly and cancellation cleanup and ends with terminal publication.
 - If the peer closes stdin before sending `run/execute`, the process exits
   0 with nothing to do.
+
+### Explicit session rotation
+
+`run/execute` with `/clear` creates the replacement session, checkpoints the
+old and new stores, and returns this result before closing the connection:
+
+```json
+{
+  "handled_locally": true,
+  "session_id": "<replacement session ID>",
+  "connection": { "state": "closing", "reason": "session_rotated" }
+}
+```
+
+For `--no-session`, the ID is null. To continue a persisted replacement,
+start a new connection with `--resume <replacement session ID>`; do not retry
+the already-completed `/clear`. This is an explicit session change, not the
+ordinary per-turn path. Closing prevents action-log, fork, cache or provider
+bindings from continuing against the retired conversation. Ordinary `/model`
+and `/schema` state remains live across requests without rotating the session.
 
 ## MCP configuration at process launch
 
@@ -111,7 +156,7 @@ norn --protocol jsonrpc --mcp-config ./mcp-servers.json
 
 The document root is `{ "mcpServers": { "server-name": { ...definition } } }`. It uses existing typed MCP settings, including command, args, env, URL and headers; `type` is an alias for `transport`. Relative document and server-command paths use the effective `--working-dir`. Repeated documents must have disjoint names. Their complete named entries replace saved definitions through the CLI overlay, persist in runtime control state across reload, and do not write configuration files. Duplicate JSON keys/names, collisions with `--extension`, invalid settings and unknown fields are refused before an MCP subprocess starts.
 
-MCP definitions remain launch configuration: `run/execute` still accepts its existing prompt/input parameters, and `initialize` keeps advertising `norn-driven/1` with a `one_shot` lifecycle. No dynamic MCP configuration method or second run is added. Source selection and positive retained limits are still explicit `--channel` launch flags; driven policy is `wake` during the active run only. Neither channel messages nor header metadata grant tool approval or permission-relay authority.
+MCP definitions remain launch configuration: `run/execute` accepts its existing prompt/input parameters. The opted-in persistent lifecycle retains the MCP runtime across requests; it adds no dynamic MCP configuration RPC. Driven policy remains `wake` for active agent work. Channels do not start a new `run/execute` while the driver is idle. Neither channel messages nor header metadata grant tool approval or permission-relay authority.
 
 For an accepted `run/execute`, an MCP document-resolution failure follows the existing id-matched error boundary before any MCP server starts. Malformed command-line syntax can still fail before the RPC loop is entered. Raw inline documents and credential values must not be emitted in errors or Debug output, and stdout remains JSON-RPC frames only. The native process fixtures pass for relative JSON/executable startup, active channel delivery, one-shot exit and id-matched invalid-document refusal. Parser, reload, print/TUI refusal and strict formatting/Clippy diagnostics also passed under [NML-001](../norn-mcp-launch/briefs/NML-001.md). The later exact `5227db4` battery and installation also passed. Fresh Fable review and live provider/Cambium acceptance remain separate; Tom’s reported Hammerbarn success is owner feedback, not a new automated receipt.
 
@@ -123,7 +168,7 @@ The `channels` settings object and `-c channels=JSON` use one fieldwise merge: u
 
 Default `wake` optionally negotiates only with enabled, approved stdio servers advertising valid Channels capability. Missing capability keeps ordinary tools. Initialization or capability-validation failures remain visible per server and exclude that optional connection while healthy sources can publish; malformed capability always fails its connection and is never accepted as tools-only. Named `wake` requires a known enabled stdio channel source, and failure of that required source is fatal to the candidate. Named `off` excludes delivery, but an unknown name still refuses. Settings do not approve MCP execution or expand tool authority. There is no `hold` setting or remote approval relay.
 
-Validate the effective policy before provider/MCP construction for the actual mode: driven refuses `next-turn` even when it comes from saved settings. Its lifetime remains one active `run/execute`; no idle-before-run or post-run listener is added. Policy and limits are fixed for this launch. Reloading MCP definitions uses that same policy; changing it requires restart. No RPC schema, mutation method or extra discovery provider call is added. [NCS-001](../norn-channel-settings/briefs/NCS-001.md) owns implementation and new proof; [the guide](../../MCP-LAUNCH.md) gives examples with explicit chosen limits.
+Validate the effective policy before provider/MCP construction for the actual mode: driven refuses `next-turn` even when it comes from saved settings. Policy and limits remain fixed for this launch. Reloading MCP definitions uses that same policy; changing it requires restart. Persistent runtime ownership does not grant idle notifications permission to execute an agent turn. [NCS-001](../norn-channel-settings/briefs/NCS-001.md) owns the settings implementation; [NDR-001](briefs/NDR-001.md) owns persistent driven execution.
 
 ## Event notifications
 
@@ -135,6 +180,11 @@ payload of the event (`type`-tagged), with two fields added:
 
 - `agent_id` (UUID string) and `agent_role` (string) — attribution, since
   multi-agent runs interleave events from several agents.
+
+Text streaming uses `event/progress` with `type: "text_delta"`. The complete
+text is also sent as `event/message` with `type: "text"`; speech consumers
+must not read both aloud. Filter by agent identity and payload type, because
+thinking, tool deltas and lifecycle messages share the coarse event categories.
 
 Delta events are always forwarded on this channel (the `--partial` render
 flag does not apply to the transport). Events with no on-wire form
@@ -168,9 +218,12 @@ Params: `{ "reason": "<string>" }` (optional; defaults to
 `"cancelled by operator"`).
 
 - Trips the run's cancellation token; the run returns at its next boundary.
-- Ack: `{ "status": "cancel_requested", "reason": ... }`. After a
-  successful cancel ack the intervene reader stops; the terminal response
-  follows.
+- Ack: `{ "status": "cancel_requested", "reason": ... }`. The input owner
+  continues answering `initialize` and rejects overlapping runs while the
+  cancelled request finishes. Further interventions are refused during teardown.
+- Each later request receives a fresh child cancellation token. Previously
+  cancelled descendants retain their old tokens and cannot be revived by a
+  new turn. Cancelling a run is separate from stopping Locutus audio playback.
 
 ### Capability gate
 
@@ -188,19 +241,18 @@ still acked `cancel_requested`, and the terminal `run/execute` response
 then reports the actual outcome (e.g. `stop.reason: "completed"`). The
 terminal response's `stop.reason` is ALWAYS authoritative; consumers must
 not infer the run outcome from a cancel ack. The window is already
-narrowed as far as the architecture allows: the intervene reader honours
-the run-finished stop signal before dispatching a request that arrived in
-the same tick, and it is stopped and joined before the terminal response
-is emitted.
+narrowed by the input owner's serialized control loop: terminal publication
+and transition to idle are one actor operation. No response acknowledges that
+speech was played; playback and interruption receipts require a separate voice
+contract.
 
-### Degraded intervention mode
+### Unavailable controls
 
-If the run's control channel cannot be assembled (the harness message
-router fails to resolve — an assembly invariant that should not fail in
-practice), the channel still reads stdin for the duration of the run and
-answers **every** `intervene/*` request with `-32603` carrying the
-unavailability reason. Peer requests never sit unread until EOF. The
-condition is error-logged on stderr.
+If the run's control channel cannot be assembled, the run fails explicitly
+and the connection closes. Operator interventions queued during assembly
+receive `-32603` before the run's error response. During cancellation cleanup,
+further interventions receive an unavailability error while `initialize`
+remains available and additional `run/execute` requests remain busy.
 
 ## Stop envelope
 
@@ -298,23 +350,29 @@ supersedes the earlier `stop: {reason, retryable}` proposal in
 | `-32600` | invalid request (bad `jsonrpc` tag, missing/invalid params) |
 | `-32601` | method not found / unadvertised intervention primitive |
 | `-32603` | internal error: run failure on the accepted `run/execute`, intervention delivery failure, degraded intervention mode |
-| `-32000` | invalid state: `run/execute` while a run is already in flight (one-shot lifecycle) |
+| `-32000` | invalid state: `run/execute` while a run is already in flight |
 
 ## Shutdown handshake
 
 - Pre-run EOF (stdin closes before `run/execute`): the writer is drained
   and joined; exit 0.
-- After the terminal response is enqueued, every writer handle is dropped,
-  the writer task drains its queue to stdout and exits, and the process
-  exits with the CLI exit code (0 for `completed`, non-zero otherwise, 2
-  for argument errors, 3 for auth errors — the id-matched error response
-  has already been delivered in the failure cases).
-- Mid-run EOF on stdin only stops the intervene reader; the run continues
-  to its own terminal result, which is still written to stdout.
-- A mid-run intervention read/transport failure does not abort the provider
-  task asynchronously, but it is retained: after the task ends, the accepted
-  run receives an error response and the process exits nonzero rather than
-  reporting a clean success over a torn control channel.
+- In default one-shot mode, the terminal response drains and the process exits
+  without requiring EOF. In opted-in persistent mode, an ordinary terminal
+  response leaves the connection open. On EOF, explicit
+  exit/rotation or fatal error, writer handles drop, the writer drains and
+  joins, and the process exits. Without a fatal transport error, the exit code
+  reflects the last served request; each request's terminal response remains
+  authoritative independently of that process exit code.
+- Mid-run EOF stops admission, but the run completes and sends its result.
+- A mid-run input failure cancels the active run through its bound handler;
+  the process reports transport failure rather than a clean completion.
+- An intervention arriving during initial assembly is held until controls are
+  bound, matching the previous reader's startup ordering. If assembly fails,
+  those requests receive an unavailability error before the run's error.
+- The input owner uses cancellation-safe line framing. A JSON line split
+  across run completion retains its entire prefix for the next read.
+- Signal handling belongs to the connection lifetime. SIGINT/SIGTERM also
+  terminate an idle persistent connection; they do not disappear between turns.
 - Event shutdown drains the unread prefix present at the shutdown cut. A live
   child or retained sender may publish later events, but cannot extend process
   shutdown without bound or write after the terminal response.

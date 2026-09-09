@@ -2,6 +2,7 @@
 
 mod assembly;
 mod driven;
+mod driven_session;
 mod error;
 mod input;
 pub mod intervene;

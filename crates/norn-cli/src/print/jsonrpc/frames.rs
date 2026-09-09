@@ -6,13 +6,12 @@
 //! found, `-32603` internal) mirror
 //! [`norn::integration::mcp_server`](../../../../norn/src/integration/mcp_server.rs).
 //! `-32000` is the driven channel's own invalid-state code (a `run/execute`
-//! while a run is already in flight — the one-shot lifecycle). stderr stays
+//! while a run is already in flight). stderr stays
 //! human logs (the tracing subscriber already targets it), so library noise
 //! can never corrupt the structured stream.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
 
 /// JSON-RPC parse-error code (invalid JSON was received).
@@ -25,8 +24,8 @@ pub(crate) const CODE_METHOD_NOT_FOUND: i64 = -32601;
 pub(crate) const CODE_INTERNAL_ERROR: i64 = -32603;
 /// Driven-channel invalid-state code (implementation-defined server-error
 /// range): a `run/execute` arrived while a run is already in flight. The
-/// channel serves exactly one run per process (`DRIVEN-PROTOCOL.md`
-/// "One-shot run lifecycle").
+/// channel serves one active run at a time (`DRIVEN-PROTOCOL.md`
+/// "Persistent run lifecycle").
 pub(crate) const CODE_RUN_BUSY: i64 = -32000;
 
 /// The JSON-RPC protocol version every frame carries.
@@ -34,7 +33,7 @@ pub(crate) const JSONRPC_VERSION: &str = "2.0";
 
 /// The `initialize` handshake method.
 pub(crate) const METHOD_INITIALIZE: &str = "initialize";
-/// The one-shot run method.
+/// The method that begins one run on the persistent connection.
 pub(crate) const METHOD_RUN_EXECUTE: &str = "run/execute";
 
 /// A parsed inbound JSON-RPC message.
@@ -123,6 +122,9 @@ impl JsonRpcResponse {
 /// response, not a transport failure.
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
+    /// The persistent input owner and runtime lost their lifecycle agreement.
+    #[error("jsonrpc session control failed: {0}")]
+    Session(String),
     /// An IO error on stdin or stdout.
     #[error("jsonrpc transport I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -134,30 +136,6 @@ pub enum TransportError {
     /// error as its source rather than discarding it.
     #[error("jsonrpc outbound writer task has stopped")]
     WriterStopped(#[from] mpsc::error::SendError<String>),
-}
-
-/// Read the next inbound request line, skipping blanks, until EOF.
-///
-/// Returns `Ok(None)` at EOF, `Ok(Some(Ok(req)))` for a parseable request,
-/// and `Ok(Some(Err(resp)))` when the line is invalid JSON / not a valid
-/// Request (the caller emits `resp` and continues reading — a parse error
-/// is not fatal to the channel).
-pub(crate) async fn read_request<R: AsyncBufReadExt + Unpin>(
-    reader: &mut R,
-    line: &mut String,
-) -> Result<Option<Result<JsonRpcRequest, Box<JsonRpcResponse>>>, TransportError> {
-    loop {
-        line.clear();
-        let n = reader.read_line(line).await?;
-        if n == 0 {
-            return Ok(None);
-        }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        return Ok(Some(parse_request(trimmed)));
-    }
 }
 
 /// Parse and validate one inbound line into a [`JsonRpcRequest`], or a

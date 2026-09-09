@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 /// The driven-protocol contract version consumers gate on.
 ///
 /// This names the wire contract specified in
-/// `docs/design/norn-cli/DRIVEN-PROTOCOL.md` — the method set, the one-shot
+/// `docs/design/norn-cli/DRIVEN-PROTOCOL.md` — the method set, the advertised
 /// run lifecycle, the `event/*` notification shapes, the `intervene/*`
 /// primitives, and the typed stop envelope. It is distinct from the
 /// `jsonrpc: "2.0"` envelope tag (which only names the JSON-RPC framing)
@@ -19,10 +19,10 @@ pub const DRIVEN_PROTOCOL_VERSION: &str = "norn-driven/1";
 /// serve — `inject_message` and `cancel` — which the mid-run intervene loop
 /// maps onto the real Norn control channel. The remaining primitives are
 /// absent (unsupported), which is the honest advertisement until their
-/// mechanism lands. `runLifecycle: "one_shot"` advertises that the channel
-/// serves exactly one `run/execute` per process — a second one is answered
-/// with the invalid-state error (`DRIVEN-PROTOCOL.md` "One-shot run
-/// lifecycle").
+/// mechanism lands. The default lifecycle is one-shot; initialization can
+/// select persistent sequential requests on one runtime. Overlapping
+/// execution is rejected as busy.
+/// Explicit session rotation closes with a replacement-session receipt.
 #[must_use]
 pub fn initialize_capabilities() -> Value {
     json!({
@@ -48,8 +48,10 @@ pub fn initialize_capabilities() -> Value {
             // respond_to_approval) are unsupported until their mechanism
             // exists.
             "interventions": ["inject_message", "cancel"],
-            // Exactly one run/execute is served per process.
+            // Sequential requests retain one runtime and conversation.
             "runLifecycle": "one_shot",
+            "runLifecycles": ["one_shot", "persistent"],
+            "sessionRotation": "close_with_receipt",
         },
     })
 }
@@ -78,5 +80,9 @@ mod tests {
         // envelope tag.
         assert_eq!(caps["protocol"], json!(DRIVEN_PROTOCOL_VERSION));
         assert_eq!(caps["capabilities"]["runLifecycle"], json!("one_shot"));
+        assert_eq!(
+            caps["capabilities"]["runLifecycles"],
+            json!(["one_shot", "persistent"])
+        );
     }
 }

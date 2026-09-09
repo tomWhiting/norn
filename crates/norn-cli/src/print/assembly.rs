@@ -29,6 +29,13 @@ pub(super) struct PrintAssembly {
     /// surface to every lock-taking `SessionManager` it constructs
     /// (`/name`'s index rename).
     pub index_lock_deadline: std::time::Duration,
+    /// Conversation-owned slash state retained across driven requests.
+    pub slash: Option<(
+        crate::commands::slash::SlashState,
+        norn::agent_loop::commands::SlashCommandRegistry,
+    )>,
+    /// Whether the conversation's session-start hooks have fired.
+    pub session_started: bool,
 }
 
 /// Assemble the headless print agent through the single library-owned
@@ -164,6 +171,8 @@ pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<PrintAssembly, Pri
     // reference for which flag-named tools exist.
     warn_unmatched_runtime_tool_flag_names(&parts, &resolved.applied);
     Ok(PrintAssembly {
+        slash: None,
+        session_started: false,
         parts,
         index_lock_deadline,
     })

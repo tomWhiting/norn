@@ -43,12 +43,10 @@ use norn::session::store::EventStore;
 use serde_json::Value;
 
 use super::assembly::{PrintAssembly, assemble_print_agent};
-use super::driven::{
-    driven_background_failure, execute_driven, finish_intervene_loop, spawn_intervene_loop,
-};
+use super::driven::{emitter_failure, execute_driven};
 use super::error::{fail_before_assembly, merge_background_failures, preserve_run_failure, report};
 use super::input::read_stdin_if_piped;
-use super::jsonrpc::{DrivenRun, SharedRunDriver};
+use super::jsonrpc::SharedRunDriver;
 use super::output::{StopInfo, drain_diagnostics, extract_output_and_usage};
 use super::retry_watch::{finish_watch, push_rollup_for_format, watch_for_invocation};
 use super::signals::SignalWatch;
@@ -167,10 +165,10 @@ async fn execute(cli: &Cli) -> Result<ExitCode, PrintError> {
     let output_schema = parse_output_schema(cli.output_schema.as_deref())
         .map_err(|err| fail_before_assembly(cli, err))?;
 
-    let assembly = assemble_print_agent(cli)
+    let mut assembly = assemble_print_agent(cli)
         .await
         .map_err(|err| fail_before_assembly(cli, err))?;
-    orchestrate(cli, assembly, effective_prompt, output_schema, None).await
+    orchestrate(cli, &mut assembly, effective_prompt, output_schema, None).await
 }
 
 /// Parse `-s` / `--output-schema` if provided. Failures are mapped to
@@ -192,10 +190,10 @@ pub(super) fn parse_output_schema(raw: Option<&str>) -> Result<Option<Value>, Pr
 /// frame-only stdout.
 pub(super) async fn orchestrate(
     cli: &Cli,
-    assembly: PrintAssembly,
+    assembly: &mut PrintAssembly,
     prompt: String,
     output_schema: Option<Value>,
-    driven_run: Option<DrivenRun>,
+    driven_run: Option<SharedRunDriver>,
 ) -> Result<ExitCode, PrintError> {
     // Captured before the run consumes the assembly: an error envelope
     // names the model and session the failed run was assembled with (R3
@@ -232,7 +230,7 @@ pub(super) async fn orchestrate(
     //
     // Not installed when the sink already failed: the run will not start,
     // and a signal error must not mask the failure that is the real cause.
-    let (signal_watch, install_error) = if sink_error.is_none() {
+    let (signal_watch, install_error) = if sink_error.is_none() && !is_driven {
         match SignalWatch::install(assembly.parts.cancel.clone()) {
             Ok(watch) => (Some(watch), None),
             // Routed through the same funnel as every other post-assembly
@@ -280,24 +278,14 @@ pub(super) async fn orchestrate(
 /// wrapper above can observe ANY failure exactly once.
 async fn orchestrate_run(
     cli: &Cli,
-    assembly: PrintAssembly,
+    assembly: &mut PrintAssembly,
     prompt: String,
     output_schema: Option<Value>,
-    driven_run: Option<DrivenRun>,
+    driven_run: Option<SharedRunDriver>,
     stream_sink: Option<&StreamSink>,
 ) -> Result<ExitCode, PrintError> {
-    let PrintAssembly {
-        mut parts,
-        index_lock_deadline,
-    } = assembly;
-    // Split the driven-mode context into the shared driver (result + events,
-    // consulted throughout) and the stdin reader (consumed once, by the
-    // mid-run intervene loop at step time). Keeping them apart lets the many
-    // existing `driven.as_ref()` sites stay a cheap Option<&SharedRunDriver>.
-    let (driven, driven_reader): (Option<SharedRunDriver>, Option<_>) = match driven_run {
-        Some(DrivenRun { driver, reader }) => (Some(driver), Some(reader)),
-        None => (None, None),
-    };
+    let driven = driven_run;
+    let parts = &mut assembly.parts;
     // The builder opened the session (`.open_session`), installed the
     // action log, and stamped the cache key, environment session id, and
     // debug-dump naming during `build()`; `AgentParts` hands back the same
@@ -307,25 +295,33 @@ async fn orchestrate_run(
     let store = Arc::clone(&parts.event_store);
     let output_session_id: Option<String> =
         parts.session_entry.as_ref().map(|entry| entry.id.clone());
-    let pre_event_count = store.len();
 
     // Install the merged slash registry so profile commands still run in-loop.
-    let (slash_state, slash_registry) = build_slash_state_with_schema(
-        cli,
-        SlashStateInputs {
-            registry: &parts.registry,
-            model_selection: &parts.model_selection,
-        },
-        Arc::clone(&store),
-        output_session_id.clone(),
-        index_lock_deadline,
-        output_schema,
-    )
-    .map_err(|error| PrintError::Argument(error.to_string()))?;
+    if assembly.slash.is_none() {
+        assembly.slash = Some(
+            build_slash_state_with_schema(
+                cli,
+                SlashStateInputs {
+                    registry: &parts.registry,
+                    model_selection: &parts.model_selection,
+                },
+                Arc::clone(&store),
+                output_session_id.clone(),
+                assembly.index_lock_deadline,
+                output_schema,
+            )
+            .map_err(|error| PrintError::Argument(error.to_string()))?,
+        );
+    }
+    let Some((slash_state, slash_registry)) = assembly.slash.as_ref() else {
+        return Err(PrintError::Agent(
+            "slash state missing after initialization".to_owned(),
+        ));
+    };
     parts.loop_context.slash_commands = Some(slash_registry.clone());
 
     let outcome =
-        match dispatch_input_with_mcp(&prompt, &slash_registry, parts.mcp_control.as_ref()).await {
+        match dispatch_input_with_mcp(&prompt, slash_registry, parts.mcp_control.as_ref()).await {
             Ok(out) => out,
             Err(err) => return Err(PrintError::Agent(err.to_string())),
         };
@@ -339,7 +335,7 @@ async fn orchestrate_run(
         parts.config.auto_compact_keep_recent_turns,
         &mut parts.loop_context,
         &store,
-        &slash_state,
+        slash_state,
     )? {
         outcome.log_to_stderr();
         // Flush the sink's pending index delta so the Compaction event is
@@ -358,8 +354,27 @@ async fn orchestrate_run(
     // output envelope and the driven response must name the session the
     // events actually land in — a driver resuming by the retired id
     // would replay the full pre-clear history it asked to leave behind.
-    let clear_report = apply_clear_and_report(&slash_state)?;
+    let clear_report = apply_clear_and_report(slash_state)?;
+    if clear_report.operator_line.is_some()
+        && let Some(driver) = driven.as_ref()
+        && driver.is_persistent()
+    {
+        checkpoint_session(&store).await?;
+        checkpoint_session(&slash_state.current_store()).await?;
+        driver
+            .finish_and_close(serde_json::json!({
+                "handled_locally": true,
+                "session_id": clear_report.envelope_session_id,
+                "connection": {"state": "closing", "reason": "session_rotated"},
+            }))
+            .await
+            .map_err(|error| PrintError::Io(error.to_string()))?;
+        return Ok(ExitCode::Success);
+    }
     let output_session_id = clear_report.envelope_session_id;
+    let store = slash_state.current_store();
+    parts.event_store = Arc::clone(&store);
+    let pre_event_count = store.len();
     if let Some(line) = clear_report.operator_line {
         eprintln!("{line}");
     }
@@ -384,9 +399,12 @@ async fn orchestrate_run(
             // still required (a null result), so the peer's request is not
             // left unanswered; otherwise render the local envelope.
             if let Some(driver) = driven.as_ref() {
-                driver
-                    .finish_with_result(Value::Null)
-                    .map_err(|err| PrintError::Io(err.to_string()))?;
+                let response = if slash_state.exit_requested.load(Ordering::Relaxed) {
+                    driver.finish_and_close(Value::Null).await
+                } else {
+                    driver.finish_with_result(Value::Null).await
+                };
+                response.map_err(|err| PrintError::Io(err.to_string()))?;
             } else {
                 write_handled_locally(
                     cli,
@@ -425,10 +443,17 @@ async fn orchestrate_run(
     // `info.session_id` — never the empty string the pre-migration path
     // passed on `--no-session`. `Agent::run` fires these itself; a custom
     // driver like this one uses the `AgentParts` helpers.
-    parts.fire_session_start().await;
+    if !assembly.session_started {
+        parts.fire_session_start().await;
+        assembly.session_started = true;
+    }
 
     let current_prompt = effective_prompt;
     let final_exit_code;
+
+    if let Some(driver) = driven.as_ref() {
+        super::driven_session::bind_controls(driver, parts)?;
+    }
 
     {
         // The builder created the event broadcast channel and the root
@@ -473,21 +498,6 @@ async fn orchestrate_run(
         // looks hung while it retries.
         let retry_watch = watch_for_invocation(&tx, cli, format, driven.is_some());
 
-        // Driven-mode WRITE direction: while the run is in flight,
-        // concurrently read in-band `intervene/*` requests off the same
-        // stdin reader and map them onto Norn's control channel — inject via
-        // the harness router to the root, cancel via the builder's root
-        // cancellation token (the same token published as `AgentCancellation`
-        // so a cancel cascades to every spawned descendant). The reader task
-        // is spawned only in driven mode; a plain CLI run has no reader.
-        let (intervene_task, intervene_stop) = spawn_intervene_loop(
-            driven.as_ref(),
-            driven_reader,
-            &parts.registry,
-            parts.id,
-            &parts.cancel,
-        );
-
         // Capture immutable tool generations through the live runtime while
         // retaining the Arc-owned executor path required by concurrent
         // batches. `Agent::run`, print, driven, and TUI now share this path.
@@ -511,15 +521,6 @@ async fn orchestrate_run(
             cancel: Some(parts.cancel.clone()),
         })
         .await;
-
-        // The run has ended (completed, cancelled, or errored). Signal the
-        // intervene reader to stop and join it, so no reader task outlives
-        // the run and every ack it emitted is accounted for before the
-        // terminal result is sent. A reader already stopped (EOF or a cancel
-        // it applied) makes the stop-send a no-op; join still completes.
-        let intervene_error = finish_intervene_loop(intervene_task, intervene_stop)
-            .await
-            .err();
 
         drop(tx);
         // REVIEW C1: the registry's shared ToolContext still holds the
@@ -550,7 +551,7 @@ async fn orchestrate_run(
         // in the run is still reported before the terminal envelope.
         let (retry_rollup, retry_watch_error) = finish_watch(retry_watch).await;
         let background = merge_background_failures(
-            driven_background_failure(intervene_error.as_ref(), emitter_error.as_ref()),
+            emitter_error.as_ref().map(emitter_failure),
             retry_watch_error,
         );
         let result = preserve_run_failure(result, background)?;
@@ -612,11 +613,12 @@ async fn orchestrate_run(
         // single replay-authoritative output — instead of writing it to
         // stdout. This is the ONLY place the driven result is emitted, and
         // it is emitted as a Response (never a notification)
-        // (`DRIVEN-PROTOCOL.md` "One-shot run lifecycle").
+        // (`DRIVEN-PROTOCOL.md` "Persistent run lifecycle").
         if let Some(driver) = driven.as_ref() {
             let result_value = driven_result_value(&step)?;
             driver
                 .finish_with_result(result_value)
+                .await
                 .map_err(|err| PrintError::Io(err.to_string()))?;
         } else {
             write_output(cli, format, &step, stream_sink)?;
@@ -627,7 +629,9 @@ async fn orchestrate_run(
     // single normal-exit path. Errors return early above and skip this
     // hook by design — the brief's acceptance does not require firing
     // on panic, and explicit cleanup is preferred over a drop guard.
-    parts.fire_session_end().await;
+    if driven.is_none() {
+        parts.fire_session_end().await;
+    }
 
     Ok(final_exit_code)
 }
