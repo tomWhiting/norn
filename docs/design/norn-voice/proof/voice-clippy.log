@@ -1,0 +1,4 @@
+    Checking norn v0.1.0-preview.8 (/Users/tom/Developer/ablative/stack/norn/.worktrees/voice-readaloud/crates/norn)
+    Checking norn-tui v0.1.0-preview.8 (/Users/tom/Developer/ablative/stack/norn/.worktrees/voice-readaloud/crates/norn-tui)
+    Checking norn-cli v0.1.0-preview.8 (/Users/tom/Developer/ablative/stack/norn/.worktrees/voice-readaloud/crates/norn-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 41.84s

@@ -13,7 +13,7 @@ const HELP: &str = "View controls\n/view focus composer|conversation|changes|div
 
 /// Whether this exact input belongs to the shared TUI-only view or pane commands.
 pub(in crate::app) fn is_frontend_command(text: &str) -> bool {
-    matches!(crate::app::slash_catalog::classify_slash(text), crate::app::slash_catalog::SlashClass::Recognised { cmd, .. } if cmd.eq_ignore_ascii_case("view") || cmd.eq_ignore_ascii_case("pane"))
+    matches!(crate::app::slash_catalog::classify_slash(text), crate::app::slash_catalog::SlashClass::Recognised { cmd, .. } if cmd.eq_ignore_ascii_case("view") || cmd.eq_ignore_ascii_case("pane") || cmd.eq_ignore_ascii_case("voice"))
 }
 
 /// Preserve the named command's semantics on both idle and active submission paths.
@@ -22,6 +22,9 @@ pub(in crate::app) fn command_named(
     arguments: &str,
     state: &mut AppState,
 ) -> Result<LocalCommandOutcome, TuiError> {
+    if name.eq_ignore_ascii_case("voice") {
+        return crate::app::voice::command(arguments, state);
+    }
     if name.eq_ignore_ascii_case("view") {
         return command(arguments, state);
     }

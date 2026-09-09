@@ -31,7 +31,11 @@ fn absent_fields_use_the_existing_declared_defaults() -> TestResult {
         FrontendPreferences::decode(Some(&json!({"composer":{}})))?,
         defaults
     );
-    assert_eq!(owned.len(), 4);
+    assert_eq!(
+        owned["voice"],
+        json!({"enabled":false,"automatic":false,"control_socket":null,"voice":null})
+    );
+    assert_eq!(owned.len(), 5);
     Ok(())
 }
 

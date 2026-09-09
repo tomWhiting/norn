@@ -111,7 +111,10 @@ impl PreferenceOwner {
             requested: self.current.clone(),
             path: snapshot.path().to_path_buf(),
             task: tokio::task::spawn_blocking(move || {
-                snapshot.patch(&["view", "display", "input", "composer"], &projection)
+                snapshot.patch(
+                    &["view", "display", "input", "composer", "voice"],
+                    &projection,
+                )
             }),
         });
         Ok(true)
@@ -176,6 +179,7 @@ fn capture(state: &AppState) -> FrontendPreferences {
         submit_mode: state.in_flight_input.mode(),
         composer_send_key: state.composer_send_key,
         view_shortcuts: Arc::clone(&state.view_shortcuts),
+        voice: state.voice_preferences.clone(),
     }
 }
 
@@ -189,6 +193,7 @@ pub(super) fn install(state: &mut AppState, launch: FrontendPreferencesLaunch) {
     state.in_flight_input.set_mode(initial.submit_mode);
     state.composer_send_key = initial.composer_send_key;
     state.view_shortcuts = Arc::clone(&initial.view_shortcuts);
+    state.voice_preferences = initial.voice.clone();
     state.preferences = PreferenceOwner::new(launch);
 }
 

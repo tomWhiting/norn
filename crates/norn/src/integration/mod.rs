@@ -7,6 +7,7 @@ pub mod claude;
 pub mod diagnostics;
 pub mod extensions;
 pub mod hooks;
+pub mod locutus;
 mod mcp_candidate_builder;
 mod mcp_channel_frame;
 mod mcp_channel_inbox;

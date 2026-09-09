@@ -296,6 +296,8 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         .await
     }
     .await;
+    let voice = super::voice::drain(&mut state).await;
+    let outcome = super::frontend_preferences::exit_outcome(outcome, voice, Ok(()));
     let saves = super::frontend_preferences::drain(&mut state).await;
     let exports = super::view_actions::reading::drain_exports(&mut state).await;
     super::frontend_preferences::exit_outcome(outcome, saves, exports)
@@ -435,6 +437,9 @@ async fn outer_loop(
             }
             result = super::frontend_preferences::wait(&mut state.preferences) => {
                 super::frontend_preferences::finish(state, result)?;
+            }
+            update = super::voice::wait(&mut state.voice) => {
+                super::voice::finish(state, update)?;
             }
             Some(result) = state.export_tasks.join_next() => {
                     crate::app::view_actions::reading::finish_export(state, result)?;

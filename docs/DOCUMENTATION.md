@@ -1,6 +1,10 @@
 # Norn documentation
 
-Updated 8 September 2026, Melbourne time. Start with the [README](../README.md) for the current preview, installation from `main`, sign-in, model defaults, and runnable examples.
+Updated 9 September 2026, Melbourne time. Start with the [README](../README.md) for the current preview, installation from `main`, sign-in, model defaults, and runnable examples.
+
+Native read-aloud is under implementation in D08. [Native voice](NATIVE-VOICE.md)
+documents controls, configuration and verification status; it does not claim
+these features are already installed.
 
 ## Operating guides
 

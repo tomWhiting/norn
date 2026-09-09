@@ -11,7 +11,7 @@ Build from an up-to-date `main` checkout. The repository pins Rust **1.94.0** (e
 ```sh
 git switch main
 git pull --ff-only
-cargo install --path crates/norn-cli --locked --force
+cargo install --path crates/norn-cli --locked --force --target-dir target
 norn --version
 norn auth login
 norn -C /absolute/path/to/project
@@ -31,6 +31,10 @@ norn --help
 ```
 
 ## MCP tools and Claude Code Channels-compatible push
+
+Native read-aloud is being added separately from MCP tool calls. The
+[native voice guide](docs/NATIVE-VOICE.md) documents the D08 branch's
+`/voice read`, `stop`, `replay`, preferences and verification status.
 
 Norn can start MCP servers and receive external messages from servers implementing the **ordinary Claude Code Channels message protocol over stdio**. This is a wire protocol, not a JavaScript dependency: the server can be written in Rust, JavaScript, or another language. An ordinary MCP tools server does not automatically support channel messages.
 

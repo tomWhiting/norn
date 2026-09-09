@@ -1,0 +1,1 @@
+{"personas":[{"name":"Operator","role":"Norn user","stories":[{"id":"S1","text":"I can remember my voice preferences without starting unused services."},{"id":"S2","text":"I can stop and replay my answer without stopping another agent or its tools."},{"id":"S3","text":"I can discover voice controls and distinguish tested behavior from work in progress."}]}]}

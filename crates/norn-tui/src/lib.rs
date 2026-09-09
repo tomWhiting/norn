@@ -13,6 +13,7 @@ pub mod input;
 pub mod render;
 pub mod terminal;
 pub mod tools;
+pub mod voice_preferences;
 
 pub use app::{AppState, TuiInputs, run_app};
 pub use error::TuiError;

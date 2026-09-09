@@ -34,6 +34,7 @@ mod turn;
 mod view_actions;
 pub mod view_config;
 mod viewport;
+mod voice;
 
 pub use event_loop::{TuiInputs, run_app};
 pub use state::AppState;

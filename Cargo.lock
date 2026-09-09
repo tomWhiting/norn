@@ -3125,6 +3125,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "locutus-contract"
+version = "0.1.0"
+source = "git+https://github.com/tomWhiting/gobetween?rev=56b6722d43380e6a5e59fe3f759bb907cbb17c87#56b6722d43380e6a5e59fe3f759bb907cbb17c87"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3323,6 +3332,7 @@ dependencies = [
  "jsonschema",
  "libc",
  "libyggd",
+ "locutus-contract",
  "lsp",
  "lsp-types",
  "norn-macros",
