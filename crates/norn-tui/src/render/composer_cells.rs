@@ -54,10 +54,18 @@ pub(crate) fn paint_composer_cells(
             let width = grapheme.width();
             validate_cluster(cells, column, row, &text, width, cell.style())?;
             let start = bytes.len();
-            let mut style = cell.style().degrade(depth);
+            let mut style = cell.style();
             if caps.colour_depth == crate::terminal::colour::ColourDepth::Monochrome {
+                // ComposerKernel declares a transparent/default base background.
+                // Iridium paints selection and secondary carets using a different
+                // background, so preserve that distinction before dropping colour.
+                if style.background != Color::Default {
+                    style.attributes |= Attributes::REVERSE;
+                }
                 style.foreground = Color::Default;
                 style.background = Color::Default;
+            } else {
+                style = style.degrade(depth);
             }
             encode_style(&mut bytes, style)?;
             bytes.extend_from_slice(text.as_bytes());
