@@ -1,10 +1,10 @@
 {
-  "checked_code_sha": "29869273bc6665692e48fa66e23251b5f08d78c0",
+  "checked_code_sha": "7ce01292fad30643ac366737f085265c8fdbf3ae",
   "working_directory": "/Users/tom/Developer/ablative/stack/norn/.worktrees/terminal-colour",
-  "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/stack/norn/target TMPDIR=/Users/tom/Developer/ablative/stack/norn/var/terminal-colour/tmp cargo clippy --workspace --all-targets -- -D warnings > /Users/tom/Developer/ablative/stack/norn/var/terminal-colour/logs/clippy.log 2>&1",
+  "command": "CARGO_TARGET_DIR=/Users/tom/Developer/ablative/stack/norn/target TMPDIR=/Users/tom/Developer/ablative/stack/norn/var/terminal-colour/tmp cargo clippy --workspace --all-targets -- -D warnings > /Users/tom/Developer/ablative/stack/norn/var/terminal-colour/logs/clippy-review.log 2>&1",
   "exit_code": 0,
   "output_streams": "stdout and stderr combined",
-  "source_log": "/Users/tom/Developer/ablative/stack/norn/var/terminal-colour/logs/clippy.log",
-  "output_sha256": "8f86573e1758f7f7d86792c1d13f9722ab794b50ff4df364994c5cb652f03073",
-  "output": "   Compiling norn-macros v0.1.0-preview.8 (/Users/tom/Developer/ablative/stack/norn/.worktrees/terminal-colour/crates/norn-macros)\n   Compiling norn v0.1.0-preview.8 (/Users/tom/Developer/ablative/stack/norn/.worktrees/terminal-colour/crates/norn)\n    Checking norn-tui v0.1.0-preview.8 (/Users/tom/Developer/ablative/stack/norn/.worktrees/terminal-colour/crates/norn-tui)\n    Checking norn-cli v0.1.0-preview.8 (/Users/tom/Developer/ablative/stack/norn/.worktrees/terminal-colour/crates/norn-cli)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 12s\n"
+  "source_log": "/Users/tom/Developer/ablative/stack/norn/var/terminal-colour/logs/clippy-review.log",
+  "output_sha256": "0c39f069e774f5acf51ab353a8cfba50eeb01143d017e5dd25667c9e9dbed2a4",
+  "output": "    Checking norn-cli v0.1.0-preview.8 (/Users/tom/Developer/ablative/stack/norn/.worktrees/terminal-colour/crates/norn-cli)\n    Checking norn-tui v0.1.0-preview.8 (/Users/tom/Developer/ablative/stack/norn/.worktrees/terminal-colour/crates/norn-tui)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.93s\n"
 }
