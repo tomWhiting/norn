@@ -27,6 +27,10 @@ norn completion --help
 
 Inside the TUI, `/help` lists slash commands and `/view help` lists frontend controls. Tool selection at startup uses `--allowed-tools` and `--disallowed-tools`; MCP server setup uses `--mcp-config`. The default OpenAI route uses `norn auth login` for ChatGPT OAuth rather than requiring an API key.
 
+## Planned work
+
+[Ordered September 8 work plan](planning/NEXT-WORK-20260908.md) consolidates the compaction and resumed-history reports, revised tool/channel presentation, action-log and memory proposals, voice hooks, and the earlier product backlog. It is planning only; implementation and verification are deferred until resources are available. Its [carry-forward inventory](planning/CARRY-FORWARD-20260908.json) preserves the earlier programme IDs and historical source status.
+
 ## Runtime and design
 
 Norn supplies the agent session, provider access, tool execution, coordination, and recorded history. CLI, TUI, and driven callers construct agents through the same library assembly path; running Norn does not require a running Aion instance.

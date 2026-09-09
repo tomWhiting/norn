@@ -1,0 +1,2092 @@
+{
+  "id": "NORN-CARRY-FORWARD-20260908",
+  "date_melbourne": "2026-09-08",
+  "purpose": "Historical input inventory for NEXT-WORK-20260908.md; not current implementation status or an executable brief.",
+  "estate_authority": "/Users/tom/Developer/ablative/docs/tracking/INDEX-20260904.md",
+  "source_programme": "/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/execution-plan.json",
+  "source_programme_updated_melbourne": "2026-09-06T18:17:54.531533+10:00",
+  "source_programme_rows": [
+    {
+      "id": "NWP-01.1",
+      "work": "Import reviewed model facts from the supplied Codex export",
+      "closure_evidence": "Astra appears on the applicable route; all visible-model differences reviewed; hidden/internal entries remain deliberate; changing the reference file alone is not counted as implementation.",
+      "status": "merged_to_main_and_installed_in_911; exact_combined205_battery_green; fresh_Fable_pending",
+      "verification_note": "Local/remote main and installed native source are911, containing modelc0. All six exact911205 legs passed with clean matching witnesses; installed digest3755fa4c… matches the build, and startup/channel-help smoke passed. Fresh Fable remains pending without pass or waiver."
+    },
+    {
+      "id": "NWP-01.2",
+      "work": "Resolve capabilities by provider, backend and model",
+      "closure_evidence": "No minimum/maximum taken across unrelated backends; effort, tier and limits checked against the route actually used.",
+      "status": "merged_to_main_and_installed_in_911; exact_combined205_battery_green; fresh_Fable_pending",
+      "verification_note": "Local/remote main and installed native source are911, containing modelc0. All six exact911205 legs passed with clean matching witnesses; installed digest3755fa4c… matches the build, and startup/channel-help smoke passed. Fresh Fable remains pending without pass or waiver."
+    },
+    {
+      "id": "NWP-01.3",
+      "work": "Make startup and `/model` share an atomic validated transition",
+      "closure_evidence": "Sol → Spark and back update budgets before the next request; aliases resolve; refused switches leave the original state intact.",
+      "status": "merged_to_main_and_installed_in_911; exact_combined205_battery_green; fresh_Fable_pending",
+      "verification_note": "Local/remote main and installed native source are911, containing modelc0. All six exact911205 legs passed with clean matching witnesses; installed digest3755fa4c… matches the build, and startup/channel-help smoke passed. Fresh Fable remains pending without pass or waiver."
+    },
+    {
+      "id": "NWP-01.4",
+      "work": "Settle context, output and effort semantics",
+      "closure_evidence": "Distinguish default/max/input/output where supplied; prove Codex `ultra` request behavior before advertising it as working; preserve deliberate user overrides.",
+      "status": "partly_covered_by_candidate_review_and_remaining_work",
+      "verification_note": "Astra/high/372000 owner defaults and explicit overrides are committed, measured and installed through exact5227db4. This does not prove live Ultra/provider acceptance."
+    },
+    {
+      "id": "NWP-01.5",
+      "work": "Establish catalogue refresh and provider proof",
+      "closure_evidence": "Reproducible metadata import with provenance; route-specific request fixtures and live authorised smoke checks; native Anthropic versus Claude CLI limitations documented.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-02.0",
+      "work": "Choose native local Liminal transport for the host",
+      "closure_evidence": "Existing authenticated loopback TCP or a proper Liminal Unix-socket addition; Norn runs independently with one shared protocol.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-02.1",
+      "work": "Move live agent ownership into a Norn background session host",
+      "closure_evidence": "Original agent, tool process and provider call continue when every terminal disconnects; no replay into the provider or second writable owner.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-02.2",
+      "work": "Add discovery and live attach protocol",
+      "closure_evidence": "Ready/version handshake, pushed roster, exact session/host generation, current cwd, active tools and pending requests; attach two viewers mid-tool.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-02.3",
+      "work": "Make snapshot/live reconnection coherent",
+      "closure_evidence": "No lost or duplicated committed events at the snapshot boundary; active partial response supplied by host; explicit lag/gaps and bounded slow-client behavior.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-02.4",
+      "work": "Separate observe, control, detach, cancel and stop",
+      "closure_evidence": "Attributed idempotent commands; stale-generation refusal; pending permission survives client loss; detach has no session teardown effect.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-02.5",
+      "work": "Define process lifetime, resource limits and recovery",
+      "closure_evidence": "One owning host per session; terminal-independent subprocesses; declared limits; host failure distinct from reconnect; recovery never silently repeats external effects.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-02.6",
+      "work": "Connect optional Aion and remote product clients",
+      "closure_evidence": "Aion drives the same host and gets one attempt result; explicit cancellation/driver-loss policy; all standalone acceptance still passes with Aion absent.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-03.1",
+      "work": "Preserve MCP channel capability and notification frames",
+      "closure_evidence": "Rust stdio fixture advertises `claude/channel` and pushes `notifications/claude/channel`; receive the first post-initialization event.",
+      "status": "implemented_merged_installed; exact911205_battery_green; fresh_review_pending",
+      "verification_note": "Combined911 is merged to local/remote main and installed; its exact six-leg205 battery is green, including current tests, with14 verified venue bindings. Broader inbox/durability, actual Cambium/Hammerbarn adapter acceptance and fresh Fable review remain distinct open work."
+    },
+    {
+      "id": "NWP-03.2",
+      "work": "Add typed, attributed, bounded inbox admission",
+      "closure_evidence": "Connection identity and generation stamped by host; per-session routing; no full-queue deadlock in the sole MCP reader; byte/count limits cover retained messages too.",
+      "status": "bounded_inbox_policy_merged_installed; exact911205_battery_green; broader_durability_scope_retained",
+      "verification_note": "Combined911 is merged to local/remote main and installed; its exact six-leg205 battery is green, including current tests, with14 verified venue bindings. Broader inbox/durability, actual Cambium/Hammerbarn adapter acceptance and fresh Fable review remain distinct open work."
+    },
+    {
+      "id": "NWP-03.3",
+      "work": "Define hold, queue, wake and receipt semantics",
+      "closure_evidence": "Idle session wakes by notification; busy-session admission follows policy; held items inspectable; restart/reconnect and deduplication tested; no unsupported delivery guarantee.",
+      "status": "supported_delivery_merged_installed; exact911205_battery_green; broader_inbox_controls_retained",
+      "verification_note": "Combined911 is merged to local/remote main and installed; its exact six-leg205 battery is green, including current tests, with14 verified venue bindings. Broader inbox/durability, actual Cambium/Hammerbarn adapter acceptance and fresh Fable review remain distinct open work."
+    },
+    {
+      "id": "NWP-03.4",
+      "work": "Prove Cambium/Hammerbarn interoperability and controls",
+      "closure_evidence": "Rust MCP server and example game channel work end to end; inbox policy visible; ordinary reply tools work; permission relay remains a separate explicit capability.",
+      "status": "Rust_stdio_and_TUI_acceptance_passed; actual_Cambium_Hammerbarn_adapter_acceptance_pending",
+      "verification_note": "Combined911 is merged to local/remote main and installed; its exact six-leg205 battery is green, including current tests, with14 verified venue bindings. Broader inbox/durability, actual Cambium/Hammerbarn adapter acceptance and fresh Fable review remain distinct open work."
+    },
+    {
+      "id": "NWP-04.1",
+      "work": "Build one semantic transcript projection",
+      "closure_evidence": "Join calls/results by ID, retaining descriptions, arguments, errors, changes and full-result references; same projection for local, saved and attached views.",
+      "status": "implemented_locally_verified_installed;main_205_Fable_pending",
+      "brief": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-001.json",
+      "branch": "codex/norn-retained-tui",
+      "worktree": "/private/tmp/norn-retained-tui",
+      "base_commit": "5b6f45839f41d786694a16c6dc04c92bb7dc4902",
+      "verification_note": "norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed. NUI-003 R4: selected main/fork/subagent history and acknowledged messaging; NUI-003 R6: persistence of selected auxiliary content. Both remain pending. Status and an Agents listing do not grant target messaging authority.",
+      "proof": [
+        "implementation/status-20260905-parallel-ui-foundations/NRT-001.json",
+        "implementation/status-20260905-parallel-ui-foundations/r8-local-checks.json",
+        "implementation/status-20260905-parallel-ui-foundations/r8-ast-policy.json",
+        "implementation/status-20260905-channel-settings-repair/nrt-r1-rereview.json",
+        "implementation/status-20260905-channel-settings-repair/nrt-r2-initial-review.json",
+        "implementation/status-20260905-channel-settings-repair/nrt-r9-local-checks.json",
+        "implementation/status-20260905-terminal-preview/nrt-compile-1-result.json",
+        "implementation/status-20260905-terminal-preview/nrt-compile-1-early-stop.json",
+        "implementation/status-20260905-terminal-preview/nrt-r9-final-checks.json",
+        "implementation/status-20260905-terminal-preview/preview-build.json",
+        "implementation/status-20260905-terminal-preview/preview-pty-smoke.json",
+        "implementation/status-20260905-ncs-installed/nrt-compile3.json",
+        "implementation/status-20260905-ncs-installed/nrt-core-tests1.json",
+        "implementation/status-20260905-ncs-installed/nrt-r2-supplement.json",
+        "implementation/status-20260905-ncs-installed/nrt-wall-registration.json",
+        "implementation/status-20260906-tui-iridium-progress/nrt-projection-tests21.json",
+        "implementation/status-20260906-tui-iridium-progress/nrt-r1-indexed-freeze06.json",
+        "implementation/status-20260906-tui-iridium-progress/nrt-check04.log",
+        "implementation/status-20260906-tui-iridium-progress/nrt-live-preview-snapshot.json",
+        "implementation/status-20260906-publication-binding-registration/evidence.json",
+        "implementation/status-20260906-ncp-assembly/status.json",
+        "implementation/installed-0.1.0-preview.5-local-checkpoint/status.json"
+      ],
+      "repair_briefs": [
+        {
+          "id": "NRT-002",
+          "path": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-002.json",
+          "status": "registered_implementation_authorized",
+          "proof": "implementation/status-20260906-publication-binding-registration/evidence.json"
+        }
+      ],
+      "latest_checkpoint": "implementation/installed-0.1.0-preview.5-local-checkpoint/status.json",
+      "historical_status_records": [
+        {
+          "status": "checked_preview0.1.0-preview.1_installed;full_release_acceptance_pending",
+          "verification_note": "**NRT projection fixtures are repaired; later indexed traversal still needs execution.** [The repaired projection selection](implementation/status-20260906-tui-iridium-progress/nrt-projection-tests21.json) passed all 21 cases, with zero failures or ignored cases. The earlier 25/28 result is historical; its three R1 fixture failures are no longer current blockers. [Three later indexed-traversal regressions](implementation/status-20260906-tui-iridium-progress/nrt-r1-indexed-freeze06.json) were authored after that run and remain unrun. R2's earlier 30-case supplement remains separate. [Check04 compiled the actual Norn and Norn TUI release targets](implementation/status-20260906-tui-iridium-progress/nrt-check04.log) with exit zero, but reported one unused `Viewport::source` warning; this is a compile result, not strict-Clippy, test-suite or completed-TUI acceptance. R5 compact summary source is written; R6 reading/selection work is active. NRT HEAD is `5b6f45839f41d786694a16c6dc04c92bb7dc4902`, derived from f0cb7476; bdfd0433 is not its ancestor, so the installed settings changes still require reconciliation before NRT lands.\n\n**Publication-binding repair registered, 6 September 2026, 01:12 Melbourne.** [NRT-002](implementation/status-20260906-publication-binding-registration/NRT-002.md) now gives the duplicate-row repair four exclusive owners: producer publication, indexed store/projection/input reconciliation, TUI consumption and canonical PTY fixtures. Private OnceLock receipts and a coalescing Notify bind the actual accepted EventId to the displayed attempt; no text/order matching or new receipt queue. NRT-001 R3/R5 completion and R7 acceptance require the repair. Canonical fixtures may be authored early after source thaw, with every existing semantic assertion retained. Normal completion facts share one compact execution row, with all metadata in details and errors/gaps explicit. [Registration evidence](implementation/status-20260906-publication-binding-registration/evidence.json) records the approved walls, including source-mapped secondary-field details. Implementation and new verification remain pending; installed Norn and the sealed archive are unchanged.",
+          "latest_checkpoint": "implementation/preview-0.1.0-preview.1/status.json"
+        },
+        {
+          "status": "checked_preview0.1.0-preview.4_installed;venue_review_pending",
+          "brief": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-001.json",
+          "branch": "codex/norn-retained-tui",
+          "worktree": "/private/tmp/norn-retained-tui",
+          "base_commit": "5b6f45839f41d786694a16c6dc04c92bb7dc4902",
+          "verification_note": "Current status and evidence: [Composer assembled; dependency and lifecycle blockers — 6 September 2026](implementation/status-20260906-ncp-assembly/status.json). Earlier verification notes remain in historical_status_records; no old failure is silently presented as a fresh result.",
+          "proof": [
+            "implementation/status-20260905-parallel-ui-foundations/NRT-001.json",
+            "implementation/status-20260905-parallel-ui-foundations/r8-local-checks.json",
+            "implementation/status-20260905-parallel-ui-foundations/r8-ast-policy.json",
+            "implementation/status-20260905-channel-settings-repair/nrt-r1-rereview.json",
+            "implementation/status-20260905-channel-settings-repair/nrt-r2-initial-review.json",
+            "implementation/status-20260905-channel-settings-repair/nrt-r9-local-checks.json",
+            "implementation/status-20260905-terminal-preview/nrt-compile-1-result.json",
+            "implementation/status-20260905-terminal-preview/nrt-compile-1-early-stop.json",
+            "implementation/status-20260905-terminal-preview/nrt-r9-final-checks.json",
+            "implementation/status-20260905-terminal-preview/preview-build.json",
+            "implementation/status-20260905-terminal-preview/preview-pty-smoke.json",
+            "implementation/status-20260905-ncs-installed/nrt-compile3.json",
+            "implementation/status-20260905-ncs-installed/nrt-core-tests1.json",
+            "implementation/status-20260905-ncs-installed/nrt-r2-supplement.json",
+            "implementation/status-20260905-ncs-installed/nrt-wall-registration.json",
+            "implementation/status-20260906-tui-iridium-progress/nrt-projection-tests21.json",
+            "implementation/status-20260906-tui-iridium-progress/nrt-r1-indexed-freeze06.json",
+            "implementation/status-20260906-tui-iridium-progress/nrt-check04.log",
+            "implementation/status-20260906-tui-iridium-progress/nrt-live-preview-snapshot.json",
+            "implementation/status-20260906-publication-binding-registration/evidence.json",
+            "implementation/status-20260906-ncp-assembly/status.json"
+          ],
+          "repair_briefs": [
+            {
+              "id": "NRT-002",
+              "path": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-002.json",
+              "status": "registered_implementation_authorized",
+              "proof": "implementation/status-20260906-publication-binding-registration/evidence.json"
+            }
+          ],
+          "latest_checkpoint": "implementation/status-20260906-ncp-assembly/status.json"
+        }
+      ]
+    },
+    {
+      "id": "NWP-04.2",
+      "work": "Replace hybrid scroll regions with owned viewport",
+      "closure_evidence": "Resize during streaming/tools/popup/composer reflows from state without extra transcript lines; stable scroll anchor and deliberate terminal restoration.",
+      "status": "implemented_locally_verified_installed;main_205_Fable_pending",
+      "brief": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-001.json",
+      "branch": "codex/norn-retained-tui",
+      "worktree": "/private/tmp/norn-retained-tui",
+      "base_commit": "5b6f45839f41d786694a16c6dc04c92bb7dc4902",
+      "verification_note": "norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed. NUI-003 R4: selected main/fork/subagent history and acknowledged messaging; NUI-003 R6: persistence of selected auxiliary content. Both remain pending. Status and an Agents listing do not grant target messaging authority.",
+      "proof": [
+        "implementation/status-20260905-parallel-ui-foundations/NRT-001.json",
+        "implementation/status-20260905-parallel-ui-foundations/r8-local-checks.json",
+        "implementation/status-20260905-parallel-ui-foundations/r8-ast-policy.json",
+        "implementation/status-20260905-channel-settings-repair/nrt-r1-rereview.json",
+        "implementation/status-20260905-channel-settings-repair/nrt-r2-initial-review.json",
+        "implementation/status-20260905-channel-settings-repair/nrt-r9-local-checks.json",
+        "implementation/status-20260905-terminal-preview/nrt-compile-1-result.json",
+        "implementation/status-20260905-terminal-preview/nrt-compile-1-early-stop.json",
+        "implementation/status-20260905-terminal-preview/nrt-r9-final-checks.json",
+        "implementation/status-20260905-terminal-preview/preview-build.json",
+        "implementation/status-20260905-terminal-preview/preview-pty-smoke.json",
+        "implementation/status-20260905-ncs-installed/nrt-compile3.json",
+        "implementation/status-20260905-ncs-installed/nrt-core-tests1.json",
+        "implementation/status-20260905-ncs-installed/nrt-r2-supplement.json",
+        "implementation/status-20260905-ncs-installed/nrt-wall-registration.json",
+        "implementation/status-20260906-tui-iridium-progress/nrt-projection-tests21.json",
+        "implementation/status-20260906-tui-iridium-progress/nrt-r1-indexed-freeze06.json",
+        "implementation/status-20260906-tui-iridium-progress/nrt-check04.log",
+        "implementation/status-20260906-tui-iridium-progress/nrt-live-preview-snapshot.json",
+        "implementation/status-20260906-tui-iridium-results/nrt-preview-artifact.json",
+        "implementation/status-20260906-tui-iridium-results/nrt-preview-verification.json",
+        "implementation/status-20260906-publication-binding-registration/evidence.json",
+        "implementation/status-20260906-ncp-assembly/status.json",
+        "implementation/installed-0.1.0-preview.5-local-checkpoint/status.json",
+        "implementation/interaction-workspace1-terminal-20260906/status.json",
+        "implementation/interaction-workspace2-followup-20260906/status.json",
+        "implementation/installed-0.1.0-preview.6-local-checkpoint/status.json"
+      ],
+      "repair_briefs": [
+        {
+          "id": "NRT-002",
+          "path": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-002.json",
+          "status": "registered_implementation_authorized",
+          "proof": "implementation/status-20260906-publication-binding-registration/evidence.json"
+        }
+      ],
+      "latest_checkpoint": "implementation/installed-0.1.0-preview.6-local-checkpoint/status.json",
+      "persistence_followup": {
+        "status": "existing_user_local_run_preferences_and_actual_restart_cases_locally_verified_installed;NUI003_R6_auxiliary_content_persistence_pending",
+        "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+        "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation.",
+        "brief": "/private/tmp/norn-retained-tui/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+        "proof": "implementation/preferences-preview4-verified/status.json",
+        "save_trigger_assumption": {
+          "choice": "automatic personal saving; run temporary; local explicit opt-in",
+          "authority": "root working assumption after optional question remained unanswered",
+          "user_confirmed": false
+        }
+      },
+      "preview_installation": {
+        "state": "installed_local_preview_pending_venue_review",
+        "version": "norn 0.1.0-preview.4",
+        "installed_path": "/Users/tom/.cargo/bin/norn",
+        "binary_sha256": "a1431e647a23bd372ee1b56b5262f9e27db91e76608ccd3d78da24fa922d0b1e",
+        "receipt_checkout_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+        "installed_melbourne": "2026-09-06T12:46:47.499094+10:00",
+        "previous_binary": "/Users/tom/.local/state/norn/install-backups/20260906-124647-preferences-preview/norn-previous",
+        "previous_sha256": "9023a9c5ad8c539d64e88c8938711a2f456c2c6b93e734bfac086b6164f63665",
+        "proof": [
+          "implementation/preview-0.1.0-preview.4/installation.json",
+          "implementation/preview-0.1.0-preview.4/status.json"
+        ],
+        "saved_frontend_preferences_included": true,
+        "main_landing_or_release": false,
+        "later_Iridium_or_attach_included": false,
+        "spoken_announcement": {
+          "command": [
+            "/usr/bin/say",
+            "Norn updated"
+          ],
+          "exit": 0
+        }
+      },
+      "saved_preferences_checkpoint": {
+        "status": "installed_local_preview_pending_venue_review",
+        "brief": "/private/tmp/norn-frontend-preferences/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+        "proof": "implementation/preview-0.1.0-preview.4/status.json",
+        "installed": true,
+        "next_preview_version": null,
+        "baseline": "687f2efcdcc4704f6406f01703a1345b794891a2",
+        "full_workspace_verdict": "passed on recorded final manifest",
+        "code_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+        "installed_version": "0.1.0-preview.4"
+      },
+      "ui_polish_checkpoint": {
+        "status": "installed_local_preview_pending_venue_review",
+        "brief": "NUI-002",
+        "code_commit": "264700821b8df07226b0073053297857207b1809",
+        "branch": "codex/norn-ui-polish",
+        "proof": "implementation/preview-0.1.0-preview.3/status.json"
+      },
+      "historical_status_records": [
+        {
+          "status": "checked_preview0.1.0-preview.4_installed;venue_review_pending",
+          "verification_note": "**The actual Norn preview is built for layout trials, with two open findings.** [The release build](implementation/status-20260906-tui-iridium-results/nrt-preview-build-01.json) completed in 509.976 seconds from the preserved 2,293-file unlanded source snapshot. [The binary](implementation/status-20260906-tui-iridium-results/nrt-preview-artifact.json), `/private/tmp/nrt-001-proof/live-screen-preview-1/norn-preview`, has SHA-256 `af7020c4c7687be204a4b07d3f944342e148458da01c9f7df05fb5c253c9e612`; `--help` and `--version` passed. Run that path from the desired project directory using ordinary Norn flags; it uses ordinary settings and can make real model calls or execute tools. [Trial instructions](implementation/status-20260906-tui-iridium-results/nrt-preview-README.md). The installed stable `norn` remains unchanged for ordinary work. [Four actual-App PTY scenarios passed 20 screen checks](implementation/status-20260906-tui-iridium-results/nrt-actual-pty/report.json) with mock providers, including resize, pane controls and terminal restoration; they do not certify live providers or CLI assembly. [Library tests](implementation/status-20260906-tui-iridium-results/nrt-preview-unit-tests-01.json) reported 721 passed and one failed carriage-return rendering expectation. [Visual review](implementation/status-20260906-tui-iridium-results/nrt-preview-verification.json) also found duplicate live and committed transcript rows; source reconciliation is under investigation. Neither finding is closed by the PTY pass. This preview has no Iridium composer integration or live attach/detach and is not installed, landed or fully verified.\n\n**Publication-binding repair registered, 6 September 2026, 01:12 Melbourne.** [NRT-002](implementation/status-20260906-publication-binding-registration/NRT-002.md) now gives the duplicate-row repair four exclusive owners: producer publication, indexed store/projection/input reconciliation, TUI consumption and canonical PTY fixtures. Private OnceLock receipts and a coalescing Notify bind the actual accepted EventId to the displayed attempt; no text/order matching or new receipt queue. NRT-001 R3/R5 completion and R7 acceptance require the repair. Canonical fixtures may be authored early after source thaw, with every existing semantic assertion retained. Normal completion facts share one compact execution row, with all metadata in details and errors/gaps explicit. [Registration evidence](implementation/status-20260906-publication-binding-registration/evidence.json) records the approved walls, including source-mapped secondary-field details. Implementation and new verification remain pending; installed Norn and the sealed archive are unchanged.",
+          "latest_checkpoint": "implementation/preview-0.1.0-preview.1/status.json",
+          "persistence_followup": {
+            "status": "preview4_local_verification_passed_release_build_running_not_installed",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation.",
+            "brief": "/private/tmp/norn-retained-tui/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+            "proof": "implementation/preferences-preview4-verified/status.json",
+            "save_trigger_assumption": {
+              "choice": "automatic personal saving; run temporary; local explicit opt-in",
+              "authority": "root working assumption after optional question remained unanswered",
+              "user_confirmed": false
+            }
+          }
+        },
+        {
+          "status": "checked_preview0.1.0-preview.4_installed;venue_review_pending",
+          "brief": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-001.json",
+          "branch": "codex/norn-retained-tui",
+          "worktree": "/private/tmp/norn-retained-tui",
+          "base_commit": "5b6f45839f41d786694a16c6dc04c92bb7dc4902",
+          "verification_note": "Current status and evidence: [Composer assembled; dependency and lifecycle blockers — 6 September 2026](implementation/status-20260906-ncp-assembly/status.json). Earlier verification notes remain in historical_status_records; no old failure is silently presented as a fresh result.",
+          "proof": [
+            "implementation/status-20260905-parallel-ui-foundations/NRT-001.json",
+            "implementation/status-20260905-parallel-ui-foundations/r8-local-checks.json",
+            "implementation/status-20260905-parallel-ui-foundations/r8-ast-policy.json",
+            "implementation/status-20260905-channel-settings-repair/nrt-r1-rereview.json",
+            "implementation/status-20260905-channel-settings-repair/nrt-r2-initial-review.json",
+            "implementation/status-20260905-channel-settings-repair/nrt-r9-local-checks.json",
+            "implementation/status-20260905-terminal-preview/nrt-compile-1-result.json",
+            "implementation/status-20260905-terminal-preview/nrt-compile-1-early-stop.json",
+            "implementation/status-20260905-terminal-preview/nrt-r9-final-checks.json",
+            "implementation/status-20260905-terminal-preview/preview-build.json",
+            "implementation/status-20260905-terminal-preview/preview-pty-smoke.json",
+            "implementation/status-20260905-ncs-installed/nrt-compile3.json",
+            "implementation/status-20260905-ncs-installed/nrt-core-tests1.json",
+            "implementation/status-20260905-ncs-installed/nrt-r2-supplement.json",
+            "implementation/status-20260905-ncs-installed/nrt-wall-registration.json",
+            "implementation/status-20260906-tui-iridium-progress/nrt-projection-tests21.json",
+            "implementation/status-20260906-tui-iridium-progress/nrt-r1-indexed-freeze06.json",
+            "implementation/status-20260906-tui-iridium-progress/nrt-check04.log",
+            "implementation/status-20260906-tui-iridium-progress/nrt-live-preview-snapshot.json",
+            "implementation/status-20260906-tui-iridium-results/nrt-preview-artifact.json",
+            "implementation/status-20260906-tui-iridium-results/nrt-preview-verification.json",
+            "implementation/status-20260906-publication-binding-registration/evidence.json",
+            "implementation/status-20260906-ncp-assembly/status.json"
+          ],
+          "repair_briefs": [
+            {
+              "id": "NRT-002",
+              "path": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-002.json",
+              "status": "registered_implementation_authorized",
+              "proof": "implementation/status-20260906-publication-binding-registration/evidence.json"
+            }
+          ],
+          "latest_checkpoint": "implementation/status-20260906-ncp-assembly/status.json",
+          "persistence_followup": {
+            "status": "preview4_local_verification_passed_release_build_running_not_installed",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation.",
+            "brief": "/private/tmp/norn-retained-tui/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+            "proof": "implementation/preferences-preview4-verified/status.json",
+            "save_trigger_assumption": {
+              "choice": "automatic personal saving; run temporary; local explicit opt-in",
+              "authority": "root working assumption after optional question remained unanswered",
+              "user_confirmed": false
+            }
+          },
+          "preview_installation": {
+            "state": "installed_local_preview_pending_venue_review",
+            "version": "norn 0.1.0-preview.4",
+            "installed_path": "/Users/tom/.cargo/bin/norn",
+            "binary_sha256": "a1431e647a23bd372ee1b56b5262f9e27db91e76608ccd3d78da24fa922d0b1e",
+            "receipt_checkout_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+            "installed_melbourne": "2026-09-06T12:46:47.499094+10:00",
+            "previous_binary": "/Users/tom/.local/state/norn/install-backups/20260906-124647-preferences-preview/norn-previous",
+            "previous_sha256": "9023a9c5ad8c539d64e88c8938711a2f456c2c6b93e734bfac086b6164f63665",
+            "proof": [
+              "implementation/preview-0.1.0-preview.4/installation.json",
+              "implementation/preview-0.1.0-preview.4/status.json"
+            ],
+            "saved_frontend_preferences_included": true,
+            "main_landing_or_release": false,
+            "later_Iridium_or_attach_included": false,
+            "spoken_announcement": {
+              "command": [
+                "/usr/bin/say",
+                "Norn updated"
+              ],
+              "exit": 0
+            }
+          },
+          "saved_preferences_checkpoint": {
+            "status": "installed_local_preview_pending_venue_review",
+            "brief": "/private/tmp/norn-frontend-preferences/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+            "proof": "implementation/preview-0.1.0-preview.4/status.json",
+            "installed": true,
+            "next_preview_version": null,
+            "baseline": "687f2efcdcc4704f6406f01703a1345b794891a2",
+            "full_workspace_verdict": "passed on recorded final manifest",
+            "code_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+            "installed_version": "0.1.0-preview.4"
+          },
+          "ui_polish_checkpoint": {
+            "status": "installed_local_preview_pending_venue_review",
+            "brief": "NUI-002",
+            "code_commit": "264700821b8df07226b0073053297857207b1809",
+            "branch": "codex/norn-ui-polish",
+            "proof": "implementation/preview-0.1.0-preview.3/status.json"
+          }
+        }
+      ],
+      "interaction_followup": {
+        "status": "R1_R3_locally_verified_installed_preview6_R4_paused_uncompiled_main_205_Fable_pending",
+        "proof": "implementation/installed-0.1.0-preview.6-local-checkpoint/status.json",
+        "installed_commit": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+        "installed_version": "0.1.0-preview.6",
+        "r4_status": "written_saved_paused_uncompiled_not_in_preview6",
+        "remaining": "Agent target viewing/messaging and remembered auxiliary content remain pending."
+      }
+    },
+    {
+      "id": "NWP-04.3",
+      "work": "Make compact tools useful by default",
+      "closure_evidence": "Description/status for all tools including unknown plugins; writes/edits link to exact changes in the workspace; optional inline detail; keyboard/click expands any old result; full evidence remains intact.",
+      "status": "implemented_locally_verified_installed;main_205_Fable_pending",
+      "brief": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-001.json",
+      "branch": "codex/norn-retained-tui",
+      "worktree": "/private/tmp/norn-retained-tui",
+      "base_commit": "5b6f45839f41d786694a16c6dc04c92bb7dc4902",
+      "verification_note": "norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed. NUI-003 R4: selected main/fork/subagent history and acknowledged messaging; NUI-003 R6: persistence of selected auxiliary content. Both remain pending. Status and an Agents listing do not grant target messaging authority.",
+      "proof": [
+        "implementation/status-20260905-parallel-ui-foundations/NRT-001.json",
+        "implementation/status-20260905-parallel-ui-foundations/r8-local-checks.json",
+        "implementation/status-20260905-parallel-ui-foundations/r8-ast-policy.json",
+        "implementation/status-20260905-channel-settings-repair/nrt-r1-rereview.json",
+        "implementation/status-20260905-channel-settings-repair/nrt-r2-initial-review.json",
+        "implementation/status-20260905-channel-settings-repair/nrt-r9-local-checks.json",
+        "implementation/status-20260905-terminal-preview/nrt-compile-1-result.json",
+        "implementation/status-20260905-terminal-preview/nrt-compile-1-early-stop.json",
+        "implementation/status-20260905-terminal-preview/nrt-r9-final-checks.json",
+        "implementation/status-20260905-terminal-preview/preview-build.json",
+        "implementation/status-20260905-terminal-preview/preview-pty-smoke.json",
+        "implementation/status-20260905-ncs-installed/nrt-compile3.json",
+        "implementation/status-20260905-ncs-installed/nrt-core-tests1.json",
+        "implementation/status-20260905-ncs-installed/nrt-r2-supplement.json",
+        "implementation/status-20260905-ncs-installed/nrt-wall-registration.json",
+        "implementation/status-20260906-tui-iridium-progress/nrt-projection-tests21.json",
+        "implementation/status-20260906-tui-iridium-progress/nrt-r1-indexed-freeze06.json",
+        "implementation/status-20260906-tui-iridium-progress/nrt-check04.log",
+        "implementation/status-20260906-tui-iridium-progress/nrt-live-preview-snapshot.json",
+        "implementation/status-20260906-publication-binding-registration/evidence.json",
+        "implementation/status-20260906-ncp-assembly/status.json",
+        "implementation/installed-0.1.0-preview.5-local-checkpoint/status.json"
+      ],
+      "repair_briefs": [
+        {
+          "id": "NRT-002",
+          "path": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-002.json",
+          "status": "registered_implementation_authorized",
+          "proof": "implementation/status-20260906-publication-binding-registration/evidence.json"
+        }
+      ],
+      "latest_checkpoint": "implementation/installed-0.1.0-preview.5-local-checkpoint/status.json",
+      "persistence_followup": {
+        "status": "existing_user_local_run_preferences_and_actual_restart_cases_locally_verified_installed;NUI003_R6_auxiliary_content_persistence_pending",
+        "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+        "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation.",
+        "brief": "/private/tmp/norn-retained-tui/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+        "proof": "implementation/preferences-preview4-verified/status.json",
+        "save_trigger_assumption": {
+          "choice": "automatic personal saving; run temporary; local explicit opt-in",
+          "authority": "root working assumption after optional question remained unanswered",
+          "user_confirmed": false
+        }
+      },
+      "saved_preferences_checkpoint": {
+        "status": "installed_local_preview_pending_venue_review",
+        "brief": "/private/tmp/norn-frontend-preferences/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+        "proof": "implementation/preview-0.1.0-preview.4/status.json",
+        "installed": true,
+        "next_preview_version": null,
+        "baseline": "687f2efcdcc4704f6406f01703a1345b794891a2",
+        "full_workspace_verdict": "passed on recorded final manifest",
+        "code_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+        "installed_version": "0.1.0-preview.4"
+      },
+      "ui_polish_checkpoint": {
+        "status": "installed_local_preview_pending_venue_review",
+        "brief": "NUI-002",
+        "code_commit": "264700821b8df07226b0073053297857207b1809",
+        "branch": "codex/norn-ui-polish",
+        "proof": "implementation/preview-0.1.0-preview.3/status.json"
+      },
+      "preview_installation": {
+        "state": "installed_local_preview_pending_venue_review",
+        "version": "norn 0.1.0-preview.4",
+        "installed_path": "/Users/tom/.cargo/bin/norn",
+        "binary_sha256": "a1431e647a23bd372ee1b56b5262f9e27db91e76608ccd3d78da24fa922d0b1e",
+        "receipt_checkout_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+        "installed_melbourne": "2026-09-06T12:46:47.499094+10:00",
+        "previous_binary": "/Users/tom/.local/state/norn/install-backups/20260906-124647-preferences-preview/norn-previous",
+        "previous_sha256": "9023a9c5ad8c539d64e88c8938711a2f456c2c6b93e734bfac086b6164f63665",
+        "proof": [
+          "implementation/preview-0.1.0-preview.4/installation.json",
+          "implementation/preview-0.1.0-preview.4/status.json"
+        ],
+        "saved_frontend_preferences_included": true,
+        "main_landing_or_release": false,
+        "later_Iridium_or_attach_included": false,
+        "spoken_announcement": {
+          "command": [
+            "/usr/bin/say",
+            "Norn updated"
+          ],
+          "exit": 0
+        }
+      },
+      "historical_status_records": [
+        {
+          "status": "checked_preview0.1.0-preview.4_installed;venue_review_pending",
+          "verification_note": "**NRT projection fixtures are repaired; later indexed traversal still needs execution.** [The repaired projection selection](implementation/status-20260906-tui-iridium-progress/nrt-projection-tests21.json) passed all 21 cases, with zero failures or ignored cases. The earlier 25/28 result is historical; its three R1 fixture failures are no longer current blockers. [Three later indexed-traversal regressions](implementation/status-20260906-tui-iridium-progress/nrt-r1-indexed-freeze06.json) were authored after that run and remain unrun. R2's earlier 30-case supplement remains separate. [Check04 compiled the actual Norn and Norn TUI release targets](implementation/status-20260906-tui-iridium-progress/nrt-check04.log) with exit zero, but reported one unused `Viewport::source` warning; this is a compile result, not strict-Clippy, test-suite or completed-TUI acceptance. R5 compact summary source is written; R6 reading/selection work is active. NRT HEAD is `5b6f45839f41d786694a16c6dc04c92bb7dc4902`, derived from f0cb7476; bdfd0433 is not its ancestor, so the installed settings changes still require reconciliation before NRT lands.\n\n**Publication-binding repair registered, 6 September 2026, 01:12 Melbourne.** [NRT-002](implementation/status-20260906-publication-binding-registration/NRT-002.md) now gives the duplicate-row repair four exclusive owners: producer publication, indexed store/projection/input reconciliation, TUI consumption and canonical PTY fixtures. Private OnceLock receipts and a coalescing Notify bind the actual accepted EventId to the displayed attempt; no text/order matching or new receipt queue. NRT-001 R3/R5 completion and R7 acceptance require the repair. Canonical fixtures may be authored early after source thaw, with every existing semantic assertion retained. Normal completion facts share one compact execution row, with all metadata in details and errors/gaps explicit. [Registration evidence](implementation/status-20260906-publication-binding-registration/evidence.json) records the approved walls, including source-mapped secondary-field details. Implementation and new verification remain pending; installed Norn and the sealed archive are unchanged.",
+          "latest_checkpoint": "implementation/preview-0.1.0-preview.1/status.json",
+          "persistence_followup": {
+            "status": "preview4_local_verification_passed_release_build_running_not_installed",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation.",
+            "brief": "/private/tmp/norn-retained-tui/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+            "proof": "implementation/preferences-preview4-verified/status.json",
+            "save_trigger_assumption": {
+              "choice": "automatic personal saving; run temporary; local explicit opt-in",
+              "authority": "root working assumption after optional question remained unanswered",
+              "user_confirmed": false
+            }
+          }
+        },
+        {
+          "status": "checked_preview0.1.0-preview.4_installed;venue_review_pending",
+          "brief": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-001.json",
+          "branch": "codex/norn-retained-tui",
+          "worktree": "/private/tmp/norn-retained-tui",
+          "base_commit": "5b6f45839f41d786694a16c6dc04c92bb7dc4902",
+          "verification_note": "Current status and evidence: [Composer assembled; dependency and lifecycle blockers — 6 September 2026](implementation/status-20260906-ncp-assembly/status.json). Earlier verification notes remain in historical_status_records; no old failure is silently presented as a fresh result.",
+          "proof": [
+            "implementation/status-20260905-parallel-ui-foundations/NRT-001.json",
+            "implementation/status-20260905-parallel-ui-foundations/r8-local-checks.json",
+            "implementation/status-20260905-parallel-ui-foundations/r8-ast-policy.json",
+            "implementation/status-20260905-channel-settings-repair/nrt-r1-rereview.json",
+            "implementation/status-20260905-channel-settings-repair/nrt-r2-initial-review.json",
+            "implementation/status-20260905-channel-settings-repair/nrt-r9-local-checks.json",
+            "implementation/status-20260905-terminal-preview/nrt-compile-1-result.json",
+            "implementation/status-20260905-terminal-preview/nrt-compile-1-early-stop.json",
+            "implementation/status-20260905-terminal-preview/nrt-r9-final-checks.json",
+            "implementation/status-20260905-terminal-preview/preview-build.json",
+            "implementation/status-20260905-terminal-preview/preview-pty-smoke.json",
+            "implementation/status-20260905-ncs-installed/nrt-compile3.json",
+            "implementation/status-20260905-ncs-installed/nrt-core-tests1.json",
+            "implementation/status-20260905-ncs-installed/nrt-r2-supplement.json",
+            "implementation/status-20260905-ncs-installed/nrt-wall-registration.json",
+            "implementation/status-20260906-tui-iridium-progress/nrt-projection-tests21.json",
+            "implementation/status-20260906-tui-iridium-progress/nrt-r1-indexed-freeze06.json",
+            "implementation/status-20260906-tui-iridium-progress/nrt-check04.log",
+            "implementation/status-20260906-tui-iridium-progress/nrt-live-preview-snapshot.json",
+            "implementation/status-20260906-publication-binding-registration/evidence.json",
+            "implementation/status-20260906-ncp-assembly/status.json"
+          ],
+          "repair_briefs": [
+            {
+              "id": "NRT-002",
+              "path": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-002.json",
+              "status": "registered_implementation_authorized",
+              "proof": "implementation/status-20260906-publication-binding-registration/evidence.json"
+            }
+          ],
+          "latest_checkpoint": "implementation/status-20260906-ncp-assembly/status.json",
+          "persistence_followup": {
+            "status": "preview4_local_verification_passed_release_build_running_not_installed",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation.",
+            "brief": "/private/tmp/norn-retained-tui/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+            "proof": "implementation/preferences-preview4-verified/status.json",
+            "save_trigger_assumption": {
+              "choice": "automatic personal saving; run temporary; local explicit opt-in",
+              "authority": "root working assumption after optional question remained unanswered",
+              "user_confirmed": false
+            }
+          },
+          "saved_preferences_checkpoint": {
+            "status": "installed_local_preview_pending_venue_review",
+            "brief": "/private/tmp/norn-frontend-preferences/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+            "proof": "implementation/preview-0.1.0-preview.4/status.json",
+            "installed": true,
+            "next_preview_version": null,
+            "baseline": "687f2efcdcc4704f6406f01703a1345b794891a2",
+            "full_workspace_verdict": "passed on recorded final manifest",
+            "code_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+            "installed_version": "0.1.0-preview.4"
+          },
+          "ui_polish_checkpoint": {
+            "status": "installed_local_preview_pending_venue_review",
+            "brief": "NUI-002",
+            "code_commit": "264700821b8df07226b0073053297857207b1809",
+            "branch": "codex/norn-ui-polish",
+            "proof": "implementation/preview-0.1.0-preview.3/status.json"
+          },
+          "preview_installation": {
+            "state": "installed_local_preview_pending_venue_review",
+            "version": "norn 0.1.0-preview.4",
+            "installed_path": "/Users/tom/.cargo/bin/norn",
+            "binary_sha256": "a1431e647a23bd372ee1b56b5262f9e27db91e76608ccd3d78da24fa922d0b1e",
+            "receipt_checkout_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+            "installed_melbourne": "2026-09-06T12:46:47.499094+10:00",
+            "previous_binary": "/Users/tom/.local/state/norn/install-backups/20260906-124647-preferences-preview/norn-previous",
+            "previous_sha256": "9023a9c5ad8c539d64e88c8938711a2f456c2c6b93e734bfac086b6164f63665",
+            "proof": [
+              "implementation/preview-0.1.0-preview.4/installation.json",
+              "implementation/preview-0.1.0-preview.4/status.json"
+            ],
+            "saved_frontend_preferences_included": true,
+            "main_landing_or_release": false,
+            "later_Iridium_or_attach_included": false,
+            "spoken_announcement": {
+              "command": [
+                "/usr/bin/say",
+                "Norn updated"
+              ],
+              "exit": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "NWP-04.4",
+      "work": "Finish command discovery and reading conveniences",
+      "closure_evidence": "Slash/skill palette survives resize; scrolling, selection/copy, search, export and accessibility have explicit acceptance; replay respects chosen detail.",
+      "status": "implemented_locally_verified_installed;main_205_Fable_pending",
+      "brief": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-001.json",
+      "branch": "codex/norn-retained-tui",
+      "worktree": "/private/tmp/norn-retained-tui",
+      "base_commit": "5b6f45839f41d786694a16c6dc04c92bb7dc4902",
+      "verification_note": "norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed. NUI-003 R4: selected main/fork/subagent history and acknowledged messaging; NUI-003 R6: persistence of selected auxiliary content. Both remain pending. Status and an Agents listing do not grant target messaging authority.",
+      "proof": [
+        "implementation/status-20260905-parallel-ui-foundations/NRT-001.json",
+        "implementation/status-20260905-parallel-ui-foundations/r8-local-checks.json",
+        "implementation/status-20260905-parallel-ui-foundations/r8-ast-policy.json",
+        "implementation/status-20260905-channel-settings-repair/nrt-r1-rereview.json",
+        "implementation/status-20260905-channel-settings-repair/nrt-r2-initial-review.json",
+        "implementation/status-20260905-channel-settings-repair/nrt-r9-local-checks.json",
+        "implementation/status-20260905-terminal-preview/nrt-compile-1-result.json",
+        "implementation/status-20260905-terminal-preview/nrt-compile-1-early-stop.json",
+        "implementation/status-20260905-terminal-preview/nrt-r9-final-checks.json",
+        "implementation/status-20260905-terminal-preview/preview-build.json",
+        "implementation/status-20260905-terminal-preview/preview-pty-smoke.json",
+        "implementation/status-20260905-ncs-installed/nrt-compile3.json",
+        "implementation/status-20260905-ncs-installed/nrt-core-tests1.json",
+        "implementation/status-20260905-ncs-installed/nrt-r2-supplement.json",
+        "implementation/status-20260905-ncs-installed/nrt-wall-registration.json",
+        "implementation/status-20260905-ncs-installed/r6-selection-wall-registration.json",
+        "implementation/status-20260906-tui-iridium-progress/nrt-projection-tests21.json",
+        "implementation/status-20260906-tui-iridium-progress/nrt-r1-indexed-freeze06.json",
+        "implementation/status-20260906-tui-iridium-progress/nrt-check04.log",
+        "implementation/status-20260906-tui-iridium-progress/nrt-live-preview-snapshot.json",
+        "implementation/status-20260906-publication-binding-registration/evidence.json",
+        "implementation/status-20260906-ncp-assembly/status.json",
+        "implementation/installed-0.1.0-preview.5-local-checkpoint/status.json",
+        "implementation/interaction-workspace1-terminal-20260906/status.json",
+        "implementation/interaction-workspace2-followup-20260906/status.json",
+        "implementation/installed-0.1.0-preview.6-local-checkpoint/status.json"
+      ],
+      "parallel_authoring_note": "R6 pure selection.rs and selection_tests.rs early authoring is registered; no module wiring. R5 remains required for integration, validation and completion.",
+      "repair_briefs": [
+        {
+          "id": "NRT-002",
+          "path": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-002.json",
+          "status": "registered_implementation_authorized",
+          "proof": "implementation/status-20260906-publication-binding-registration/evidence.json"
+        }
+      ],
+      "latest_checkpoint": "implementation/installed-0.1.0-preview.6-local-checkpoint/status.json",
+      "persistence_followup": {
+        "status": "existing_user_local_run_preferences_and_actual_restart_cases_locally_verified_installed;NUI003_R6_auxiliary_content_persistence_pending",
+        "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+        "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation.",
+        "brief": "/private/tmp/norn-retained-tui/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+        "proof": "implementation/preferences-preview4-verified/status.json",
+        "save_trigger_assumption": {
+          "choice": "automatic personal saving; run temporary; local explicit opt-in",
+          "authority": "root working assumption after optional question remained unanswered",
+          "user_confirmed": false
+        }
+      },
+      "saved_preferences_checkpoint": {
+        "status": "installed_local_preview_pending_venue_review",
+        "brief": "/private/tmp/norn-frontend-preferences/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+        "proof": "implementation/preview-0.1.0-preview.4/status.json",
+        "installed": true,
+        "next_preview_version": null,
+        "baseline": "687f2efcdcc4704f6406f01703a1345b794891a2",
+        "full_workspace_verdict": "passed on recorded final manifest",
+        "code_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+        "installed_version": "0.1.0-preview.4"
+      },
+      "ui_polish_checkpoint": {
+        "status": "installed_local_preview_pending_venue_review",
+        "brief": "NUI-002",
+        "code_commit": "264700821b8df07226b0073053297857207b1809",
+        "branch": "codex/norn-ui-polish",
+        "proof": "implementation/preview-0.1.0-preview.3/status.json"
+      },
+      "preview_installation": {
+        "state": "installed_local_preview_pending_venue_review",
+        "version": "norn 0.1.0-preview.4",
+        "installed_path": "/Users/tom/.cargo/bin/norn",
+        "binary_sha256": "a1431e647a23bd372ee1b56b5262f9e27db91e76608ccd3d78da24fa922d0b1e",
+        "receipt_checkout_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+        "installed_melbourne": "2026-09-06T12:46:47.499094+10:00",
+        "previous_binary": "/Users/tom/.local/state/norn/install-backups/20260906-124647-preferences-preview/norn-previous",
+        "previous_sha256": "9023a9c5ad8c539d64e88c8938711a2f456c2c6b93e734bfac086b6164f63665",
+        "proof": [
+          "implementation/preview-0.1.0-preview.4/installation.json",
+          "implementation/preview-0.1.0-preview.4/status.json"
+        ],
+        "saved_frontend_preferences_included": true,
+        "main_landing_or_release": false,
+        "later_Iridium_or_attach_included": false,
+        "spoken_announcement": {
+          "command": [
+            "/usr/bin/say",
+            "Norn updated"
+          ],
+          "exit": 0
+        }
+      },
+      "historical_status_records": [
+        {
+          "status": "checked_preview0.1.0-preview.4_installed;venue_review_pending",
+          "verification_note": "**NRT projection fixtures are repaired; later indexed traversal still needs execution.** [The repaired projection selection](implementation/status-20260906-tui-iridium-progress/nrt-projection-tests21.json) passed all 21 cases, with zero failures or ignored cases. The earlier 25/28 result is historical; its three R1 fixture failures are no longer current blockers. [Three later indexed-traversal regressions](implementation/status-20260906-tui-iridium-progress/nrt-r1-indexed-freeze06.json) were authored after that run and remain unrun. R2's earlier 30-case supplement remains separate. [Check04 compiled the actual Norn and Norn TUI release targets](implementation/status-20260906-tui-iridium-progress/nrt-check04.log) with exit zero, but reported one unused `Viewport::source` warning; this is a compile result, not strict-Clippy, test-suite or completed-TUI acceptance. R5 compact summary source is written; R6 reading/selection work is active. NRT HEAD is `5b6f45839f41d786694a16c6dc04c92bb7dc4902`, derived from f0cb7476; bdfd0433 is not its ancestor, so the installed settings changes still require reconciliation before NRT lands.\n\n**Publication-binding repair registered, 6 September 2026, 01:12 Melbourne.** [NRT-002](implementation/status-20260906-publication-binding-registration/NRT-002.md) now gives the duplicate-row repair four exclusive owners: producer publication, indexed store/projection/input reconciliation, TUI consumption and canonical PTY fixtures. Private OnceLock receipts and a coalescing Notify bind the actual accepted EventId to the displayed attempt; no text/order matching or new receipt queue. NRT-001 R3/R5 completion and R7 acceptance require the repair. Canonical fixtures may be authored early after source thaw, with every existing semantic assertion retained. Normal completion facts share one compact execution row, with all metadata in details and errors/gaps explicit. [Registration evidence](implementation/status-20260906-publication-binding-registration/evidence.json) records the approved walls, including source-mapped secondary-field details. Implementation and new verification remain pending; installed Norn and the sealed archive are unchanged.",
+          "latest_checkpoint": "implementation/preview-0.1.0-preview.1/status.json",
+          "persistence_followup": {
+            "status": "preview4_local_verification_passed_release_build_running_not_installed",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation.",
+            "brief": "/private/tmp/norn-retained-tui/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+            "proof": "implementation/preferences-preview4-verified/status.json",
+            "save_trigger_assumption": {
+              "choice": "automatic personal saving; run temporary; local explicit opt-in",
+              "authority": "root working assumption after optional question remained unanswered",
+              "user_confirmed": false
+            }
+          }
+        },
+        {
+          "status": "checked_preview0.1.0-preview.4_installed;venue_review_pending",
+          "brief": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-001.json",
+          "branch": "codex/norn-retained-tui",
+          "worktree": "/private/tmp/norn-retained-tui",
+          "base_commit": "5b6f45839f41d786694a16c6dc04c92bb7dc4902",
+          "verification_note": "Current status and evidence: [Composer assembled; dependency and lifecycle blockers — 6 September 2026](implementation/status-20260906-ncp-assembly/status.json). Earlier verification notes remain in historical_status_records; no old failure is silently presented as a fresh result.",
+          "proof": [
+            "implementation/status-20260905-parallel-ui-foundations/NRT-001.json",
+            "implementation/status-20260905-parallel-ui-foundations/r8-local-checks.json",
+            "implementation/status-20260905-parallel-ui-foundations/r8-ast-policy.json",
+            "implementation/status-20260905-channel-settings-repair/nrt-r1-rereview.json",
+            "implementation/status-20260905-channel-settings-repair/nrt-r2-initial-review.json",
+            "implementation/status-20260905-channel-settings-repair/nrt-r9-local-checks.json",
+            "implementation/status-20260905-terminal-preview/nrt-compile-1-result.json",
+            "implementation/status-20260905-terminal-preview/nrt-compile-1-early-stop.json",
+            "implementation/status-20260905-terminal-preview/nrt-r9-final-checks.json",
+            "implementation/status-20260905-terminal-preview/preview-build.json",
+            "implementation/status-20260905-terminal-preview/preview-pty-smoke.json",
+            "implementation/status-20260905-ncs-installed/nrt-compile3.json",
+            "implementation/status-20260905-ncs-installed/nrt-core-tests1.json",
+            "implementation/status-20260905-ncs-installed/nrt-r2-supplement.json",
+            "implementation/status-20260905-ncs-installed/nrt-wall-registration.json",
+            "implementation/status-20260905-ncs-installed/r6-selection-wall-registration.json",
+            "implementation/status-20260906-tui-iridium-progress/nrt-projection-tests21.json",
+            "implementation/status-20260906-tui-iridium-progress/nrt-r1-indexed-freeze06.json",
+            "implementation/status-20260906-tui-iridium-progress/nrt-check04.log",
+            "implementation/status-20260906-tui-iridium-progress/nrt-live-preview-snapshot.json",
+            "implementation/status-20260906-publication-binding-registration/evidence.json",
+            "implementation/status-20260906-ncp-assembly/status.json"
+          ],
+          "parallel_authoring_note": "R6 pure selection.rs and selection_tests.rs early authoring is registered; no module wiring. R5 remains required for integration, validation and completion.",
+          "repair_briefs": [
+            {
+              "id": "NRT-002",
+              "path": "/private/tmp/norn-retained-tui/docs/design/norn-retained-tui/briefs/NRT-002.json",
+              "status": "registered_implementation_authorized",
+              "proof": "implementation/status-20260906-publication-binding-registration/evidence.json"
+            }
+          ],
+          "latest_checkpoint": "implementation/status-20260906-ncp-assembly/status.json",
+          "persistence_followup": {
+            "status": "preview4_local_verification_passed_release_build_running_not_installed",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation.",
+            "brief": "/private/tmp/norn-retained-tui/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+            "proof": "implementation/preferences-preview4-verified/status.json",
+            "save_trigger_assumption": {
+              "choice": "automatic personal saving; run temporary; local explicit opt-in",
+              "authority": "root working assumption after optional question remained unanswered",
+              "user_confirmed": false
+            }
+          },
+          "saved_preferences_checkpoint": {
+            "status": "installed_local_preview_pending_venue_review",
+            "brief": "/private/tmp/norn-frontend-preferences/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+            "proof": "implementation/preview-0.1.0-preview.4/status.json",
+            "installed": true,
+            "next_preview_version": null,
+            "baseline": "687f2efcdcc4704f6406f01703a1345b794891a2",
+            "full_workspace_verdict": "passed on recorded final manifest",
+            "code_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+            "installed_version": "0.1.0-preview.4"
+          },
+          "ui_polish_checkpoint": {
+            "status": "installed_local_preview_pending_venue_review",
+            "brief": "NUI-002",
+            "code_commit": "264700821b8df07226b0073053297857207b1809",
+            "branch": "codex/norn-ui-polish",
+            "proof": "implementation/preview-0.1.0-preview.3/status.json"
+          },
+          "preview_installation": {
+            "state": "installed_local_preview_pending_venue_review",
+            "version": "norn 0.1.0-preview.4",
+            "installed_path": "/Users/tom/.cargo/bin/norn",
+            "binary_sha256": "a1431e647a23bd372ee1b56b5262f9e27db91e76608ccd3d78da24fa922d0b1e",
+            "receipt_checkout_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+            "installed_melbourne": "2026-09-06T12:46:47.499094+10:00",
+            "previous_binary": "/Users/tom/.local/state/norn/install-backups/20260906-124647-preferences-preview/norn-previous",
+            "previous_sha256": "9023a9c5ad8c539d64e88c8938711a2f456c2c6b93e734bfac086b6164f63665",
+            "proof": [
+              "implementation/preview-0.1.0-preview.4/installation.json",
+              "implementation/preview-0.1.0-preview.4/status.json"
+            ],
+            "saved_frontend_preferences_included": true,
+            "main_landing_or_release": false,
+            "later_Iridium_or_attach_included": false,
+            "spoken_announcement": {
+              "command": [
+                "/usr/bin/say",
+                "Norn updated"
+              ],
+              "exit": 0
+            }
+          }
+        }
+      ],
+      "interaction_followup": {
+        "status": "R1_R3_locally_verified_installed_preview6_R4_paused_uncompiled_main_205_Fable_pending",
+        "proof": "implementation/installed-0.1.0-preview.6-local-checkpoint/status.json",
+        "installed_commit": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+        "installed_version": "0.1.0-preview.6",
+        "r4_status": "written_saved_paused_uncompiled_not_in_preview6",
+        "remaining": "Agent target viewing/messaging and remembered auxiliary content remain pending."
+      }
+    },
+    {
+      "id": "NWP-05.1",
+      "work": "Expose an embeddable wrapped terminal editor view",
+      "closure_evidence": "Host rectangle, optional chrome, no outside painting; wrapping, caret, hit-testing and resize agree.",
+      "status": "implemented_locally_verified_installed;main_205_Fable_pending",
+      "branch": "codex/iridium-cell-composer",
+      "worktree": "/private/tmp/iridium-cell-composer",
+      "base_commit": "0ebd033179b73bcdc9746c050162d75d1cf280bd",
+      "settlement": "implementation/status-20260905-parallel-ui-foundations/iridium-root-settlement.json",
+      "verification_note": "norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed. NUI-003 R4: selected main/fork/subagent history and acknowledged messaging; NUI-003 R6: persistence of selected auxiliary content. Both remain pending. Status and an Agents listing do not grant target messaging authority.",
+      "brief": "/private/tmp/iridium-cell-composer/docs/design/iridium-cell-composer/briefs/ICC-001.json",
+      "proof": [
+        "implementation/status-20260905-channel-settings-repair/iridium-r2-tests-1.json",
+        "implementation/status-20260905-channel-settings-repair/iridium-r2-tests-1.log",
+        "implementation/status-20260905-channel-settings-repair/iridium-r2-clippy-1.json",
+        "implementation/status-20260905-terminal-preview/iridium-r2-local-proof.json",
+        "implementation/status-20260905-ncs-installed/icc-r3-local-proof.json",
+        "implementation/status-20260905-ncs-installed/icc-r3-review.json",
+        "implementation/status-20260906-tui-iridium-progress/icc-r3-highlight-ownership-proof.json",
+        "implementation/status-20260906-tui-iridium-progress/icc-r4-checkpoint.json",
+        "implementation/status-20260906-tui-iridium-progress/icc-r4-benchmarks.json",
+        "implementation/status-20260906-tui-iridium-progress/icc-r4-final-benchmark-review.json",
+        "implementation/status-20260906-tui-iridium-results/icc-r4-local-proof.json",
+        "implementation/status-20260906-tui-iridium-results/icc-r4-workspace-test-census.json",
+        "implementation/status-20260906-iridium-handler-repair/iridium-handler-local-proof.json",
+        "implementation/status-20260906-iridium-handler-repair/ast-repair-review.json",
+        "implementation/status-20260906-iridium-handler-repair/iridium-r3-independent-closure-addendum.json",
+        "implementation/status-20260906-iridium-standalone-selections/iridium-handler-ci-supplement.json",
+        "implementation/status-20260906-ncp-assembly/status.json",
+        "implementation/installed-0.1.0-preview.5-local-checkpoint/status.json"
+      ],
+      "latest_checkpoint": "implementation/installed-0.1.0-preview.5-local-checkpoint/status.json",
+      "historical_status_records": [
+        {
+          "status": "private_feature_checkpoint09cfa793_pushed;landing_and_Norn_integration_pending",
+          "verification_note": "**Iridium's handler structure repair is verified against the current source.** [The independent AST audit](implementation/status-20260906-iridium-handler-repair/ast-original-review.json) found that ICC had extended the existing `KeyboardHandler` implementation inside `keyboard/mod.rs`. The registered two-file repair moved that type and implementation into a 415-line named file, preserving its public path and behavior; the module is now 118 lines. [Independent rereview closed ICC-AST-01](implementation/status-20260906-iridium-handler-repair/ast-repair-review.json): all 40 Rust files in the 43-path source set were scanned, with zero skips or parser errors. Nineteen inherited inventory matches and the unrelated 2,877-line editor core remain explicitly qualified, so there is no aggregate AST-clean claim. [Fresh local proof](implementation/status-20260906-iridium-handler-repair/iridium-handler-local-proof.json) records 403 focused keyboard tests plus complete core, syntax and TUI selections, full workspace tests, strict workspace Clippy, wasm check/Clippy and formatting against exactly `e785bb9ecf5bf4174c7d3ea5b5871b4a4d90bb844605fde43bdd9acd8d5fd6a2`. Full workspace tests passed 3,209 cases with zero failures; [the 20 baseline ignores and actual GPU target counts](implementation/status-20260906-iridium-handler-repair/iridium-handler-workspace-test-census.json) are recorded. The first retry could not find a Metal adapter; that failed result is preserved alongside the successful run in the GPU-capable context. [The R3 syntax-cache ownership closure](implementation/status-20260906-iridium-handler-repair/iridium-r3-independent-closure-addendum.json) is now persisted; its initial review remains unchanged. Earlier 42-path tests and benchmark measurements remain historical. The approximately 70 ms Rust stress cost remains unresolved. No venue receipt, Norn embedding, commit, merge, installation, publication or landing approval is claimed.\n\n**The plain-text composer and Rust stress path have different measured costs.** [The 51 recorded measurements](implementation/status-20260906-tui-iridium-progress/icc-r4-benchmarks.json) use fixed synthetic workloads and arithmetic means, without a timing pass threshold. Plain-text edit + prepare + paint averaged approximately 9–15 µs for the 24-byte short draft, 157–176 µs for the 2,560-byte multiline draft and 324–373 µs for the 17,408-byte Unicode line. That same long line with Rust syntax enabled remained approximately 70.05–70.09 ms, above the documented sub-8ms intent for this fixture. This remains an unresolved performance qualification; the plain-text control does not excuse it. These are aggregate path costs, not isolated Rope copy-on-write, capture-map allocation or parser measurements. These measurements precede the behavior-preserving handler extraction; no new timing claim is made for the current 43-path source snapshot.",
+          "latest_checkpoint": "implementation/status-20260906-runtime-checkpoint/iridium-private-checkpoint.json"
+        },
+        {
+          "status": "private_feature_checkpoint84d026f6_pushed;ICC004_optional_syntax_checking;Norn_integration_and_landing_pending",
+          "verification_note": "Current status and evidence: [Composer assembled; dependency and lifecycle blockers — 6 September 2026](implementation/status-20260906-ncp-assembly/status.json). Earlier verification notes remain in historical_status_records; no old failure is silently presented as a fresh result.",
+          "latest_checkpoint": "implementation/status-20260906-ncp-assembly/status.json"
+        },
+        {
+          "status": "ICC002_003_004_private_checkpoint15673cba_pushed;Norn_dependency_integrated_runtime_validation_and_landing_pending",
+          "verification_note": "Current assembly and cleanup evidence: [Dependencies resolved; test build and cleanup checkpoint — 6 September2026](implementation/status-20260906-ncp-assembly/status.json). Prior resolver failures and checks remain historical; no test or install pass inferred from cargo check."
+        },
+        {
+          "status": "ICC156_private_checkpoint_integrated_in_NCP04bcc9a;strict_checks_pass;runtime_acceptance_and_landing_pending",
+          "branch": "codex/iridium-cell-composer",
+          "worktree": "/private/tmp/iridium-cell-composer",
+          "base_commit": "0ebd033179b73bcdc9746c050162d75d1cf280bd",
+          "settlement": "implementation/status-20260905-parallel-ui-foundations/iridium-root-settlement.json",
+          "verification_note": "Candidate and bounded evidence: [Candidate pushed; strict checks pass, runtime acceptance running — 6 September 2026](implementation/status-20260906-ncp-assembly/status.json). Latest completed TUI run remains833passed/2failed; fixes are committed but runtime acceptance is pending.",
+          "brief": "/private/tmp/iridium-cell-composer/docs/design/iridium-cell-composer/briefs/ICC-001.json",
+          "proof": [
+            "implementation/status-20260905-channel-settings-repair/iridium-r2-tests-1.json",
+            "implementation/status-20260905-channel-settings-repair/iridium-r2-tests-1.log",
+            "implementation/status-20260905-channel-settings-repair/iridium-r2-clippy-1.json",
+            "implementation/status-20260905-terminal-preview/iridium-r2-local-proof.json",
+            "implementation/status-20260905-ncs-installed/icc-r3-local-proof.json",
+            "implementation/status-20260905-ncs-installed/icc-r3-review.json",
+            "implementation/status-20260906-tui-iridium-progress/icc-r3-highlight-ownership-proof.json",
+            "implementation/status-20260906-tui-iridium-progress/icc-r4-checkpoint.json",
+            "implementation/status-20260906-tui-iridium-progress/icc-r4-benchmarks.json",
+            "implementation/status-20260906-tui-iridium-progress/icc-r4-final-benchmark-review.json",
+            "implementation/status-20260906-tui-iridium-results/icc-r4-local-proof.json",
+            "implementation/status-20260906-tui-iridium-results/icc-r4-workspace-test-census.json",
+            "implementation/status-20260906-iridium-handler-repair/iridium-handler-local-proof.json",
+            "implementation/status-20260906-iridium-handler-repair/ast-repair-review.json",
+            "implementation/status-20260906-iridium-handler-repair/iridium-r3-independent-closure-addendum.json",
+            "implementation/status-20260906-iridium-standalone-selections/iridium-handler-ci-supplement.json",
+            "implementation/status-20260906-ncp-assembly/status.json"
+          ],
+          "latest_checkpoint": "implementation/status-20260906-ncp-assembly/status.json"
+        }
+      ]
+    },
+    {
+      "id": "NWP-05.2",
+      "work": "Correct shared grapheme motion/deletion",
+      "closure_evidence": "Combining accents, flags and ZWJ emoji remain intact through movement/deletion; undo restores exact text and selection.",
+      "status": "implemented_locally_verified_installed;main_205_Fable_pending",
+      "brief": "/private/tmp/iridium-cell-composer/docs/design/iridium-cell-composer/briefs/ICC-001.json",
+      "branch": "codex/iridium-cell-composer",
+      "worktree": "/private/tmp/iridium-cell-composer",
+      "base_commit": "0ebd033179b73bcdc9746c050162d75d1cf280bd",
+      "verification_note": "norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed. NUI-003 R4: selected main/fork/subagent history and acknowledged messaging; NUI-003 R6: persistence of selected auxiliary content. Both remain pending. Status and an Agents listing do not grant target messaging authority.",
+      "proof": [
+        "implementation/status-20260905-channel-settings-repair/iridium-r2-tests-1.json",
+        "implementation/status-20260905-channel-settings-repair/iridium-r2-tests-1.log",
+        "implementation/status-20260905-channel-settings-repair/iridium-r2-clippy-1.json",
+        "implementation/status-20260905-terminal-preview/iridium-r2-local-proof.json",
+        "implementation/status-20260905-ncs-installed/icc-r3-local-proof.json",
+        "implementation/status-20260905-ncs-installed/icc-r3-review.json",
+        "implementation/status-20260906-tui-iridium-progress/icc-r3-highlight-ownership-proof.json",
+        "implementation/status-20260906-tui-iridium-progress/icc-r4-checkpoint.json",
+        "implementation/status-20260906-tui-iridium-progress/icc-r4-benchmarks.json",
+        "implementation/status-20260906-tui-iridium-progress/icc-r4-final-benchmark-review.json",
+        "implementation/status-20260906-tui-iridium-results/icc-r4-local-proof.json",
+        "implementation/status-20260906-tui-iridium-results/icc-r4-workspace-test-census.json",
+        "implementation/status-20260906-iridium-handler-repair/iridium-handler-local-proof.json",
+        "implementation/status-20260906-iridium-handler-repair/ast-repair-review.json",
+        "implementation/status-20260906-iridium-handler-repair/iridium-r3-independent-closure-addendum.json",
+        "implementation/status-20260906-iridium-standalone-selections/iridium-handler-ci-supplement.json",
+        "implementation/status-20260906-ncp-assembly/status.json",
+        "implementation/installed-0.1.0-preview.5-local-checkpoint/status.json"
+      ],
+      "latest_checkpoint": "implementation/installed-0.1.0-preview.5-local-checkpoint/status.json",
+      "historical_status_records": [
+        {
+          "status": "private_feature_checkpoint09cfa793_pushed;landing_and_Norn_integration_pending",
+          "verification_note": "**Iridium's handler structure repair is verified against the current source.** [The independent AST audit](implementation/status-20260906-iridium-handler-repair/ast-original-review.json) found that ICC had extended the existing `KeyboardHandler` implementation inside `keyboard/mod.rs`. The registered two-file repair moved that type and implementation into a 415-line named file, preserving its public path and behavior; the module is now 118 lines. [Independent rereview closed ICC-AST-01](implementation/status-20260906-iridium-handler-repair/ast-repair-review.json): all 40 Rust files in the 43-path source set were scanned, with zero skips or parser errors. Nineteen inherited inventory matches and the unrelated 2,877-line editor core remain explicitly qualified, so there is no aggregate AST-clean claim. [Fresh local proof](implementation/status-20260906-iridium-handler-repair/iridium-handler-local-proof.json) records 403 focused keyboard tests plus complete core, syntax and TUI selections, full workspace tests, strict workspace Clippy, wasm check/Clippy and formatting against exactly `e785bb9ecf5bf4174c7d3ea5b5871b4a4d90bb844605fde43bdd9acd8d5fd6a2`. Full workspace tests passed 3,209 cases with zero failures; [the 20 baseline ignores and actual GPU target counts](implementation/status-20260906-iridium-handler-repair/iridium-handler-workspace-test-census.json) are recorded. The first retry could not find a Metal adapter; that failed result is preserved alongside the successful run in the GPU-capable context. [The R3 syntax-cache ownership closure](implementation/status-20260906-iridium-handler-repair/iridium-r3-independent-closure-addendum.json) is now persisted; its initial review remains unchanged. Earlier 42-path tests and benchmark measurements remain historical. The approximately 70 ms Rust stress cost remains unresolved. No venue receipt, Norn embedding, commit, merge, installation, publication or landing approval is claimed.\n\n**The plain-text composer and Rust stress path have different measured costs.** [The 51 recorded measurements](implementation/status-20260906-tui-iridium-progress/icc-r4-benchmarks.json) use fixed synthetic workloads and arithmetic means, without a timing pass threshold. Plain-text edit + prepare + paint averaged approximately 9–15 µs for the 24-byte short draft, 157–176 µs for the 2,560-byte multiline draft and 324–373 µs for the 17,408-byte Unicode line. That same long line with Rust syntax enabled remained approximately 70.05–70.09 ms, above the documented sub-8ms intent for this fixture. This remains an unresolved performance qualification; the plain-text control does not excuse it. These are aggregate path costs, not isolated Rope copy-on-write, capture-map allocation or parser measurements. These measurements precede the behavior-preserving handler extraction; no new timing claim is made for the current 43-path source snapshot.",
+          "latest_checkpoint": "implementation/status-20260906-runtime-checkpoint/iridium-private-checkpoint.json"
+        },
+        {
+          "status": "private_feature_checkpoint84d026f6_pushed;ICC004_optional_syntax_checking;Norn_integration_and_landing_pending",
+          "verification_note": "Current status and evidence: [Composer assembled; dependency and lifecycle blockers — 6 September 2026](implementation/status-20260906-ncp-assembly/status.json). Earlier verification notes remain in historical_status_records; no old failure is silently presented as a fresh result.",
+          "latest_checkpoint": "implementation/status-20260906-ncp-assembly/status.json"
+        },
+        {
+          "status": "ICC002_003_004_private_checkpoint15673cba_pushed;Norn_dependency_integrated_runtime_validation_and_landing_pending",
+          "verification_note": "Current assembly and cleanup evidence: [Dependencies resolved; test build and cleanup checkpoint — 6 September2026](implementation/status-20260906-ncp-assembly/status.json). Prior resolver failures and checks remain historical; no test or install pass inferred from cargo check."
+        },
+        {
+          "status": "ICC156_private_checkpoint_integrated_in_NCP04bcc9a;strict_checks_pass;runtime_acceptance_and_landing_pending",
+          "brief": "/private/tmp/iridium-cell-composer/docs/design/iridium-cell-composer/briefs/ICC-001.json",
+          "branch": "codex/iridium-cell-composer",
+          "worktree": "/private/tmp/iridium-cell-composer",
+          "base_commit": "0ebd033179b73bcdc9746c050162d75d1cf280bd",
+          "verification_note": "Candidate and bounded evidence: [Candidate pushed; strict checks pass, runtime acceptance running — 6 September 2026](implementation/status-20260906-ncp-assembly/status.json). Latest completed TUI run remains833passed/2failed; fixes are committed but runtime acceptance is pending.",
+          "proof": [
+            "implementation/status-20260905-channel-settings-repair/iridium-r2-tests-1.json",
+            "implementation/status-20260905-channel-settings-repair/iridium-r2-tests-1.log",
+            "implementation/status-20260905-channel-settings-repair/iridium-r2-clippy-1.json",
+            "implementation/status-20260905-terminal-preview/iridium-r2-local-proof.json",
+            "implementation/status-20260905-ncs-installed/icc-r3-local-proof.json",
+            "implementation/status-20260905-ncs-installed/icc-r3-review.json",
+            "implementation/status-20260906-tui-iridium-progress/icc-r3-highlight-ownership-proof.json",
+            "implementation/status-20260906-tui-iridium-progress/icc-r4-checkpoint.json",
+            "implementation/status-20260906-tui-iridium-progress/icc-r4-benchmarks.json",
+            "implementation/status-20260906-tui-iridium-progress/icc-r4-final-benchmark-review.json",
+            "implementation/status-20260906-tui-iridium-results/icc-r4-local-proof.json",
+            "implementation/status-20260906-tui-iridium-results/icc-r4-workspace-test-census.json",
+            "implementation/status-20260906-iridium-handler-repair/iridium-handler-local-proof.json",
+            "implementation/status-20260906-iridium-handler-repair/ast-repair-review.json",
+            "implementation/status-20260906-iridium-handler-repair/iridium-r3-independent-closure-addendum.json",
+            "implementation/status-20260906-iridium-standalone-selections/iridium-handler-ci-supplement.json",
+            "implementation/status-20260906-ncp-assembly/status.json"
+          ],
+          "latest_checkpoint": "implementation/status-20260906-ncp-assembly/status.json"
+        }
+      ]
+    },
+    {
+      "id": "NWP-05.3",
+      "work": "Replace Norn composer editing with Iridium kernel",
+      "closure_evidence": "GPU-free dependency graph; pairs, indentation, undo and paste use kernel APIs; one terminal owner and reader.",
+      "status": "implemented_locally_verified_installed;main_205_Fable_pending",
+      "persistence_followup": {
+        "status": "existing_user_local_run_preferences_and_actual_restart_cases_locally_verified_installed;NUI003_R6_auxiliary_content_persistence_pending",
+        "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+        "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation."
+      },
+      "historical_status_records": [
+        {
+          "status": "named",
+          "persistence_followup": {
+            "status": "required_not_implemented;external_registration_prepared",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation."
+          }
+        },
+        {
+          "status": "NCP001_source_assembled_uncompiled;ICC004_dependency_conflict_and_final_checks_pending",
+          "verification_note": "Current status and evidence: [Composer assembled; dependency and lifecycle blockers — 6 September 2026](implementation/status-20260906-ncp-assembly/status.json). Earlier verification notes remain in historical_status_records; no old failure is silently presented as a fresh result.",
+          "latest_checkpoint": "implementation/status-20260906-ncp-assembly/status.json",
+          "persistence_followup": {
+            "status": "NCP_R6_source_and_R7_actual_CLI_restart_fixtures_authored;execution_pending_dependency",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation."
+          }
+        },
+        {
+          "status": "NCP_dependencies_resolved_check_completed_with_warnings;first_TUI_test_build_failed;runtime_validation_and_installation_pending",
+          "verification_note": "Current assembly and cleanup evidence: [Dependencies resolved; test build and cleanup checkpoint — 6 September2026](implementation/status-20260906-ncp-assembly/status.json). Prior resolver failures and checks remain historical; no test or install pass inferred from cargo check.",
+          "persistence_followup": {
+            "status": "R7_actual_CLI_restart_fixtures_authored;dependencies_resolved;execution_pending_test_build_repair",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation."
+          }
+        },
+        {
+          "status": "NCP_dependencies_resolved_TUI_library_833_passed_2_failed;modifier_repairs_acceptance_and_installation_pending",
+          "verification_note": "Exact TUI library result:833 passed,2 failed,0 ignored; source unchanged. See [implementation/status-20260906-ncp-assembly/status.json](implementation/status-20260906-ncp-assembly/status.json). No aggregate NCP or installation pass.",
+          "persistence_followup": {
+            "status": "R7_actual_CLI_restart_fixtures_authored;execution_pending_modifier_repair_and_acceptance_lane",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation."
+          }
+        },
+        {
+          "status": "NCP04bcc9a_candidate_committed_pushed;strict_clippy_fmt_pass;workspace_runtime_running_unaccepted_not_installed",
+          "persistence_followup": {
+            "status": "R7_actual_CLI_restart_fixtures_committed_in04bcc9a;execution_and_acceptance_pending",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation."
+          },
+          "latest_checkpoint": "implementation/status-20260906-ncp-assembly/status.json",
+          "verification_note": "Candidate and bounded evidence: [Candidate pushed; strict checks pass, runtime acceptance running — 6 September 2026](implementation/status-20260906-ncp-assembly/status.json). Latest completed TUI run remains833passed/2failed; fixes are committed but runtime acceptance is pending.",
+          "proof": [
+            "implementation/status-20260906-ncp-assembly/status.json"
+          ]
+        }
+      ],
+      "latest_checkpoint": "implementation/installed-0.1.0-preview.5-local-checkpoint/status.json",
+      "verification_note": "norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed. NUI-003 R4: selected main/fork/subagent history and acknowledged messaging; NUI-003 R6: persistence of selected auxiliary content. Both remain pending. Status and an Agents listing do not grant target messaging authority.",
+      "proof": [
+        "implementation/status-20260906-ncp-assembly/status.json",
+        "implementation/installed-0.1.0-preview.5-local-checkpoint/status.json"
+      ]
+    },
+    {
+      "id": "NWP-05.4",
+      "work": "Add configurable Enter/Option-Enter send behavior",
+      "closure_evidence": "Visible setting; declared default; popup precedence; paste never sends; unavailable modifiers reported; admission failure retains the draft.",
+      "status": "implemented_locally_verified_installed;main_205_Fable_pending",
+      "persistence_followup": {
+        "status": "existing_user_local_run_preferences_and_actual_restart_cases_locally_verified_installed;NUI003_R6_auxiliary_content_persistence_pending",
+        "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+        "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation."
+      },
+      "historical_status_records": [
+        {
+          "status": "named",
+          "persistence_followup": {
+            "status": "required_not_implemented;external_registration_prepared",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation."
+          }
+        },
+        {
+          "status": "NCP001_source_assembled_uncompiled;ICC004_dependency_conflict_and_final_checks_pending",
+          "verification_note": "Current status and evidence: [Composer assembled; dependency and lifecycle blockers — 6 September 2026](implementation/status-20260906-ncp-assembly/status.json). Earlier verification notes remain in historical_status_records; no old failure is silently presented as a fresh result.",
+          "latest_checkpoint": "implementation/status-20260906-ncp-assembly/status.json",
+          "persistence_followup": {
+            "status": "NCP_R6_source_and_R7_actual_CLI_restart_fixtures_authored;execution_pending_dependency",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation."
+          }
+        },
+        {
+          "status": "NCP_dependencies_resolved_check_completed_with_warnings;first_TUI_test_build_failed;runtime_validation_and_installation_pending",
+          "verification_note": "Current assembly and cleanup evidence: [Dependencies resolved; test build and cleanup checkpoint — 6 September2026](implementation/status-20260906-ncp-assembly/status.json). Prior resolver failures and checks remain historical; no test or install pass inferred from cargo check.",
+          "persistence_followup": {
+            "status": "R7_actual_CLI_restart_fixtures_authored;dependencies_resolved;execution_pending_test_build_repair",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation."
+          }
+        },
+        {
+          "status": "NCP_dependencies_resolved_TUI_library_833_passed_2_failed;modifier_repairs_acceptance_and_installation_pending",
+          "verification_note": "Exact TUI library result:833 passed,2 failed,0 ignored; source unchanged. See [implementation/status-20260906-ncp-assembly/status.json](implementation/status-20260906-ncp-assembly/status.json). No aggregate NCP or installation pass.",
+          "persistence_followup": {
+            "status": "R7_actual_CLI_restart_fixtures_authored;execution_pending_modifier_repair_and_acceptance_lane",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation."
+          }
+        },
+        {
+          "status": "NCP04bcc9a_candidate_committed_pushed;strict_clippy_fmt_pass;workspace_runtime_running_unaccepted_not_installed",
+          "persistence_followup": {
+            "status": "R7_actual_CLI_restart_fixtures_committed_in04bcc9a;execution_and_acceptance_pending",
+            "proposal": "session-ready-design/FRONTEND-PREFERENCES-AMENDMENT-20260906.json",
+            "closure": "True fresh-process restart, explicit user/local scope, whole-object precedence, concurrent unrelated MCP write preservation, no automatic service activation."
+          },
+          "latest_checkpoint": "implementation/status-20260906-ncp-assembly/status.json",
+          "verification_note": "Candidate and bounded evidence: [Candidate pushed; strict checks pass, runtime acceptance running — 6 September 2026](implementation/status-20260906-ncp-assembly/status.json). Latest completed TUI run remains833passed/2failed; fixes are committed but runtime acceptance is pending.",
+          "proof": [
+            "implementation/status-20260906-ncp-assembly/status.json"
+          ]
+        }
+      ],
+      "latest_checkpoint": "implementation/installed-0.1.0-preview.6-local-checkpoint/status.json",
+      "verification_note": "norn 0.1.0-preview.5 was installed locally at 2026-09-06T16:49:05.269539+10:00 from private checkpoint 05109e6f6294c9af6f58657722dc7e968857b721. Final unchanged-source workspace/all-target tests: 6378 passed, 0 failed, 0 ignored across 39 suites; doctests: 8 passed, 0 failed, 0 ignored. Strict workspace/all-target Clippy, fmt and release build passed on the same manifest. NUI-003 R1/R2/R3/R5 restore typed agent status, tool name plus original description, item spacing, role/lifecycle styling and actual /pane diff|agents listing. NV-003 R1 passed its actual large committed-region/byte-equal watch regression, and NV-004 R1 passed its actual held-child descriptor admission/permit-return regression. Installed SHA256: d97dcaa072658bb6db5c774e9b2c6b824b178a2678621c2ef785cd193ff10933. [Final local receipt index](/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/implementation/installed-0.1.0-preview.5-local-checkpoint/status.json). Main landing, exact-commit venue 205 and Fable approval remain unclaimed. NUI-003 R4: selected main/fork/subagent history and acknowledged messaging; NUI-003 R6: persistence of selected auxiliary content. Both remain pending. Status and an Agents listing do not grant target messaging authority.",
+      "proof": [
+        "implementation/status-20260906-ncp-assembly/status.json",
+        "implementation/installed-0.1.0-preview.5-local-checkpoint/status.json",
+        "implementation/interaction-workspace1-terminal-20260906/status.json",
+        "implementation/interaction-workspace2-followup-20260906/status.json",
+        "implementation/installed-0.1.0-preview.6-local-checkpoint/status.json"
+      ],
+      "interaction_followup": {
+        "status": "R1_R3_locally_verified_installed_preview6_R4_paused_uncompiled_main_205_Fable_pending",
+        "proof": "implementation/installed-0.1.0-preview.6-local-checkpoint/status.json",
+        "installed_commit": "d4913e67cdb4fba49ff3e4bf8a6c3656c532f7e8",
+        "installed_version": "0.1.0-preview.6",
+        "r4_status": "written_saved_paused_uncompiled_not_in_preview6",
+        "remaining": "Agent target viewing/messaging and remembered auxiliary content remain pending."
+      }
+    },
+    {
+      "id": "NWP-06.1",
+      "work": "Bind manifest changes to authenticated authority",
+      "closure_evidence": "Adversarial fixtures for unrelated signers superseding a handle or asserting identity; preserve signer provenance through projection; grants are enforced separately from declared intent.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-06.2a",
+      "work": "Complete unified body declaration and action transport",
+      "closure_evidence": "Typed inert/process/module forms; generic admitted action reaches its implementation and returns a correlated typed result; reuse existing R1b work.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-06.2b",
+      "work": "Launch and own declared process implementations",
+      "closure_evidence": "Existing R2c work: launch/readiness/failure/stop/archive are observable; no kernel restart.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-06.2c",
+      "work": "Host live Beamr modules",
+      "closure_evidence": "Independent load/invoke/replace/unload proof, failure containment and permitted host operations; process-body success does not close this row.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-06.3",
+      "work": "Implement generation-safe hot replacement and removal",
+      "closure_evidence": "Candidate validation before activation, in-flight calls retain their generation, revoked calls refused, unload/drain and failure recovery proved.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-06.4",
+      "work": "Replace Norn's Meridian extension bridge with Liminal",
+      "closure_evidence": "Old bridge removed in full with caller/config migration; default coding capabilities remain useful and fast; no second permanent plugin protocol.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-06.5",
+      "work": "Demonstrate agents extending the live environment",
+      "closure_evidence": "Agent authors a small typed module, checks/builds it, registers it, invokes it, updates it and removes it without restarting the host; permissions remain host-owned.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-06.6",
+      "work": "Apply manifest changes through pushed incremental updates",
+      "closure_evidence": "Boot replay then subscription; no idle polling/full-history re-read; reconnect without lost or duplicate transitions.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-06.7",
+      "work": "Preserve a typed composer extension boundary",
+      "closure_evidence": "Append, transform and annotate remain distinct; changes use Iridium commands and preserve undo/history; reconcile with existing Manifold direction.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-07.1",
+      "work": "Replace unreliable battery verdict path",
+      "closure_evidence": "Deliberately failing leg yields nonzero/red; fmt failures cannot pass; source is not restored destructively; exact declared legs run via Aion workflow on 205.",
+      "status": "NV001_skip_contract_committed_at_c0; exact_six_leg_205_battery_green",
+      "verification_note": "Explicit opt-in live OpenAI workflow, fail-loud Python/permission prerequisites and factual vacuity-marker contract are committed. All six declared c0 legs passed with no waivers/ignored/problems. The live target was compiled/linted only; no provider call or global Aion closure is claimed."
+    },
+    {
+      "id": "NWP-07.2",
+      "work": "Bind release proof to measured source and artifact",
+      "closure_evidence": "Exact commit/clean inputs throughout measurement; receipt → build → artifact digest linkage; prior Aion dirty-source finding revalidated and closed on the release path.",
+      "status": "exact911_receipt_native_artifact_install_and_main_linked; global_Aion_X1_open",
+      "verification_note": "Receipt f5d86f7c… binds all six green legs to clean911 and matching declaration/guard hashes. Native/install digest3755fa4c… matches; local and remote main are911. Pre/post checks cannot detect edit-execute-restore within a leg; Aion X.1 is not closed.",
+      "local_preview_checkpoint": {
+        "version": "norn 0.1.0-preview.1",
+        "proof": "implementation/preview-0.1.0-preview.1/status.json",
+        "main_release_pending": true
+      }
+    },
+    {
+      "id": "NWP-07.3",
+      "work": "Define and produce release artifacts",
+      "closure_evidence": "Supported OS/architecture matrix, version and destination settled; dependency packaging checked; matching provenance, checksums/signatures and release notes; install/run proof per supported target.",
+      "status": "exact5227db4_native_artifact_locally_installed;public_release_pending",
+      "verification_note": "Native binarydc61b730… matches exact5227db4 with green six-leg205 receipt and installed smokes. Main local+origin updated; user files/Cargo metadata preserved. Public release version/platform matrix/signing/installer remain open.",
+      "local_preview_checkpoint": {
+        "state": "installed_local_preview_pending_venue_review",
+        "version": "norn 0.1.0-preview.4",
+        "installed_path": "/Users/tom/.cargo/bin/norn",
+        "binary_sha256": "a1431e647a23bd372ee1b56b5262f9e27db91e76608ccd3d78da24fa922d0b1e",
+        "receipt_checkout_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+        "installed_melbourne": "2026-09-06T12:46:47.499094+10:00",
+        "previous_binary": "/Users/tom/.local/state/norn/install-backups/20260906-124647-preferences-preview/norn-previous",
+        "previous_sha256": "9023a9c5ad8c539d64e88c8938711a2f456c2c6b93e734bfac086b6164f63665",
+        "proof": [
+          "implementation/preview-0.1.0-preview.4/installation.json",
+          "implementation/preview-0.1.0-preview.4/status.json"
+        ],
+        "saved_frontend_preferences_included": true,
+        "main_landing_or_release": false,
+        "later_Iridium_or_attach_included": false,
+        "spoken_announcement": {
+          "command": [
+            "/usr/bin/say",
+            "Norn updated"
+          ],
+          "exit": 0
+        }
+      }
+    },
+    {
+      "id": "NWP-07.4",
+      "work": "Provide a verified one-line installer",
+      "closure_evidence": "Real published URL; version pinning, platform detection, integrity/authenticity checks, atomic install and explicit errors; no required Rust toolchain or elevated install.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-07.5",
+      "work": "Define update, rollback, uninstall and live-host upgrades",
+      "closure_evidence": "Version handshake, active sessions preserved or explicit draining, documented compatibility and recovery; interrupted updates leave a usable installation.",
+      "status": "named",
+      "local_preview_checkpoint": {
+        "state": "installed_local_preview_pending_venue_review",
+        "version": "norn 0.1.0-preview.4",
+        "installed_path": "/Users/tom/.cargo/bin/norn",
+        "binary_sha256": "a1431e647a23bd372ee1b56b5262f9e27db91e76608ccd3d78da24fa922d0b1e",
+        "receipt_checkout_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+        "installed_melbourne": "2026-09-06T12:46:47.499094+10:00",
+        "previous_binary": "/Users/tom/.local/state/norn/install-backups/20260906-124647-preferences-preview/norn-previous",
+        "previous_sha256": "9023a9c5ad8c539d64e88c8938711a2f456c2c6b93e734bfac086b6164f63665",
+        "proof": [
+          "implementation/preview-0.1.0-preview.4/installation.json",
+          "implementation/preview-0.1.0-preview.4/status.json"
+        ],
+        "saved_frontend_preferences_included": true,
+        "main_landing_or_release": false,
+        "later_Iridium_or_attach_included": false,
+        "spoken_announcement": {
+          "command": [
+            "/usr/bin/say",
+            "Norn updated"
+          ],
+          "exit": 0
+        }
+      },
+      "saved_preferences_checkpoint": {
+        "status": "installed_local_preview_pending_venue_review",
+        "brief": "/private/tmp/norn-frontend-preferences/docs/design/norn-frontend-preferences/briefs/NFP-001.json",
+        "proof": "implementation/preview-0.1.0-preview.4/status.json",
+        "installed": true,
+        "next_preview_version": null,
+        "baseline": "687f2efcdcc4704f6406f01703a1345b794891a2",
+        "full_workspace_verdict": "passed on recorded final manifest",
+        "code_commit": "fe6af3209d2498f5a67100552511078a3b749b74",
+        "installed_version": "0.1.0-preview.4"
+      }
+    },
+    {
+      "id": "NWP-00.1",
+      "work": "Reconcile Norn model/compaction/Claude branches and Manifold attach work",
+      "closure_evidence": "Cleanup through 2026-09-06 12:58 Melbourne: 3 Norn + 1 Iridium worktrees archived/verified/removed; 4 local + 3 origin aliases retired by ancestry to pushed d27259c; 38.89 GiB allocated inactive caches removed. Active NFP/ICC worktrees and genuinely unmerged Claude SDK parity retained. Proof: implementation/cleanup-20260906-125130/status.json.",
+      "status": "NSP168d9cd_draft_pushed_worktree_removed;main_blocked_NSP_LIFECYCLE_1_and_NSP_UNDERSCORE_1;other_reconciliation_retained",
+      "verification_note": "Current assembly and cleanup evidence: [Dependencies resolved; test build and cleanup checkpoint — 6 September2026](implementation/status-20260906-ncp-assembly/status.json). Prior resolver failures and checks remain historical; no test or install pass inferred from cargo check.",
+      "prior_checkpoints": [
+        {
+          "closure_evidence": "PARTLY RECONCILED. Nineteen already-merged local refs removed with a backup bundle. The D3 local branch was retired after exact aggregate-tree and residual-patch proof; its remote ref remains. Claude SDK, HerdR and the archival prototype are preserved, as is remaining Manifold attach reconciliation. Evidence: /private/tmp/nwp-01-proof/merged-branch-cleanup.json, d3-branch-reconciliation.json and d3-branch-retirement.json.",
+          "status": "partly_reconciled;23_local_refs_retired_with_proof;only_main_worktree_remains",
+          "verification_note": "The two merged feature worktrees/local branches were retired after main reached911, with remote branches and verified bundle retained. Combined with21 earlier retirements,23 local refs are retired. All original untracked main files are preserved; unrelated retained tips/Manifold reconciliation remain explicit."
+        }
+      ],
+      "historical_status_records": [
+        {
+          "status": "partly_reconciled;superseded_worktrees_aliases_and_inactive_caches_cleaned;claude_sdk_parity_requires_named_integration",
+          "verification_note": "This operation is not a main merge. Historical totals and receipts remain preserved; no cumulative branch-retirement total is inferred. Parity has 9 unique commits, 25 changed paths and 5 textual conflicts. Archive records preserve all retired source paths. Installed preview.4 and verified rollback remain available; no new installation or venue verdict."
+        },
+        {
+          "status": "NSP168d9cd_development_checkpoint_pushed;main_blocked_NSP_LIFECYCLE_1_and_NSP_UNDERSCORE_1;other_reconciliation_retained",
+          "verification_note": "Current status and evidence: [Composer assembled; dependency and lifecycle blockers — 6 September 2026](implementation/status-20260906-ncp-assembly/status.json). Earlier verification notes remain in historical_status_records; no old failure is silently presented as a fresh result.",
+          "latest_checkpoint": "implementation/status-20260906-ncp-assembly/status.json"
+        }
+      ],
+      "latest_checkpoint": "implementation/status-20260906-ncp-assembly/status.json",
+      "proof": [
+        "implementation/status-20260906-ncp-assembly/status.json"
+      ],
+      "latest_incremental_cleanup": {
+        "at_melbourne": "2026-09-06T18:13:31.234460+10:00",
+        "path": "/private/tmp/norn-active-target/debug/incremental",
+        "allocated_bytes_before": 22009245696,
+        "entries_before": 26704,
+        "scope": "Only inactive incremental compilation data; dependency artifacts, release cache, installed binary, source trees and proof retained.",
+        "guard": "Exclusive nonblocking Cargo debug cache lock held; no cargo/rustc/clippy-driver process present.",
+        "removed": true,
+        "proof": "implementation/installed-0.1.0-preview.6-local-checkpoint/inactive-incremental-cleanup.json"
+      }
+    },
+    {
+      "id": "NWP-00.2",
+      "work": "Resolve Aion's conflicting release tags",
+      "closure_evidence": "NAMED. Local and remote `aion-v0.8.0` and `v0.11.0` target different commits. Main refreshed without replacing either tag.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-00.3",
+      "work": "Integrate this draft and amend stale design passages",
+      "closure_evidence": "NAMED. Register settled decisions/briefs/branches in the estate index; specifically replace the old no-Norn-supervisor direction and Meridian assumptions.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-00.4",
+      "work": "Carry the twelve earlier Cambium/Aion findings to their existing owners",
+      "closure_evidence": "NAMED. [Earlier review](EARLIER-REVIEW.md) preserved with its original commit/proof limits; these are not newly claimed current defects or added Norn implementation scope.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-00.5",
+      "work": "Correct context-file freshness when content changes without a new mtime",
+      "closure_evidence": "NAMED. [Confirmed venue mechanism](evidence/prompt-refresh-diagnostic.md); production loader compares only mtime. The NV-001 fixture repair establishes test preconditions and does not close this production finding. Exact implementation wall and branch pending.",
+      "status": "named"
+    },
+    {
+      "id": "NWP-08.1",
+      "work": "Durable file activity and explicit comparison baselines",
+      "closure_evidence": "Actual before/after content and trusted author survive diagnostic failure, commit/revert/rename and resume; Git and session-start comparisons never substitute for one another.",
+      "status": "wanted_documented_later_implementation"
+    },
+    {
+      "id": "NWP-08.2",
+      "work": "Iridium file workspace and guarded human/agent editing",
+      "closure_evidence": "Conversation beside workspace, full-width composer below, no global header; diff/file views share resource identity; one owner serializes participating writes; dirty drafts and undo survive updates; stale saves fail explicitly; external-writer limitations remain truthful.",
+      "status": "wanted_documented_later_implementation"
+    },
+    {
+      "id": "NWP-08.3",
+      "work": "Goals, scoped tasks and agent conversations",
+      "closure_evidence": "Reuse task-group and coordination authorities through pushes; separate thread drafts and visible message targets; lifecycle and observer/control rights remain distinct.",
+      "status": "wanted_documented_later_implementation"
+    },
+    {
+      "id": "NWP-08.4",
+      "work": "Prompt, skill, tool and model controls",
+      "closure_evidence": "Show source/scope, active/pending/refused settings, and named application boundaries; no frontend authority bypass or manufactured workflow verdict.",
+      "status": "wanted_documented_later_implementation"
+    },
+    {
+      "id": "NWP-08.5",
+      "work": "Shared panel contract for Liminal modules",
+      "closure_evidence": "Built-ins and modules use the same typed, permission-checked data/action boundary; collapsed panels retain bounded resources and preserve drafts.",
+      "status": "wanted_documented_later_implementation"
+    },
+    {
+      "id": "NWP-08.6",
+      "work": "Per-request output contracts and structured result views",
+      "closure_evidence": "Interactive/driven requests capture effective schema and owner; attachment preserves workflow contract; backend enforcement and local validation precede committed success; message-local views show the same result without changing the transcript or request.",
+      "status": "wanted_documented_later_implementation"
+    },
+    {
+      "id": "NWP-00.6",
+      "work": "Diagnose the existing account-catalog lock-test timing failure",
+      "closure_evidence": "FIXED AS A TEST PRECONDITION. Successful named-login preparation now uses ordinary declared lock timing; the short 20 ms timeout is applied only immediately before deliberate catalog-lock fault injection. Production lock code is unchanged. Candidate16 full workspace tests and doctests passed on 205. Candidate17 is committed, with exact-commit battery still pending. Source: crates/norn/src/provider/openai_oauth/account_catalog_tests.rs:261; proof: /private/tmp/nwp-01-proof/candidate16-tests-output.txt. The earlier source diagnosis remains historical.",
+      "status": "fixture_timing_fixed_in_committed_candidate; candidate16_full_suite_passed"
+    },
+    {
+      "id": "NWP-03.5",
+      "work": "Accept complete runtime MCP definitions from repeated --mcp-config JSON|PATH for interactive, print and driven launches",
+      "closure_evidence": "NML-001 strict parsing/duplicate refusal and complete-entry CLI precedence; real process args/env/HTTP-header settings and driven id-matched failures; explicit channel policies; no persistent writes or secret-value diagnostics; exact candidate battery, review and installed identity recorded separately.",
+      "status": "execution_complete;installed_and_merged;exact205_green",
+      "brief": "/Users/tom/Developer/ablative/stack/norn/docs/design/norn-mcp-launch/briefs/NML-001.json",
+      "branch": "main",
+      "worktree": "/Users/tom/Developer/ablative/stack/norn",
+      "verification_note": "Exact5227db4 native build/install checks and all six205 legs passed with14 venue bindings. NML-001 plus test-only NV-002 are installed and merged; user files preserved and temporary worktree/local branch removed. Previous396 red receipt and original isolated pass remain historical; neither establishes its failure cause. Fable/live-adapter/globalX1/canonical retention remain separate.",
+      "proof": [
+        "implementation/status-20260905-mcp-launch-final/installation.json",
+        "implementation/status-20260905-mcp-launch-final/native-build.json",
+        "implementation/status-20260905-mcp-launch-final/battery-execution-result.json",
+        "implementation/status-20260905-mcp-launch-final/battery-receipt.json",
+        "implementation/status-20260905-mcp-launch-final/battery-venue-binding.json",
+        "implementation/status-20260905-mcp-launch-final/battery-worker-stop.json",
+        "implementation/status-20260905-mcp-launch-final/main-merge.json",
+        "implementation/status-20260905-mcp-launch-final/cleanup.json",
+        "implementation/status-20260905-mcp-launch-final/nv002-two-line-edit.json",
+        "implementation/status-20260905-mcp-launch-final/full-battery-capture.json",
+        "implementation/status-20260905-mcp-launch-final/helper-provenance.json",
+        "implementation/status-20260905-mcp-launch-final/final-bundle.json"
+      ],
+      "commit": "5227db49d805a4c0729912dca3832c842c8f39e1",
+      "defaults_commit": "e16df0e89017dc2ca5384cb06a94e05553bbf9f3"
+    },
+    {
+      "id": "NWP-00.7",
+      "work": "Preserve complete failed-leg evidence beyond Aion battery teardown",
+      "closure_evidence": "Separate reviewed Aion brief/file wall; retain full raw failure output outside the removed run root with source/run/artifact integrity and appropriate access/retention policy, or prove a compatible structured producer and extraction. Preserve Norn harness=false suites mcp_channels_stdio, mcp_launch and mcp_channels plus separate doctests. A failed assertion before the final tail must remain retrievable after teardown.",
+      "status": "confirmed_evidence_retention_gap;separate_Aion_design_and_brief_required;not_implemented",
+      "brief": null,
+      "branch": null,
+      "worktree": null,
+      "proof": [
+        "implementation/status-20260905-mcp-launch/failure-retention-diagnosis.json",
+        "implementation/status-20260905-mcp-launch/exact-battery-execution-result.json"
+      ],
+      "verification_note": "Exact396 test failure retains the name and final16KiB tail but no detailed error. Structured extraction requires both a declared problems contract and compatible nextest events; empty schema fields, a bound alone or removing --nocapture do not supply that producer. Existing retention duplicates bounded JSON, and full battery.log is removed by teardown. No Aion, runner or gates edits were made. A read-only inotify/open-descriptor observer retained the second run full log (765101 bytes, sha e652aff…) across teardown. This run-specific evidence capture does not repair canonical Aion retention."
+    },
+    {
+      "id": "NWP-03.6",
+      "work": "Persist channel policy and limits with optional default delivery and strict named overrides",
+      "status": "execution_complete_exact205_green_installed_main_merged_and_pushed",
+      "brief": "/Users/tom/Developer/ablative/stack/norn/docs/design/norn-channel-settings/briefs/NCS-001.json",
+      "branch": "codex/norn-channel-settings",
+      "worktree": "/Users/tom/Developer/ablative/stack/norn",
+      "closure_evidence": "NCS-001 typed persistent/inline layers and flag precedence; approved stdio optional default capability negotiation; strict named wake/next-turn/off; missing/malformed capability and actual-mode refusal; explicit positive count/byte limits and overflow; immutable policy through MCP reload; real settings/stdin/stdio process tests, strict checks, exact candidate205 receipt and installed-artifact proof.",
+      "verification_note": "Exact bdfd0433 attempt10 green on all six declared legs with14 venue bindings, no waivers and safe worker stop. Installed23:44:10 Melbourne5Sep2026 as f44849b9; main fast-forwarded and pushed, tracked clean and11 owner untracked entries preserved. Live inference not run; fresh Fable and global Aion X.1 remain separate. Earlier red/refused attempts preserved.",
+      "proof": [
+        "implementation/status-20260905-channel-settings-local/fmt-3.json",
+        "implementation/status-20260905-channel-settings-local/fmt-3.log",
+        "implementation/status-20260905-channel-settings-local/clippy-2.json",
+        "implementation/status-20260905-channel-settings-local/clippy-2.log",
+        "implementation/status-20260905-channel-settings-local/process-tests-1.json",
+        "implementation/status-20260905-channel-settings-local/process-tests-1.log",
+        "implementation/status-20260905-channel-settings-local/stdio-tests-1.json",
+        "implementation/status-20260905-channel-settings-local/stdio-tests-1.log",
+        "implementation/status-20260905-channel-settings-local/cli-channel-tests-1.json",
+        "implementation/status-20260905-channel-settings-local/cli-channel-tests-1.log",
+        "implementation/status-20260905-channel-settings-local/candidate.json",
+        "implementation/status-20260905-channel-settings-local/ast-policy.json",
+        "implementation/status-20260905-channel-settings-local/ast-audit.log",
+        "implementation/status-20260905-channel-settings-local/native-build.json",
+        "implementation/status-20260905-channel-settings-local/native-build.log",
+        "implementation/status-20260905-channel-settings-local/battery-attempt-1-preflight.stderr",
+        "implementation/status-20260905-channel-settings-local/battery-attempt-2-preflight.stderr",
+        "implementation/status-20260905-channel-settings-local/battery-attempt-3-preflight.stderr",
+        "implementation/status-20260905-channel-settings-local/battery-attempt-4-preflight.stderr",
+        "implementation/status-20260905-channel-settings-local/battery-attempt-5-preflight.stderr",
+        "implementation/status-20260905-channel-settings-local/evidence.json",
+        "implementation/status-20260905-channel-settings-repair/battery7-receipt.json",
+        "implementation/status-20260905-channel-settings-repair/battery7-full-capture.json",
+        "implementation/status-20260905-channel-settings-repair/battery7-worker-stop.json",
+        "implementation/status-20260905-channel-settings-repair/battery7-cache-incident.json",
+        "implementation/status-20260905-channel-settings-repair/help-fix-checks.json",
+        "implementation/status-20260905-channel-settings-repair/help-fix-ast.json",
+        "implementation/status-20260905-channel-settings-repair/native-bdfd043-build.json",
+        "implementation/status-20260905-channel-settings-repair/battery8-preflight.stderr",
+        "implementation/status-20260905-channel-settings-repair/evidence.json",
+        "implementation/status-20260905-terminal-preview/battery9-preflight.stderr",
+        "implementation/status-20260905-terminal-preview/evidence.json",
+        "implementation/status-20260905-ncs-installed/battery10-execution-result.json",
+        "implementation/status-20260905-ncs-installed/battery10-receipt.json",
+        "implementation/status-20260905-ncs-installed/battery10-venue-binding.json",
+        "implementation/status-20260905-ncs-installed/battery10-worker-stop.json",
+        "implementation/status-20260905-ncs-installed/installation.json",
+        "implementation/status-20260905-ncs-installed/main-merge-preservation.json",
+        "implementation/status-20260905-ncs-installed/clean-worktree-result.json"
+      ],
+      "commit": "bdfd0433b68d4fd3da6817c343381049a00126c2",
+      "former_worktree": "/private/tmp/norn-channel-settings",
+      "worktree_status": "clean_feature_worktree_removed_without_force;branch_refs_and_proofs_retained"
+    },
+    {
+      "id": "NWP-03.7",
+      "work": "Provide safe actionable MCP subprocess startup diagnostics",
+      "status": "desired;incident_recorded;separate_design_and_executable_brief_required",
+      "brief": null,
+      "branch": null,
+      "worktree": null,
+      "closure_evidence": "A separate reviewed file wall and real process fixtures must show a missing server configuration produces a source/stage-specific diagnostic with a safe actionable referent, preserving relevant exit/error evidence without exposing secrets. Distinguish process launch/configuration, MCP initialization/capability, project approval and channel policy errors. Preserve optional-source failure isolation versus required-source refusal. No blind raw stderr/config/environment/header dump or invented credential/enrolment fallback.",
+      "verification_note": "Tom’s Cambium launch incident was directly reproduced by the coordinator as missing /Users/tom/.cambium/norn.seat.json with no seat directory. Location/enrolment details are pending. This records a desired diagnostic improvement and application setup issue; it does not establish a Norn channel-negotiation defect or implement a fix.",
+      "proof": [
+        "implementation/status-20260905-channel-settings-local/cambium-seat-incident.json"
+      ]
+    }
+  ],
+  "source_next_features": "/Users/tom/.codex/visualizations/2026/09/04/01a06e84-dc47-79f2-afff-893a3847d20e/norn-work-program/NEXT-FEATURES-20260906.json",
+  "source_next_features_document": {
+    "id": "NORN-NEXT-FEATURES-20260906",
+    "date_melbourne": "2026-09-06",
+    "status": "discussion_plan_not_implementation_briefs",
+    "baseline": {
+      "last_verified_main": "a929c647b91e69fbdc759a72aa5ef9dd734ddb0f",
+      "source_version": "0.1.0-preview.7",
+      "installed_version": "not rechecked for this planning task",
+      "note": "Main and origin/main were verified equal in the preceding merge turn. Historical CURRENT/NEXT install summaries do not establish current installation."
+    },
+    "identity_policy": "Discussion checkpoint numbers do not replace or renumber the 54 existing programme rows. New messaging/mode/voice requirements need scoped JSON briefs before implementation. No new feature implementation is authorized by writing this plan.",
+    "delivery_contract": [
+      "Agree one checkpoint and its acceptance before implementation.",
+      "Register its JSON brief, file wall and failure-path checks.",
+      "Complete required code-quality and relevant runtime checks without adding unrelated work during release.",
+      "Merge and push completed work to main before calling the normal reinstall path ready; do not silently install a divergent branch.",
+      "Verify version/source/artifact and preserve rollback; announce Norn updated only after an actual successful installation.",
+      "Stop at the usable checkpoint for Tom to try it before starting the next feature.",
+      "Keep one current status summary; retain old evidence as history instead of accumulating contradictory current-state paragraphs."
+    ],
+    "checkpoints": [
+      {
+        "id": "01",
+        "title": "Channel launch ergonomics",
+        "relative_size": "Small–medium",
+        "existing_programme_links": "NWP-03",
+        "scope": [
+          "Save a default wake policy for approved servers advertising Channels, with named off/wake/next-turn overrides.",
+          "Declare documented, overridable retention defaults; settle values from existing operator choices rather than inventing caps.",
+          "Ordinary launch needs only its MCP definition when saved policy is present; preserve compatible server configuration shapes."
+        ],
+        "done_when": "Launch the same game/channel from a short command and saved settings; ordinary MCP tools and exclusions still work."
+      },
+      {
+        "id": "02",
+        "title": "Agent directory, viewing and direct addressing",
+        "relative_size": "Medium",
+        "existing_programme_links": "NWP-08 / NUI-003 R4",
+        "scope": [
+          "One live directory with stable identity, hierarchy, aliases, status and permitted routes.",
+          "Select/view main, forks and subagents; @ autocomplete chooses a visible To recipient.",
+          "Each draft retains its recipient; viewing another conversation never silently retargets it.",
+          "Unknown, ambiguous or stopped recipients fail explicitly; show accepted/queued/failed acknowledgements."
+        ],
+        "done_when": "Switch between actual main/fork/subagent conversations and send a draft to the selected recipient without admitting it to another agent."
+      },
+      {
+        "id": "03",
+        "title": "CC mentions and unified agent messaging",
+        "relative_size": "Medium",
+        "existing_programme_links": "NWP-08 / new addressing brief",
+        "scope": [
+          "Recognized @ mentions add CC recipients; show To/CC before sending and exclude literal/code/quoted occurrences.",
+          "One logical message identity, sender and recipient context, with a delivery result for each recipient.",
+          "Human mentions and agent messages resolve through the same structured routing envelope; do not scan arbitrary model prose for side effects.",
+          "Publish hierarchy/directory updates to agents; retire the separate send-message tool only when equivalent routing and acknowledgements work."
+        ],
+        "done_when": "Main receives a message also addressed to @builder; each receives one copy with correct context, and partial delivery failure remains visible."
+      },
+      {
+        "id": "04",
+        "title": "Visible per-agent message queue",
+        "relative_size": "Medium",
+        "existing_programme_links": "NWP-08 / new queue brief",
+        "scope": [
+          "Runtime-owned, visible queue with recipient/CC, state, edit/reorder/remove/send-now/pause controls.",
+          "FIFO per recipient: release exactly one queued input after a normal completed turn, and wait for the resulting turn before releasing another.",
+          "Explicit operator stop/pause pauses the queue; failure or cancellation does not silently advance it.",
+          "Coordinate queued and channel inputs through one admission owner; expose partial fan-out outcomes and avoid duplicate retries.",
+          "Preserve queue records across host detach; define restart recovery so uncertain submissions are never silently replayed."
+        ],
+        "done_when": "Queue three messages, observe three sequential turns, then pause and edit the remainder without losing or duplicating input."
+      },
+      {
+        "id": "05",
+        "title": "Independent session host and attach/detach",
+        "relative_size": "Large",
+        "existing_programme_links": "NWP-02",
+        "scope": [
+          "Move live provider, tools, MCPs, queue, cwd and root cancellation ownership out of the TUI into a Norn host.",
+          "First checkpoint: one independently running session and read-only observer; second: interactive attach/detach to that same session.",
+          "Attach receives semantic Ready state then ordered updates; history and large bodies load on demand.",
+          "Detach, cancel-turn and stop-session are separate; no Aion dependency, PTY replay or server-rendered terminal frames.",
+          "Start sessions with hosting support; do not claim arbitrary old foreground processes can be adopted.",
+          "Show actual session cwd without claiming to change the invoking parent shell; define version compatibility and control authority."
+        ],
+        "done_when": "Start background work, attach, detach during a tool, and reattach to the same session and running work with no replayed effects."
+      },
+      {
+        "id": "06",
+        "title": "Additive feature activations",
+        "relative_size": "Medium",
+        "existing_programme_links": "new mode brief / NWP-08",
+        "scope": [
+          "Use /plan, /goal and /coordinate as independently composable feature activations, not exclusive operating modes; remove /implement.",
+          "Persist and display active features; define their target scope, inheritance and changes during active work.",
+          "The user request determines whether planning means design, writing a plan, executing it, or a combination; activation alone does not authorize new effects.",
+          "Additional user instructions can tailor the planning process and deliverables, with their scope and provenance retained.",
+          "Feature activation does not broaden permissions; explicit operator stop overrides every activation."
+        ],
+        "done_when": "Activate planning and coordination together, tailor planning with additional instructions, and verify the runtime and UI agree without requiring an implement mode."
+      },
+      {
+        "id": "07",
+        "title": "Linked goals, plans and tasks",
+        "relative_size": "Medium",
+        "existing_programme_links": "NWP-08",
+        "scope": [
+          "Keep goals (desired outcomes), plans (approaches/designs) and tasks (units of work) as distinct records with stable identities and explicit typed links.",
+          "A goal can have plans and tasks attached; a plan can address goals and organize tasks; a task can contribute to goals and implement a part of a plan.",
+          "Allow useful standalone records and multiple links rather than forcing every record into a rigid goal-plan-task hierarchy. Planning will often involve a goal; existing goals should be linked rather than duplicated.",
+          "Use the existing task hierarchy, dependencies and assignments where applicable; linking and dependency ordering are distinct relationships.",
+          "Show related records and progress in the pane and expose the same authoritative state through structured tools.",
+          "Version plan changes and preserve link integrity. Link creation or task completion must not silently complete a goal, grant authority, or trigger execution.",
+          "Preserve linked-record scope and provenance through delegation; define missing/deleted record and dependency-cycle behaviour in the implementation brief."
+        ],
+        "done_when": "Open a goal, inspect its attached plan and tasks, navigate the links in both directions, and revise or execute the plan under the user request without maintaining duplicate checklists."
+      },
+      {
+        "id": "08",
+        "title": "Goal activation and completion protocol",
+        "relative_size": "Medium",
+        "existing_programme_links": "NWP-08 / existing goal tracker",
+        "scope": [
+          "Connect objective, optional budgets and explicit completion conditions to linked plans and tasks; support standalone goals and goals used during planning.",
+          "Distinguish implementation complete, validation complete, merged and installed; attach concrete evidence.",
+          "Enforce pause, blocked and completion semantics; budget limits and queue behaviour remain explicit."
+        ],
+        "done_when": "Run a bounded goal, pause it mid-work, resume it deliberately, and finish only when its stated conditions are met."
+      },
+      {
+        "id": "09",
+        "title": "Coordination activation",
+        "relative_size": "Medium–large",
+        "existing_programme_links": "NWP-08",
+        "scope": [
+          "Use the same directory, @ addressing, tasks and queues for delegation, ownership, handoff and acknowledgements.",
+          "Make delegated scope, dependencies and current ownership visible; prevent duplicate assignment and unacknowledged handoff claims.",
+          "Scope coordination permissions and feature inheritance explicitly; stopped coordination must not launch fresh work."
+        ],
+        "done_when": "Delegate independent tasks to two agents, inspect each conversation, and see acknowledged results update the shared plan."
+      },
+      {
+        "id": "10",
+        "title": "Text-to-speech",
+        "relative_size": "Small–medium",
+        "existing_programme_links": "new voice brief / NWP-06",
+        "scope": [
+          "Define a typed output subscriber and service adapter for an existing user-selected speech service.",
+          "First ship final-message read-aloud with play/stop/replay/voice settings; streaming speech is a later checkpoint.",
+          "Keep playback off the agent stop-hook/control path; start adapters only when enabled/used.",
+          "Bind speech to selected session/output identity and keep local audio ownership with the attached client."
+        ],
+        "done_when": "Read an assistant response aloud, stop it immediately, replay it and change voice without blocking agent execution."
+      },
+      {
+        "id": "11",
+        "title": "Speech-to-text",
+        "relative_size": "Medium",
+        "existing_programme_links": "new voice brief / NWP-05",
+        "scope": [
+          "Define capture/transcription adapters for an existing user-selected service.",
+          "Start with push-to-talk into Iridium; provisional recognition remains separate until committed to the draft.",
+          "Bind recognition to recipient and draft revision; preserve edits and do not misdeliver after switching agents.",
+          "Make direct voice submission a later explicit preference, with visible recording/cancellation/errors."
+        ],
+        "done_when": "Dictate, correct the resulting draft and send using the configured send key; switching agents during recognition cannot retarget it silently."
+      },
+      {
+        "id": "12",
+        "title": "Tool inspection and Markdown composer polish",
+        "relative_size": "Medium; split into small deliveries",
+        "existing_programme_links": "NWP-04 / NWP-05 / VFE-05..09",
+        "scope": [
+          "First independent delivery: syntax highlighting in the Changes/diff pane using the existing syntax highlighter, with path-derived language, syntax-coloured code and distinct added/removed markers/backgrounds. Preserve displayed text, wrapping and selection/copy. Cache highlighted evidence in the existing background job; never parse syntax during paint or scrolling.",
+          "Diff pane follows the latest eligible recorded change by default. Direct inspection (scrolling, selecting/copying text, choosing an older change, or later editing) pins the view and prevents automatic replacement. A visible Latest/resume-follow control returns to the newest change and resumes following; no guessed idle timeout steals the view. Following the diff must not retarget the composer, change the conversation scroll position or admit provider input. Publish only completed matching-revision evidence so stale background jobs cannot replace newer content.",
+          "Give tool groups clearer styling and selected/expanded backgrounds.",
+          "Present arguments as readable fields with a raw input toggle; make shell commands prominent.",
+          "Add Markdown editing conveniences and lazy highlighting only inside language-tagged code fences.",
+          "Keep startup, input, scroll and resize measurements; the known cached-row lookup optimization remains named work, not a completed fix.",
+          "Context usage: show estimated next input tokens divided by the active configured context-window limit as a percentage in the existing status area, with used/limit available. Do not use cumulative billed tokens or assume the model maximum when a smaller limit is configured. Distinguish estimates and unavailable/stale measurements; update on new authoritative estimates and compaction. Show any output reservation or compaction threshold separately rather than silently changing the denominator.",
+          "Tool presentation: vary semantic colours and grouping, add subtle selected/expanded backgrounds and distinct running/success/failure/blocked states, while retaining tool name plus tool_use_description. Keep labels/symbols so colour is not the only cue. Preserve readable contrast, terminal capability handling, selection/copy, compact height and incremental repaint behaviour."
+        ],
+        "done_when": "Watch successive edits automatically appear with syntax highlighting; inspect an older diff without it being replaced, then resume Latest. Wrapping/copy and the composer remain intact. Subsequent deliveries improve tool forms and Markdown writing.",
+        "source_observation": {
+          "changes": "crates/norn-tui/src/app/render/changes.rs currently describes recorded evidence as a String then passes it through safe_text.",
+          "existing_highlighter": "crates/norn-tui/src/render/syntax.rs exposes direct original-byte highlight_spans; the rich edit renderer already emits ContentBlock::Diff.",
+          "status": "Read-only implementation inspection; no source edits or new verification."
+        }
+      },
+      {
+        "id": "13",
+        "title": "Editable workspace and session controls",
+        "relative_size": "Large; separate briefs",
+        "existing_programme_links": "NWP-08",
+        "scope": [
+          "Build on read-only Changes with Iridium file editing, explicit change baselines and guarded saves when agents also edit files.",
+          "Persist auxiliary pane selection and provide Work/Session controls for tasks, agents, model settings, prompts, skills and tool access.",
+          "Keep the composer full width, optional conversation/workspace side-by-side, and no global header consuming vertical space."
+        ],
+        "done_when": "Review and edit a changed file beside the conversation; concurrent changes cannot silently overwrite each other."
+      },
+      {
+        "id": "14",
+        "title": "Request-time output contracts",
+        "relative_size": "Medium",
+        "existing_programme_links": "NWP-08",
+        "scope": [
+          "Attach validated output schemas to individual interactive or driven requests with provider-enforced support where available.",
+          "Expose structured output as an alternate request/result view while preserving the conversation.",
+          "Specify inheritance through queued messages, children and host attachment; do not treat structured output as only a global runtime switch."
+        ],
+        "done_when": "Send a schema-bound request, inspect its structured result, then send an ordinary request in the same session."
+      },
+      {
+        "id": "15",
+        "title": "Modular extension interfaces",
+        "relative_size": "Large; incremental",
+        "existing_programme_links": "NWP-06",
+        "scope": [
+          "Keep an opinionated Norn product with typed, replaceable service/tool/view interfaces.",
+          "Use Liminal for stack interoperability; speech adapters provide a bounded first extension case.",
+          "Reconcile with Manifold before adding a general module host; Meridian is not the intended future path.",
+          "Validate generation changes and in-flight calls during replacement; load services lazily and expose failures."
+        ],
+        "done_when": "Replace one adapter without restarting or corrupting an unrelated running session; broader hot-loaded tools/views require their own proof."
+      }
+    ],
+    "preserved_separate_work": [
+      "Public releases, supported platform matrix, one-line installer/updater and rollback.",
+      "Venue source-binding and exact-commit battery/review work; do not claim missing receipts passed.",
+      "Unfinished Claude SDK integration and archived prototype branches need independent reconciliation.",
+      "Branch/worktree and inactive-build cleanup after merged content and rollback are verified.",
+      "Voluntary game/play integrations remain product use cases, not hidden evaluation work."
+    ],
+    "feature_model": {
+      "authority": "Tom, 6 September 2026: leave out implement; treat modes as feature activations; planning may write and/or execute a plan, include design, and be tailored with additional user prompts; goals/plans/tasks can be linked.",
+      "activations": [
+        "plan",
+        "goal",
+        "coordinate"
+      ],
+      "removed_activation": "implement",
+      "record_links": "Typed links between distinct goals, plans and tasks; no mandatory single hierarchy."
+    },
+    "urgent_ui_repair": {
+      "status": "requested_scope_recorded_not_implemented",
+      "reported_melbourne": "2026-09-07",
+      "scope": [
+        "Hide duplicate raw delivery bookkeeping in the default transcript; render meaningful process/watch notifications compactly while preserving original records.",
+        "Render compaction as a compact expandable entry; show real compaction progress and clear it on completion/failure/cancellation.",
+        "Expose and inspect the mechanical_digest_fallback summarization error; presentation cleanup must not hide a failed summary.",
+        "Investigate search row: \"search: description unavailable · incomplete · result completed · 1ms\". The renderer has a completed result but lacks complete invocation association/metadata; tools.rs result_facts explicitly marks missing arguments as Incomplete while retaining result_state Completed. This is not evidence that search execution failed. Trace live/replay association and missing description, preserve identity, and separate missing history coverage from actual tool failure in compact labels.",
+        "Context usage: show estimated next input tokens divided by the active configured context-window limit as a percentage in the existing status area, with used/limit available. Do not use cumulative billed tokens or assume the model maximum when a smaller limit is configured. Distinguish estimates and unavailable/stale measurements; update on new authoritative estimates and compaction. Show any output reservation or compaction threshold separately rather than silently changing the denominator.",
+        "Tool presentation: vary semantic colours and grouping, add subtle selected/expanded backgrounds and distinct running/success/failure/blocked states, while retaining tool name plus tool_use_description. Keep labels/symbols so colour is not the only cue. Preserve readable contrast, terminal capability handling, selection/copy, compact height and incremental repaint behaviour."
+      ],
+      "placement": "Use the existing status area and tool rows; no global header or extra persistent vertical chrome.",
+      "estimate_boundary": "Earlier 1–2 hour estimate covered notification/compaction display and spinner; search remains undiagnosed and these additions have not been implementation-scoped. No installation or delivery-time guarantee.",
+      "search_report": {
+        "exact_row": "search: description unavailable · incomplete · result completed · 1ms",
+        "source": "crates/norn/src/session_view/tools.rs:146–164",
+        "status": "classification verified; cause of absent invocation association not yet established"
+      }
+    }
+  },
+  "integration_routes": [
+    {
+      "id": "NWP-01.1",
+      "delivery_route": "Existing model foundation; D20 remaining route/catalogue proof",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-01.2",
+      "delivery_route": "Existing model foundation; D20 remaining route/catalogue proof",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-01.3",
+      "delivery_route": "Existing model foundation; D20 remaining route/catalogue proof",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-01.4",
+      "delivery_route": "Existing model foundation; D20 remaining route/catalogue proof",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-01.5",
+      "delivery_route": "Existing model foundation; D20 remaining route/catalogue proof",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-02.0",
+      "delivery_route": "D15 live host and attachment",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-02.1",
+      "delivery_route": "D15 live host and attachment",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-02.2",
+      "delivery_route": "D15 live host and attachment",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-02.3",
+      "delivery_route": "D15 live host and attachment",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-02.4",
+      "delivery_route": "D15 live host and attachment",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-02.5",
+      "delivery_route": "D15 live host and attachment",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-02.6",
+      "delivery_route": "D15 live host and attachment",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-03.1",
+      "delivery_route": "Existing Channels foundation; D05 history; D20 remaining controls/proof",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-03.2",
+      "delivery_route": "Existing Channels foundation; D05 history; D20 remaining controls/proof",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-03.3",
+      "delivery_route": "Existing Channels foundation; D05 history; D20 remaining controls/proof",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-03.4",
+      "delivery_route": "Existing Channels foundation; D05 history; D20 remaining controls/proof",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-04.1",
+      "delivery_route": "Existing retained TUI; D01/D02/D04/D06 repairs and presentation",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-04.2",
+      "delivery_route": "Existing retained TUI; D01/D02/D04/D06 repairs and presentation",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-04.3",
+      "delivery_route": "Existing retained TUI; D01/D02/D04/D06 repairs and presentation",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-04.4",
+      "delivery_route": "Existing retained TUI; D01/D02/D04/D06 repairs and presentation",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-05.1",
+      "delivery_route": "Existing Iridium composer; D06 polish and editor handoff",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-05.2",
+      "delivery_route": "Existing Iridium composer; D06 polish and editor handoff",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-05.3",
+      "delivery_route": "Existing Iridium composer; D06 polish and editor handoff",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-05.4",
+      "delivery_route": "Existing Iridium composer; D06 polish and editor handoff",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-06.1",
+      "delivery_route": "D08/D09 bounded voice adapters; D19 general modules",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-06.2a",
+      "delivery_route": "D08/D09 bounded voice adapters; D19 general modules",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-06.2b",
+      "delivery_route": "D08/D09 bounded voice adapters; D19 general modules",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-06.2c",
+      "delivery_route": "D08/D09 bounded voice adapters; D19 general modules",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-06.3",
+      "delivery_route": "D08/D09 bounded voice adapters; D19 general modules",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-06.4",
+      "delivery_route": "D08/D09 bounded voice adapters; D19 general modules",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-06.5",
+      "delivery_route": "D08/D09 bounded voice adapters; D19 general modules",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-06.6",
+      "delivery_route": "D08/D09 bounded voice adapters; D19 general modules",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-06.7",
+      "delivery_route": "D08/D09 bounded voice adapters; D19 general modules",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-07.1",
+      "delivery_route": "D20 release work and every delivery checkpoint",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-07.2",
+      "delivery_route": "D20 release work and every delivery checkpoint",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-07.3",
+      "delivery_route": "D20 release work and every delivery checkpoint",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-07.4",
+      "delivery_route": "D20 release work and every delivery checkpoint",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-07.5",
+      "delivery_route": "D20 release work and every delivery checkpoint",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-00.1",
+      "delivery_route": "D20 reconciliation; adjacent product owners retain their scope",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-00.2",
+      "delivery_route": "D20 reconciliation; adjacent product owners retain their scope",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-00.3",
+      "delivery_route": "D20 reconciliation; adjacent product owners retain their scope",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-00.4",
+      "delivery_route": "D20 reconciliation; adjacent product owners retain their scope",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-00.5",
+      "delivery_route": "D20 reconciliation; adjacent product owners retain their scope",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-08.1",
+      "delivery_route": "D06/D13/D14/D16/D17 workspace, coordination and contracts",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-08.2",
+      "delivery_route": "D06/D13/D14/D16/D17 workspace, coordination and contracts",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-08.3",
+      "delivery_route": "D06/D13/D14/D16/D17 workspace, coordination and contracts",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-08.4",
+      "delivery_route": "D06/D13/D14/D16/D17 workspace, coordination and contracts",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-08.5",
+      "delivery_route": "D06/D13/D14/D16/D17 workspace, coordination and contracts",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-08.6",
+      "delivery_route": "D06/D13/D14/D16/D17 workspace, coordination and contracts",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-00.6",
+      "delivery_route": "D20 reconciliation; adjacent product owners retain their scope",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-03.5",
+      "delivery_route": "Existing Channels foundation; D05 history; D20 remaining controls/proof",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-00.7",
+      "delivery_route": "D20 reconciliation; adjacent product owners retain their scope",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-03.6",
+      "delivery_route": "Existing Channels foundation; D05 history; D20 remaining controls/proof",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    },
+    {
+      "id": "NWP-03.7",
+      "delivery_route": "Existing Channels foundation; D05 history; D20 remaining controls/proof",
+      "current_verification": "not_performed_in_this_documentation_only_pass"
+    }
+  ],
+  "new_report_topics": [
+    "semantic compaction failure and diagnostic output crossing terminal paint",
+    "resumed history not reachable by scrolling",
+    "readable tool inputs and outputs with raw toggles",
+    "category-coloured names and configurable short running preview",
+    "completion collapse preserving deliberate expansion and selection",
+    "faint expanded-detail and inbound-content backgrounds",
+    "lifetime action log and time-anchored authored memory",
+    "external Locutus voice interfaces mapped; integration gaps and runtime verification pending"
+  ],
+  "execution_status": "planning_only_no_builds_checks_or_runtime_changes",
+  "integration_status": "estate_index_registration_pending_no_new_branch_assigned",
+  "external_voice_integration": {
+    "path": "/Users/tom/Developer/projects/locutus-merge",
+    "handoff": "LOCUTUS-VOICE-20260908.md",
+    "status": "source_and_docs_read_only_no_runtime_verification",
+    "surfaces": [
+      "stdio MCP tools and Claude Channels notifications",
+      "optional Unix-socket NDJSON control door",
+      "locutus-contract typed door, mouth and ears wires"
+    ]
+  }
+}
