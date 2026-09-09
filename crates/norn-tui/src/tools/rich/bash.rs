@@ -130,7 +130,7 @@ mod tests {
 
     fn true_caps() -> TerminalCaps {
         let mut c = TerminalCaps::baseline();
-        c.true_colour = true;
+        c.colour_depth = crate::terminal::colour::ColourDepth::TrueColour;
         c
     }
 

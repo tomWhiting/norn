@@ -62,6 +62,7 @@ pub struct FrontendPreferences {
     pub(crate) submit_mode: InFlightSubmitMode,
     pub(crate) composer_send_key: ComposerSendKey,
     pub(crate) view_shortcuts: Arc<ViewShortcuts>,
+    pub(crate) voice: crate::voice_preferences::VoicePreferences,
 }
 
 impl Default for FrontendPreferences {
@@ -75,6 +76,7 @@ impl Default for FrontendPreferences {
             submit_mode: InFlightSubmitMode::Steer,
             composer_send_key: ComposerSendKey::default(),
             view_shortcuts: Arc::new(ViewShortcuts::default()),
+            voice: crate::voice_preferences::VoicePreferences::default(),
         }
     }
 }
@@ -215,6 +217,7 @@ impl FrontendPreferences {
             return Ok(result);
         };
         let root = object(value, "tui")?;
+        result.voice = crate::voice_preferences::VoicePreferences::decode(root.get("voice"))?;
         if let Some(value) = root.get("view") {
             let view = object(value, "tui.view")?;
             known(
@@ -351,6 +354,7 @@ impl FrontendPreferences {
     pub fn projection(&self) -> Result<Map<String, Value>, crate::TuiError> {
         let (conversation, changes) = self.split.weights();
         let mut result = Map::new();
+        result.insert("voice".to_owned(), self.voice.projection());
         result.insert("view".to_owned(), serde_json::json!({
             "changes_open":self.changes_open,"split":{"conversation":conversation,"changes":changes},
             "upper_pane":match self.upper { UpperPane::Conversation => "conversation", UpperPane::Changes => "changes" },

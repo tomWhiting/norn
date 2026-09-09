@@ -13,14 +13,14 @@ pub mod input;
 pub mod render;
 pub mod terminal;
 pub mod tools;
+pub mod voice_preferences;
 
 pub use app::{AppState, TuiInputs, run_app};
 pub use error::TuiError;
 
-use terminal::caps::TerminalCaps;
 use terminal::setup::TerminalGuard;
 
-/// Validate hard requirements and set up the raw-mode terminal guard.
+/// Set up the raw-mode terminal guard and progressive rendering capabilities.
 ///
 /// This is a low-level entry point used by examples and tests that do
 /// not need a full agent runtime. Production callers should invoke
@@ -37,10 +37,8 @@ use terminal::setup::TerminalGuard;
 ///
 /// # Errors
 ///
-/// Returns [`TuiError::UnsupportedTerminal`] if the terminal does not
-/// meet minimum requirements, [`TuiError::Io`] on terminal I/O errors.
+/// Returns [`TuiError::Io`] on terminal I/O errors.
 pub fn run_tui() -> Result<(), TuiError> {
-    TerminalCaps::check_hard_requirements()?;
     let guard = TerminalGuard::new()?;
     drop(guard);
     Ok(())

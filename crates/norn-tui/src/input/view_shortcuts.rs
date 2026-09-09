@@ -20,9 +20,11 @@ pub(crate) enum ViewAction {
     Export,
     FocusNext,
     FocusPrevious,
+    VoiceRead,
+    VoiceStop,
 }
 
-const ACTIONS: [ViewAction; 10] = [
+const ACTIONS: [ViewAction; 12] = [
     ViewAction::PaneToggle,
     ViewAction::PaneDiff,
     ViewAction::PaneAgents,
@@ -33,6 +35,8 @@ const ACTIONS: [ViewAction; 10] = [
     ViewAction::Export,
     ViewAction::FocusNext,
     ViewAction::FocusPrevious,
+    ViewAction::VoiceRead,
+    ViewAction::VoiceStop,
 ];
 const FUNCTIONS: [EditorCode; 12] = [
     EditorCode::F1,
@@ -49,6 +53,15 @@ const FUNCTIONS: [EditorCode; 12] = [
     EditorCode::F12,
 ];
 
+const VOICE_READ_KEYS: &[(EditorCode, Modifiers)] = &[(
+    EditorCode::Char('v'),
+    Modifiers::ALT.union(Modifiers::SHIFT),
+)];
+const VOICE_STOP_KEYS: &[(EditorCode, Modifiers)] = &[(
+    EditorCode::Char('x'),
+    Modifiers::ALT.union(Modifiers::SHIFT),
+)];
+
 impl ViewAction {
     pub(crate) const fn name(self) -> &'static str {
         match self {
@@ -62,6 +75,8 @@ impl ViewAction {
             Self::Export => "export",
             Self::FocusNext => "focus_next",
             Self::FocusPrevious => "focus_previous",
+            Self::VoiceRead => "voice_read",
+            Self::VoiceStop => "voice_stop",
         }
     }
 
@@ -98,6 +113,8 @@ impl ViewAction {
             Self::Export => &[(EditorCode::F5, Modifiers::NONE)],
             Self::FocusNext => &[(EditorCode::F6, Modifiers::NONE)],
             Self::FocusPrevious => &[(EditorCode::F6, Modifiers::SHIFT)],
+            Self::VoiceRead => VOICE_READ_KEYS,
+            Self::VoiceStop => VOICE_STOP_KEYS,
         }
     }
 }

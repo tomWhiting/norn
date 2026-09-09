@@ -636,7 +636,7 @@ mod tests {
 
     #[test]
     fn fenced_code_block_emits_foreground_escape() -> Result<(), Box<dyn std::error::Error>> {
-        let caps = caps_with(|c| c.true_colour = true);
+        let caps = caps_with(|c| c.colour_depth = crate::terminal::colour::ColourDepth::TrueColour);
         let mut r = MarkdownRenderer::new(caps, 80);
         let out = collect_styled(&mut r, "```rust\nfn main() {}\n```\n")?;
         assert!(out.contains("38;2;"), "expected truecolor escape: {out:?}");

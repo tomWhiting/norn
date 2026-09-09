@@ -11,7 +11,7 @@ Build from an up-to-date `main` checkout. The repository pins Rust **1.94.0** (e
 ```sh
 git switch main
 git pull --ff-only
-cargo install --path crates/norn-cli --locked --force
+cargo install --path crates/norn-cli --locked --force --target-dir target
 norn --version
 norn auth login
 norn -C /absolute/path/to/project
@@ -31,6 +31,10 @@ norn --help
 ```
 
 ## MCP tools and Claude Code Channels-compatible push
+
+Native read-aloud is being added separately from MCP tool calls. The
+[native voice guide](docs/NATIVE-VOICE.md) documents the D08 branch's
+`/voice read`, `stop`, `replay`, preferences and verification status.
 
 Norn can start MCP servers and receive external messages from servers implementing the **ordinary Claude Code Channels message protocol over stdio**. This is a wire protocol, not a JavaScript dependency: the server can be written in Rust, JavaScript, or another language. An ordinary MCP tools server does not automatically support channel messages.
 
@@ -117,13 +121,15 @@ norn --mcp-config ./mcp-servers.json \
 
 Channels are disabled without an active policy. Active policies require both positive quotas and the explicit overflow action, supplied through settings or flags. `hold` is not exposed by the CLI: interactive inbox release/deny controls are not implemented.
 
-In the **TUI**, `wake` can start a turn while idle without losing the composer draft. In **print and driven modes**, `wake` joins only the active run; it does not keep Norn alive after completion. `next-turn` is interactive-only. Ordinary message push is implemented; permission relay and live detach/reattach are separate work.
+In the **TUI**, `wake` can start a turn while idle without losing the composer draft. In **print and default one-shot driven modes**, `wake` joins only the active run. Opted-in persistent driven mode retains its runtime across sequential requests, but channel traffic does not independently start an idle run. `next-turn` is interactive-only. Ordinary message push is implemented; permission relay and live detach/reattach are separate work.
 
 If startup reports `unknown MCP source`, check the exact JSON key. If it reports `server closed stdout`, the server exited or closed its MCP transport: check its executable, args, working directory, required environment, and server-side diagnostics. A withheld stderr line is not proof of the underlying cause.
 
 See [MCP launch and Channels](docs/MCP-LAUNCH.md) for HTTP tool definitions, merge rules, approval boundaries, and detailed startup behaviour.
 
 ## Terminal UI
+
+Colour detection never prevents interactive startup. `COLORTERM=truecolor` or `24bit` enables RGB; `TERM` names ending in `ghostty`, `kitty`, `alacritty`, or `wezterm`, and names containing `256color`, enable indexed colour without terminfo. Without explicit RGB evidence, other names use 16 ANSI colours; unset, empty, or `dumb` `TERM` uses the terminal’s default foreground and background. Reduced colour gets one notice inside the TUI, with selection and emphasis retained. Terminal I/O failures still report errors.
 
 The TUI owns the screen, retains conversation history, and uses **Iridium** for its full-width composer. Tool rows show the tool name, supplied `tool_use_description`, and outcome compactly; click a row to inspect its details. The status line shows approximate context usage against the active configured window, separately from cumulative token usage.
 
@@ -160,7 +166,7 @@ For bidirectional integration:
 norn --protocol jsonrpc --mcp-config ./mcp-servers.json
 ```
 
-The peer sends `initialize`, then one `run/execute`; Norn streams `event/*` notifications and returns the final result. Stdout contains protocol messages and stderr contains logs. Saved channel settings and the same channel flags apply. This is a single-run protocol, not an idle daemon or live session attachment endpoint. See the [driven-mode guide](docs/DRIVEN-MODE-GUIDE.md) and [wire contract](docs/design/norn-cli/DRIVEN-PROTOCOL.md).
+By default the peer sends `initialize`, then one `run/execute`; Norn streams `event/*`, returns the terminal result and closes stdout without requiring stdin EOF. To reuse one process and conversation, initialize with `params: {"runLifecycle":"persistent"}`, verify the selected capability, then send each request after the prior terminal response. Close stdin or send `/exit` when finished. In persistent mode `/clear` returns a replacement session ID with `connection.reason: "session_rotated"` and closes. Stdout contains protocol messages and stderr contains logs. Saved channel settings and the same channel flags apply. This provides sequential driven execution; live session attachment remains separate. See the [driven-mode guide](docs/DRIVEN-MODE-GUIDE.md) and [wire contract](docs/design/norn-cli/DRIVEN-PROTOCOL.md).
 
 Use `norn session --help`, `norn auth --help`, `norn mcp --help`, and `norn completion --help` for subcommand details. `norn doctor` checks setup; `norn mcp serve` exposes Norn as an MCP server. Alternative provider configuration is described in [provider backends](docs/provider-backends.md).
 

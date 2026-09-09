@@ -98,6 +98,16 @@ fn apply_key(key: KeyEvent, state: &mut AppState) -> Result<bool, TuiError> {
 
 fn apply_shortcut(action: ViewAction, state: &mut AppState) -> Result<(), TuiError> {
     match action {
+        ViewAction::VoiceRead | ViewAction::VoiceStop => {
+            crate::app::voice::command(
+                if action == ViewAction::VoiceRead {
+                    "read"
+                } else {
+                    "stop"
+                },
+                state,
+            )?;
+        }
         ViewAction::PaneToggle | ViewAction::PaneDiff | ViewAction::PaneAgents => {
             let arguments = match action {
                 ViewAction::PaneDiff => "diff",

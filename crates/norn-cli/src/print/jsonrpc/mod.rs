@@ -6,7 +6,7 @@
 //! is byte-for-byte unreached without it.
 //!
 //! The normative wire contract — framing, `initialize` capabilities,
-//! the one-shot `run/execute` lifecycle, `event/*` notifications,
+//! the persistent `run/execute` lifecycle, `event/*` notifications,
 //! `intervene/*` requests, the typed stop envelope, and the error-code
 //! table — is specified in `docs/design/norn-cli/DRIVEN-PROTOCOL.md`.
 
@@ -15,6 +15,9 @@ pub mod emitter;
 pub mod frames;
 pub mod interventions;
 pub mod run;
+pub mod session;
+#[cfg(test)]
+mod session_tests;
 pub mod stdin;
 pub mod writer;
 
@@ -23,12 +26,7 @@ pub use emitter::{EventEmitterError, EventEmitterHandle, spawn_event_emitter};
 pub use frames::{
     JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, TransportError,
 };
-pub use interventions::{
-    InjectPriority, InterventionHandler, UnavailableInterventionHandler, drive_interventions,
-};
-pub use run::{
-    DrivenRun, PreRunOutcome, RunDriver, SharedRunDriver, drive_pre_run, prompt_from_params,
-    send_run_error, send_run_result,
-};
+pub use interventions::{InjectPriority, InterventionHandler};
+pub use run::{RunDriver, SharedRunDriver, prompt_from_params};
 pub use stdin::{StdinReader, stdin_reader};
 pub use writer::{OutboundWriter, spawn_writer};

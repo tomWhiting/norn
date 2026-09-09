@@ -107,7 +107,7 @@ Default delivery is **optional negotiation for enabled, approved stdio sources**
 
 Named `wake`/`next-turn` is required: an unknown, disabled or HTTP source, a missing/malformed capability, or an initialization failure is fatal to the candidate instead of silently omitting the requested source. Named `off` can exclude a disabled or HTTP definition but still refuses an unknown name. A default policy leaves HTTP sources as ordinary tools. Existing project MCP approval remains the authority to run a server; channel settings cannot approve it, widen its tool access or bypass generation fencing.
 
-**Changing channel policy or limits requires restart.** MCP reload refreshes definitions under the policy captured at startup; it does not reread policy files into a running session. Effective policy is checked after all layers merge and against the actual dispatch mode, including TUI fallback. `next-turn` is interactive-only; print and driven accept active-run `wake` or `off`. Driven still accepts one run and exposes no idle listener or live policy-mutation method.
+**Changing channel policy or limits requires restart.** MCP reload refreshes definitions under the policy captured at startup; it does not reread policy files into a running session. Effective policy is checked after all layers merge and against the actual dispatch mode, including TUI fallback. `next-turn` is interactive-only; print and driven accept active-run `wake` or `off`. Driven remains one-shot by default. A caller selecting `initialize` parameters `{"runLifecycle":"persistent"}` retains one runtime for sequential requests. Channel traffic alone does not begin another driven run while idle, and there is no live policy-mutation RPC.
 
 ## Driven startup
 
@@ -121,7 +121,7 @@ norn --protocol jsonrpc --mcp-config ./mcp-bridge.json \
   --channel-overflow reject-new
 ```
 
-The peer still sends `initialize` and one `run/execute` with its prompt. MCP definitions are launch flags, not new request parameters. They add no dynamic MCP mutation method, permission-relay endpoint, idle daemon or second run. JSON-RPC stdout stays protocol-only. See [the driven contract](design/norn-cli/DRIVEN-PROTOCOL.md).
+The peer sends `initialize`, then a `run/execute` with its prompt. By default Norn returns one result and exits with stdout EOF, even when stdin remains open. To retain the connection, explicitly send `initialize` with `params: {"runLifecycle":"persistent"}` and verify the returned `capabilities.runLifecycle`. Another request can then follow the matching terminal response on the same process and conversation. MCP definitions and policy remain launch configuration; the MCP runtime is reused across those requests. EOF, `/exit`, `/quit`, fatal error or explicit `/clear` rotation ends the persistent connection. In persistent mode `/clear` returns the new session ID with `connection.reason: "session_rotated"` before closing. MCP configuration adds no permission-relay endpoint or autonomous idle agent execution. JSON-RPC stdout stays protocol-only. See [the driven contract](design/norn-cli/DRIVEN-PROTOCOL.md).
 
 ## Historical verification
 

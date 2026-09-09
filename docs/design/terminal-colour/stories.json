@@ -1,0 +1,14 @@
+{
+  "personas": [
+    {
+      "name": "Operator",
+      "role": "Terminal user",
+      "stories": [
+        {
+          "id": "S1",
+          "text": "I can launch Norn on a remote terminal without manually repairing colour environment variables."
+        }
+      ]
+    }
+  ]
+}

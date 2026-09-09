@@ -1,0 +1,18 @@
+{
+  "title": "Native Norn voice",
+  "design_document": "DESIGN.md",
+  "structure": {
+    "crates/norn-tui/src": "Frontend preferences, controls and supervised playback presentation; NV-001 has the exact per-row file walls.",
+    "crates/norn/src/integration/locutus.rs": "Native socket adapter using the pinned Locutus contract.",
+    "crates/norn/src/integration/locutus_tests.rs": "Native socket protocol fixtures.",
+    "crates/norn/src/integration/mod.rs": "Native adapter export.",
+    "crates/norn/src/loop/commands.rs": "Shared TUI command metadata.",
+    "crates/norn/Cargo.toml": "Pinned typed contract dependency.",
+    "Cargo.lock": "Exact resolved contract revision.",
+    "README.md": "Entry-point voice guidance and repository-local installation target.",
+    "docs/DOCUMENTATION.md": "Documentation entry point.",
+    "docs/NATIVE-VOICE.md": "Native voice controls, preferences and truthful verification status.",
+    "docs/design/norn-voice/PROOF.md": "Local verification commands, results and pending review/venue work.",
+    "docs/design/norn-voice/proof": "Unedited local check output supplied with the review candidate."
+  }
+}

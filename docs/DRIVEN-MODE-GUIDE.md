@@ -1,7 +1,7 @@
 # Driven mode (`--protocol jsonrpc`) — a consumer's guide
 
-How to drive Norn as a subprocess over JSON-RPC: spawn it, run one agent
-step, stream its events, intervene mid-run, and read the result. This is
+How to drive Norn as a subprocess over JSON-RPC: spawn it once, run sequential
+agent steps, stream events, intervene mid-run, and read each result. This is
 the practical companion to the normative contract in
 [`docs/design/norn-cli/DRIVEN-PROTOCOL.md`](design/norn-cli/DRIVEN-PROTOCOL.md)
 — where this guide and that document disagree, the protocol document wins.
@@ -23,9 +23,14 @@ a deadline — and gives you an unambiguous, id-matched terminal response
 instead of watching for a final NDJSON line. If you only ever read, and
 never steer, stream-json is simpler and equivalent.
 
-The channel is **one-shot**: one `run/execute` per process. Budget a
-process per step. (This is deliberate — process teardown is the cleanup
-guarantee; nothing leaks between steps.)
+The channel is **one-shot by default**: one accepted run, one terminal response,
+then stdout EOF and process exit even when stdin stays open. To opt into a
+persistent conversation, send `initialize` with
+`params: {"runLifecycle":"persistent"}` and check the selected lifecycle in
+the reply. Sequential requests then share one provider, MCP runtime, in-memory
+history and slash state. Wait for each terminal response; overlapping runs are
+rejected. Close stdin or send `/exit` when finished. Existing one-shot consumers
+can keep their current startup and shutdown behavior.
 
 ## 2. Spawning
 
@@ -48,7 +53,7 @@ Flags most relevant to a driven-mode consumer:
 |---|---|
 | `--workspace-root <DIR>` | Confines `read`/`write`/`edit`/`patch` to the directory (symlink-aware canonicalization). Omitted = unconfined. |
 | `-s, --output-schema <JSON\|PATH>` | JSON Schema the final `output` must satisfy — the loop retries/nudges the model until it validates or the schema budget is exhausted (`stop.reason: "schema_unreachable"`). |
-| `--session-id <ID>` / `--resume <ID>` | Correlate steps: create step N's session under a known ID, resume it in step N+1's process to continue the conversation. `--resume-if-exists` with `--session-id` gives you idempotent create-or-resume. |
+| `--session-id <ID>` / `--resume <ID>` | Choose the persistent conversation at startup. Requests on the same connection reuse it directly; `--resume` recovers it after a process restart. `--resume-if-exists` with `--session-id` gives explicit create-or-resume. |
 | `--no-session` | Skip persistence entirely for throwaway steps. |
 | `--timeout <DURATION>` | Step budget; expiry is `stop.reason: "timed_out"` with partial output, not a killed process. |
 | `--max-turns <N>` | Provider round-trip cap; `stop.reason: "max_iterations"`. |
@@ -87,8 +92,10 @@ Full lifecycle, as actual frames. `→` is you writing to Norn's stdin,
 `←` is Norn's stdout.
 
 ```jsonc
-// 1. Handshake (recommended, optional, idempotent — safe mid-run too)
-→ {"jsonrpc":"2.0","id":"init","method":"initialize"}
+// 1. Explicitly select persistence before the first run.
+// Omit params to retain the one-shot default.
+→ {"jsonrpc":"2.0","id":"init","method":"initialize",
+   "params":{"runLifecycle":"persistent"}}
 ← {"jsonrpc":"2.0","id":"init","result":{
      "protocol":"norn-driven/1",
      "serverInfo":{"name":"norn","version":"..."},
@@ -97,9 +104,11 @@ Full lifecycle, as actual frames. `→` is you writing to Norn's stdin,
        "events":["event/message","event/toolCall","event/toolResult",
                  "event/progress","event/stop","event/raw"],
        "interventions":["inject_message","cancel"],
-       "runLifecycle":"one_shot"}}}
+       "runLifecycle":"persistent",
+       "runLifecycles":["one_shot","persistent"],
+       "sessionRotation":"close_with_receipt"}}}
 
-// 2. Exactly one run. "input" is accepted as an alias for "prompt".
+// 2. Start a run. "input" is accepted as an alias for "prompt".
 → {"jsonrpc":"2.0","id":"run-1","method":"run/execute",
    "params":{"prompt":"Summarise the diff in ./changes.patch"}}
 
@@ -122,7 +131,16 @@ Full lifecycle, as actual frames. `→` is you writing to Norn's stdin,
      "events":[ ... ],
      "diagnostics":[ ... ]}}
 
-// 5. Process drains stdout and exits (0 for completed, 1 otherwise).
+// 5. Continue on the SAME process and conversation.
+→ {"jsonrpc":"2.0","id":"run-2","method":"run/execute",
+   "params":{"prompt":"Now explain the second change"}}
+// ...events, then the matching run-2 response...
+
+// 6. Close stdin when finished, or explicitly exit with a local command.
+→ {"jsonrpc":"2.0","id":"exit","method":"run/execute",
+   "params":{"prompt":"/exit"}}
+← {"jsonrpc":"2.0","id":"exit","result":null}
+// The writer drains and the process exits.
 ```
 
 Rules your client can rely on:
@@ -132,7 +150,9 @@ Rules your client can rely on:
   *error* response (`-32603`, message carrying the typed CLI error) — you
   never see EOF instead of a Response. A prompt that resolves entirely to
   a local slash command (including `/exit`) is answered with a success
-  Response whose `result` is `null`.
+  Response whose `result` is `null`. Explicit `/clear` rotation instead returns
+  the typed closing receipt described below. Delivery requires a writable
+  transport; broken stdout cannot carry a result.
 - Notifications and responses are structurally disjoint: a notification
   never carries an `id`, a response never carries a `method`. Dispatch on
   that, not on ordering.
@@ -156,6 +176,13 @@ like. Events with no on-wire form are skipped — a run failure still
 reaches you through the terminal response, so the event stream is
 best-effort observability, not the source of truth. **The terminal
 response is the source of truth.**
+
+For streaming voice, use `event/progress` with `params.type: "text_delta"`,
+filtered to the intended agent. `event/message` with `params.type: "text"`
+repeats the completed text, so speaking both duplicates the response. Tool
+progress and reasoning deltas are separate payload types and must not be
+treated as spoken answer text. Norn does not yet attach playback cursors or
+speech section identifiers to these messages.
 
 ## 5. Interventions (the write direction)
 
@@ -190,14 +217,20 @@ reached its own terminal outcome is still acked, and the terminal
 response then reports the real outcome (e.g. `completed`). Branch on the
 terminal `stop.reason`, never on the ack.
 
+After that terminal response, another run can execute with a fresh cancellation
+token on the same runtime. Previously cancelled descendants keep their cancelled
+tokens. A voice controller should stop audio locally immediately; RPC steering
+and runtime cancellation do not themselves control speaker playback.
+
 Anything else (`intervene/pauseResume`, unknown methods) is `-32601` —
 check `capabilities.interventions` from `initialize` rather than probing.
 A second `run/execute` mid-run is `-32000` ("run already active"), never
 `-32601`.
 
-If the run's control channel could not be assembled (shouldn't happen in
-practice), every `intervene/*` is answered `-32603` with the reason —
-your requests never sit unread.
+Interventions received during assembly wait for the current run's controls.
+If assembly fails, they receive unavailability errors before the matching
+run error response and connection close. Further interventions during cancelled
+run cleanup are refused, while `initialize` remains available.
 
 ## 6. The stop envelope
 
@@ -248,18 +281,38 @@ won't encode that judgment. A reasonable workflow policy:
 | `-32603` | internal: run failure on the accepted run, intervention delivery failure |
 | `-32000` | invalid state: second `run/execute` while one is in flight |
 
-Process exit codes: `0` completed, `1` any other stop or run failure,
+On connection close, process exit codes reflect the last request: `0` completed,
+`1` any other stop or run failure,
 `2` argument errors, `3` auth errors — in the failure cases the
 id-matched error response has already been delivered before exit.
 
 EOF semantics:
 
+- In default one-shot mode, Norn exits after its terminal response without
+  requiring stdin EOF. The following rules cover opted-in persistence.
+
 - You close stdin **before** sending `run/execute` → Norn exits 0,
   nothing to do.
 - You close stdin **mid-run** → only the intervention reader stops; the
   run continues to its own terminal result, which is still written to
-  stdout. (So: closing your write side does not cancel — use
+  stdout, then the connection closes. (So: closing your write side does not cancel — use
   `intervene/cancel`.)
+
+In persistent mode, `/clear` deliberately rotates the persisted session and closes the connection
+after a success response with this `result`:
+
+```json
+{
+  "handled_locally": true,
+  "session_id": "<replacement session ID>",
+  "connection": { "state": "closing", "reason": "session_rotated" }
+}
+```
+
+Use that ID with `--resume` on a new connection; do not retry the completed
+rotation. Under `--no-session` the replacement ID is null. This explicit
+rotation avoids retaining tools or provider bindings to the retired session.
+It is separate from ordinary turns, which keep the connection and runtime.
 
 ## 8. Recipes
 
@@ -268,10 +321,12 @@ run stops itself with `timed_out` + partials) over killing the process.
 For a caller-side dynamic deadline, send `intervene/cancel` and wait for
 the terminal response — never SIGKILL first; you'll lose the envelope.
 
-**Multi-step conversation.** Step 1:
-`--session-id job42-step1`. Step 2:
-`norn --protocol jsonrpc --resume job42-step1 ...` — the new process
-replays the session and continues it. Sessions are persisted per working
+**Multi-step conversation.** Start with `--session-id job42`. Select
+`initialize` parameters `{"runLifecycle":"persistent"}`. Send one
+`run/execute`, await its terminal response, then send another on the same
+stdin/stdout connection. No process creation, provider reassembly or disk
+replay occurs between these turns. After a restart, `--resume job42` restores
+the saved conversation. Sessions are persisted per working
 directory; a bare `--resume` (no ID) resolves to the latest session *for
 that working directory*, not the globally newest.
 
@@ -298,12 +353,16 @@ boundary instead of derailing the current chain.
   `stop.reason` is authoritative.
 - **Don't parse stderr** — it's human logs (tracing); its format is not a
   contract.
-- **Don't send a second `run/execute`** to the same process — one-shot;
-  spawn another.
+- **Don't overlap `run/execute` requests** — wait for the current terminal
+  response. Sequential requests require explicit persistent negotiation.
 - **Don't treat event-stream absence as failure** — some events have no
   on-wire form; the terminal response is the contract.
-- **Version-gate on `initialize.result.protocol`** (`norn-driven/1`);
-  the version bumps on incompatible change.
+- **Gate on both `initialize.result.protocol` and `capabilities.runLifecycle`**.
+  A client omitting the new selection retains the one-shot default. A client
+  selecting persistence must close stdin or send `/exit` when finished.
+- **Choose the lifecycle before the first run.** Unknown selections fail
+  explicitly; changing selection after execution starts is refused. Later
+  parameterless `initialize` calls are read-only and preserve the selection.
 - Timestamps/ordering across multiple agents' events are interleaved
   as produced — sequence per `agent_id` if you need per-agent order.
 

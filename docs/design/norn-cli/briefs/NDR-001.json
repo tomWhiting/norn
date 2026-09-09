@@ -1,0 +1,321 @@
+{
+  "id": "NDR-001",
+  "cluster": "norn-cli",
+  "title": "Opt-in persistent driven conversation",
+  "depends_on": [
+    "NC-001",
+    "NC-003",
+    "NC-004"
+  ],
+  "blocked_by": [],
+  "checklist": [
+    "C29",
+    "C38",
+    "C53",
+    "C55",
+    "C57",
+    "C60",
+    "C61",
+    "C63",
+    "C67"
+  ],
+  "stories": [
+    "S4",
+    "S8",
+    "S9",
+    "S19",
+    "S21",
+    "S23",
+    "S30",
+    "S43",
+    "S48"
+  ],
+  "purpose": "Waffles, relayed by Ripley on 9 September 2026 Melbourne time, requires repeated voice-driver run/execute requests on one open Norn process and runtime. His 14:06 ruling requires explicit initialize params runLifecycle=persistent; omission preserves one-shot EOF for existing Aion consumers. The normative design is docs/design/norn-cli/DRIVEN-PROTOCOL.md. Existing checklist/story references below describe the session, streaming, slash and cancellation responsibilities extended to driven mode; they do not declare the older NC briefs reverified.",
+  "task": "Retain one assembled runtime behind a single input owner, negotiate lifecycle before the first run, preserve event and intervention contracts, and replace per-run cancellation tokens without reviving cancelled descendants. Publish typed close-on-clear receipts. Source implementation is commit 5ccfcd2ce1293907fa0ac0862c524192bb4a4bc5. This brief records local implementation, not Fable approval or a 205 landing receipt. Proof: docs/design/norn-cli/proofs/NDR-001-local.json.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Retain the assembled runtime",
+      "spec": "WHEN persistent lifecycle is selected, THE SYSTEM SHALL reuse one agent, provider, MCP runtime and event store across sequential run/execute requests without subprocess-per-utterance execution or session replay.",
+      "acceptance": [
+        "Native sequential_runs_retain_the_process_and_session_until_explicit_exit observes the same process/session and prior user/assistant messages in the second provider request",
+        "rg -n 'assembly|execute_request' crates/norn-cli/src/print/driven_session.rs identifies retained assembly ownership"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-cli/src/print/driven_session.rs"
+        ],
+        "modify": [
+          "crates/norn-cli/src/print/assembly.rs",
+          "crates/norn-cli/src/print/driven.rs",
+          "crates/norn-cli/src/print/mod.rs",
+          "crates/norn-cli/tests/jsonrpc_driven_mode.rs"
+        ]
+      },
+      "checklist": [
+        "C38",
+        "C55"
+      ],
+      "stories": [
+        "S9",
+        "S30"
+      ]
+    },
+    {
+      "id": "R2",
+      "title": "Own input and run admission",
+      "spec": "WHILE a run is active, THE SYSTEM SHALL reject overlapping execution as busy. THE SYSTEM SHALL have one newline-framed input owner and preserve partial prefixes when run completion wins selection.",
+      "acceptance": [
+        "Actor tests cover busy admission and a partial next request across terminal completion",
+        "rg -n 'next_line|active' crates/norn-cli/src/print/jsonrpc/session.rs identifies framing and admission"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-cli/src/print/jsonrpc/session.rs",
+          "crates/norn-cli/src/print/jsonrpc/session_tests.rs"
+        ],
+        "modify": [
+          "crates/norn-cli/src/print/jsonrpc/run.rs",
+          "crates/norn-cli/src/print/jsonrpc/mod.rs"
+        ]
+      },
+      "checklist": [
+        "C55"
+      ],
+      "stories": [
+        "S43"
+      ]
+    },
+    {
+      "id": "R3",
+      "title": "Drain events before each terminal response",
+      "spec": "WHEN a request completes, THE SYSTEM SHALL drain its event stream before publishing its matching terminal response. WHEN stdin reaches EOF during an accepted run, THE SYSTEM SHALL finish that run before closing.",
+      "acceptance": [
+        "Native tests observe event notifications before terminal results",
+        "Actor EOF test retains the accepted run until its terminal response"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/print/driven.rs",
+          "crates/norn-cli/src/print/orchestrator.rs",
+          "crates/norn-cli/src/print/jsonrpc/run.rs",
+          "crates/norn-cli/tests/jsonrpc_driven_mode.rs"
+        ],
+        "create": [
+          "crates/norn-cli/src/print/jsonrpc/session_tests.rs"
+        ]
+      },
+      "checklist": [
+        "C29"
+      ],
+      "stories": [
+        "S19",
+        "S21"
+      ]
+    },
+    {
+      "id": "R4",
+      "title": "Keep cancellation scoped to a run",
+      "spec": "WHEN cancel is accepted, THE SYSTEM SHALL cancel the active run. WHEN a later run starts, THE SYSTEM SHALL install a fresh child cancellation token while descendants holding prior cancelled tokens remain cancelled. THE SYSTEM SHALL preserve injectMessage normal and interrupt semantics.",
+      "acceptance": [
+        "Native cancelled_run_can_be_followed_by_a_successful_run_in_the_same_process passes",
+        "Actor tests cover startup injection, cancellation and non-revival of old descendant tokens"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-cli/src/print/driven_session.rs",
+          "crates/norn-cli/src/print/jsonrpc/session_tests.rs"
+        ],
+        "modify": [
+          "crates/norn-cli/src/print/jsonrpc/interventions.rs",
+          "crates/norn-cli/tests/jsonrpc_driven_mode.rs"
+        ]
+      },
+      "checklist": [
+        "C53"
+      ],
+      "stories": [
+        "S8"
+      ]
+    },
+    {
+      "id": "R5",
+      "title": "Retain slash and schema state",
+      "spec": "WHILE the persistent connection remains open, THE SYSTEM SHALL retain slash registry/state, selected model, output schema and session identity between requests. WHEN exit or quit is requested, THE SYSTEM SHALL return the local terminal result and close.",
+      "acceptance": [
+        "rg -n 'slash|session_started' crates/norn-cli/src/print/assembly.rs crates/norn-cli/src/print/orchestrator.rs identifies retained state",
+        "Native sequential execution closes explicitly through /exit"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/print/assembly.rs",
+          "crates/norn-cli/src/print/orchestrator.rs",
+          "crates/norn-cli/tests/jsonrpc_driven_mode.rs"
+        ]
+      },
+      "checklist": [
+        "C57",
+        "C60",
+        "C61",
+        "C67"
+      ],
+      "stories": [
+        "S4",
+        "S23",
+        "S48"
+      ]
+    },
+    {
+      "id": "R6",
+      "title": "Report malformed input and transport failure",
+      "spec": "WHEN a frame, parameter or intervention state is invalid, THE SYSTEM SHALL publish an explicit protocol error. WHEN input or output transport fails, THE SYSTEM SHALL return an error rather than report clean completion and SHALL cancel a bound active run.",
+      "acceptance": [
+        "Actor tests cover invalid frames, parameters, unknown methods, closed queues and input failure",
+        "Driven emitter tests cover writer failure and event loss"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/print/jsonrpc/frames.rs",
+          "crates/norn-cli/src/print/jsonrpc/interventions.rs",
+          "crates/norn-cli/src/print/driven.rs"
+        ],
+        "create": [
+          "crates/norn-cli/src/print/jsonrpc/session.rs",
+          "crates/norn-cli/src/print/jsonrpc/session_tests.rs"
+        ]
+      },
+      "checklist": [
+        "C29"
+      ],
+      "stories": [
+        "S21",
+        "S43"
+      ]
+    },
+    {
+      "id": "R7",
+      "title": "Close explicitly on session rotation",
+      "spec": "WHEN clear rotates a persistent session, THE SYSTEM SHALL return the replacement session_id and connection state closing with reason session_rotated, then close. THE SYSTEM SHALL NOT continue using old action-log, fork, cache or provider bindings. This close-on-clear boundary was approved by the coordinator on 9 September 2026; the TUI rotation implementation is precedent for future full live rebinding.",
+      "acceptance": [
+        "Native clear_returns_the_new_session_identity_and_explicit_close_reason checks replacement identity, receipt and EOF",
+        "Default one-shot local-command responses retain their existing shape"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/print/orchestrator.rs",
+          "crates/norn-cli/tests/jsonrpc_driven_mode.rs"
+        ]
+      },
+      "checklist": [
+        "C63"
+      ],
+      "stories": [
+        "S23"
+      ]
+    },
+    {
+      "id": "R8",
+      "title": "Negotiate persistence explicitly",
+      "spec": "UNLESS initialize explicitly selects runLifecycle persistent, THE SYSTEM SHALL return one terminal response and stdout EOF without waiting for stdin EOF. THE SYSTEM SHALL advertise one_shot and persistent choices and the selected lifecycle. AFTER the first accepted run, THE SYSTEM SHALL refuse lifecycle changes. Parameterless initialize SHALL preserve the current selection.",
+      "acceptance": [
+        "Native default_one_shot_exits_after_one_response_with_stdin_still_open passes",
+        "Actor tests cover invalid choices, fixed selection and repeated parameterless initialize",
+        "rg -n 'runLifecycle' crates/norn-cli/src/print/jsonrpc/capabilities.rs crates/norn-cli/src/print/jsonrpc/session.rs shows capability and negotiation"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/print/jsonrpc/capabilities.rs",
+          "crates/norn-cli/tests/jsonrpc_driven_mode.rs"
+        ],
+        "create": [
+          "crates/norn-cli/src/print/jsonrpc/session.rs",
+          "crates/norn-cli/src/print/jsonrpc/session_tests.rs"
+        ]
+      },
+      "checklist": [
+        "C55"
+      ],
+      "stories": [
+        "S21",
+        "S43"
+      ]
+    },
+    {
+      "id": "R9",
+      "title": "Own signals for the entire connection",
+      "spec": "WHILE a driven connection exists, THE SYSTEM SHALL retain its signal watcher. WHEN SIGINT arrives between persistent requests, THE SYSTEM SHALL terminate the idle process.",
+      "acceptance": [
+        "Native persistent_idle_process_still_handles_sigint passes"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-cli/src/print/driven_session.rs"
+        ],
+        "modify": [
+          "crates/norn-cli/src/print/orchestrator.rs",
+          "crates/norn-cli/tests/jsonrpc_driven_mode.rs"
+        ]
+      },
+      "checklist": [
+        "C53"
+      ],
+      "stories": [
+        "S8"
+      ]
+    },
+    {
+      "id": "R10",
+      "title": "Publish the contract and exact local evidence",
+      "spec": "THE SYSTEM documentation SHALL explain default EOF, persistent opt-in, active-run-only channel wake, rotation receipts, streaming filters and shutdown. THE BRIEF SHALL remain authoritative JSON with rendered Markdown and checked checklist/story coverage. Local proof SHALL identify the checked source commit and preserve complete command logs without claiming Fable or 205 success.",
+      "acceptance": [
+        "Render NDR-001.json using render-brief.py and run check-coverage.py for norn-cli",
+        "README and both launch guides show persistent initialization and preserve one-shot default",
+        "Proof JSON contains complete focused test and Clippy logs and identifies code commit 5ccfcd2"
+      ],
+      "files": {
+        "create": [
+          "docs/design/norn-cli/briefs/NDR-001.json",
+          "docs/design/norn-cli/proofs/NDR-001-local.json"
+        ],
+        "modify": [
+          "README.md",
+          "docs/DRIVEN-MODE-GUIDE.md",
+          "docs/MCP-LAUNCH.md",
+          "docs/design/norn-cli/DRIVEN-PROTOCOL.md",
+          "docs/design/norn-cli/briefs/NDR-001.md",
+          "docs/design/norn-cli/briefs/NC-002.json",
+          "docs/design/norn-cli/briefs/NC-002.md",
+          "docs/design/norn-cli/briefs/NC-003.json",
+          "docs/design/norn-cli/briefs/NC-003.md",
+          "docs/design/norn-cli/briefs/NC-006.json",
+          "docs/design/norn-cli/briefs/NC-006.md"
+        ]
+      },
+      "checklist": [
+        "C29",
+        "C55"
+      ],
+      "stories": [
+        "S19",
+        "S43"
+      ]
+    }
+  ],
+  "boundaries": [
+    "No process-per-utterance substitute",
+    "No live attach endpoint or autonomous channel-triggered idle execution",
+    "No audio playback or second-model cleanup: Locutus owns audio hush separately from generation cancellation",
+    "No full live rebind after clear; return the explicit rotation receipt and close",
+    "README was added to the wall by coordinator instruction on 9 September 2026",
+    "No build reruns for the documentation follow-on; checked Rust remains commit 5ccfcd2"
+  ],
+  "verification": [
+    "cargo test --locked -p norn-cli --lib --test jsonrpc_driven_mode -j2: 564 library and 11 native RPC tests passed",
+    "cargo clippy --locked --workspace --all-targets --features norn/live-api-smoke -j2 -- -D warnings: passed",
+    "cargo fmt --all --check and git diff --check: passed",
+    "render-brief.py rendered this Markdown from authoritative JSON",
+    "check-coverage.py initially found ten existing failures. Eight semantically unambiguous mapping defects were corrected in NC-002/NC-003/NC-006 and those briefs re-rendered. Two failures remain: NC-003 top-level C35 (--session-name) has no implementing requirement; C124 device-auth is unassigned and NC-008/R8 specifies browser PKCE only. The design owner must provide a session-name requirement and a dedicated device-auth brief or explicit authored expansion of NC-008/R8. NDR-001 has no unknown or bidirectional-reference failure. Existing design.json is absent, so structure checks were skipped. Complete before/after outputs and mapping justifications are retained in the proof JSON; no cluster coverage pass is claimed.",
+    "Build target and TMPDIR stayed inside the repository; no live provider inference was run",
+    "Fable review and exact-commit 205 battery remain separate and outstanding"
+  ]
+}

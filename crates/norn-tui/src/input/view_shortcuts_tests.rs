@@ -7,6 +7,35 @@ use termina::event::KeyEventKind;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[test]
+fn native_voice_bindings_are_exact_and_editable() -> TestResult {
+    let bindings = ViewShortcuts::decode(None)?;
+    for (action, letter) in [(ViewAction::VoiceRead, 'v'), (ViewAction::VoiceStop, 'x')] {
+        assert_eq!(
+            bindings.action(KeyEvent::new(
+                KeyCode::Char(letter),
+                Modifiers::ALT | Modifiers::SHIFT
+            )),
+            Some(action)
+        );
+        assert_eq!(
+            bindings.action(KeyEvent::new(KeyCode::Char(letter), Modifiers::NONE)),
+            None
+        );
+    }
+    let changed =
+        ViewShortcuts::decode(Some(&json!({"voice_read":["ctrl+alt+v"],"voice_stop":[]})))?;
+    assert_eq!(
+        changed.action(KeyEvent::new(
+            KeyCode::Char('v'),
+            Modifiers::CONTROL | Modifiers::ALT
+        )),
+        Some(ViewAction::VoiceRead)
+    );
+    assert_eq!(changed.hint(ViewAction::VoiceStop), "unbound");
+    Ok(())
+}
+
+#[test]
 fn declared_option_and_function_aliases_validate_and_round_trip() -> TestResult {
     let bindings = ViewShortcuts::decode(None)?;
     assert_eq!(bindings, ViewShortcuts::default());

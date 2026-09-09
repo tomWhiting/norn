@@ -514,6 +514,9 @@ pub fn finalise_turn(
     };
     match result {
         Ok(step) => {
+            if let AgentStepResult::Completed { output, .. } = &step {
+                super::voice::completed(state, output)?;
+            }
             let usage = extract_usage(&step);
             state.reconcile_root_turn_usage(usage.input_tokens, usage.output_tokens);
             let elapsed = state.turn_start.map(|start| start.elapsed());

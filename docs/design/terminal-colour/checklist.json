@@ -1,0 +1,14 @@
+{
+  "sections": [
+    {
+      "id": "colour",
+      "title": "Progressive terminal colour",
+      "items": [
+        {
+          "id": "C1",
+          "text": "Colour uncertainty never rejects the TUI and all output respects the selected depth."
+        }
+      ]
+    }
+  ]
+}

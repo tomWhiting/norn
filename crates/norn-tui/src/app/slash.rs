@@ -656,6 +656,7 @@ mod tests {
                 ("help", TuiBuiltinKind::Help),
                 ("view", TuiBuiltinKind::View),
                 ("pane", TuiBuiltinKind::View),
+                ("voice", TuiBuiltinKind::View),
                 ("model", TuiBuiltinKind::Model),
                 ("effort", TuiBuiltinKind::Effort),
                 ("reasoning-effort", TuiBuiltinKind::Effort),

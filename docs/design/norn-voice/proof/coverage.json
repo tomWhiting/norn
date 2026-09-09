@@ -1,0 +1,9 @@
+{
+  "command": [
+    "python3",
+    "/Users/tom/Developer/ablative/docs/design-system-v2/scripts/check-coverage.py",
+    "docs/design/norn-voice"
+  ],
+  "exit_code": 0,
+  "output": "Cluster: norn-voice\n  Checklist items: 3\n  User stories: 3\n  Briefs: 1\n\n  Brief dependencies:\n    NV-001: Native read-aloud through Locutus\n\n  Coverage clean: all items covered, briefs consistent.\n"
+}

@@ -46,6 +46,7 @@ struct SseStub {
     stop: Arc<AtomicBool>,
     addr: std::net::SocketAddr,
     thread: Option<std::thread::JoinHandle<()>>,
+    requests: mpsc::Receiver<Vec<u8>>,
 }
 
 impl SseStub {
@@ -54,6 +55,7 @@ impl SseStub {
         let addr = listener.local_addr().expect("stub addr");
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = Arc::clone(&stop);
+        let (requests_tx, requests) = mpsc::channel();
         let thread = std::thread::spawn(move || {
             let mut gate = gate;
             for stream in listener.incoming() {
@@ -64,7 +66,11 @@ impl SseStub {
                 stream
                     .set_read_timeout(Some(WATCHDOG))
                     .expect("stub read timeout");
-                read_http_request(&mut stream);
+                let request = read_http_request(&mut stream);
+                if let Err(error) = requests_tx.send(request) {
+                    eprintln!("stub request observer closed: {error}");
+                    return;
+                }
                 // Only the first connection is gated: it holds the run
                 // in-flight until the test releases it.
                 if let Some(rx) = gate.take() {
@@ -75,9 +81,16 @@ impl SseStub {
                     SSE_COMPLETION.len(),
                     SSE_COMPLETION,
                 );
-                stream
-                    .write_all(response.as_bytes())
-                    .expect("stub write response");
+                if let Err(error) = stream.write_all(response.as_bytes()) {
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+                    ) {
+                        continue;
+                    }
+                    eprintln!("stub response failed: {error}");
+                    return;
+                }
                 stream.flush().expect("stub flush");
             }
         });
@@ -86,7 +99,14 @@ impl SseStub {
             stop,
             addr,
             thread: Some(thread),
+            requests,
         }
+    }
+
+    fn request(&self) -> Result<Value, Box<dyn std::error::Error>> {
+        Ok(serde_json::from_slice(
+            &self.requests.recv_timeout(WATCHDOG)?,
+        )?)
     }
 
     /// Stop the accept loop: raise the flag, poke a dummy connection to
@@ -101,7 +121,7 @@ impl SseStub {
 }
 
 /// Read one HTTP request (headers + content-length body) off `stream`.
-fn read_http_request(stream: &mut TcpStream) {
+fn read_http_request(stream: &mut TcpStream) -> Vec<u8> {
     let mut reader = BufReader::new(stream.try_clone().expect("clone stub stream"));
     let mut content_length = 0usize;
     loop {
@@ -118,6 +138,7 @@ fn read_http_request(stream: &mut TcpStream) {
     }
     let mut body = vec![0u8; content_length];
     reader.read_exact(&mut body).expect("stub read body");
+    body
 }
 
 /// Spawn `norn --protocol jsonrpc` with an isolated `NORN_HOME`, extra
@@ -223,6 +244,17 @@ impl DrivenChild {
         response
     }
 
+    fn initialize_persistent(&mut self) -> Value {
+        self.send(&json!({"jsonrpc":"2.0","id":"init","method":"initialize","params":{"runLifecycle":"persistent"}}));
+        let (response, notes) = self.read_response(&json!("init"));
+        assert!(notes.is_empty());
+        assert_eq!(
+            response["result"]["capabilities"]["runLifecycle"],
+            "persistent"
+        );
+        response
+    }
+
     /// Close stdin and reap the child, disarming the watchdog.
     fn finish(mut self) -> std::process::ExitStatus {
         drop(self.stdin.take());
@@ -272,7 +304,7 @@ fn driven_mode_answers_initialize_over_real_stdio() {
     assert_eq!(parsed["result"]["protocol"], "norn-driven/1");
     assert_eq!(
         parsed["result"]["capabilities"]["runLifecycle"], "one_shot",
-        "the one-shot run lifecycle is advertised"
+        "one-shot remains the default unless the client opts in"
     );
     let interventions = parsed["result"]["capabilities"]["interventions"]
         .as_array()
@@ -487,7 +519,8 @@ fn run_execute_quit_prompt_is_answered_with_null_result() {
 /// — norn never exited. The read deadline here is the TEST's own bound;
 /// norn itself never times a run out.
 #[test]
-fn run_completes_and_process_exits_while_caller_holds_stdin_open() {
+fn sequential_runs_retain_the_process_and_session_until_explicit_exit()
+-> Result<(), Box<dyn std::error::Error>> {
     let stub = SseStub::spawn(None);
     let base_url_arg = format!("base_url={}", stub.base_url);
     let mut child = DrivenChild::spawn(&[
@@ -495,9 +528,10 @@ fn run_completes_and_process_exits_while_caller_holds_stdin_open() {
         "openai-compatible",
         "-c",
         &base_url_arg,
-        "--no-session",
+        "--session-id",
+        "driven-persistent-test",
     ]);
-    child.initialize();
+    child.initialize_persistent();
 
     child.send(&json!({
         "jsonrpc": "2.0",
@@ -515,14 +549,36 @@ fn run_completes_and_process_exits_while_caller_holds_stdin_open() {
     assert_eq!(response["result"]["stop"]["reason"], "completed");
     assert_eq!(response["result"]["output"], "hello");
 
-    // And with the write half STILL open, the one-shot lifecycle completes:
-    // the process exits 0 without ever seeing EOF on stdin.
+    let first_pid = child.child.id();
+    let first_request = stub.request()?;
+    assert!(first_request.to_string().contains("Say hello"));
+    let first_session = response["result"]["session_id"].clone();
+    assert_eq!(first_session, "driven-persistent-test");
+    child.send(&json!({"jsonrpc":"2.0", "id":"second", "method":"run/execute", "params":{"prompt":"What did I just ask?"}}));
+    let (second, events) = child.read_response(&json!("second"));
+    let second_request = stub.request()?;
+    let second_wire = second_request.to_string();
+    assert!(second_wire.contains("Say hello"));
+    assert!(second_wire.contains("What did I just ask?"));
+    assert!(second_wire.contains("hello"));
+    assert_eq!(second["result"]["session_id"], first_session);
+    assert_eq!(second["result"]["stop"]["reason"], "completed");
+    assert!(!events.is_empty());
+    assert_eq!(child.child.id(), first_pid);
+    assert!(child.child.try_wait()?.is_none());
+    child.send(
+        &json!({"jsonrpc":"2.0", "id":"exit", "method":"run/execute", "params":{"prompt":"/exit"}}),
+    );
+    let (exit, events) = child.read_response(&json!("exit"));
+    assert_eq!(exit["result"], Value::Null);
+    assert!(events.is_empty());
     let status = child.wait_with_stdin_open();
     assert!(
         status.success(),
-        "a completed run exits 0 with stdin held open: {status:?}"
+        "an explicit /exit exits with stdin held open: {status:?}"
     );
     stub.shutdown();
+    Ok(())
 }
 
 /// Mid-run traffic at the process boundary: while the run is held in
@@ -576,7 +632,7 @@ fn intervene_and_second_run_are_served_mid_run() {
         busy["error"]["message"]
             .as_str()
             .expect("busy message")
-            .contains("one_shot"),
+            .contains("run already active"),
     );
 
     // Release the run. The injected queued turn triggers one more provider
@@ -595,4 +651,127 @@ fn intervene_and_second_run_are_served_mid_run() {
     let status = child.finish();
     assert!(status.success());
     stub.shutdown();
+}
+
+#[test]
+fn cancelled_run_can_be_followed_by_a_successful_run_in_the_same_process()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (release, gate) = mpsc::channel();
+    let stub = SseStub::spawn(Some(gate));
+    let base_url = format!("base_url={}", stub.base_url);
+    let mut child = DrivenChild::spawn(&[
+        "--provider",
+        "openai-compatible",
+        "-c",
+        &base_url,
+        "--session-id",
+        "cancel-followed-by-run",
+    ]);
+    child.initialize_persistent();
+    let pid = child.child.id();
+    child.send(&json!({"jsonrpc":"2.0","id":"first","method":"run/execute","params":{"prompt":"First request"}}));
+    let request = stub.request()?;
+    assert!(request.to_string().contains("First request"));
+    child.send(&json!({"jsonrpc":"2.0","id":"cancel","method":"intervene/cancel","params":{"reason":"voice interruption"}}));
+    let (ack, events) = child.read_response(&json!("cancel"));
+    assert_eq!(ack["result"]["status"], "cancel_requested");
+    assert!(events.iter().all(|event| event.get("id").is_none()));
+    let (first, events) = child.read_response(&json!("first"));
+    assert_eq!(first["result"]["stop"]["reason"], "cancelled");
+    assert!(events.iter().all(|event| event.get("id").is_none()));
+    release.send(())?;
+    child.send(&json!({"jsonrpc":"2.0","id":"second","method":"run/execute","params":{"prompt":"Continue after cancellation"}}));
+    let (second, events) = child.read_response(&json!("second"));
+    assert_eq!(second["result"]["stop"]["reason"], "completed");
+    assert_eq!(
+        second["result"]["session_id"],
+        first["result"]["session_id"]
+    );
+    assert_eq!(pid, child.child.id());
+    assert!(!events.is_empty());
+    assert!(child.finish().success());
+    stub.shutdown();
+    Ok(())
+}
+
+#[test]
+fn clear_returns_the_new_session_identity_and_explicit_close_reason()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut child = DrivenChild::spawn(&[
+        "--provider",
+        "openai-compatible",
+        "-c",
+        "base_url=http://127.0.0.1:9/v1",
+        "--session-id",
+        "before-driven-clear",
+    ]);
+    child.initialize_persistent();
+    child.send(
+        &json!({"jsonrpc":"2.0","id":"clear","method":"run/execute","params":{"prompt":"/clear"}}),
+    );
+    let (response, events) = child.read_response(&json!("clear"));
+    assert!(events.is_empty());
+    assert_eq!(response["result"]["handled_locally"], true);
+    assert_eq!(
+        response["result"]["connection"]["reason"],
+        "session_rotated"
+    );
+    let session_id = response["result"]["session_id"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("rotation receipt missing replacement session"))?;
+    assert_ne!(session_id, "before-driven-clear");
+    assert!(!session_id.is_empty());
+    assert!(child.wait_with_stdin_open().success());
+    Ok(())
+}
+
+#[test]
+fn default_one_shot_exits_after_one_response_with_stdin_still_open() {
+    let stub = SseStub::spawn(None);
+    let base_url = format!("base_url={}", stub.base_url);
+    let mut child = DrivenChild::spawn(&[
+        "--provider",
+        "openai-compatible",
+        "-c",
+        &base_url,
+        "--no-session",
+    ]);
+    child.initialize();
+    child.send(
+        &json!({"jsonrpc":"2.0","id":"once","method":"run/execute","params":{"prompt":"hello"}}),
+    );
+    let (response, events) = child.read_response(&json!("once"));
+    assert_eq!(response["result"]["stop"]["reason"], "completed");
+    assert!(!events.is_empty());
+    assert!(child.wait_with_stdin_open().success());
+    stub.shutdown();
+}
+
+#[test]
+fn persistent_idle_process_still_handles_sigint() -> Result<(), Box<dyn std::error::Error>> {
+    let stub = SseStub::spawn(None);
+    let base_url = format!("base_url={}", stub.base_url);
+    let mut child = DrivenChild::spawn(&[
+        "--provider",
+        "openai-compatible",
+        "-c",
+        &base_url,
+        "--no-session",
+    ]);
+    child.initialize_persistent();
+    child.send(
+        &json!({"jsonrpc":"2.0","id":"first","method":"run/execute","params":{"prompt":"hello"}}),
+    );
+    let (response, events) = child.read_response(&json!("first"));
+    assert_eq!(response["result"]["stop"]["reason"], "completed");
+    assert!(!events.is_empty());
+    assert!(
+        Command::new("kill")
+            .args(["-INT", &child.child.id().to_string()])
+            .status()?
+            .success()
+    );
+    assert!(child.wait_with_stdin_open().success());
+    stub.shutdown();
+    Ok(())
 }

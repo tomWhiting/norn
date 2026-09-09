@@ -225,7 +225,7 @@ fn prepare(
     };
     Ok((
         frame.prepare(&TerminalCaps {
-            true_colour: true,
+            colour_depth: norn_tui::terminal::colour::ColourDepth::TrueColour,
             ..TerminalCaps::baseline()
         })?,
         options,

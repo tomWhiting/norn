@@ -248,7 +248,7 @@ pub(crate) mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let caps = {
             let mut c = TerminalCaps::baseline();
-            c.true_colour = true;
+            c.colour_depth = crate::terminal::colour::ColourDepth::TrueColour;
             c
         };
         let h = SyntaxHighlighter::new();

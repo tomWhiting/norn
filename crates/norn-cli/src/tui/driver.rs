@@ -17,7 +17,6 @@ use norn::tools::lsp::{LspBackend, WorkspaceLspBackend, build_lsp_workspace};
 use norn_tui::TuiInputs;
 use norn_tui::input::history::{InputHistory, default_history_path};
 use norn_tui::render::fixed_panel::StatusBar;
-use norn_tui::terminal::caps::TerminalCaps;
 
 use crate::cli::{BuildError, Cli, ExitCode, Mode, Protocol};
 use crate::print::build_provider;
@@ -35,10 +34,6 @@ const AGENT_EVENT_CHANNEL_CAPACITY: usize = 4096;
 #[must_use]
 pub fn run(cli: &Cli) -> ExitCode {
     if cli.protocol == Some(Protocol::Jsonrpc) {
-        return crate::print::run(cli);
-    }
-    if let Err(e) = TerminalCaps::check_hard_requirements() {
-        eprintln!("{e}");
         return crate::print::run(cli);
     }
     if let Err(error) = validate_channel_mode(cli, Mode::Tui) {

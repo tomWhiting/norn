@@ -187,6 +187,16 @@ pub const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         tui: true,
     },
     BuiltinSlashCommand {
+        kind: BuiltinSlashKind::View,
+        name: "voice",
+        usage: "/voice [read|stop|replay|on|off|status|configure]",
+        help: "Native Locutus read-aloud, playback controls and remembered preferences",
+        autocomplete: "Read, stop or replay native voice",
+        cli_description: "Interactive native voice controls",
+        cli: false,
+        tui: true,
+    },
+    BuiltinSlashCommand {
         kind: BuiltinSlashKind::Model,
         name: "model",
         usage: "/model <name>",

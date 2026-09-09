@@ -12,7 +12,7 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn true_colour() -> TerminalCaps {
     TerminalCaps {
-        true_colour: true,
+        colour_depth: crate::terminal::colour::ColourDepth::TrueColour,
         ..TerminalCaps::baseline()
     }
 }
@@ -223,5 +223,71 @@ fn replacing_wide_cells_with_short_text_clears_the_tail_in_the_same_frame() -> T
     let bytes = current.encode_delta(Some(&previous))?;
     assert_eq!(bytes, b"\x1b[?25l\x1b[1;1H\x1b[0mx\x1b[0m \x1b[0m\x1b[?25l");
     assert!(current.encode_delta(Some(&current))?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn ansi16_composer_emits_basic_sgr_for_every_palette_index() -> TestResult {
+    use crate::terminal::colour::ColourDepth;
+    let caps = TerminalCaps {
+        colour_depth: ColourDepth::Ansi16,
+        ..TerminalCaps::baseline()
+    };
+    for index in 0..=u8::MAX {
+        let mut cells = CellBuffer::new(1, 1);
+        let style = Style::new(
+            Color::Indexed(index),
+            Color::Indexed(index),
+            Attributes::REVERSE | Attributes::BOLD,
+        );
+        set(&mut cells, 0, 0, "x", style, 1)?;
+        let mut output = PreparedFrame::new(1, 1, None);
+        paint_composer_cells(&mut output, area(0, 0, 1, 1), &cells, &caps)?;
+        let encoded = String::from_utf8(output.encode_delta(None)?)?;
+        assert!(!encoded.contains("38;"), "index {index}: {encoded:?}");
+        assert!(!encoded.contains("48;"), "index {index}: {encoded:?}");
+        assert!(encoded.contains("\x1b[1m\x1b[7mx"));
+    }
+    Ok(())
+}
+
+#[test]
+fn rgb_composer_degrades_to_basic_ansi_or_default_with_selection_intact() -> TestResult {
+    use crate::terminal::colour::ColourDepth;
+    for (depth, expected) in [
+        (
+            ColourDepth::Ansi16,
+            "\x1b[0m\x1b[91m\x1b[104m\x1b[1m\x1b[7mx",
+        ),
+        (ColourDepth::Monochrome, "\x1b[0m\x1b[1m\x1b[7mx"),
+    ] {
+        for (foreground, background) in [
+            (Color::Rgb(255, 0, 0), Color::Rgb(0, 0, 255)),
+            (Color::Indexed(196), Color::Indexed(21)),
+        ] {
+            let caps = TerminalCaps {
+                colour_depth: depth,
+                ..TerminalCaps::baseline()
+            };
+            let mut cells = CellBuffer::new(1, 1);
+            set(
+                &mut cells,
+                0,
+                0,
+                "x",
+                Style::new(
+                    foreground,
+                    background,
+                    Attributes::BOLD | Attributes::REVERSE,
+                ),
+                1,
+            )?;
+            let mut output = PreparedFrame::new(1, 1, None);
+            paint_composer_cells(&mut output, area(0, 0, 1, 1), &cells, &caps)?;
+            let mut expected_frame = PreparedFrame::new(1, 1, None);
+            expected_frame.put(0, 0, 1, expected.as_bytes())?;
+            assert_eq!(output, expected_frame);
+        }
+    }
     Ok(())
 }
