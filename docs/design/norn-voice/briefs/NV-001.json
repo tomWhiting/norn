@@ -57,14 +57,16 @@
         "Disabled voice starts no audio task",
         "A stalled hush write or receipt cannot hold the TUI past the owner-ruled five-second deadline; expiry is unknown",
         "An untagged error after admission cannot terminate identified playback",
-        "A complete-playback receipt after a stop request retains the request in its outcome and UI wording"
+        "A complete-playback receipt after a stop request retains the request in its outcome and UI wording",
+        "Turn input sources and state reset are structurally separated so run.rs stays within the 500 production-line policy; execution behaviour and existing tests are unchanged (Waffles wall ruling, 9 September 2026 15:15 Melbourne)."
       ],
       "files": {
         "create": [
           "crates/norn-tui/src/app/voice.rs",
           "crates/norn-tui/src/app/voice_tests.rs",
           "crates/norn/src/integration/locutus.rs",
-          "crates/norn/src/integration/locutus_tests.rs"
+          "crates/norn/src/integration/locutus_tests.rs",
+          "crates/norn-tui/src/app/turn/seed.rs"
         ],
         "modify": [
           "crates/norn-tui/src/app/mod.rs",
@@ -74,7 +76,8 @@
           "crates/norn-tui/src/app/dispatch.rs",
           "crates/norn/src/integration/mod.rs",
           "crates/norn/Cargo.toml",
-          "Cargo.lock"
+          "Cargo.lock",
+          "crates/norn-tui/src/app/turn/mod.rs"
         ]
       },
       "checklist": [

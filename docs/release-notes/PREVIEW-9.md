@@ -54,6 +54,25 @@ followed by the CLI suite and strict Clippy again; the TUI and core source
 remained unchanged. [Exact commands, output and changed-source hashes](PREVIEW-9-local-checks.json)
 record that boundary. No live provider or audible playback was exercised.
 
+## Structural policy correction
+
+The AST/tokei check on initial candidate `b3547a4` found `app/turn/run.rs`
+at 501 production lines after the voice select arm was added. Waffles extended
+NV-001's wall at 15:15 Melbourne on 9 September (Meridian
+`300b32be-cd12-4208-a34d-a55a9b8a99e0`). The unchanged turn input enum and
+initial-state reset now live in `app/turn/seed.rs`; `run.rs` measures 490
+production lines and `seed.rs` 15. Existing turn behaviour and tests are unchanged. The 929-test TUI suite,
+strict workspace/all-target Clippy, formatting and brief coverage passed after
+extraction; [exact checks and source hashes](PREVIEW-9-extraction-checks.json)
+record the final change.
+
+That initial scan found no added forbidden constructs. Its other finding,
+`crates/norn/src/tools/agent/mod.rs:47`, is a pre-existing constant in a
+module entry point, byte-unchanged from `d9873d0`. Waffles assigned it a separate
+row in the post-landing documentation/backfill brief alongside C35 and C124.
+It remains a recorded baseline policy failure; this candidate does not claim a
+clean whole-repository structural-policy verdict or alter that file.
+
 ## Remaining acceptance
 
 1. Submit the final full commit ID for review and the exact-commit 205 battery.

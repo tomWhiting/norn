@@ -7,7 +7,7 @@ use termina::Event;
 use tokio::sync::{broadcast, mpsc};
 
 use norn::agent_loop::active_input_channel;
-use norn::agent_loop::inbound::{ChannelMessage, InboundChannel};
+use norn::agent_loop::inbound::InboundChannel;
 use norn::agent_loop::runner::{
     AgentMessageStepRequest, AgentStepRequest, AgentStepResult, run_agent_step,
     run_agent_step_from_messages,
@@ -26,16 +26,11 @@ use crate::app::helpers::checkpoint_session;
 use crate::app::render::{load_visible, redraw_all, redraw_streaming_tick, write_user_message};
 use crate::app::state::AppState;
 
+use super::seed::{TurnSeed, reset_turn_state};
+
 use super::mid::{
     handle_active_input_delivery, handle_mid_turn_agent_event, handle_mid_turn_event,
 };
-
-enum TurnSeed {
-    Operator(crate::app::transcript::publication::SubmittedInput),
-    ChildResult(String),
-    AgentMessages(Vec<ChannelMessage>),
-    McpChannelWake,
-}
 
 #[derive(Default)]
 struct TurnOutcome {
@@ -544,11 +539,4 @@ async fn run_turn(
         interrupt_prompt,
         channel_wake_pause,
     })
-}
-
-fn reset_turn_state(state: &mut AppState) {
-    state.turn_start = None;
-    state.complete_at = None;
-    state.streaming_indicator = StreamingIndicator::Idle;
-    state.reset_live_usage();
 }
