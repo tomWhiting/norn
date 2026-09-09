@@ -1,6 +1,6 @@
 # TUI preferences
 
-Updated 8 September 2026, Melbourne time, for **Norn 0.1.0-preview.8**. The retained TUI uses an Iridium composer, saved send-key choices, and editable view shortcuts. See [NUI-005](design/norn-retained-tui/briefs/NUI-005.md) for the current installation and verification limits; [NFP-001](design/norn-frontend-preferences/briefs/NFP-001.md) records the earlier preference implementation.
+Updated 9 September 2026, Melbourne time, for **Norn 0.1.0-preview.9 source**. The retained TUI uses an Iridium composer, saved send-key choices, and editable view shortcuts. See the [preview.9 candidate record](release-notes/PREVIEW-9.md) for installation and verification status; [NFP-001](design/norn-frontend-preferences/briefs/NFP-001.md) records the earlier preference implementation.
 
 ## Choose where changes are saved
 
@@ -62,7 +62,7 @@ This example uses the declared defaults and omits optional shortcut overrides. A
 - `composer.send_key` is `enter` (default), `shift-enter`, or `alt-enter`; it selects the physical send key independently of steer/queue. Change it with `/view composer send-key enter|shift-enter|alt-enter`, Option/Alt+S, or the last-row send-key control. A visible completion popup takes bare Enter/Tab first. In Shift+Enter or Alt+Enter mode, bare Enter inserts a newline. The terminal must distinguish the chosen modifier; the control reports unconfirmed modifier support where applicable. A setting cannot enable unsupported terminal reporting.
 - Boolean fields require JSON booleans. Fields may be omitted to use the declared defaults within the winning object.
 
-The frontend owns `tui.view`, `tui.display`, `tui.input` and `tui.composer`. `composer` is a strict object containing only `send_key`; unknown fields such as `composer.future` are refused. Saves preserve unrelated document keys and unowned `tui` siblings such as `extension_data`. They do not save drafts, selections, viewport positions, transcript IDs, queued messages or terminal capability replies.
+The frontend owns `tui.view`, `tui.display`, `tui.input`, `tui.composer` and `tui.voice`. Native read-aloud uses the same save owner; [the voice guide](NATIVE-VOICE.md) documents its strict settings and commands. `composer` is a strict object containing only `send_key`; unknown fields such as `composer.future` are refused. Saves preserve unrelated document keys and unowned `tui` siblings such as `extension_data`. They do not save drafts, selections, viewport positions, transcript IDs, queued messages or terminal capability replies.
 
 Malformed values and unknown fields inside an owned section are refused with the document and dotted field name, rather than silently replaced. Each loaded layer is validated, including a shadowed layer. Correct the named field and restart. Unknown top-level `tui` siblings remain available to their separate owners.
 
@@ -106,7 +106,7 @@ Each action maps to an array of key strokes. An empty array explicitly unbinds i
 
 Only one save runs at a time. Later edits remain active in the current view and unsaved until their own values are persisted. After a successful completion, the same owner saves the latest eligible state; an older completion is not reported as saving newer edits. An ordinary exit waits for accepted preference writes and reports failures.
 
-The shared settings writer compares the four owned sections against the captured snapshot under the same document lock used by MCP settings writes. Unrelated changes are preserved. A concurrent change to an owned section is a named conflict and is not overwritten.
+The shared settings writer compares the five owned sections against the captured snapshot under the same document lock used by MCP settings writes. Unrelated changes are preserved. A concurrent change to an owned section is a named conflict and is not overwritten.
 
 A failure before publication leaves the run values intact and stops automatic retries. Inspect `/view preferences status` and the reported file/error. After correcting a transient write problem, `/view preferences save` can retry; for an owned-section conflict, inspect the file and restart to capture its current values before reapplying desired changes.
 

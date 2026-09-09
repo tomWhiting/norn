@@ -83,5 +83,19 @@
       "exit_code": 0,
       "output": "Cluster: norn-voice\n  Checklist items: 3\n  User stories: 3\n  Briefs: 1\n\n  All items covered.\n\n  Brief dependencies:\n    NV-001: Native read-aloud through Locutus\n"
     }
-  ]
+  ],
+  "final_wording_checks": {
+    "scope": "After extraction, only documentation and the capability lifecycle comment changed; strict Clippy and fmt repeated.",
+    "capabilities_file_sha256": "f40638430611833afe6ec578e290ff028bd1941d8f136539940d67a070ccd7f3",
+    "clippy": {
+      "command": "env TMPDIR=/Users/tom/Developer/ablative/stack/norn/target/tmp cargo clippy --locked --workspace --all-targets --features norn/live-api-smoke --target-dir /Users/tom/Developer/ablative/stack/norn/target -j 2 -- -D warnings",
+      "exit_code": 0,
+      "output": "    Checking norn-cli v0.1.0-preview.9 (/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate/crates/norn-cli)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.61s\n"
+    },
+    "fmt": {
+      "command": "cargo fmt --all -- --check",
+      "exit_code": 0,
+      "output": ""
+    }
+  }
 }

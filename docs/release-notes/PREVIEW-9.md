@@ -70,7 +70,10 @@ That initial scan found no added forbidden constructs. Its other finding,
 `crates/norn/src/tools/agent/mod.rs:47`, is a pre-existing constant in a
 module entry point, byte-unchanged from `d9873d0`. Waffles assigned it a separate
 row in the post-landing documentation/backfill brief alongside C35 and C124.
-It remains a recorded baseline policy failure; this candidate does not claim a
+The [repeated AST policy report](PREVIEW-9-policy.json) on `ae13a81`
+confirms no over-limit files, no added forbidden constructs and only that
+unchanged module finding. The subsequent change updates release documentation
+and one capability comment only. It remains a recorded baseline policy failure; this candidate does not claim a
 clean whole-repository structural-policy verdict or alter that file.
 
 ## Remaining acceptance

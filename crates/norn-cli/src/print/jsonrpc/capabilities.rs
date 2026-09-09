@@ -49,7 +49,7 @@ pub fn initialize_capabilities(persistent: bool) -> Value {
             // respond_to_approval) are unsupported until their mechanism
             // exists.
             "interventions": ["inject_message", "cancel"],
-            // Sequential requests retain one runtime and conversation.
+            // Report the selected lifecycle; retention requires explicit persistent mode.
             "runLifecycle": run_lifecycle,
             "runLifecycles": ["one_shot", "persistent"],
             "sessionRotation": "close_with_receipt",

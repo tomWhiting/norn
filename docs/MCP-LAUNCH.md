@@ -1,10 +1,10 @@
 # MCP launch configuration and Channels
 
-Updated 8 September 2026, Melbourne time. This guide describes the current startup interface from [NML-001](design/norn-mcp-launch/briefs/NML-001.md) and [NCS-001](design/norn-channel-settings/briefs/NCS-001.md).
+Updated 9 September 2026, Melbourne time. This guide describes the current startup interface from [NML-001](design/norn-mcp-launch/briefs/NML-001.md) and [NCS-001](design/norn-channel-settings/briefs/NCS-001.md).
 
 ## Current interface
 
-Norn `0.1.0-preview.8` includes inline/file MCP launch configuration, saved channel policies, `-c channels=JSON`, optional default delivery, and named `off`. These work with the interactive TUI and with the active-run limits described below. The [README](../README.md) has a complete launch example and the [latest preview record](design/norn-retained-tui/briefs/NUI-005.md) records installation and verification limits. Implementation availability does not imply a completed venue battery or independent review.
+Norn `0.1.0-preview.9` source includes inline/file MCP launch configuration, saved channel policies, `-c channels=JSON`, optional default delivery, and named `off`. These work with the interactive TUI and with the active-run limits described below. The [README](../README.md) has a complete launch example and the [latest candidate record](release-notes/PREVIEW-9.md) records installation and verification limits. Implementation availability does not imply a completed venue battery or independent review.
 
 Norn accepts the empty `claude/channel` experimental capability and `notifications/claude/channel` messages from admitted stdio sources. This wire contract does not require a JavaScript runtime. Ordinary MCP tools servers must implement that contract to send channel input. Optional permission relay and persistent attachment remain separate. A channel message never grants tool approval.
 
@@ -125,7 +125,7 @@ The peer sends `initialize`, then a `run/execute` with its prompt. By default No
 
 ## Historical verification
 
-These are dated implementation checkpoints, not the current installation identity. See the [preview.8 record](design/norn-retained-tui/briefs/NUI-005.md) for the later installed source and open findings.
+These are dated implementation checkpoints, not the current installation identity. See the [preview.8 record](design/norn-retained-tui/briefs/NUI-005.md) for that installed checkpoint and the [preview.9 candidate](release-notes/PREVIEW-9.md) for the next delivery and its acceptance status.
 
 ### NML-001 installation checkpoint
 
