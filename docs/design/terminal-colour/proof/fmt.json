@@ -1,0 +1,10 @@
+{
+  "checked_code_sha": "29869273bc6665692e48fa66e23251b5f08d78c0",
+  "working_directory": "/Users/tom/Developer/ablative/stack/norn/.worktrees/terminal-colour",
+  "command": "cargo fmt --all --check > /Users/tom/Developer/ablative/stack/norn/var/terminal-colour/logs/fmt.log 2>&1",
+  "exit_code": 0,
+  "output_streams": "stdout and stderr combined",
+  "source_log": "/Users/tom/Developer/ablative/stack/norn/var/terminal-colour/logs/fmt.log",
+  "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "output": ""
+}

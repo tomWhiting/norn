@@ -21,6 +21,10 @@
     "README.md": "TC-001 colour depth, rendering, caller or regression coverage.",
     "crates/norn-tui/src/terminal/colour.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
     "crates/norn-tui/src/terminal/colour_tests.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
-    "crates/norn-tui/src/error.rs": "Remove retired colour-only admission error."
+    "crates/norn-tui/src/error.rs": "Remove retired colour-only admission error.",
+    "docs/design/terminal-colour/PROOF.md": "TC-001 checked-source verification evidence and explicit validation limits.",
+    "docs/design/terminal-colour/proof/tui-lib.json": "TC-001 checked-source verification evidence and explicit validation limits.",
+    "docs/design/terminal-colour/proof/clippy.json": "TC-001 checked-source verification evidence and explicit validation limits.",
+    "docs/design/terminal-colour/proof/fmt.json": "TC-001 checked-source verification evidence and explicit validation limits."
   }
 }
