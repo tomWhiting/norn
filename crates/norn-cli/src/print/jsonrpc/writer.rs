@@ -192,6 +192,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn concurrent_notifications_and_responses_never_interleave_frames()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use serde_json::{Value, json};
+        use tokio::io::AsyncReadExt;
+
+        // Force writes to suspend within frames while both producers enqueue
+        // messages. Only the writer task owns the output half.
+        let (output, mut input) = tokio::io::duplex(17);
+        let (writer, writer_task) = spawn_writer_to(output);
+        let reader = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            input.read_to_end(&mut bytes).await?;
+            Ok::<_, std::io::Error>(bytes)
+        });
+        let responses = writer.clone();
+        let response_task = tokio::spawn(async move {
+            for id in 0..64 {
+                responses.send_response(&JsonRpcResponse::ok(
+                    json!(id),
+                    json!({"status":"injected"}),
+                ))?;
+                tokio::task::yield_now().await;
+            }
+            Ok::<_, TransportError>(())
+        });
+        let notification_task = tokio::spawn(async move {
+            for index in 0..64 {
+                writer.send_notification(&JsonRpcNotification {
+                    jsonrpc: "2.0",
+                    method: "event/message",
+                    params: json!({"index":index,"text":format!("chunk-{index}")}),
+                })?;
+                tokio::task::yield_now().await;
+            }
+            Ok::<_, TransportError>(())
+        });
+        response_task.await??;
+        notification_task.await??;
+        writer_task.await??;
+        let bytes = reader.await??;
+        let text = String::from_utf8(bytes)?;
+        assert!(text.ends_with('\n'));
+        let mut responses = std::collections::BTreeSet::new();
+        let mut notifications = std::collections::BTreeSet::new();
+        for line in text.lines() {
+            let frame: Value = serde_json::from_str(line)?;
+            assert_eq!(frame["jsonrpc"], "2.0");
+            if let Some(id) = frame.get("id") {
+                assert!(frame.get("method").is_none());
+                assert_eq!(frame["result"]["status"], "injected");
+                assert!(responses.insert(id.as_u64().ok_or("response id missing")?));
+            } else {
+                assert_eq!(frame["method"], "event/message");
+                assert!(
+                    notifications.insert(
+                        frame["params"]["index"]
+                            .as_u64()
+                            .ok_or("event index missing")?
+                    )
+                );
+            }
+        }
+        assert_eq!(responses, (0..64).collect());
+        assert_eq!(notifications, (0..64).collect());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn writer_task_surfaces_write_failure() {
         let outcome = broken_sink_result(false).await;
         assert!(

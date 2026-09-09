@@ -1,7 +1,7 @@
 # Native read-aloud
 
-This describes the D08 implementation branch. Installation and live audio
-verification are pending; these commands are not yet in installed preview.8.
+This describes native read-aloud in the preview.9 source candidate. Installation
+and live audio verification are pending; installed preview.8 lacks these commands.
 
 Norn's terminal connects directly to Locutus's Unix control socket. It does
 not ask the model to call `say`, load audio models, or start a voice service.
@@ -89,5 +89,8 @@ words reached your ears.
 
 Dictation, streamed spoken/written sections and model-visible interruption
 receipts are subsequent deliveries. The pinned contract is `locutus-contract`
-at `56b6722d43380e6a5e59fe3f759bb907cbb17c87`. Live service testing, review and
-the exact-commit 205 battery remain required before landing and installation.
+at `56b6722d43380e6a5e59fe3f759bb907cbb17c87`. Waffles approved the corrected read-aloud code at `1cd0b35` on 9 September
+2026, 14:52 Melbourne. The combined candidate still requires its exact-commit
+205 battery before landing. Audible playback and stop with Tom on his Mac are
+the installation acceptance; socket fixtures alone do not prove live audio.
+See the [candidate record](release-notes/PREVIEW-9.md).

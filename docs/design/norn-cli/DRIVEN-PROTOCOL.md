@@ -350,7 +350,7 @@ supersedes the earlier `stop: {reason, retryable}` proposal in
 | `-32600` | invalid request (bad `jsonrpc` tag, missing/invalid params) |
 | `-32601` | method not found / unadvertised intervention primitive |
 | `-32603` | internal error: run failure on the accepted `run/execute`, intervention delivery failure, degraded intervention mode |
-| `-32000` | invalid state: `run/execute` while a run is already in flight |
+| `-32000` | invalid state: overlapping `run/execute`, or an `initialize` request changing `runLifecycle` after the first accepted run |
 
 ## Shutdown handshake
 
@@ -372,7 +372,12 @@ supersedes the earlier `stop: {reason, retryable}` proposal in
 - The input owner uses cancellation-safe line framing. A JSON line split
   across run completion retains its entire prefix for the next read.
 - Signal handling belongs to the connection lifetime. SIGINT/SIGTERM also
-  terminate an idle persistent connection; they do not disappear between turns.
+  terminate an idle connection with the platform signal exit status (130 for
+  SIGINT, 143 for SIGTERM on Unix), without claiming a run was cancelled.
+  Active work retains the graceful cancellation ladder.
+- The output writer is supervised throughout the connection. A failed writer
+  cancels active work or wakes idle admission, even when stdin remains open;
+  shutdown preserves execution and transport failures together.
 - Event shutdown drains the unread prefix present at the shutdown cut. A live
   child or retained sender may publish later events, but cannot extend process
   shutdown without bound or write after the terminal response.

@@ -148,6 +148,7 @@ struct DrivenChild {
     stdin: Option<std::process::ChildStdin>,
     reader: BufReader<std::process::ChildStdout>,
     watchdog_disarm: mpsc::Sender<()>,
+    stderr: mpsc::Receiver<String>,
     _home: tempfile::TempDir,
 }
 
@@ -172,11 +173,21 @@ impl DrivenChild {
         // Drain stderr in the background so a chatty child can never block
         // on a full pipe; surface it for post-mortem readability.
         let stderr = child.stderr.take().expect("child stderr");
+        let (stderr_tx, stderr_rx) = mpsc::channel();
         std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
             for line in reader.lines() {
-                let Ok(line) = line else { return };
+                let line = match line {
+                    Ok(line) => line,
+                    Err(error) => {
+                        eprintln!("norn-child stderr read failed: {error}");
+                        return;
+                    }
+                };
                 eprintln!("norn-child stderr: {line}");
+                if stderr_tx.send(line).is_err() {
+                    return;
+                }
             }
         });
         // Watchdog: kill the child if the test has not disarmed in time,
@@ -195,6 +206,7 @@ impl DrivenChild {
             stdin: Some(stdin),
             reader: BufReader::new(stdout),
             watchdog_disarm: disarm_tx,
+            stderr: stderr_rx,
             _home: home,
         }
     }
@@ -506,18 +518,8 @@ fn run_execute_quit_prompt_is_answered_with_null_result() {
     assert!(status.success(), "an answered /quit prompt exits 0");
 }
 
-/// Regression for the driven-shutdown wedge: when the caller correctly
-/// holds stdin open after `run/execute` (the contract keeps the channel
-/// open for mid-run interventions; EOF-before-exit is NOT required), the
-/// terminal id-matched Response must still arrive AND the process must
-/// still exit — "After the terminal response is enqueued … the process
-/// exits with the CLI exit code" (`DRIVEN-PROTOCOL.md` "Shutdown
-/// handshake"). Pre-fix, the intervene reader's blocking stdin read lived
-/// on the runtime's blocking pool; with stdin never closing, that read
-/// never returned and `Runtime::drop` at the end of
-/// `print::orchestrator::run` wedged forever in `BlockingPool::shutdown`
-/// — norn never exited. The read deadline here is the TEST's own bound;
-/// norn itself never times a run out.
+/// Explicit persistence retains the process and provider conversation across
+/// completed requests, then /exit closes without requiring stdin EOF.
 #[test]
 fn sequential_runs_retain_the_process_and_session_until_explicit_exit()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -628,11 +630,10 @@ fn intervene_and_second_run_are_served_mid_run() {
     }));
     let (busy, _notes) = child.read_response(&json!("run-dup"));
     assert_eq!(busy["error"]["code"], -32000);
-    assert!(
-        busy["error"]["message"]
-            .as_str()
-            .expect("busy message")
-            .contains("run already active"),
+    assert_eq!(
+        busy["error"]["message"],
+        "run already active: the driven channel serves exactly one run/execute per \
+         process (runLifecycle: one_shot)",
     );
 
     // Release the run. The injected queued turn triggers one more provider
@@ -721,6 +722,13 @@ fn clear_returns_the_new_session_identity_and_explicit_close_reason()
         .ok_or_else(|| std::io::Error::other("rotation receipt missing replacement session"))?;
     assert_ne!(session_id, "before-driven-clear");
     assert!(!session_id.is_empty());
+    assert!(child.child.wait()?.success());
+    let stderr: Vec<_> = child.stderr.iter().collect();
+    assert!(
+        stderr
+            .iter()
+            .any(|line| line == &format!("Conversation cleared. New session: {session_id}"))
+    );
     assert!(child.wait_with_stdin_open().success());
     Ok(())
 }
@@ -771,7 +779,37 @@ fn persistent_idle_process_still_handles_sigint() -> Result<(), Box<dyn std::err
             .status()?
             .success()
     );
-    assert!(child.wait_with_stdin_open().success());
+    let status = child.child.wait()?;
+    assert_eq!(status.code(), Some(130));
+    let stderr: Vec<_> = child.stderr.iter().collect();
+    assert!(
+        stderr
+            .iter()
+            .all(|line| !line.contains("cancelling the run"))
+    );
+    assert_eq!(child.wait_with_stdin_open().code(), Some(130));
     stub.shutdown();
+    Ok(())
+}
+
+#[test]
+fn default_idle_sigint_exits_with_signal_status_without_claiming_a_run()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut child = DrivenChild::spawn(&[]);
+    child.initialize();
+    assert!(
+        Command::new("kill")
+            .args(["-INT", &child.child.id().to_string()])
+            .status()?
+            .success()
+    );
+    assert_eq!(child.child.wait()?.code(), Some(130));
+    let stderr: Vec<_> = child.stderr.iter().collect();
+    assert!(
+        stderr
+            .iter()
+            .all(|line| !line.contains("cancelling the run"))
+    );
+    assert_eq!(child.wait_with_stdin_open().code(), Some(130));
     Ok(())
 }

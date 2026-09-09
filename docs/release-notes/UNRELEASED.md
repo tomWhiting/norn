@@ -1,5 +1,15 @@
 # Unreleased — local preview candidates and recorded checkpoints
 
+## 0.1.0-preview.9 — native read-aloud and driven sessions candidate
+
+9 September 2026, Melbourne. The candidate adds opt-in Locutus read-aloud,
+opt-in persistent driven JSON-RPC sessions, and progressive terminal colour
+that permits interactive startup without 256-colour support. Voice stays
+disabled by default; one-shot driven execution remains the default. Live
+dictation and detach/reattach are separate work. This entry records source,
+not an installation or public release. See [the candidate record](PREVIEW-9.md)
+for checks, review and acceptance status.
+
 ## 0.1.0-preview.7 — scrolling and configurable shortcuts candidate (not installed)
 
 The user has authorized a local scrolling/Latest preview for hands-on testing after compile, focused runtime checks and code-quality checks, with rollback preserved. Root owns source, manifests, builds and installation. No preview.7 passing checks or installation are recorded yet. Installed preview.6 remains the checkpoint below.

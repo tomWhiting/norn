@@ -27,8 +27,12 @@ play audio. The TUI suite includes disabled startup, draft preservation, strict
 settings, stale-source rejection, command discovery, editable shortcuts,
 connect failure, busy-control refusal, and retained unknown/late-stop outcomes.
 
-Pending: Fable review, real playback and stop against Buckley's gated Locutus
-service, and the exact-commit 205 battery. No merge or installation is claimed.
+Waffles's re-review approved corrected commit `1cd0b35` at 14:52 Melbourne
+on 9 September 2026, with the listed checks reproduced independently. His
+Meridian receipt is `4cd90028-7e54-4e30-a79e-0783a6c6efde`. The exact-commit
+205 battery and real playback and stop against Buckley's gated Locutus service
+remain outstanding here. Live audio is the installation acceptance with Tom,
+after the combined candidate is built. No installation is claimed.
 Dictation and streamed spoken/written sections are separate deliveries.
 
 Use the filter `integration::locutus::tests`. The misspelling

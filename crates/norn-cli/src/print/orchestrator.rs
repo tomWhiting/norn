@@ -355,6 +355,9 @@ async fn orchestrate_run(
     // events actually land in — a driver resuming by the retired id
     // would replay the full pre-clear history it asked to leave behind.
     let clear_report = apply_clear_and_report(slash_state)?;
+    if let Some(line) = clear_report.operator_line.as_ref() {
+        eprintln!("{line}");
+    }
     if clear_report.operator_line.is_some()
         && let Some(driver) = driven.as_ref()
         && driver.is_persistent()
@@ -375,9 +378,6 @@ async fn orchestrate_run(
     let store = slash_state.current_store();
     parts.event_store = Arc::clone(&store);
     let pre_event_count = store.len();
-    if let Some(line) = clear_report.operator_line {
-        eprintln!("{line}");
-    }
 
     let format = cli.output_format.unwrap_or(OutputFormat::Text);
 

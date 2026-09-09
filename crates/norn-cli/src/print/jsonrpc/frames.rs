@@ -6,7 +6,8 @@
 //! found, `-32603` internal) mirror
 //! [`norn::integration::mcp_server`](../../../../norn/src/integration/mcp_server.rs).
 //! `-32000` is the driven channel's own invalid-state code (a `run/execute`
-//! while a run is already in flight). stderr stays
+//! while a run is already in flight, or a lifecycle change after the first
+//! accepted run). stderr stays
 //! human logs (the tracing subscriber already targets it), so library noise
 //! can never corrupt the structured stream.
 
@@ -23,9 +24,9 @@ pub(crate) const CODE_METHOD_NOT_FOUND: i64 = -32601;
 /// JSON-RPC internal-error code.
 pub(crate) const CODE_INTERNAL_ERROR: i64 = -32603;
 /// Driven-channel invalid-state code (implementation-defined server-error
-/// range): a `run/execute` arrived while a run is already in flight. The
-/// channel serves one active run at a time (`DRIVEN-PROTOCOL.md`
-/// "Persistent run lifecycle").
+/// range): overlapping execution or a lifecycle change after the first
+/// accepted run. The channel serves one active run at a time and freezes
+/// its lifecycle on first admission (`DRIVEN-PROTOCOL.md`).
 pub(crate) const CODE_RUN_BUSY: i64 = -32000;
 
 /// The JSON-RPC protocol version every frame carries.

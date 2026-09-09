@@ -422,6 +422,16 @@ fn retained_foreground_background_and_emphasis_survive_colour_degradation()
             let encoded = String::from_utf8(bytes)?;
             if selected {
                 assert!(encoded.contains("\x1b[1m"));
+                if depth == ColourDepth::Ansi16 {
+                    assert!(
+                        encoded.contains("\x1b[44m"),
+                        "selected ANSI16 background missing: {encoded:?}"
+                    );
+                    assert!(
+                        !encoded.contains("\x1b[104m"),
+                        "text background overrode selected background"
+                    );
+                }
             }
             if highlighted || depth == ColourDepth::Monochrome {
                 assert!(encoded.contains("\x1b[7m"));

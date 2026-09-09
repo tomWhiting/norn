@@ -53,7 +53,14 @@ fn missing_or_dumb_term_without_rgb_evidence_keeps_default_colours() {
 
 #[test]
 fn unknown_extended_colour_evidence_uses_basic_ansi() {
-    for term in ["xterm", "vt100", "unknown-terminal"] {
+    for term in [
+        "xterm",
+        "vt100",
+        "screen",
+        "tmux",
+        "linux",
+        "unknown-terminal",
+    ] {
         for colorterm in [None, Some(""), Some("yes"), Some("unknown")] {
             assert_eq!(
                 ColourDepth::from_environment(Some(term), colorterm),

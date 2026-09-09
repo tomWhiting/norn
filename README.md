@@ -2,7 +2,7 @@
 
 Norn is an AI agent runtime for interactive terminal work, command-line automation, and embedding in other applications. It can read and edit files, run commands, search code, use MCP tools, coordinate agents, and resume saved sessions. The Rust library, terminal UI, print mode, and driven JSON-RPC mode share the same `AgentBuilder` assembly path.
 
-**Current source version: `0.1.0-preview.8`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [latest installation and verification record](docs/design/norn-retained-tui/briefs/NUI-005.md) for the tested scope and open findings.
+**Current source version: `0.1.0-preview.9`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [candidate verification record](docs/release-notes/PREVIEW-9.md) for the tested scope and open findings.
 
 ## Install and start
 
@@ -32,9 +32,9 @@ norn --help
 
 ## MCP tools and Claude Code Channels-compatible push
 
-Native read-aloud is being added separately from MCP tool calls. The
-[native voice guide](docs/NATIVE-VOICE.md) documents the D08 branch's
-`/voice read`, `stop`, `replay`, preferences and verification status.
+Native read-aloud uses Locutus's control socket separately from MCP tool calls.
+The [native voice guide](docs/NATIVE-VOICE.md) documents `/voice read`, `stop`,
+`replay`, preferences and the pending live-audio acceptance.
 
 Norn can start MCP servers and receive external messages from servers implementing the **ordinary Claude Code Channels message protocol over stdio**. This is a wire protocol, not a JavaScript dependency: the server can be written in Rust, JavaScript, or another language. An ordinary MCP tools server does not automatically support channel messages.
 

@@ -31,7 +31,7 @@
     "S48"
   ],
   "purpose": "Waffles, relayed by Ripley on 9 September 2026 Melbourne time, requires repeated voice-driver run/execute requests on one open Norn process and runtime. His 14:06 ruling requires explicit initialize params runLifecycle=persistent; omission preserves one-shot EOF for existing Aion consumers. The normative design is docs/design/norn-cli/DRIVEN-PROTOCOL.md. Existing checklist/story references below describe the session, streaming, slash and cancellation responsibilities extended to driven mode; they do not declare the older NC briefs reverified.",
-  "task": "Retain one assembled runtime behind a single input owner, negotiate lifecycle before the first run, preserve event and intervention contracts, and replace per-run cancellation tokens without reviving cancelled descendants. Publish typed close-on-clear receipts. Source implementation is commit 5ccfcd2ce1293907fa0ac0862c524192bb4a4bc5. This brief records local implementation, not Fable approval or a 205 landing receipt. Proof: docs/design/norn-cli/proofs/NDR-001-local.json.",
+  "task": "Retain one assembled runtime behind a single input owner, negotiate lifecycle before the first run, preserve event and intervention contracts, and replace per-run cancellation tokens without reviving cancelled descendants. Publish typed close-on-clear receipts. The initial implementation is commit 5ccfcd2ce1293907fa0ac0862c524192bb4a4bc5. Waffles reviewed that commit with changes requested in Meridian message 2468081e-6098-4b94-a4db-1c738d1a7ad6 (9 September 2026, 14:50 Melbourne); the source correction and exact checked commit are recorded in docs/design/norn-cli/proofs/NDR-001-local.json. This brief records local implementation and review corrections, not a 205 landing receipt.",
   "requirements": [
     {
       "id": "R1",
@@ -92,14 +92,16 @@
       "spec": "WHEN a request completes, THE SYSTEM SHALL drain its event stream before publishing its matching terminal response. WHEN stdin reaches EOF during an accepted run, THE SYSTEM SHALL finish that run before closing.",
       "acceptance": [
         "Native tests observe event notifications before terminal results",
-        "Actor EOF test retains the accepted run until its terminal response"
+        "Actor EOF test retains the accepted run until its terminal response",
+        "concurrent_notifications_and_responses_never_interleave_frames exercises concurrent producers against a real writer with 17-byte duplex capacity; all 128 complete JSON frames remain distinct"
       ],
       "files": {
         "modify": [
           "crates/norn-cli/src/print/driven.rs",
           "crates/norn-cli/src/print/orchestrator.rs",
           "crates/norn-cli/src/print/jsonrpc/run.rs",
-          "crates/norn-cli/tests/jsonrpc_driven_mode.rs"
+          "crates/norn-cli/tests/jsonrpc_driven_mode.rs",
+          "crates/norn-cli/src/print/jsonrpc/writer.rs"
         ],
         "create": [
           "crates/norn-cli/src/print/jsonrpc/session_tests.rs"
@@ -168,10 +170,11 @@
     {
       "id": "R6",
       "title": "Report malformed input and transport failure",
-      "spec": "WHEN a frame, parameter or intervention state is invalid, THE SYSTEM SHALL publish an explicit protocol error. WHEN input or output transport fails, THE SYSTEM SHALL return an error rather than report clean completion and SHALL cancel a bound active run.",
+      "spec": "WHEN a frame, parameter or intervention state is invalid, THE SYSTEM SHALL publish an explicit protocol error. WHEN input or output transport fails, THE SYSTEM SHALL return an error rather than report clean completion and SHALL cancel a bound active run. IF execution and input shutdown both fail, THE SYSTEM SHALL retain the original failure and classification while attaching the shutdown failure. WHILE the session is open, THE SYSTEM SHALL supervise the output writer concurrently; a failed writer SHALL cancel active work or wake idle admission and await owned cleanup even if stdin remains open.",
       "acceptance": [
         "Actor tests cover invalid frames, parameters, unknown methods, closed queues and input failure",
-        "Driven emitter tests cover writer failure and event loss"
+        "Driven emitter tests cover writer failure and event loss",
+        "failed_writer_wakes_an_idle_session_with_stdin_still_open injects writer failure after initialize without a model and verifies owned input cleanup"
       ],
       "files": {
         "modify": [
@@ -195,7 +198,7 @@
     {
       "id": "R7",
       "title": "Close explicitly on session rotation",
-      "spec": "WHEN clear rotates a persistent session, THE SYSTEM SHALL return the replacement session_id and connection state closing with reason session_rotated, then close. THE SYSTEM SHALL NOT continue using old action-log, fork, cache or provider bindings. This close-on-clear boundary was approved by the coordinator on 9 September 2026; the TUI rotation implementation is precedent for future full live rebinding.",
+      "spec": "WHEN clear rotates a persistent session, THE SYSTEM SHALL return the replacement session_id and connection state closing with reason session_rotated, then close. THE SYSTEM SHALL NOT continue using old action-log, fork, cache or provider bindings. This close-on-clear boundary was approved by the coordinator on 9 September 2026; the TUI rotation implementation is precedent for future full live rebinding. THE SYSTEM SHALL also print the existing cleared-session operator line on stderr before the persistent close receipt.",
       "acceptance": [
         "Native clear_returns_the_new_session_identity_and_explicit_close_reason checks replacement identity, receipt and EOF",
         "Default one-shot local-command responses retain their existing shape"
@@ -216,7 +219,7 @@
     {
       "id": "R8",
       "title": "Negotiate persistence explicitly",
-      "spec": "UNLESS initialize explicitly selects runLifecycle persistent, THE SYSTEM SHALL return one terminal response and stdout EOF without waiting for stdin EOF. THE SYSTEM SHALL advertise one_shot and persistent choices and the selected lifecycle. AFTER the first accepted run, THE SYSTEM SHALL refuse lifecycle changes. Parameterless initialize SHALL preserve the current selection.",
+      "spec": "UNLESS initialize explicitly selects runLifecycle persistent, THE SYSTEM SHALL return one terminal response and stdout EOF without waiting for stdin EOF. THE SYSTEM SHALL advertise one_shot and persistent choices and the selected lifecycle. AFTER the first accepted run, THE SYSTEM SHALL refuse lifecycle changes. Parameterless initialize SHALL preserve the current selection. WHEN the lifecycle is one_shot and execution is busy, THE SYSTEM SHALL preserve the original -32000 error text byte-for-byte.",
       "acceptance": [
         "Native default_one_shot_exits_after_one_response_with_stdin_still_open passes",
         "Actor tests cover invalid choices, fixed selection and repeated parameterless initialize",
@@ -243,9 +246,10 @@
     {
       "id": "R9",
       "title": "Own signals for the entire connection",
-      "spec": "WHILE a driven connection exists, THE SYSTEM SHALL retain its signal watcher. WHEN SIGINT arrives between persistent requests, THE SYSTEM SHALL terminate the idle process.",
+      "spec": "WHILE a driven connection exists, THE SYSTEM SHALL retain its signal watcher. WHEN SIGINT arrives between persistent requests, THE SYSTEM SHALL terminate the idle process. WHEN no run is active, SIGINT or SIGTERM SHALL exit immediately with its platform signal exit code and SHALL NOT describe a run being cancelled. Review ruling: Waffles, Meridian message 2468081e-6098-4b94-a4db-1c738d1a7ad6, 9 September 2026 14:50 Melbourne.",
       "acceptance": [
-        "Native persistent_idle_process_still_handles_sigint passes"
+        "Native persistent_idle_process_still_handles_sigint passes",
+        "Default pre-run and persistent post-run native SIGINT tests exit 130 without claiming a run was cancelled; existing signal_cancellation fixtures retain graceful active-run cancellation"
       ],
       "files": {
         "create": [
@@ -253,7 +257,8 @@
         ],
         "modify": [
           "crates/norn-cli/src/print/orchestrator.rs",
-          "crates/norn-cli/tests/jsonrpc_driven_mode.rs"
+          "crates/norn-cli/tests/jsonrpc_driven_mode.rs",
+          "crates/norn-cli/src/print/signals.rs"
         ]
       },
       "checklist": [
@@ -307,10 +312,11 @@
     "No audio playback or second-model cleanup: Locutus owns audio hush separately from generation cancellation",
     "No full live rebind after clear; return the explicit rotation receipt and close",
     "README was added to the wall by coordinator instruction on 9 September 2026",
-    "No build reruns for the documentation follow-on; checked Rust remains commit 5ccfcd2"
+    "No build reruns for the documentation follow-on; checked Rust remains commit 5ccfcd2",
+    "Reviewer correction expands the wall to signals.rs and jsonrpc/writer.rs before edits; source-review findings are recorded in the local proof. C35/C124 backfill remains with the design owner after landing, per Waffles ruling."
   ],
   "verification": [
-    "cargo test --locked -p norn-cli --lib --test jsonrpc_driven_mode -j2: 564 library and 11 native RPC tests passed",
+    "Latest review-correction verification is recorded with exact commands, complete output and checked source commit in docs/design/norn-cli/proofs/NDR-001-local.json. The initial 5ccfcd2 checkpoint passed 564 CLI library tests and 11 native RPC tests; those historical logs are preserved separately from the corrected source results.",
     "cargo clippy --locked --workspace --all-targets --features norn/live-api-smoke -j2 -- -D warnings: passed",
     "cargo fmt --all --check and git diff --check: passed",
     "render-brief.py rendered this Markdown from authoritative JSON",

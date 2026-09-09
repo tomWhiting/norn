@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 /// and is bumped when the contract changes incompatibly.
 pub const DRIVEN_PROTOCOL_VERSION: &str = "norn-driven/1";
 
-/// The capabilities Norn advertises in its `initialize` response.
+/// The capabilities Norn advertises for the selected lifecycle.
 ///
 /// Norn advertises the consumer-neutral intervention primitives it can
 /// serve — `inject_message` and `cancel` — which the mid-run intervene loop
@@ -24,7 +24,8 @@ pub const DRIVEN_PROTOCOL_VERSION: &str = "norn-driven/1";
 /// execution is rejected as busy.
 /// Explicit session rotation closes with a replacement-session receipt.
 #[must_use]
-pub fn initialize_capabilities() -> Value {
+pub fn initialize_capabilities(persistent: bool) -> Value {
+    let run_lifecycle = if persistent { "persistent" } else { "one_shot" };
     json!({
         "protocol": DRIVEN_PROTOCOL_VERSION,
         "serverInfo": {
@@ -49,7 +50,7 @@ pub fn initialize_capabilities() -> Value {
             // exists.
             "interventions": ["inject_message", "cancel"],
             // Sequential requests retain one runtime and conversation.
-            "runLifecycle": "one_shot",
+            "runLifecycle": run_lifecycle,
             "runLifecycles": ["one_shot", "persistent"],
             "sessionRotation": "close_with_receipt",
         },
@@ -63,7 +64,7 @@ mod tests {
 
     #[test]
     fn initialize_capabilities_advertises_interventions() {
-        let caps = initialize_capabilities();
+        let caps = initialize_capabilities(false);
         let interventions = caps["capabilities"]["interventions"].as_array().unwrap();
         let names: Vec<&str> = interventions.iter().filter_map(Value::as_str).collect();
         assert!(names.contains(&"inject_message"));
@@ -75,7 +76,7 @@ mod tests {
 
     #[test]
     fn initialize_result_carries_contract_version_and_lifecycle() {
-        let caps = initialize_capabilities();
+        let caps = initialize_capabilities(false);
         // The contract version consumers gate on — NOT the JSON-RPC "2.0"
         // envelope tag.
         assert_eq!(caps["protocol"], json!(DRIVEN_PROTOCOL_VERSION));
@@ -83,6 +84,10 @@ mod tests {
         assert_eq!(
             caps["capabilities"]["runLifecycles"],
             json!(["one_shot", "persistent"])
+        );
+        assert_eq!(
+            initialize_capabilities(true)["capabilities"]["runLifecycle"],
+            "persistent"
         );
     }
 }

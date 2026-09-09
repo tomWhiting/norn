@@ -291,3 +291,72 @@ fn rgb_composer_degrades_to_basic_ansi_or_default_with_selection_intact() -> Tes
     }
     Ok(())
 }
+
+#[test]
+fn real_iridium_selection_and_caret_reverse_only_their_columns_in_monochrome() -> TestResult {
+    use crate::input::{InputEditor, InputHistory};
+    use crate::terminal::colour::ColourDepth;
+    use iridium_editor::cell_layout::{CellColumn, CellWrapParameters, ScreenRow};
+    use iridium_editor::editor::CellInputOptions;
+    use iridium_tui::frame::{CellFrameOptions, Frame as IridiumFrame};
+
+    for (anchor, head, paint_primary, emphasized) in [(1, 4, false, 1..4), (3, 3, true, 3..4)] {
+        let mut editor = InputEditor::new(InputHistory::in_memory());
+        editor.paste_cells("abcdef")?;
+        let options = CellInputOptions {
+            wrap: CellWrapParameters::new(8, 4),
+            visible_rows: 1,
+        };
+        editor.set_cell_pointer(ScreenRow(0), CellColumn(anchor), false, options)?;
+        editor.set_cell_pointer(ScreenRow(0), CellColumn(head), true, options)?;
+        let prepared = IridiumFrame::prepare_cells(
+            editor.kernel(),
+            CellFrameOptions {
+                columns: 8,
+                rows: 1,
+                first_row: ScreenRow(0),
+                chrome: None,
+            },
+        )?;
+        let mut cells = CellBuffer::new(8, 1);
+        IridiumFrame::new().render_cells_with_primary_caret(
+            &prepared,
+            &mut cells,
+            paint_primary,
+        )?;
+        let mut expected = PreparedFrame::new(8, 1, None);
+        for (column, glyph) in "abcdef  ".chars().enumerate() {
+            let style = cells.get(column, 0).ok_or("rendered cell missing")?.style();
+            assert!(
+                !style.attributes.contains(Attributes::REVERSE),
+                "fixture already supplies reverse"
+            );
+            assert_eq!(
+                style.background != Color::Default,
+                emphasized.contains(&column)
+            );
+            let reverse = if emphasized.contains(&column) {
+                "\x1b[7m"
+            } else {
+                ""
+            };
+            expected.put(
+                u16::try_from(column)?,
+                0,
+                1,
+                format!("\x1b[0m{reverse}{glyph}").as_bytes(),
+            )?;
+        }
+        let caps = TerminalCaps {
+            colour_depth: ColourDepth::Monochrome,
+            ..TerminalCaps::baseline()
+        };
+        let mut output = PreparedFrame::new(8, 1, None);
+        paint_composer_cells(&mut output, area(0, 0, 8, 1), &cells, &caps)?;
+        assert_eq!(
+            output, expected,
+            "selection/caret columns lost or extra columns reversed"
+        );
+    }
+    Ok(())
+}
