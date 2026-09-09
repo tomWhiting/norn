@@ -99,3 +99,113 @@ fn voice_commands_are_frontend_commands_while_the_agent_is_running() {
         "please /voice read"
     ));
 }
+
+#[tokio::test]
+async fn connect_failure_becomes_a_retained_error_and_releases_playback() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let mut state = state();
+    state.voice_preferences = VoicePreferences::decode(Some(&serde_json::json!({
+        "enabled":true,"control_socket":directory.path().join("no-listener")
+    })))?;
+    completed(&mut state, &serde_json::json!("Read this answer."))?;
+    assert!(matches!(
+        command("read", &mut state)?,
+        LocalCommandOutcome::Accepted
+    ));
+    while state.voice.playback.is_some() {
+        let update = wait(&mut state.voice).await;
+        finish(&mut state, update)?;
+    }
+    assert!(state.transcript.projection.items().any(|item| matches!(
+        item.kind,
+        norn::session_view::ViewItemKind::Error
+    ) && item.label.as_str()
+        == "Read-aloud failed"));
+    assert_eq!(
+        state.screen.feedback.as_deref(),
+        Some("Voice failed; inspect the retained error")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn busy_controls_cannot_replace_the_owned_request() -> TestResult {
+    let mut state = state();
+    state.voice_preferences = VoicePreferences::decode(Some(&serde_json::json!({
+        "enabled":true,"control_socket":"/not-opened"
+    })))?;
+    completed(&mut state, &serde_json::json!("The answer."))?;
+    let request_id = uuid::Uuid::new_v4();
+    let cancel = CancellationToken::new();
+    let task_cancel = cancel.clone();
+    let (progress, receiver) = watch::channel(ReadAloudProgress::Stopping);
+    state.voice.playback = Some(Playback {
+        request_id,
+        cancel,
+        progress: receiver,
+        task: tokio::spawn(async move {
+            task_cancel.cancelled().await;
+            Ok(ReadAloudOutcome::StopUnconfirmed {
+                stop_sent: true,
+                waited: std::time::Duration::from_secs(5),
+            })
+        }),
+    });
+    for text in ["read", "replay", "configure {}"] {
+        assert!(matches!(
+            command(text, &mut state)?,
+            LocalCommandOutcome::Rejected
+        ));
+        assert_eq!(
+            state
+                .voice
+                .playback
+                .as_ref()
+                .ok_or("lost playback owner")?
+                .request_id,
+            request_id
+        );
+    }
+    drain(&mut state).await?;
+    assert!(state.voice.playback.is_none());
+    assert!(state.transcript.projection.items().any(|item| {
+        item.label
+            .as_str()
+            .contains("stop sent; no receipt within 5000 ms; playback outcome unknown")
+    }));
+    drop(progress);
+    Ok(())
+}
+
+#[tokio::test]
+async fn completion_notice_retains_a_late_stop_request() -> TestResult {
+    let mut state = state();
+    let (progress, receiver) = watch::channel(ReadAloudProgress::Stopping);
+    state.voice.playback = Some(Playback {
+        request_id: uuid::Uuid::new_v4(),
+        cancel: CancellationToken::new(),
+        progress: receiver,
+        task: tokio::spawn(async {
+            Ok(ReadAloudOutcome::Completed {
+                session: "voice-session".to_owned(),
+                id: 41,
+                duration_ms: 2500,
+                stop_requested: true,
+            })
+        }),
+    });
+    while state.voice.playback.is_some() {
+        let update = wait(&mut state.voice).await;
+        finish(&mut state, update)?;
+    }
+    assert!(
+        state
+            .screen
+            .feedback
+            .as_deref()
+            .is_some_and(|text| text.contains("server reports completed playback")
+                && text.contains("stop was requested"))
+    );
+    drop(progress);
+    Ok(())
+}

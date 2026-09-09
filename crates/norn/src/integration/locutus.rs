@@ -1,6 +1,7 @@
 //! Native Locutus read-aloud: one request, seat-scoped stop, no model or audio engine.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use locutus_contract::door::{DoorEvent, DoorIntent};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -8,6 +9,11 @@ use tokio::net::UnixStream;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+// Waffles, 2026-09-09 14:35 Melbourne: a stop must release the UI after five
+// seconds without a receipt. This covers blocked writes as well as reads;
+// expiry is an unknown outcome, never a claim that the service stopped audio.
+const STOP_RECEIPT_DEADLINE: Duration = Duration::from_secs(5);
 
 /// One immutable speech admission, independent of later terminal focus changes.
 #[derive(Clone, Debug)]
@@ -58,6 +64,15 @@ pub enum ReadAloudOutcome {
         id: u64,
         /// Reported audio duration.
         duration_ms: u64,
+        /// A stop was requested, but the server reported complete playback.
+        stop_requested: bool,
+    },
+    /// Stop supervision expired; the server's playback outcome is unknown.
+    StopUnconfirmed {
+        /// Whether the complete request-tagged hush was written to the socket.
+        stop_sent: bool,
+        /// Actual wait since cancellation was observed by the supervisor.
+        waited: Duration,
     },
     /// The server confirms a cut, including its measured playback uncertainty.
     Stopped {
@@ -112,7 +127,8 @@ pub enum ReadAloudError {
 /// Read one answer through the registered native door, supervising it until terminal.
 ///
 /// Cancellation sends a request-tagged hush on the same ordered connection. It
-/// never drops an in-flight speech future or cancels an agent/provider token.
+/// supervises speech through its receipt or the owner-declared stop deadline,
+/// and never cancels an agent/provider token.
 /// No reconnect or replay is automatic. The progress channel holds one latest
 /// frame so a slow renderer cannot delay a stop behind presentation updates.
 ///
@@ -139,9 +155,32 @@ pub async fn read_aloud(
             path: request.socket.clone(),
             source: Box::new(source),
         })?;
-    let outcome = read_admitted(request, cancel, progress).await;
+    let outcome = supervise_read(request, cancel, progress).await;
     drop(permit);
     outcome
+}
+
+async fn supervise_read(
+    request: ReadAloudRequest,
+    cancel: CancellationToken,
+    progress: watch::Sender<ReadAloudProgress>,
+) -> Result<ReadAloudOutcome, ReadAloudError> {
+    let operation = read_admitted(request, cancel.clone(), progress.clone());
+    tokio::pin!(operation);
+    tokio::select! {
+        biased;
+        outcome = &mut operation => outcome,
+        () = cancel.cancelled() => {
+            let started = tokio::time::Instant::now();
+            match tokio::time::timeout(STOP_RECEIPT_DEADLINE, &mut operation).await {
+                Ok(outcome) => outcome,
+                Err(_) => Ok(ReadAloudOutcome::StopUnconfirmed {
+                    stop_sent: matches!(*progress.borrow(), ReadAloudProgress::Stopping),
+                    waited: started.elapsed(),
+                }),
+            }
+        }
+    }
 }
 
 async fn read_admitted(
@@ -219,14 +258,15 @@ async fn read_admitted(
                     DoorEvent::Spoken { id, ms, request: Some(ref echoed), session: ref current, .. } if echoed == &tag => {
                         same_session(&request, &session, current)?;
                         terminal_identity(&request, accepted, id)?;
-                        return Ok(ReadAloudOutcome::Completed { session, id, duration_ms: ms });
+                        return Ok(ReadAloudOutcome::Completed { session, id, duration_ms: ms, stop_requested: stop_sent });
                     }
                     DoorEvent::Hushed { id, at_ms, latency_ms, request: Some(ref echoed), session: ref current, .. } if echoed == &tag => {
                         same_session(&request, &session, current)?;
                         terminal_identity(&request, accepted, id)?;
                         return Ok(ReadAloudOutcome::Stopped { session, id, at_ms, latency_ms });
                     }
-                    DoorEvent::Error { message, request: echoed, .. } if echoed.as_ref().is_none_or(|echoed| echoed == &tag) => {
+                    DoorEvent::Error { message, request: echoed, session: ref current, .. } if echoed.as_ref().is_some_and(|echoed| echoed == &tag) || (echoed.is_none() && accepted.is_none()) => {
+                        same_session(&request, &session, current)?;
                         return Err(protocol(&request, &message));
                     }
                     _ => {}

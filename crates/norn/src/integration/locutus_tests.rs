@@ -94,6 +94,113 @@ fn spoken(tag: &str, id: u64) -> DoorEvent {
     }
 }
 
+fn untagged_error() -> DoorEvent {
+    DoorEvent::Error {
+        message: "untagged service error".to_owned(),
+        request: None,
+        at: 2.0,
+        session: "voice-session".to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn untagged_error_is_terminal_only_before_admission() -> TestResult {
+    for admitted in [false, true] {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("door");
+        let listener = UnixListener::bind(&path)?;
+        let (progress, receiver) = watch::channel(ReadAloudProgress::Connecting);
+        let server = async {
+            let (reader, mut writer, tag) = accept(&listener).await?;
+            if admitted {
+                emit(&mut writer, say(&tag, 41)).await?;
+            }
+            emit(&mut writer, untagged_error()).await?;
+            if admitted {
+                emit(&mut writer, spoken(&tag, 41)).await?;
+            }
+            drop(reader);
+            TestResult::Ok(())
+        };
+        let (result, fixture_outcome) = tokio::join!(
+            read_aloud(request(path), CancellationToken::new(), progress),
+            server
+        );
+        fixture_outcome?;
+        if admitted {
+            assert!(matches!(
+                result?,
+                ReadAloudOutcome::Completed { id: 41, .. }
+            ));
+        } else {
+            assert!(
+                matches!(result, Err(ReadAloudError::Protocol { reason, .. }) if reason == "untagged service error")
+            );
+        }
+        drop(receiver);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn completed_receipt_retains_the_stop_request() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("door");
+    let listener = UnixListener::bind(&path)?;
+    let cancel = CancellationToken::new();
+    let (progress, receiver) = watch::channel(ReadAloudProgress::Connecting);
+    let server = async {
+        let (mut reader, mut writer, tag) = accept(&listener).await?;
+        emit(&mut writer, say(&tag, 41)).await?;
+        cancel.cancel();
+        assert!(
+            matches!(receive(&mut reader).await?, DoorIntent::Hush { request: Some(echoed), .. } if echoed == tag)
+        );
+        emit(&mut writer, spoken(&tag, 41)).await?;
+        TestResult::Ok(())
+    };
+    let (result, fixture_outcome) =
+        tokio::join!(read_aloud(request(path), cancel.clone(), progress), server);
+    fixture_outcome?;
+    assert!(matches!(
+        result?,
+        ReadAloudOutcome::Completed {
+            stop_requested: true,
+            ..
+        }
+    ));
+    drop(receiver);
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn unanswered_hush_releases_the_socket_with_an_unknown_outcome() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("door");
+    let listener = UnixListener::bind(&path)?;
+    let cancel = CancellationToken::new();
+    let (progress, receiver) = watch::channel(ReadAloudProgress::Connecting);
+    let server = async {
+        let (mut reader, writer, tag) = accept(&listener).await?;
+        cancel.cancel();
+        assert!(
+            matches!(receive(&mut reader).await?, DoorIntent::Hush { request: Some(echoed), .. } if echoed == tag)
+        );
+        tokio::time::advance(STOP_RECEIPT_DEADLINE).await;
+        assert!(reader.next_line().await?.is_none());
+        drop(writer);
+        TestResult::Ok(())
+    };
+    let (result, fixture_outcome) =
+        tokio::join!(read_aloud(request(path), cancel.clone(), progress), server);
+    fixture_outcome?;
+    assert!(
+        matches!(result?, ReadAloudOutcome::StopUnconfirmed { stop_sent: true, waited } if waited >= STOP_RECEIPT_DEADLINE)
+    );
+    assert_eq!(*receiver.borrow(), ReadAloudProgress::Stopping);
+    Ok(())
+}
+
 #[tokio::test]
 async fn unrelated_broadcasts_cannot_admit_or_complete_our_speech() -> TestResult {
     let directory = tempfile::tempdir()?;
@@ -129,7 +236,8 @@ async fn unrelated_broadcasts_cannot_admit_or_complete_our_speech() -> TestResul
         ReadAloudOutcome::Completed {
             session: "voice-session".to_owned(),
             id: 41,
-            duration_ms: 2500
+            duration_ms: 2500,
+            stop_requested: false
         }
     );
     assert_eq!(*receiver.borrow(), ReadAloudProgress::Playing { id: 41 });

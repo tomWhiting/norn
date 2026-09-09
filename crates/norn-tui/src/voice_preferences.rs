@@ -139,6 +139,14 @@ mod tests {
     }
 
     #[test]
+    fn unknown_key_reports_its_exact_path() {
+        assert!(matches!(
+            VoicePreferences::decode(Some(&json!({"autmatic":true}))),
+            Err(FrontendPreferenceError::Unknown { path }) if path == "tui.voice.autmatic"
+        ));
+    }
+
+    #[test]
     fn preferences_round_trip_without_losing_the_socket() -> Result<(), FrontendPreferenceError> {
         let original = json!({"enabled":true,"automatic":false,"control_socket":"/tmp/a voice.sock","voice":"bm_fable"});
         let preferences = VoicePreferences::decode(Some(&original))?;

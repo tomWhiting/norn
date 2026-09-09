@@ -41,7 +41,13 @@ Stop sends request-tagged `Hush` on the same ordered connection, including
 before the server has assigned a speech ID. A control write alone is not a
 confirmed stop. The adapter waits for `Spoken`, `Hushed`, an explicit refusal,
 or a transport error; disconnection after submission is an unknown playback
-outcome. It never retries speech automatically. `Hushed` retains the server
+outcome. It never retries speech automatically. Waffles ruled at 14:35
+Melbourne on 9 September 2026 that stop supervision has a fixed five-second
+deadline, including a blocked hush write and receipt wait. Expiry releases the
+socket and TUI owner with an unknown outcome and actual elapsed wait. It does
+not claim that sound stopped. A complete-playback receipt after a stop request
+retains that request and says so. After admission, untagged broadcast errors
+cannot terminate our request. `Hushed` retains the server
 session, speech ID, output callback position and device latency.
 
 Progress uses a latest-value channel. The UI cannot delay a stop by falling
@@ -91,3 +97,12 @@ disabled startup and settings round trips. Exercise the actual Locutus
 transport before claiming integration works. Run strict Clippy and formatting;
 the full battery is an exact-commit workflow on the 205. Each delivery has its
 own branch and review; installation is reported separately from implementation.
+
+## Separate build-location decision
+
+Tom explicitly required build output to remain visible inside the repository,
+not in temporary directories, on 9 September 2026. The README installation
+command therefore names `--target-dir target`, keeping install compilation in
+the caller's current directory instead of Cargo's temporary install target.
+Our development commands use the Norn repository's absolute `target` path.
+This is a build-hygiene decision accompanying D08, not voice behavior.

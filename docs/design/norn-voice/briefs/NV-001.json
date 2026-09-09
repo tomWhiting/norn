@@ -14,7 +14,7 @@
     "S2",
     "S3"
   ],
-  "purpose": "D08, as authorized by Tom and Waffles on 2026-09-09: play, stop and replay completed answers without a second model or a blocking terminal.",
+  "purpose": "D08, as authorized by Tom and Waffles on 2026-09-09: play, stop and replay completed answers without a second model or a blocking terminal. The README repository-local install target also records Tom\u2019s explicit build-location instruction.",
   "task": "Implement the settings, supervised playback lifecycle, Locutus adapter and TUI controls described in docs/design/norn-voice/DESIGN.md. Resolve external request correlation and cancellation semantics before wiring the adapter.",
   "requirements": [
     {
@@ -54,7 +54,10 @@
         "Stop before submission and stop during playback cannot leave queued speech audible",
         "Completion after a stop cannot claim uninterrupted playback",
         "Replay and source changes cannot redirect an earlier request",
-        "Disabled voice starts no audio task"
+        "Disabled voice starts no audio task",
+        "A stalled hush write or receipt cannot hold the TUI past the owner-ruled five-second deadline; expiry is unknown",
+        "An untagged error after admission cannot terminate identified playback",
+        "A complete-playback receipt after a stop request retains the request in its outcome and UI wording"
       ],
       "files": {
         "create": [
@@ -95,9 +98,10 @@
         "create": [
           "docs/NATIVE-VOICE.md",
           "docs/design/norn-voice/PROOF.md",
-          "docs/design/norn-voice/proof/voice-clippy.log",
-          "docs/design/norn-voice/proof/voice-socket-tests.log",
-          "docs/design/norn-voice/proof/voice-tui-tests.log"
+          "docs/design/norn-voice/proof/voice-clippy.json",
+          "docs/design/norn-voice/proof/voice-socket-tests.json",
+          "docs/design/norn-voice/proof/voice-tui-tests.json",
+          "docs/design/norn-voice/proof/coverage.json"
         ],
         "modify": [
           "crates/norn/src/loop/commands.rs",

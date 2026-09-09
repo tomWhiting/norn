@@ -81,8 +81,29 @@ pub(super) fn finish(state: &mut AppState, update: VoiceUpdate) -> Result<(), Tu
             };
             let receipt = match result {
                 Ok(Ok(ReadAloudOutcome::NotSubmitted)) => "cancelled before submission".to_owned(),
-                Ok(Ok(ReadAloudOutcome::Completed { duration_ms, .. })) => {
-                    format!("completed · {duration_ms} ms")
+                Ok(Ok(ReadAloudOutcome::Completed {
+                    duration_ms,
+                    stop_requested,
+                    ..
+                })) => {
+                    if stop_requested {
+                        format!(
+                            "server reports completed playback · {duration_ms} ms · stop was requested"
+                        )
+                    } else {
+                        format!("completed · {duration_ms} ms")
+                    }
+                }
+                Ok(Ok(ReadAloudOutcome::StopUnconfirmed { stop_sent, waited })) => {
+                    let action = if stop_sent {
+                        "stop sent"
+                    } else {
+                        "stop requested; hush write unconfirmed"
+                    };
+                    format!(
+                        "{action}; no receipt within {} ms; playback outcome unknown",
+                        waited.as_millis()
+                    )
                 }
                 Ok(Ok(ReadAloudOutcome::Stopped {
                     at_ms, latency_ms, ..

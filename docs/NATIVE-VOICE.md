@@ -20,7 +20,10 @@ reads raw structured JSON or reasoning. Source changes invalidate earlier
 selections; loading history never automatically speaks it.
 
 `stop` targets this terminal's request, including speech that has not started.
-The UI distinguishes requesting a stop from receiving confirmation. Agent
+The UI distinguishes requesting a stop from receiving confirmation. If the
+service does not confirm within five seconds, supervision releases with the
+actual wait shown and playback outcome explicitly unknown. A completed receipt
+after a stop request says both facts. Agent
 generation and tools continue. `off` stops speech and disables new requests.
 
 ```text

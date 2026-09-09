@@ -1,0 +1,4 @@
+{
+  "exit_code": 0,
+  "output": "    Checking norn v0.1.0-preview.8 (/Users/tom/Developer/ablative/stack/norn/.worktrees/voice-readaloud/crates/norn)\n    Checking norn-tui v0.1.0-preview.8 (/Users/tom/Developer/ablative/stack/norn/.worktrees/voice-readaloud/crates/norn-tui)\n    Checking norn-cli v0.1.0-preview.8 (/Users/tom/Developer/ablative/stack/norn/.worktrees/voice-readaloud/crates/norn-cli)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 34.45s\n"
+}
