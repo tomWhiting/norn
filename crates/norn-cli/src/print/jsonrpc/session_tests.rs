@@ -109,14 +109,31 @@ async fn sequential_requests_wait_for_the_previous_terminal_result() -> TestResu
     fixture.persistent().await?;
     fixture.send("first", "run/execute", json!({"prompt":"one"}))?;
     fixture.accepted("first").await?;
+    assert!(
+        fixture
+            .session
+            .run_active
+            .load(std::sync::atomic::Ordering::Acquire)
+    );
     fixture.send("busy", "run/execute", json!({"prompt":"overlap"}))?;
-    assert_eq!(fixture.frame().await?["error"]["code"], -32000);
+    let busy = fixture.frame().await?;
+    assert_eq!(busy["error"]["code"], -32000);
+    assert_eq!(
+        busy["error"]["message"],
+        "run already active; wait for its terminal response"
+    );
     fixture.send("init", "initialize", Value::Null)?;
     assert_eq!(
         fixture.frame().await?["result"]["capabilities"]["runLifecycle"],
         "persistent"
     );
     fixture.finish_run("first").await?;
+    assert!(
+        !fixture
+            .session
+            .run_active
+            .load(std::sync::atomic::Ordering::Acquire)
+    );
     fixture.send("second", "run/execute", json!({"prompt":"two"}))?;
     fixture.accepted("second").await?;
     fixture.finish_run("second").await?;

@@ -31,6 +31,9 @@
 //! operator cannot stop — precisely the hazard the unbounded retry policy
 //! creates. Degrading silently to a no-signal run would hide that.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -180,8 +183,20 @@ impl SignalWatch {
     /// [`SignalInstallError`] when the operating system refuses to
     /// register a handler. The caller must fail the run: see the module
     /// docs.
-    #[cfg(unix)]
     pub(super) fn install(cancel: CancellationToken) -> Result<Self, SignalInstallError> {
+        Self::install_with_activity(cancel, Arc::new(AtomicBool::new(true)))
+    }
+
+    /// Watch an entire driven connection. Its input owner publishes whether
+    /// a run is active; idle signals use immediate platform exit semantics.
+    ///
+    /// # Errors
+    /// Returns the signal installation failure without starting a watcher.
+    #[cfg(unix)]
+    pub(super) fn install_with_activity(
+        cancel: CancellationToken,
+        active: Arc<AtomicBool>,
+    ) -> Result<Self, SignalInstallError> {
         let mut interrupt = stream_for(RunSignal::Interrupt)?;
         let mut terminate = stream_for(RunSignal::Terminate)?;
         let task = tokio::spawn(async move {
@@ -197,7 +212,7 @@ impl SignalWatch {
                         None => break report_closed(RunSignal::Terminate),
                     },
                 };
-                apply(escalation.observe(received), received, &cancel);
+                apply_for_activity(&mut escalation, received, &cancel, &active);
             }
         });
         Ok(Self { task })
@@ -215,7 +230,10 @@ impl SignalWatch {
     /// [`SignalInstallError`] when the platform refuses to register the
     /// handler.
     #[cfg(windows)]
-    pub(super) fn install(cancel: CancellationToken) -> Result<Self, SignalInstallError> {
+    pub(super) fn install_with_activity(
+        cancel: CancellationToken,
+        active: Arc<AtomicBool>,
+    ) -> Result<Self, SignalInstallError> {
         let mut interrupt =
             tokio::signal::windows::ctrl_c().map_err(|source| SignalInstallError {
                 signal: RunSignal::Interrupt.label(),
@@ -224,11 +242,7 @@ impl SignalWatch {
         let task = tokio::spawn(async move {
             let mut escalation = SignalEscalation::default();
             while interrupt.recv().await.is_some() {
-                apply(
-                    escalation.observe(RunSignal::Interrupt),
-                    RunSignal::Interrupt,
-                    &cancel,
-                );
+                apply_for_activity(&mut escalation, RunSignal::Interrupt, &cancel, &active);
             }
             report_closed(RunSignal::Interrupt);
         });
@@ -245,7 +259,11 @@ impl SignalWatch {
     ///
     /// Always: the platform has no supported signal surface.
     #[cfg(all(not(unix), not(windows)))]
-    pub(super) fn install(_cancel: CancellationToken) -> Result<Self, SignalInstallError> {
+    pub(super) fn install_with_activity(
+        cancel: CancellationToken,
+        active: Arc<AtomicBool>,
+    ) -> Result<Self, SignalInstallError> {
+        drop((cancel, active));
         Err(SignalInstallError {
             signal: RunSignal::Interrupt.label(),
             source: std::io::Error::new(
@@ -284,6 +302,19 @@ fn report_closed(signal: RunSignal) {
 }
 
 /// Carry out an escalation decision.
+fn apply_for_activity(
+    escalation: &mut SignalEscalation,
+    signal: RunSignal,
+    cancel: &CancellationToken,
+    active: &AtomicBool,
+) {
+    if !active.load(Ordering::Acquire) {
+        std::process::exit(signal.immediate_exit_code());
+    }
+    apply(escalation.observe(signal), signal, cancel);
+}
+
+/// Carry out an active-run escalation decision.
 fn apply(action: SignalAction, signal: RunSignal, cancel: &CancellationToken) {
     match action {
         SignalAction::CancelRun => {

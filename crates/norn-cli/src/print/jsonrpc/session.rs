@@ -1,6 +1,7 @@
 //! Single input owner, explicit lifecycle negotiation and ordered run admission.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::Value;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt};
@@ -35,6 +36,7 @@ enum Command {
 
 struct Admission {
     active: Option<Value>,
+    run_active: Arc<AtomicBool>,
     handler: Option<Arc<dyn InterventionHandler>>,
     pending: Vec<JsonRpcRequest>,
     controls_ready: bool,
@@ -44,6 +46,7 @@ struct Admission {
 
 impl Drop for Admission {
     fn drop(&mut self) {
+        self.run_active.store(false, Ordering::Release);
         if let Some(handler) = self.handler.take()
             && let Err(error) =
                 handler.cancel("driven input owner stopped before the run completed")
@@ -110,13 +113,20 @@ impl Admission {
                     return writer.send_response(&JsonRpcResponse::err(
                         id,
                         CODE_RUN_BUSY,
-                        "run already active; wait for its terminal response".to_owned(),
+                        if self.persistent {
+                            "run already active; wait for its terminal response"
+                        } else {
+                            "run already active: the driven channel serves exactly one run/execute per \
+                             process (runLifecycle: one_shot)"
+                        }
+                        .to_owned(),
                     ));
                 }
                 match prompt_from_params(&request.params) {
                     Ok(prompt) => {
                         self.started = true;
                         self.active = Some(id.clone());
+                        self.run_active.store(true, Ordering::Release);
                         runs.send(AcceptedRun {
                             id,
                             prompt,
@@ -175,6 +185,7 @@ impl Admission {
         }
         writer.send_response(response)?;
         self.active = None;
+        self.run_active.store(false, Ordering::Release);
         self.handler = None;
         self.controls_ready = false;
         Ok(())
@@ -242,6 +253,9 @@ pub struct SessionInput {
     pub runs: mpsc::UnboundedReceiver<AcceptedRun>,
     /// Process-lifetime cancellation, distinct from each run's child token.
     pub cancel: CancellationToken,
+    /// Input-owner publication for signal handling: idle signals must not
+    /// report cancellation of a run. Only the admission actor writes this.
+    pub run_active: Arc<AtomicBool>,
     /// Input owner's terminal result.
     pub task: tokio::task::JoinHandle<Result<(), TransportError>>,
 }
@@ -255,17 +269,20 @@ where
     let (tx, commands) = mpsc::unbounded_channel();
     let (runs_tx, runs) = mpsc::unbounded_channel();
     let cancel = CancellationToken::new();
+    let run_active = Arc::new(AtomicBool::new(false));
     let task = tokio::spawn(drive_session(
         reader,
         writer,
         commands,
         runs_tx,
         cancel.clone(),
+        Arc::clone(&run_active),
     ));
     SessionInput {
         control: SessionControl { tx },
         runs,
         cancel,
+        run_active,
         task,
     }
 }
@@ -276,10 +293,12 @@ async fn drive_session<R: AsyncBufRead + Unpin>(
     mut commands: mpsc::UnboundedReceiver<Command>,
     runs: mpsc::UnboundedSender<AcceptedRun>,
     cancel: CancellationToken,
+    run_active: Arc<AtomicBool>,
 ) -> Result<(), TransportError> {
     let mut lines = reader.lines();
     let mut admission = Admission {
         active: None,
+        run_active,
         handler: None,
         pending: Vec::new(),
         controls_ready: false,

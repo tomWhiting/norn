@@ -372,7 +372,12 @@ supersedes the earlier `stop: {reason, retryable}` proposal in
 - The input owner uses cancellation-safe line framing. A JSON line split
   across run completion retains its entire prefix for the next read.
 - Signal handling belongs to the connection lifetime. SIGINT/SIGTERM also
-  terminate an idle persistent connection; they do not disappear between turns.
+  terminate an idle connection with the platform signal exit status (130 for
+  SIGINT, 143 for SIGTERM on Unix), without claiming a run was cancelled.
+  Active work retains the graceful cancellation ladder.
+- The output writer is supervised throughout the connection. A failed writer
+  cancels active work or wakes idle admission, even when stdin remains open;
+  shutdown preserves execution and transport failures together.
 - Event shutdown drains the unread prefix present at the shutdown cut. A live
   child or retained sender may publish later events, but cannot extend process
   shutdown without bound or write after the terminal response.

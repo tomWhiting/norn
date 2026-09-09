@@ -7,7 +7,7 @@ use norn::agent_loop::config::ToolExecutor;
 use tokio_util::sync::CancellationToken;
 
 use super::assembly::{PrintAssembly, assemble_print_agent};
-use super::error::PrintError;
+use super::error::{PrintError, preserve_primary_failure};
 use super::intervene::NornInterventionHandler;
 use super::jsonrpc::session::SessionInput;
 use super::jsonrpc::{RunDriver, SharedRunDriver};
@@ -21,7 +21,10 @@ pub(super) async fn run_session(
     mut input: SessionInput,
     writer: super::jsonrpc::OutboundWriter,
 ) -> Result<ExitCode, PrintError> {
-    let signal_watch = match SignalWatch::install(input.cancel.clone()) {
+    let signal_watch = match SignalWatch::install_with_activity(
+        input.cancel.clone(),
+        Arc::clone(&input.run_active),
+    ) {
         Ok(watch) => watch,
         Err(error) => {
             input.control.shutdown().map_err(|transport| {
@@ -97,13 +100,13 @@ pub(super) async fn run_session(
     {
         tracing::debug!(%error, "driven input owner ended during shutdown");
     }
-    let result = match input.task.await {
-        Ok(Ok(())) => outcome,
+    let input_result = match input.task.await {
+        Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => Err(PrintError::Io(format!("driven input failed: {error}"))),
         Err(error) => Err(PrintError::Io(format!("driven input task failed: {error}"))),
     };
     drop(signal_watch);
-    result
+    preserve_primary_failure(outcome, input_result)
 }
 
 async fn execute_request(
