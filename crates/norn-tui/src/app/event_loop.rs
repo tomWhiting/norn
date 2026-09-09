@@ -26,7 +26,6 @@ use crate::TuiError;
 use crate::input::history::InputHistory;
 use crate::input::keybindings::{InputAction, map_key_event};
 use crate::render::fixed_panel::StatusBar;
-use crate::terminal::caps::TerminalCaps;
 use crate::terminal::setup::TerminalGuard;
 
 use super::autocomplete::{PopupKeyOutcome, dismiss as dismiss_autocomplete, handle_popup_key};
@@ -195,9 +194,7 @@ pub(super) fn turn_cancel_token(
 ///
 /// # Errors
 ///
-/// Returns [`TuiError::Io`] on terminal I/O errors and
-/// [`TuiError::UnsupportedTerminal`] if the terminal cannot meet hard
-/// requirements during capability detection.
+/// Returns [`TuiError::Io`] on terminal I/O errors.
 pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
     // FIRST statement, so it is also the LAST drop: every exit from this
     // function — clean quit, terminal EOF, a `?` on terminal setup, an
@@ -205,7 +202,6 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
     // descendant's run (D7). Declared before the terminal guard so the
     // cascade fires after the terminal is restored.
     let root_cancel = RootCancelOnExit::new(inputs.root_cancel);
-    TerminalCaps::check_hard_requirements()?;
     let mut guard = TerminalGuard::new()?;
     let source = inputs
         .store
@@ -226,6 +222,9 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
     state.agent_panel.set_pending_messages(pending_messages);
 
     replay_visible_session_history(&mut state, &inputs.store).await?;
+    if let Some(notice) = state.terminal_caps.colour_depth.notice() {
+        super::notices::notice(&mut state, notice, None)?;
+    }
 
     redraw_all(&mut state, &mut guard)?;
     load_visible(&mut state, &inputs.store)?;

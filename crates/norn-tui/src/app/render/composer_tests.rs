@@ -69,7 +69,7 @@ fn encoded_user_rows_keep_the_same_colour_after_newlines_and_wrapping() -> TestR
             });
         }
         let mut caps = TerminalCaps::baseline();
-        caps.true_colour = true;
+        caps.colour_depth = crate::terminal::colour::ColourDepth::TrueColour;
         let encoded = frame.encode(&caps)?;
         let mut observed = UserColours::default();
         vte::Parser::new().advance(&mut observed, &encoded);

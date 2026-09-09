@@ -1,9 +1,8 @@
 //! Terminal capability detection.
 //!
-//! Hard requirements (256-colour) are checked from environment variables
-//! before entering raw mode. Enhancement capabilities (true colour, Kitty
-//! keyboard, synchronized rendering, OSC 8, italic) are probed after
-//! entering raw mode by writing query sequences and reading responses.
+//! Colour depth comes from declared environment capabilities and never gates
+//! startup. Keyboard, synchronized rendering, hyperlinks and italic are
+//! progressive enhancements probed after entering raw mode.
 
 use std::env;
 use std::io::{self, Write as _};
@@ -12,16 +11,15 @@ use std::time::Duration;
 use termina::escape::csi::{self, Csi, DecModeSetting, DecPrivateMode, DecPrivateModeCode};
 use termina::{Event, PlatformTerminal, Terminal};
 
-use crate::TuiError;
+use super::colour::ColourDepth;
 
 /// Detected terminal capabilities.
 ///
-/// Capabilities are split into hard requirements (checked via env vars)
-/// and progressive enhancements (probed via terminal queries).
+/// Colour uses explicit degradation; optional enhancements use terminal queries.
 #[derive(Clone, Debug)]
 pub struct TerminalCaps {
-    /// Terminal supports 24-bit RGB colour.
-    pub true_colour: bool,
+    /// Richest colour encoding supported by the startup evidence.
+    pub colour_depth: ColourDepth,
     /// Terminal supports the Kitty keyboard protocol.
     pub kitty_keyboard: bool,
     /// Terminal supports DCS 2026 synchronized rendering.
@@ -33,28 +31,14 @@ pub struct TerminalCaps {
 }
 
 impl TerminalCaps {
-    /// Check hard requirements using environment variables only.
-    ///
-    /// This runs before raw mode and terminal setup. Returns
-    /// `Err(TuiError::UnsupportedTerminal)` if the terminal cannot
-    /// support the minimum 256-colour mode.
-    pub fn check_hard_requirements() -> Result<(), TuiError> {
-        if !Self::env_has_256_colour() {
-            return Err(TuiError::UnsupportedTerminal(
-                "terminal does not support 256-colour mode. \
-                 Set TERM to a 256color variant (e.g. xterm-256color) \
-                 or set COLORTERM. Use --print for headless mode."
-                    .into(),
-            ));
-        }
-        Ok(())
-    }
-
     /// Probe terminal capabilities by writing query sequences and reading
     /// responses. Must be called after entering raw mode.
     pub fn detect(terminal: &mut PlatformTerminal) -> io::Result<Self> {
         let mut caps = Self {
-            true_colour: Self::env_has_true_colour(),
+            colour_depth: ColourDepth::from_environment(
+                env::var("TERM").ok().as_deref(),
+                env::var("COLORTERM").ok().as_deref(),
+            ),
             kitty_keyboard: false,
             synchronized_rendering: false,
             osc_hyperlinks: Self::env_has_osc8(),
@@ -97,26 +81,15 @@ impl TerminalCaps {
         Ok(caps)
     }
 
-    /// Construct with all enhancements disabled. For testing only.
+    /// Construct the original indexed-colour baseline without optional enhancements.
     pub fn baseline() -> Self {
         Self {
-            true_colour: false,
+            colour_depth: ColourDepth::Indexed256,
             kitty_keyboard: false,
             synchronized_rendering: false,
             osc_hyperlinks: false,
             italic_support: false,
         }
-    }
-
-    fn env_has_256_colour() -> bool {
-        if env::var("COLORTERM").is_ok() {
-            return true;
-        }
-        env::var("TERM").is_ok_and(|t| t.contains("256color"))
-    }
-
-    fn env_has_true_colour() -> bool {
-        matches!(env::var("COLORTERM").as_deref(), Ok("truecolor" | "24bit"))
     }
 
     fn env_has_osc8() -> bool {
@@ -143,7 +116,7 @@ mod tests {
     #[test]
     fn baseline_has_no_enhancements() {
         let caps = TerminalCaps::baseline();
-        assert!(!caps.true_colour);
+        assert_eq!(caps.colour_depth, ColourDepth::Indexed256);
         assert!(!caps.kitty_keyboard);
         assert!(!caps.synchronized_rendering);
         assert!(!caps.osc_hyperlinks);
@@ -153,7 +126,7 @@ mod tests {
     #[test]
     fn default_matches_baseline() {
         let caps = TerminalCaps::default();
-        assert!(!caps.true_colour);
+        assert_eq!(caps.colour_depth, ColourDepth::Indexed256);
         assert!(!caps.kitty_keyboard);
     }
 }

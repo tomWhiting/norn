@@ -298,7 +298,11 @@ fn backgrounds_encode_in_both_colour_modes_and_selection_wins()
     };
     for true_colour in [false, true] {
         let mut caps = TerminalCaps::baseline();
-        caps.true_colour = true_colour;
+        caps.colour_depth = if true_colour {
+            crate::terminal::colour::ColourDepth::TrueColour
+        } else {
+            crate::terminal::colour::ColourDepth::Indexed256
+        };
         for selected in [false, true] {
             let rgb = if selected { [48, 58, 70] } else { [30, 34, 40] };
             let mut bytes = Vec::new();
@@ -360,7 +364,11 @@ fn styled_tab_cells_keep_the_body_background() -> Result<(), Box<dyn std::error:
     };
     for true_colour in [false, true] {
         let mut caps = TerminalCaps::baseline();
-        caps.true_colour = true_colour;
+        caps.colour_depth = if true_colour {
+            crate::terminal::colour::ColourDepth::TrueColour
+        } else {
+            crate::terminal::colour::ColourDepth::Indexed256
+        };
         let mut frame = PreparedFrame::new(20, 1, None);
         paint_row(&mut frame, &row, &caps)?;
         let encoded = String::from_utf8(frame.encode_delta(None)?)?;
@@ -376,6 +384,53 @@ fn styled_tab_cells_keep_the_body_background() -> Result<(), Box<dyn std::error:
             encoded.contains(&format!("{background}   ")),
             "tab cells must inherit background: {encoded:?}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn retained_foreground_background_and_emphasis_survive_colour_degradation()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::terminal::colour::ColourDepth;
+    let text = TextStyle {
+        foreground: Some([255, 0, 0]),
+        background: Some([0, 0, 255]),
+        ..TextStyle::default()
+    };
+    for (depth, foreground, background) in [
+        (
+            ColourDepth::TrueColour,
+            "\x1b[38;2;255;0;0m",
+            "\x1b[48;2;0;0;255m",
+        ),
+        (ColourDepth::Indexed256, "\x1b[91m", "\x1b[104m"),
+        (ColourDepth::Ansi16, "\x1b[91m", "\x1b[104m"),
+        (ColourDepth::Monochrome, "\x1b[39m", "\x1b[49m"),
+    ] {
+        let caps = TerminalCaps {
+            colour_depth: depth,
+            ..TerminalCaps::baseline()
+        };
+        let mut bytes = Vec::new();
+        style(&mut bytes, text, false, false, false, &caps)?;
+        let encoded = String::from_utf8(bytes)?;
+        assert!(encoded.contains(foreground), "{depth:?}: {encoded:?}");
+        assert!(encoded.contains(background), "{depth:?}: {encoded:?}");
+        for (selected, highlighted) in [(true, false), (false, true)] {
+            let mut bytes = Vec::new();
+            style(&mut bytes, text, false, selected, highlighted, &caps)?;
+            let encoded = String::from_utf8(bytes)?;
+            if selected {
+                assert!(encoded.contains("\x1b[1m"));
+            }
+            if highlighted || depth == ColourDepth::Monochrome {
+                assert!(encoded.contains("\x1b[7m"));
+            }
+            if matches!(depth, ColourDepth::Ansi16 | ColourDepth::Monochrome) {
+                assert!(!encoded.contains("38;"));
+                assert!(!encoded.contains("48;"));
+            }
+        }
     }
     Ok(())
 }

@@ -125,6 +125,8 @@ See [MCP launch and Channels](docs/MCP-LAUNCH.md) for HTTP tool definitions, mer
 
 ## Terminal UI
 
+Colour detection never prevents interactive startup. `COLORTERM=truecolor` or `24bit` enables RGB; `TERM` names ending in `ghostty`, `kitty`, `alacritty`, or `wezterm`, and names containing `256color`, enable indexed colour without terminfo. Without explicit RGB evidence, other names use 16 ANSI colours; unset, empty, or `dumb` `TERM` uses the terminal’s default foreground and background. Reduced colour gets one notice inside the TUI, with selection and emphasis retained. Terminal I/O failures still report errors.
+
 The TUI owns the screen, retains conversation history, and uses **Iridium** for its full-width composer. Tool rows show the tool name, supplied `tool_use_description`, and outcome compactly; click a row to inspect its details. The status line shows approximate context usage against the active configured window, separately from cumulative token usage.
 
 | Command | Action |

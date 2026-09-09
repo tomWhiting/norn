@@ -48,9 +48,6 @@ pub enum TuiError {
         /// Typed internal focus or viewport validation error.
         source: Box<dyn std::error::Error + Send + Sync>,
     },
-    /// The terminal does not meet minimum requirements for the TUI.
-    #[error("unsupported terminal: {0}")]
-    UnsupportedTerminal(String),
 
     /// An I/O error occurred during terminal operations.
     #[error(transparent)]

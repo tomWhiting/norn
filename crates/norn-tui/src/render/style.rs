@@ -5,7 +5,7 @@
 //! and emits the richest form the terminal supports, falling back
 //! gracefully otherwise:
 //!
-//! - [`colour_for`] — 24-bit RGB, or the nearest 256-colour palette entry.
+//! - [`colour_for`] — 24-bit RGB, indexed, basic ANSI or terminal default colour.
 //! - [`italic`] / [`italic_off`] — italic SGR, or underline fallback.
 //! - [`newline_key_hint`] — the Kitty-protocol newline key, or `Alt+Enter`.
 //! - [`hyperlink`] — an OSC 8 hyperlink, or `text (url)` bracketed text.
@@ -19,6 +19,7 @@ use termina::escape::{OSC, ST};
 use termina::style::{ColorSpec, RgbColor, Underline};
 
 use crate::terminal::caps::TerminalCaps;
+use crate::terminal::colour::ColourDepth;
 
 /// The xterm 256-colour cube channel levels (indices 16-231).
 const CUBE_LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
@@ -72,9 +73,13 @@ fn palette_rgb(index: u8) -> (u8, u8, u8) {
 /// returns the index minimising the Euclidean distance in RGB space.
 /// On ties the lowest index wins.
 pub fn nearest_256(rgb: RgbColor) -> u8 {
+    nearest_index(rgb, u8::MAX)
+}
+
+fn nearest_index(rgb: RgbColor, last: u8) -> u8 {
     let mut best_index = 0u8;
     let mut best_dist = u32::MAX;
-    for index in 0..=u8::MAX {
+    for index in 0..=last {
         let (r, g, b) = palette_rgb(index);
         let dr = u32::from(rgb.red).abs_diff(u32::from(r));
         let dg = u32::from(rgb.green).abs_diff(u32::from(g));
@@ -90,21 +95,19 @@ pub fn nearest_256(rgb: RgbColor) -> u8 {
 
 /// Map an RGB colour to a [`ColorSpec`] honouring terminal capabilities.
 ///
-/// Returns a true-colour spec when [`TerminalCaps::true_colour`] is set,
-/// otherwise the nearest 256-colour palette entry (see [`nearest_256`]).
+/// Extended, basic ANSI or default colours follow the same explicit depth.
 pub fn colour_spec(rgb: RgbColor, caps: &TerminalCaps) -> ColorSpec {
-    if caps.true_colour {
-        ColorSpec::TrueColor(rgb.into())
-    } else {
-        ColorSpec::PaletteIndex(nearest_256(rgb))
+    match caps.colour_depth {
+        ColourDepth::TrueColour => ColorSpec::TrueColor(rgb.into()),
+        ColourDepth::Indexed256 => ColorSpec::PaletteIndex(nearest_256(rgb)),
+        ColourDepth::Ansi16 => ColorSpec::PaletteIndex(nearest_index(rgb, 15)),
+        ColourDepth::Monochrome => ColorSpec::Reset,
     }
 }
 
 /// Build the foreground SGR escape sequence for an RGB colour.
 ///
-/// Emits a 24-bit `38;2;r;g;b` escape when the terminal supports true
-/// colour, otherwise a `38;5;{index}` escape targeting the nearest
-/// 256-colour palette entry.
+/// Uses direct RGB, an indexed colour, basic ANSI or the terminal default.
 pub fn colour_for(rgb: RgbColor, caps: &TerminalCaps) -> String {
     Csi::Sgr(Sgr::Foreground(colour_spec(rgb, caps))).to_string()
 }
@@ -220,7 +223,7 @@ mod tests {
 
     #[test]
     fn colour_for_emits_rgb_escape_with_true_colour() {
-        let caps = caps_with(|c| c.true_colour = true);
+        let caps = caps_with(|c| c.colour_depth = crate::terminal::colour::ColourDepth::TrueColour);
         let escape = colour_for(RgbColor::new(10, 20, 30), &caps);
         assert!(escape.contains("38;2;10;20;30"), "got: {escape:?}");
     }
@@ -240,7 +243,8 @@ mod tests {
 
     #[test]
     fn colour_spec_variants_track_capability() {
-        let true_caps = caps_with(|c| c.true_colour = true);
+        let true_caps =
+            caps_with(|c| c.colour_depth = crate::terminal::colour::ColourDepth::TrueColour);
         assert!(matches!(
             colour_spec(RgbColor::new(1, 2, 3), &true_caps),
             ColorSpec::TrueColor(_)

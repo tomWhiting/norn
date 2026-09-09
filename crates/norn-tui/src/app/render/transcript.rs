@@ -694,7 +694,7 @@ mod tests {
             assert!(transcript.accept_body(&demand, page)?);
         }
         let mut caps = crate::terminal::caps::TerminalCaps::baseline();
-        caps.true_colour = true;
+        caps.colour_depth = crate::terminal::colour::ColourDepth::TrueColour;
         caps.italic_support = true;
         let mut state = AppState::new(
             caps,
@@ -705,6 +705,34 @@ mod tests {
         );
         state.transcript = transcript;
         Ok(state)
+    }
+
+    #[test]
+    fn mixed_frame_degrades_every_layer_without_losing_tool_text_or_emphasis() -> TestResult {
+        use crate::terminal::colour::ColourDepth;
+        for depth in [ColourDepth::Ansi16, ColourDepth::Monochrome] {
+            let mut state = readable_state()?;
+            state.terminal_caps.colour_depth = depth;
+            let frame = super::super::prepare(&mut state, 100, 40)?;
+            let painted = String::from_utf8(frame.encode(&state.terminal_caps)?)?;
+            assert!(
+                !painted.contains("\x1b[38;2;") && !painted.contains("\x1b[38;5;"),
+                "{depth:?} leaked extended foreground"
+            );
+            assert!(
+                !painted.contains("\x1b[48;2;") && !painted.contains("\x1b[48;5;"),
+                "{depth:?} leaked extended background"
+            );
+            assert!(painted.contains("\x1b[2m"), "thinking emphasis missing");
+            assert!(painted.contains("\x1b[3m"), "italic emphasis missing");
+            assert!(state.screen.hit_rows.iter().any(|row| {
+                row.text
+                    .styled
+                    .text()
+                    .starts_with("edit: A deliberately long descriptive tool header")
+            }));
+        }
+        Ok(())
     }
 
     #[test]

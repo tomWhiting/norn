@@ -2,4 +2,5 @@
 
 pub mod caps;
 pub(crate) mod clipboard;
+pub mod colour;
 pub mod setup;

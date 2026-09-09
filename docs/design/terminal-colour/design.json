@@ -1,0 +1,26 @@
+{
+  "title": "Terminal colour degradation",
+  "structure": {
+    "crates/norn-tui/src/terminal/caps.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/terminal/mod.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/lib.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/app/event_loop.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-cli/src/tui/driver.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/render/style.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/render/frame.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/render/frame_tests.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/render/composer_cells.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/render/composer_cells_tests.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/render/markdown.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/render/syntax.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/app/render/transcript.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/app/render/composer_tests.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/tools/rich/patch.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/tools/rich/bash.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/benches/iridium_composer.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "README.md": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/terminal/colour.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/terminal/colour_tests.rs": "TC-001 colour depth, rendering, caller or regression coverage.",
+    "crates/norn-tui/src/error.rs": "Remove retired colour-only admission error."
+  }
+}

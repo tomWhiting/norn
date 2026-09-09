@@ -33,10 +33,11 @@ pub(crate) fn paint_composer_cells(
     caps: &TerminalCaps,
 ) -> Result<(), TuiError> {
     validate_extent(output, area, cells)?;
-    let depth = if caps.true_colour {
-        ColorDepth::TrueColor
-    } else {
-        ColorDepth::Ansi256
+    let depth = match caps.colour_depth {
+        crate::terminal::colour::ColourDepth::TrueColour => ColorDepth::TrueColor,
+        crate::terminal::colour::ColourDepth::Indexed256 => ColorDepth::Ansi256,
+        crate::terminal::colour::ColourDepth::Ansi16
+        | crate::terminal::colour::ColourDepth::Monochrome => ColorDepth::Ansi16,
     };
     let mut glyphs = Vec::new();
     let mut bytes = Vec::new();
@@ -53,7 +54,12 @@ pub(crate) fn paint_composer_cells(
             let width = grapheme.width();
             validate_cluster(cells, column, row, &text, width, cell.style())?;
             let start = bytes.len();
-            encode_style(&mut bytes, cell.style().degrade(depth))?;
+            let mut style = cell.style().degrade(depth);
+            if caps.colour_depth == crate::terminal::colour::ColourDepth::Monochrome {
+                style.foreground = Color::Default;
+                style.background = Color::Default;
+            }
+            encode_style(&mut bytes, style)?;
             bytes.extend_from_slice(text.as_bytes());
             glyphs.push(Glyph {
                 column: area
@@ -152,6 +158,11 @@ fn encode_style(output: &mut Vec<u8>, style: Style) -> io::Result<()> {
 fn encode_colour(output: &mut Vec<u8>, colour: Color, code: u8) -> io::Result<()> {
     match colour {
         Color::Default => Ok(()),
+        Color::Indexed(index) if index < 16 => {
+            let base = if code == 38 { 30 } else { 40 };
+            let sgr = base + if index < 8 { index } else { 60 + index - 8 };
+            write!(output, "\x1b[{sgr}m")
+        }
         Color::Indexed(index) => write!(output, "\x1b[{code};5;{index}m"),
         Color::Rgb(red, green, blue) => write!(output, "\x1b[{code};2;{red};{green};{blue}m"),
     }

@@ -259,26 +259,22 @@ fn style(
     } else {
         text.background
     };
-    if caps.true_colour {
-        if let Some([red, green, blue]) = text.foreground {
-            write!(output, "\x1b[38;2;{red};{green};{blue}m")?;
-        }
-        if let Some([red, green, blue]) = background {
-            write!(output, "\x1b[48;2;{red};{green};{blue}m")?;
-        }
-    } else {
-        if let Some([red, green, blue]) = text.foreground {
-            let colour = crate::render::style::colour_for(
+    for (colour, foreground) in [(text.foreground, true), (background, false)] {
+        if let Some([red, green, blue]) = colour {
+            let spec = crate::render::style::colour_spec(
                 termina::style::RgbColor::new(red, green, blue),
                 caps,
             );
-            output.extend_from_slice(colour.as_bytes());
+            let sgr = if foreground {
+                termina::escape::csi::Sgr::Foreground(spec)
+            } else {
+                termina::escape::csi::Sgr::Background(spec)
+            };
+            write!(output, "{}", termina::escape::csi::Csi::Sgr(sgr))?;
         }
-        if let Some([red, green, blue]) = background {
-            let index =
-                crate::render::style::nearest_256(termina::style::RgbColor::new(red, green, blue));
-            write!(output, "\x1b[48;5;{index}m")?;
-        }
+    }
+    if selected && caps.colour_depth == crate::terminal::colour::ColourDepth::Monochrome {
+        output.extend_from_slice(b"\x1b[7m");
     }
     if selected {
         output.extend_from_slice(b"\x1b[1m");
