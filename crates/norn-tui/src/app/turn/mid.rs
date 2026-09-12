@@ -30,6 +30,10 @@ pub(super) fn handle_mid_turn_event(
     cancel: &CancellationToken,
     cancel_requested: &mut bool,
 ) -> Result<(), TuiError> {
+    if crate::app::helpers::observe_terminal_reply(&event, state, guard)? {
+        redraw_all(state, guard)?;
+        return Ok(());
+    }
     match event {
         Event::WindowResized(size) => {
             guard.handle_resize(size.cols, size.rows);

@@ -4,7 +4,7 @@ use std::io::{self, Write as _};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use termina::escape::csi::{self, Csi, KittyKeyboardFlags};
-use termina::{PlatformTerminal, Terminal};
+use termina::{Event, PlatformTerminal, Terminal};
 
 use super::caps::TerminalCaps;
 use crate::TuiError;
@@ -71,6 +71,23 @@ impl TerminalGuard {
     #[must_use]
     pub fn caps(&self) -> &TerminalCaps {
         &self.caps
+    }
+
+    /// Admit a late reply through the same terminal owner, including keyboard cleanup ownership.
+    ///
+    /// # Errors
+    /// Propagates a failed keyboard push/flush; cleanup retains its uncertain push ownership.
+    pub fn observe_reply(&mut self, event: &Event) -> io::Result<bool> {
+        let mut next = self.caps.clone();
+        next.observe_reply(event);
+        if next == self.caps {
+            return Ok(false);
+        }
+        if next.kitty_keyboard && !self.caps.kitty_keyboard {
+            push_keyboard(&mut self.terminal, &self.restoration)?;
+        }
+        self.caps = next;
+        Ok(true)
     }
 
     /// Last observed actual terminal columns.
@@ -146,17 +163,33 @@ fn enter_screen(
     writer.write_all(ENTER_SCREEN)?;
     writer.flush()?;
     if kitty {
-        // Keyboard stacks are separate for the primary and alternate screens.
-        // An uncertain push is safe to pop only after entering the alternate one.
-        restoration.store(KEYBOARD_PUSHED, Ordering::Release);
-        write!(
-            writer,
-            "{}",
-            Csi::Keyboard(csi::Keyboard::PushFlags(KITTY_FLAGS))
-        )?;
-        writer.flush()?;
+        push_keyboard(writer, restoration)?;
     }
     Ok(())
+}
+
+fn push_keyboard(writer: &mut impl io::Write, restoration: &AtomicU8) -> io::Result<()> {
+    match restoration.compare_exchange(
+        SCREEN_ENTERED,
+        KEYBOARD_PUSHED,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    ) {
+        Ok(_) => {
+            // Keyboard stacks are screen-local. Own an uncertain push before I/O,
+            // so a partial write/failed flush still gets one alternate-screen pop.
+            write!(
+                writer,
+                "{}",
+                Csi::Keyboard(csi::Keyboard::PushFlags(KITTY_FLAGS))
+            )?;
+            writer.flush()
+        }
+        Err(KEYBOARD_PUSHED) => Ok(()),
+        Err(state) => Err(io::Error::other(format!(
+            "cannot push terminal keyboard flags without alternate-screen ownership (state {state})"
+        ))),
+    }
 }
 
 fn cleanup_owned(writer: &mut impl io::Write, restoration: &AtomicU8) -> io::Result<()> {

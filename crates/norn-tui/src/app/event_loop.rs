@@ -528,6 +528,10 @@ async fn dispatch_input(
     agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
     child_results: &mut ChildResultState,
 ) -> Result<InputOutcome, TuiError> {
+    if super::helpers::observe_terminal_reply(&event, state, guard)? {
+        redraw_all(state, guard)?;
+        return Ok(InputOutcome::Continue);
+    }
     if matches!(&event, Event::Paste(_))
         || matches!(&event, Event::Key(key) if key.kind != KeyEventKind::Release
             && !(key.code == KeyCode::Char('c') && key.modifiers.contains(Modifiers::CONTROL)))

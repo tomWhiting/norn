@@ -16,13 +16,13 @@ use super::colour::ColourDepth;
 /// Detected terminal capabilities.
 ///
 /// Colour uses explicit degradation; optional enhancements use terminal queries.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalCaps {
     /// Richest colour encoding supported by the startup evidence.
     pub colour_depth: ColourDepth,
     /// Terminal supports the Kitty keyboard protocol.
     pub kitty_keyboard: bool,
-    /// Terminal supports DCS 2026 synchronized rendering.
+    /// Terminal reports changeable CSI 2026 synchronized output.
     pub synchronized_rendering: bool,
     /// Terminal supports OSC 8 hyperlinks.
     pub osc_hyperlinks: bool,
@@ -58,27 +58,41 @@ impl TerminalCaps {
 
         let mut timeout = Some(Duration::from_millis(150));
         while terminal.poll(Event::is_escape, timeout)? {
-            match terminal.read(Event::is_escape)? {
-                Event::Csi(Csi::Keyboard(csi::Keyboard::ReportFlags(_))) => {
-                    caps.kitty_keyboard = true;
-                }
-                Event::Csi(Csi::Mode(csi::Mode::ReportDecPrivateMode {
-                    mode: DecPrivateMode::Code(DecPrivateModeCode::SynchronizedOutput),
-                    setting,
-                })) => {
-                    caps.synchronized_rendering = setting != DecModeSetting::NotRecognized;
-                }
-                Event::Csi(Csi::Device(csi::Device::DeviceAttributes(()))) => {
-                    caps.italic_support = true;
-                    // Primary DA is not proof that earlier enhancement replies were received.
-                    // Drain replies already queued without extending terminal admission.
-                    timeout = Some(Duration::ZERO);
-                }
-                _ => {}
+            let event = terminal.read(Event::is_escape)?;
+            caps.observe_reply(&event);
+            if matches!(
+                event,
+                Event::Csi(Csi::Device(csi::Device::DeviceAttributes(())))
+            ) {
+                // Primary DA is not proof that earlier enhancement replies were received.
+                // Drain queued replies; later ones remain with the ordinary input owner.
+                timeout = Some(Duration::ZERO);
             }
         }
 
         Ok(caps)
+    }
+
+    /// Reduce a reply at admission or later without turning it into keyboard input.
+    pub(super) fn observe_reply(&mut self, event: &Event) {
+        match event {
+            Event::Csi(Csi::Keyboard(csi::Keyboard::ReportFlags(_))) => {
+                self.kitty_keyboard = true;
+            }
+            Event::Csi(Csi::Mode(csi::Mode::ReportDecPrivateMode {
+                mode: DecPrivateMode::Code(DecPrivateModeCode::SynchronizedOutput),
+                setting,
+            })) => {
+                // A frame needs both begin and end. Permanently set/reset modes
+                // cannot provide that contract even though the mode is recognized.
+                self.synchronized_rendering =
+                    matches!(setting, DecModeSetting::Set | DecModeSetting::Reset);
+            }
+            Event::Csi(Csi::Device(csi::Device::DeviceAttributes(()))) => {
+                self.italic_support = true;
+            }
+            _ => {}
+        }
     }
 
     /// Construct the original indexed-colour baseline without optional enhancements.
@@ -128,5 +142,41 @@ mod tests {
         let caps = TerminalCaps::default();
         assert_eq!(caps.colour_depth, ColourDepth::Indexed256);
         assert!(!caps.kitty_keyboard);
+    }
+    #[test]
+    fn progressive_replies_require_toggleable_sync_and_preserve_unrelated_capabilities() {
+        let mut caps = TerminalCaps::baseline();
+        for (setting, expected) in [
+            (DecModeSetting::Reset, true),
+            (DecModeSetting::PermanentlyReset, false),
+            (DecModeSetting::Set, true),
+            (DecModeSetting::PermanentlySet, false),
+            (DecModeSetting::NotRecognized, false),
+        ] {
+            caps.observe_reply(&Event::Csi(Csi::Mode(csi::Mode::ReportDecPrivateMode {
+                mode: DecPrivateMode::Code(DecPrivateModeCode::SynchronizedOutput),
+                setting,
+            })));
+            assert_eq!(caps.synchronized_rendering, expected);
+        }
+        let before = caps.clone();
+        caps.observe_reply(&Event::Csi(Csi::Mode(csi::Mode::ReportDecPrivateMode {
+            mode: DecPrivateMode::Code(DecPrivateModeCode::AutoWrap),
+            setting: DecModeSetting::Set,
+        })));
+        assert_eq!(caps, before);
+        caps.observe_reply(&Event::Csi(Csi::Keyboard(csi::Keyboard::ReportFlags(
+            csi::KittyKeyboardFlags::empty(),
+        ))));
+        assert!(caps.kitty_keyboard);
+        caps.observe_reply(&Event::Csi(Csi::Device(csi::Device::DeviceAttributes(()))));
+        assert!(caps.italic_support);
+        assert_eq!(caps.colour_depth, before.colour_depth);
+        assert_eq!(caps.osc_hyperlinks, before.osc_hyperlinks);
+        let before = caps.clone();
+        caps.observe_reply(&Event::Csi(Csi::Keyboard(csi::Keyboard::ReportFlags(
+            csi::KittyKeyboardFlags::empty(),
+        ))));
+        assert_eq!(caps, before);
     }
 }

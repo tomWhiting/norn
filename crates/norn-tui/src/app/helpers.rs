@@ -21,6 +21,20 @@ pub(crate) fn sync_with_guard(
     Ok(())
 }
 
+/// Apply progressive capability evidence without clearing the frame or delaying input.
+pub(super) fn observe_terminal_reply(
+    event: &termina::Event,
+    state: &mut super::state::AppState,
+    guard: &mut TerminalGuard,
+) -> Result<bool, TuiError> {
+    if !guard.observe_reply(event)? {
+        return Ok(false);
+    }
+    state.terminal_caps = guard.caps().clone();
+    state.screen.dirty = true;
+    Ok(true)
+}
+
 /// Compose `[{input} in / {output} out, {elapsed}]`.
 ///
 /// Inlined here (rather than imported from `norn-cli`) so `norn-tui` does

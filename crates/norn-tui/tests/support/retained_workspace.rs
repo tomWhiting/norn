@@ -604,6 +604,45 @@ impl Workspace {
         self.frame(after, predicate)
     }
 
+    /// Observe a cursor-acknowledged raw delta while deliberately changing synchronization support.
+    /// This transport probe does not label an unsynchronized delta as an atomic screen.
+    pub fn terminal_exchange(
+        &mut self,
+        input: &[u8],
+        cursor: (usize, usize),
+    ) -> io::Result<Vec<u8>> {
+        let after = self.output.bytes()?.len();
+        let marker = format!("\x1b[{};{}H\x1b[?25h", cursor.1 + 1, cursor.0 + 1).into_bytes();
+        self.send(input)?;
+        self.output.wait(
+            "cursor-acknowledged terminal capability exchange",
+            |bytes| {
+                let delta = &bytes[after..];
+                let Some(at) = delta.windows(marker.len()).position(|part| part == marker) else {
+                    return Ok(None);
+                };
+                let mut end = at + marker.len();
+                if delta[..end].windows(8).any(|part| part == b"\x1b[?2026h") {
+                    if !delta[end..].starts_with(retained_screen::FRAME_END) {
+                        return Ok(None);
+                    }
+                    end += retained_screen::FRAME_END.len();
+                }
+                Ok(Some(delta[..end].to_vec()))
+            },
+        )
+    }
+
+    /// Count actual screen-local Kitty pushes in the captured terminal transport.
+    pub fn keyboard_pushes(&self) -> io::Result<usize> {
+        Ok(self
+            .output
+            .bytes()?
+            .windows(5)
+            .filter(|part| *part == b"\x1b[>5u")
+            .count())
+    }
+
     /// Observe the already-published frame without requiring a redundant repaint.
     pub fn screen(&self) -> io::Result<Screen> {
         self.observe(|_| true)

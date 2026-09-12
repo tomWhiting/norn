@@ -393,3 +393,45 @@ fn typing_keeps_published_response_visible_after_stream_replacement() -> TestRes
         Ok("reading fixture".to_owned())
     })
 }
+
+#[test]
+fn progressive_terminal_replies_work_idle_and_during_execution() -> TestResult {
+    for active in [false, true] {
+        with_composer("enter", |app| {
+            if active {
+                edit(app, b"capability fixture", &["capability fixture"])?;
+                submit(app, "capability fixture")?;
+            }
+            let before = app.snapshot()?;
+            let cursor = app.screen()?.cursor;
+            assert_eq!(cursor.0, 0);
+            assert_eq!(app.keyboard_pushes()?, 0);
+            let plain_delta = app.terminal_exchange(b"\x1b[?2026;0$yA", (1, cursor.1))?;
+            assert!(!plain_delta.windows(8).any(|part| part == b"\x1b[?2026h"));
+            let sync_delta =
+                app.terminal_exchange(b"\x1b[?2026;2$y\x1b[?1u\x1b[?1uB", (2, cursor.1))?;
+            assert!(sync_delta.starts_with(b"\x1b[>5u") || sync_delta.starts_with(b"\x1b[?2026h"));
+            assert!(sync_delta.windows(8).any(|part| part == b"\x1b[?2026h"));
+            assert!(sync_delta.ends_with(b"\x1b[?2026l"));
+            assert_eq!(app.keyboard_pushes()?, 1);
+            // The ordinary screen oracle deliberately excludes unsynchronized deltas.
+            // An actual resize publishes a full current frame after this transport probe.
+            let resized = app.resize(101, 24)?;
+            plain(&resized, &["AB"])?;
+            app.input(b"\x1b[?1uC", |screen| draft(screen) == ["ABC"])?;
+            assert_eq!(app.keyboard_pushes()?, 1);
+            assert_eq!(
+                app.snapshot()?,
+                before,
+                "capability traffic admitted provider input"
+            );
+            edit(app, b"\x1b", &[""])?;
+            if !active {
+                edit(app, b"capability fixture", &["capability fixture"])?;
+                submit(app, "capability fixture")?;
+            }
+            Ok("capability fixture".to_owned())
+        })?;
+    }
+    Ok(())
+}

@@ -87,3 +87,49 @@ fn failed_screen_admission_never_pops_the_parent_keyboard_stack() -> io::Result<
     assert_eq!(writer.0, ENTER_SCREEN);
     Ok(())
 }
+
+#[test]
+fn late_keyboard_push_is_idempotent_and_needs_owned_alternate_screen() -> io::Result<()> {
+    let restoration = AtomicU8::new(INACTIVE);
+    let mut bytes = Vec::new();
+    assert!(push_keyboard(&mut bytes, &restoration).is_err());
+    assert!(bytes.is_empty());
+    enter_screen(&mut bytes, &restoration, false)?;
+    assert_eq!(bytes, ENTER_SCREEN);
+    push_keyboard(&mut bytes, &restoration)?;
+    let once = bytes.clone();
+    push_keyboard(&mut bytes, &restoration)?;
+    assert_eq!(bytes, once);
+    cleanup_owned(&mut bytes, &restoration)?;
+    let ended = bytes.clone();
+    cleanup_owned(&mut bytes, &restoration)?;
+    assert_eq!(bytes, ended);
+    assert!(push_keyboard(&mut bytes, &restoration).is_err());
+    assert_eq!(bytes, ended);
+    assert_eq!(
+        bytes.windows(5).filter(|part| *part == b"\x1b[>5u").count(),
+        1
+    );
+    assert_eq!(
+        bytes.windows(5).filter(|part| *part == b"\x1b[<1u").count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn failed_late_keyboard_flush_keeps_exactly_one_cleanup_pop() -> io::Result<()> {
+    let restoration = AtomicU8::new(INACTIVE);
+    enter_screen(&mut Vec::new(), &restoration, false)?;
+    let mut failed = FailedScreenFlush(Vec::new());
+    assert!(push_keyboard(&mut failed, &restoration).is_err());
+    assert_eq!(failed.0, b"\x1b[>5u");
+    let mut restored = Vec::new();
+    cleanup_owned(&mut restored, &restoration)?;
+    let mut expected = b"\x1b[<1u".to_vec();
+    expected.extend_from_slice(LEAVE_SCREEN);
+    assert_eq!(restored, expected);
+    cleanup_owned(&mut restored, &restoration)?;
+    assert_eq!(restored, expected);
+    Ok(())
+}

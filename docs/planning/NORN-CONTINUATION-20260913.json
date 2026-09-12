@@ -160,6 +160,11 @@
         "Independent next draft during pending opening-input admission, with exact rejection recovery",
         "Actual Herdr input/frame latency and flicker acceptance"
       ]
+    },
+    {
+      "id": "U02",
+      "delivery": "Reconcile the requested termina 0.4.0 update against current Cargo.lock 0.3.3 and Iridium/terminput dependency constraints; do not claim it already shipped.",
+      "status": "open"
     }
   ],
   "verification": "Per-row focused tests, changed-file AST scans and strict Clippy; full source-bound venue battery required for landing. Historical status is not live proof.",
@@ -282,12 +287,21 @@
     },
     {
       "id": "P02.2",
-      "status": "verified_local_release_pending",
+      "status": "installed_local_preview",
       "scope": "Retain the successfully published reading viewport when its pinned body revision is retired; reflow displayed bytes/styles on resize without granting old bodies current source authority.",
       "wall": "See P02.2 Markdown wall",
       "baseline": "p02-reading-followed-before.log reproduces whole-pane warning after provider completion while the draft survives; p02-reading-before.log did not exercise stale body anchoring.",
       "tests": "6528 standard workspace/all-target tests across 39 suites passed, zero failed/ignored; 4733 core, 578 CLI, 957 TUI, 24 PTY, 12 actual-App composer tests. Separate channel stdio 14, channel TUI 4, frontend preference restart 5, composer preference restart 4 and MCP launch 10 passed. Strict Clippy and seven-file AST passed.",
-      "remaining": "Release executable build/probe/installation and physical terminal acceptance; main needs independent review and exact-commit venue battery."
+      "remaining": "Physical terminal acceptance, independent final-source review and exact-commit venue battery. Local checks/build/probe/install passed; see installed_checkpoint."
+    },
+    {
+      "id": "P02.4",
+      "status": "verified_local_release_pending",
+      "scope": "Process delayed synchronized-output and Kitty capability replies in startup, idle and active terminal handling, with exact screen-local push/pop ownership.",
+      "wall": "See P02.4 Markdown wall",
+      "remaining": "Atomic local installation/probe, physical terminal/multiplexer acceptance and independent review/exact-commit venue battery.",
+      "tests": "6532 standard workspace/all-target tests across 39 suites passed, zero failed/ignored; 4733 core, 578 CLI, 960 TUI, 24 PTY and 13 composer test cases. Separate channel stdio 14, channel TUI 4, frontend preference restart 5, composer preference restart 4 and MCP launch 10 passed. Strict Clippy, eight-file AST, production LOC and release build passed.",
+      "actual_cli": "Installed preview.22 fails after Primary-DA-only first paint and late sync/Kitty replies. Built preview.23 passes with typed-cursor acknowledgement, one push/pop, parent keyboard restoration and zero loopback provider calls. Logs p02-caps-cli-{baseline-timed,timed}.log and hashed receipts under var/releases/preview.23-progressive-terminal."
     }
   ],
   "policy_debt": [
@@ -343,36 +357,42 @@
       "tests": "6528 standard workspace/all-target tests across 39 suites passed, zero failed/ignored; 4733 core, 578 CLI, 957 TUI, 24 PTY, 12 actual-App composer tests. Separate channel stdio 14, channel TUI 4, frontend preference restart 5, composer preference restart 4 and MCP launch 10 passed. Strict Clippy and seven-file AST passed.",
       "build": "Release norn executable build passed; installed-binary probe and atomic install follow final source commit.",
       "source_binding": "P02.2 on 84f33f729e7678953f1aaa3063a77a230189070b; final commit/installation receipt to follow."
+    },
+    "p02_caps": {
+      "logs": "var/verification/continuation-20260913/p02-caps-{clippy,workspace,build}.log; p02-caps-ast.json; p02-caps-loc.json",
+      "tests": "6532 standard workspace/all-target tests across 39 suites passed, zero failed/ignored; 4733 core, 578 CLI, 960 TUI, 24 PTY and 13 composer test cases. Separate channel stdio 14, channel TUI 4, frontend preference restart 5, composer preference restart 4 and MCP launch 10 passed. Strict Clippy, eight-file AST, production LOC and release build passed.",
+      "actual_cli": "Installed preview.22 fails after Primary-DA-only first paint and late sync/Kitty replies. Built preview.23 passes with typed-cursor acknowledgement, one push/pop, parent keyboard restoration and zero loopback provider calls. Logs p02-caps-cli-{baseline-timed,timed}.log and hashed receipts under var/releases/preview.23-progressive-terminal.",
+      "source_binding": "P02.4 on 51bc564af2aedd238b79a7fd1f9f19832b4eb6dd; installation receipt will bind final commit."
     }
   },
   "installed_checkpoint": {
-    "installed_at_melbourne": "2026-09-13T08:53:17.458428+10:00",
-    "version": "norn 0.1.0-preview.21",
+    "installed_at_melbourne": "2026-09-13T09:21:28.605350+10:00",
+    "version": "norn 0.1.0-preview.22",
     "binary": "/Users/tom/.cargo/bin/norn",
-    "sha256": "b14b9e8e77427bc7bb2b86f8dad8e04c192f2cf0845b35e96ad60014c7c4e00e",
-    "source_commit": "84f33f729e7678953f1aaa3063a77a230189070b",
+    "sha256": "8fc5d2f060d48142de3b799c3c7cfdd2047ba8c51a419a3c2a4585930effdbb3",
+    "source_commit": "51bc564af2aedd238b79a7fd1f9f19832b4eb6dd",
     "source_worktree": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate",
-    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.21-word-motion/previous-norn-preview.20",
-    "previous_version": "norn 0.1.0-preview.20",
+    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.22-reading-view/previous-norn-preview.21",
+    "previous_version": "norn 0.1.0-preview.21",
     "verification": [
-      "Release workspace/all-target tests passed, including 4733 core, 578 CLI, 955 TUI, 24 PTY and 14 real Rust stdio channel scenarios; zero failures/ignored",
+      "Release workspace/all-target tests passed, including 4733 core, 578 CLI, 957 TUI, 24 PTY and 14 real Rust stdio channel scenarios; zero failures/ignored",
       "strict release workspace/all-target Clippy passed; live-api-smoke compiled/linted only",
       "7 changed Rust files AST-scanned against prior commit; no added unwrap/expect or lint bypass/discard matches",
-      "Ghostty Escape-B/F reproducer fails before fix; actual App word/line movement and Control+E tests cover idle/active execution, exact provider-history census and terminal restoration",
-      "context and inbound-receiver preservation on provider success/error plus fatal-worker handling tested",
+      "Actual App streaming-completion reproducer fails before fix and passes after; editable draft, resize, exact provider history and terminal restoration retained",
+      "Retired source copy/export refused; display-snapshot copy, visible-only reflow with graphemes/styles/highlights, failed flush and source replacement tested",
       "format and whitespace checks passed",
       "release build passed",
       "exact candidate hash unchanged across loopback-only HTTP-429 warning probe: collapsed notice, no raw tracing writes, two requests, Kitty and terminal restoration passed"
     ],
     "pending": [
       "physical Herdr test drive and broader input/frame latency measurement",
-      "intermittent flicker and stale pinned-view behavior",
+      "remaining intermittent flicker, publication/input races and progressive capability negotiation",
       "remaining storage and ordered product work",
       "independent final-source review and exact-commit venue battery"
     ],
     "scope": "local preview installation on codex/norn-integration-candidate; main remains preview.9"
   },
-  "next_slice": "Finish P02.2 verification and install; investigate progressive synchronized-output replies and sustained-event fairness. P01 latency, D03.3b and all remaining D01-D20/S01/U01 programme items remain open.",
+  "next_slice": "Install verified preview.23, then P02 event-drain fairness and publication/input-admission races. Physical flicker acceptance, P01 matched-route latency, U02 termina/Iridium dependency reconciliation, D03.3b and the full D01-D20/S01/U01 programme remain open.",
   "disk_checkpoint": {
     "available_gib": 41,
     "build_cache_gib": 5.8,
