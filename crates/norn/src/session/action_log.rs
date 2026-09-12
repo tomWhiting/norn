@@ -420,7 +420,17 @@ impl ActionLog {
     /// [`SessionEvent::ToolResult`](crate::session::events::SessionEvent::ToolResult)
     /// event has been appended to the [`EventStore`].
     pub fn record_completion(&self, record: CompletionRecord<'_>) {
-        self.record_completion_with_origin(record, ActionOrigin::Direct);
+        self.record_completion_with_origin(record, ActionOrigin::Direct, Utc::now());
+    }
+
+    /// Restore a completion at its persisted event time, without sampling the live clock.
+    /// Insertion order remains event order even when recorded timestamps tie or move backwards.
+    pub(crate) fn restore_completion(
+        &self,
+        record: CompletionRecord<'_>,
+        timestamp: DateTime<Utc>,
+    ) {
+        self.record_completion_with_origin(record, ActionOrigin::Direct, timestamp);
     }
 
     /// Record a tool dispatch produced by executing a follow-up action.
@@ -440,10 +450,16 @@ impl ActionLog {
                 source_tool_call_id: source_tool_call_id.to_owned(),
                 action: action.to_owned(),
             },
+            Utc::now(),
         );
     }
 
-    fn record_completion_with_origin(&self, record: CompletionRecord<'_>, origin: ActionOrigin) {
+    fn record_completion_with_origin(
+        &self,
+        record: CompletionRecord<'_>,
+        origin: ActionOrigin,
+        timestamp: DateTime<Utc>,
+    ) {
         let summary_line = compute_summary(record.tool_name, &record.outcome, record.output);
 
         // Update the session mutation ledger for successful mutation-tool
@@ -468,7 +484,7 @@ impl ActionLog {
             tool_name: record.tool_name.to_owned(),
             tool_call_id: record.tool_call_id.to_owned(),
             tool_use_description: record.tool_use_description.to_owned(),
-            timestamp: Utc::now(),
+            timestamp,
             outcome: record.outcome,
             summary_line,
             origin,

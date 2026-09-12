@@ -10,13 +10,15 @@
 //! start empty — [`rebuild_action_log`] replays the persisted events to
 //! restore both.
 //!
+//! Completion timestamps are restored from persisted `ToolResult` event times.
+//!
 //! Reconstruction limits (data the event log does not carry):
 //!
 //! - Follow-up actions (including `StoredContent` before-content snapshots)
 //!   are in-memory closures and are not persisted; rebuilt entries carry no
 //!   follow-ups, so a resumed `write` to a pre-existing file is recorded as
 //!   `Created` in the mutation ledger rather than `Modified`.
-//! - Entry timestamps are reconstruction-time, and mutation-ledger revert
+//! - Mutation-ledger revert
 //!   baselines are hashed from the file's content *at resume time* —
 //!   external edits made while the session was suspended are treated as
 //!   part of the resumed baseline.
@@ -72,7 +74,7 @@ const BLOCKED_BY_PERMISSIONS_PREFIX: &str = "blocked by permissions";
 /// [`ReplayArtifacts`](crate::session::ReplayArtifacts) a
 /// [`SessionManager`](crate::session::SessionManager) open produced.
 /// See the module docs for the reconstruction limits — data the event
-/// log does not carry (follow-ups, original timestamps, post-validate
+/// log does not carry (follow-ups, post-validate
 /// outcomes) is not restored.
 pub fn rebuild_action_log(action_log: &ActionLog, events: &[SessionEvent]) {
     // call_id → (clean tool args, tool_use_description), filled as the
@@ -93,6 +95,7 @@ pub fn rebuild_action_log(action_log: &ActionLog, events: &[SessionEvent]) {
                 }
             }
             SessionEvent::ToolResult {
+                base,
                 tool_call_id,
                 tool_name,
                 output,
@@ -103,21 +106,24 @@ pub fn rebuild_action_log(action_log: &ActionLog, events: &[SessionEvent]) {
                     .remove(tool_call_id.as_str())
                     .unwrap_or((serde_json::Value::Null, String::new()));
                 let outcome = outcome_from_output(output);
-                action_log.record_completion(CompletionRecord {
-                    tool_name,
-                    tool_call_id,
-                    tool_use_description: &description,
-                    outcome,
-                    output,
-                    args,
-                    duration_ms: *duration_ms,
-                    follow_ups: Vec::new(),
-                    post_validate_outcome: None,
-                    // Mirror the live dispatch path: the action_log tool's
-                    // own historical dispatches stay Level-1-only so the
-                    // rebuilt log is not bloated with old query results.
-                    level_1_only: tool_name == "action_log",
-                });
+                action_log.restore_completion(
+                    CompletionRecord {
+                        tool_name,
+                        tool_call_id,
+                        tool_use_description: &description,
+                        outcome,
+                        output,
+                        args,
+                        duration_ms: *duration_ms,
+                        follow_ups: Vec::new(),
+                        post_validate_outcome: None,
+                        // Mirror the live dispatch path: the action_log tool's
+                        // own historical dispatches stay Level-1-only so the
+                        // rebuilt log is not bloated with old query results.
+                        level_1_only: tool_name == "action_log",
+                    },
+                    base.timestamp,
+                );
             }
             // Only assistant tool calls and tool results participate in
             // the rebuild; every other variant carries no action-log
@@ -591,3 +597,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "resume_time_tests.rs"]
+mod time_tests;

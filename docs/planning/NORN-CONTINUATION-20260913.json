@@ -23,7 +23,7 @@
     {
       "id": "D03",
       "delivery": "Correct resume selection, action-log times, and child-history access",
-      "status": "queued_for_live_audit",
+      "status": "in_progress",
       "acceptance": "Duplicate names cannot select the wrong session; old tool rows retain their real times; descendant work is inspectable after resume."
     },
     {
@@ -134,7 +134,7 @@
       "id": "S01",
       "delivery": "Measure session storage duplication; reduce redundant new writes only with replay/backward compatibility tests; no deletion or rewriting of live session files",
       "status": "in_progress_with_D01",
-      "next_audit": "Finish S01.2 installation. Continue auditing remaining journal/cache ownership and storage growth; historical session files are not rewritten. D02 retained-history navigation follows."
+      "next_audit": "S01.2 installed in preview.16. Continue remaining journal/cache ownership and storage-growth audit; historical session files are not rewritten."
     },
     {
       "id": "U01",
@@ -205,11 +205,11 @@
     },
     {
       "id": "D02.2",
-      "status": "installed_local_preview_17_venue_running_review_pending",
+      "status": "installed_local_preview_17_venue_green_review_pending",
       "scope": "Retain finite backward scroll remainder across asynchronous earlier-page completion; cancel on explicit navigation barriers and failed/nonprogressing reads",
       "wall": "See D02.2 Markdown wall",
       "tests": "6504 standard tests across 39 suites, zero failed/ignored; channel stdio 14 and channel TUI 4 passed. Strict release workspace/all-target Clippy with live-api-smoke compilation, 10-file AST comparison, formatting and release build passed.",
-      "remaining": "Preview.17 venue run and independent review; extended history acceptance tracked in D02.3 and subsequent cases."
+      "remaining": "Independent review; extended history acceptance tracked in D02.3 and subsequent cases."
     },
     {
       "id": "D02.3",
@@ -218,6 +218,14 @@
       "wall": "render.rs test declaration and render/resumed_compaction_tests.rs; queue JSON/Markdown",
       "tests": "951 TUI library tests passed, zero failures/ignored; strict workspace/all-target release Clippy with live-api-smoke compilation, formatting and two-file AST comparison passed.",
       "limits": "Adapter/frame integration, not physical terminal or CLI picker acceptance; oversized/spooled results and descendant-history cases remain."
+    },
+    {
+      "id": "D03.1",
+      "status": "verified_local_install_pending",
+      "scope": "Replay action-log completions with original ToolResult event timestamps, preserving precision, event order, tied and backward times; live dispatch clock behaviour unchanged.",
+      "wall": "session/action_log.rs; agent/resume.rs and new resume_time_tests.rs; Cargo manifests, README, release notes and continuation queue.",
+      "tests": "6506 standard workspace/all-target tests across 39 suites, zero failed/ignored; channel stdio 14 passed. Strict release workspace/all-target Clippy with live-api-smoke compilation, formatting and three-file AST comparison passed. Timestamp regression covers wire precision, repeated replay, detail output and unchanged event-store bytes. Release binary build passed; channel TUI four scenarios passed.",
+      "remaining": "Actual-binary installation probe; independent final-source review and exact-commit venue battery. Duplicate-name/project-scope resolution and descendant-history access remain separate D03 work."
     }
   ],
   "policy_debt": [
@@ -228,43 +236,43 @@
   ],
   "verification_completed": {
     "core_library": {
-      "passed": 4721,
+      "passed": 4722,
       "failed": 0,
       "ignored": 0,
-      "last_run_version": "preview.17 full workspace/all-target feature union"
+      "last_run_version": "preview.18 full workspace/all-target feature union"
     },
     "tui_library_cli_feature_set": {
       "passed": 951,
       "failed": 0,
       "ignored": 0,
-      "last_run_version": "preview.17 plus test-only D02.3 source; standalone norn-tui library feature set"
+      "last_run_version": "preview.18 full workspace/all-target feature union"
     },
     "clippy": "cargo clippy --locked --release --workspace --all-targets --features norn/live-api-smoke -j 6 -- -D warnings passed",
     "format": "cargo fmt --all -- --check passed",
-    "ast": "D02.3: two changed Rust files against installed preview.17; no added unwrap/expect or bypass/discard matches",
+    "ast": "D03.1: three changed Rust files against 256a3e6; no added unwrap/expect or bypass/discard matches",
     "cli_library": {
       "passed": 577,
       "failed": 0,
       "ignored": 0,
-      "last_run_version": "preview.17 full workspace/all-target feature union"
+      "last_run_version": "preview.18 full workspace/all-target feature union"
     },
     "pty_smoke": {
       "passed": 23,
       "failed": 0,
       "ignored": 0,
-      "last_run_version": "preview.17 full workspace/all-target feature union"
+      "last_run_version": "preview.18 full workspace/all-target feature union"
     },
-    "diagnostic_pty": "Installed preview.17 exact-binary probe passed; test-only D02.3 does not replace the binary",
+    "diagnostic_pty": "Installed preview.17 probe remains the latest; preview.18 build/probe pending at this source checkpoint.",
     "workspace_all_targets": {
-      "version": "preview.17",
+      "version": "preview.18",
       "standard_suites": 39,
-      "passed": 6504,
+      "passed": 6506,
       "failed": 0,
       "ignored": 0,
       "channel_stdio": 14,
-      "channel_tui": 4,
-      "log": "var/verification/continuation-20260913/d02-page-workspace.log",
-      "source_commit": "68802a046310784faff301db1f0277a68f4b87d9"
+      "log": "var/verification/continuation-20260913/d03-time-workspace.log",
+      "source_binding": "D03.1 source changes on 256a3e6, before final source commit; installation receipt will pin the built commit.",
+      "channel_tui": 4
     }
   },
   "installed_checkpoint": {
@@ -273,22 +281,22 @@
     "installed_at_melbourne": "2026-09-13T06:14:18.067552+10:00",
     "sha256": "fd9917a4750f55c9e2c75f2de667df3bef8606898e05479b9f5c074cd968226e",
     "receipt": "var/releases/preview.17-history-scroll/installation.json",
-    "note": "Current changes are test/documentation only; the installed production binary is unchanged."
+    "note": "Preview.18 source, release build, tests and Clippy passed. Atomic installation follows this source commit; the repository-local release receipt records installed state."
   },
-  "next_slice": "D03: remove first-match name ambiguity with settled project-scoped resolution and retain persisted action-log times. D02 oversized/spooled-result and child-history acceptance remains tracked, not inferred from the bounded D02.3 fixture. Continue existing preview.17 venue handle; do not duplicate the active run.",
+  "next_slice": "Finish D03.1 persisted action-log timestamp verification and installation, then correct name ambiguity and project scope. D02 oversized/spooled results and descendant-history acceptance remain explicit. Tom owns independent Fable review; no agent transmission is authorized.",
   "disk_checkpoint": {
-    "available_gib": 10,
-    "build_cache_gib": 4.5,
-    "release_receipts_and_rollbacks_mib": 235,
+    "available_gib": 8.1,
+    "build_cache_gib": 5.3,
+    "release_receipts_and_rollbacks_mib": 529,
     "obsolete_test_executable_bytes_removed_this_goal": 836883840,
-    "note": "D02.3 removed another 276964672 bytes in four unopened obsolete test executables, identified by Cargo package-version depfiles. Receipt: d02-resume-cleanup.json. Current executable, rollback files and all sessions preserved.",
-    "obsolete_build_artifact_bytes_removed_this_goal": 2966928000,
-    "observed_at_melbourne": "2026-09-13T06:13:00.343387+10:00"
+    "note": "D03.1 removed 344106166 bytes in eight unopened, positively versioned obsolete Norn library artifacts after the owned build ended; receipt d03-time-cleanup.json. Current artifacts, rollback binaries and all sessions preserved.",
+    "obsolete_build_artifact_bytes_removed_this_goal": 3311034166,
+    "observed_at_melbourne": "2026-09-13T06:47:59.326816+10:00"
   },
   "venue_discovery": {
     "workflow_type": "repo_battery_205",
     "route_active_hash": "56cd8d0a1d3ba94811c605432b0e3730a4f87d1ab9cfe732c62cda46f0f5b0e9",
-    "status": "Running preview.17; describe_run confirms live run with venue activity, workers at capacity",
+    "status": "Completed green for preview.17: all six declared legs returned zero; independent review still pending.",
     "input_fields": [
       "subject_repo",
       "subject_ref",
@@ -301,7 +309,7 @@
     "workflow_id": "99c739bf-f305-4061-bc66-4c8817ce87df",
     "run_id": "bff3126e-fe31-4075-9118-2946c2939857",
     "source_commit": "68802a046310784faff301db1f0277a68f4b87d9",
-    "receipt": "var/releases/preview.17-history-scroll/venue-run.json",
+    "receipt": "var/releases/preview.17-history-scroll/venue-result.json",
     "prior_green_receipt": "var/releases/preview.16-canonical-storage/venue-result.json"
   },
   "main_checkpoint": {
@@ -313,6 +321,7 @@
     "source_commit": "68802a046310784faff301db1f0277a68f4b87d9",
     "base_commit": "7ec7ee272788e940cbacc030001bfb3c58e48f41",
     "directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview17-20260913",
-    "status": "Preview.17 package ready; launch rejected by automatic approval review pending explicit user authorization to transmit private source to Anthropic Fable. No review launched."
+    "status": "Tom will arrange the independent Fable review. He explicitly declined agent transmission of source to Anthropic. No review was launched by Ripley; reviewed commit and verdict await Tom.",
+    "owner": "Tom"
   }
 }
