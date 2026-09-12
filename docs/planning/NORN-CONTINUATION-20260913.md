@@ -78,3 +78,11 @@ Wall: `crates/norn/src/error.rs`, `error/{subsystems.rs,compaction.rs}`, `loop/{
 Acceptance: permanent provider failure, empty/truncated output and cancellation commit no compaction or hidden-event marks; trigger remains re-usable; actual runner sends no normal model request after failure; original accepted input survives; known rejected-summary usage and typed error survive in the returned error and durable audit; a later successful retry can compact. Run core/runner and TUI regressions, strict Clippy, formatting and changed-file AST scans. Historical fallback records remain readable. No live session rewrite or inferred recovery of facts lost by earlier semantic fallbacks is claimed.
 
 D01.2 also permits source-documentation correction in `crates/norn/src/loop/summarization.rs`; the summary renderer is unchanged by this slice.
+
+## D01.2 local verification checkpoint
+
+Source fix `6407b1765ab846d6a71c9c4273e9a037fc1a9e6c`: all 4,711 core and 939 TUI library tests passed, zero failed or ignored. Strict release workspace/all-target Clippy with live-api-smoke enabled passed (compiled/linted only, no live provider request). Format and whitespace checks passed. New compaction modules have no unwrap/expect or bypass/discard matches; scans of all 11 changed Rust files record existing counts separately with no increase. Proof logs are under `var/verification/continuation-20260913/d01-failure-*`. An initial test fixture lacked completed assistant turns and was corrected; the final suite includes the real runner error-path regression.
+
+The next slice is D01.3's summary-only projection of opaque encrypted provider items, then terminal diagnostic ownership and S01's storage/allocation audit. This change preserves failed context; it does not yet prevent every oversized summary request.
+
+Venue input was recovered from the first event of completed workflow `62bd3f87-a13b-4fa7-bce5-6dc07fec1229`, under the still-active package `56cd8d0a1d3ba94811c605432b0e3730a4f87d1ab9cfe732c62cda46f0f5b0e9`: `subject_repo`, exact `subject_ref`, `workspace_root=/home/aion/venue/.battery`, and `waivers_json`. Its activities dispatch to `lane_repo_battery` on `venue205`. No repo_battery_205 run was active at inspection. A new measured receipt is still required; that older run is contract evidence only.

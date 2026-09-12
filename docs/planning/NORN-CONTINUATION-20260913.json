@@ -158,9 +158,10 @@
     },
     {
       "id": "D01.2",
-      "status": "implementation_under_verification",
+      "status": "local_checks_passed_build_install_pending",
       "scope": "Stop failed automatic semantic compaction; preserve context and known spend; durable failure audit; manual mechanical compaction unchanged",
-      "remaining": "Core/TUI tests, strict Clippy, build, local installation, exact-commit venue battery"
+      "remaining": "Release build, actual-binary probe, local installation, exact-commit venue battery",
+      "tests": "4711 core library and 939 TUI library tests passed, zero failed or ignored; strict release workspace/all-target Clippy passed"
     }
   ],
   "policy_debt": [
@@ -171,7 +172,7 @@
   ],
   "verification_completed": {
     "core_library": {
-      "passed": 4709,
+      "passed": 4711,
       "failed": 0,
       "ignored": 0
     },
@@ -182,7 +183,7 @@
     },
     "clippy": "cargo clippy --locked --release --workspace --all-targets --features norn/live-api-smoke -j 6 -- -D warnings passed",
     "format": "cargo fmt --all -- --check passed",
-    "ast": "new helper/tests and navigation files clean for unwrap/expect and bypass/discard patterns; existing compaction allowances explicitly retained as debt"
+    "ast": "New compaction modules clean; all 11 changed Rust files scanned against prior commit with no increase in unwrap/expect or bypass/discard counts. Existing findings remain policy debt."
   },
   "installed_checkpoint": {
     "version": "norn 0.1.0-preview.12",
@@ -191,10 +192,10 @@
     "sha256": "ded53f31ea3829cfe530d8a70d4efb6cd19b85ae48e62a6cb5dad3cea20fbc0d",
     "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.12-continuity/previous-norn-preview.11"
   },
-  "next_slice": "D01.2: compaction failure policy, bounded semantic summary projection and terminal-safe diagnostics; scope each change before editing. S01 compatibility/publication audit continues.",
+  "next_slice": "D01.3: exclude opaque encrypted response payloads from the semantic summary transcript without changing persistence or normal replay. Then terminal-safe diagnostics and S01 storage/allocation audit.",
   "disk_checkpoint": {
-    "available_gib": 25,
-    "build_cache_gib": 3.5,
+    "available_gib": 24,
+    "build_cache_gib": 3.6,
     "release_receipts_and_rollbacks_mib": 235,
     "obsolete_test_executable_bytes_removed_this_goal": 191361440
   },
