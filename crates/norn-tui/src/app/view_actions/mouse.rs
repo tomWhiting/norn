@@ -50,9 +50,9 @@ fn apply_mouse(event: MouseEvent, state: &mut AppState) -> Result<bool, TuiError
     }
     if !matches!(
         event.kind,
-        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown | MouseEventKind::Moved
     ) {
-        crate::app::render::navigation::apply(state)?;
+        crate::app::render::navigation::finish(state)?;
     }
     if matches!(event.kind, MouseEventKind::Down(MouseButton::Left))
         && state

@@ -49,7 +49,7 @@ pub(crate) fn sync_input_area(
         Layout::ResizeRequired { area } => area.width != cols || area.height != terminal_rows,
     };
     if geometry_changed {
-        navigation::apply(state)?;
+        navigation::finish(state)?;
         state.screen.row_cursor = None;
     }
     super::display_selection::sync_geometry(&mut state.screen, cols, terminal_rows);

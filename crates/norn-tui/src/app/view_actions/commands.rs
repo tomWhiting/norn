@@ -58,7 +58,7 @@ pub(in crate::app) fn command(
     state: &mut AppState,
 ) -> Result<LocalCommandOutcome, TuiError> {
     if text.trim() != "follow" {
-        crate::app::render::navigation::apply(state)?;
+        crate::app::render::navigation::finish(state)?;
     }
     let mut outcome = if text == "preferences" || text.starts_with("preferences ") {
         crate::app::frontend_preferences::command(

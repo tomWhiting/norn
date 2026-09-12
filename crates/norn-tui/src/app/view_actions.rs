@@ -20,7 +20,7 @@ pub(super) use keys::key;
 pub(super) use mouse::mouse;
 
 fn focus(state: &mut AppState, target: Focus) -> Result<(), TuiError> {
-    super::render::navigation::apply(state)?;
+    super::render::navigation::finish(state)?;
     state
         .screen
         .focus
@@ -33,7 +33,7 @@ fn focus(state: &mut AppState, target: Focus) -> Result<(), TuiError> {
 }
 
 pub(super) fn pin_visible(state: &mut AppState) -> Result<(), TuiError> {
-    super::render::navigation::apply(state)?;
+    super::render::navigation::finish(state)?;
     state.transcript.cancel_latest();
     if state.screen.viewport.anchor().is_none() {
         if let Some(anchor) = state.screen.visible.first().cloned() {
@@ -81,7 +81,7 @@ fn browse_target_rows(
     rows: usize,
 ) -> Result<(), TuiError> {
     if target == Focus::Changes {
-        super::render::navigation::apply(state)?;
+        super::render::navigation::finish(state)?;
         state.screen.changes_row = if upwards {
             state.screen.changes_row.saturating_sub(rows)
         } else {
@@ -117,6 +117,7 @@ pub(super) const fn default_expanded(
 }
 
 fn expand(state: &mut AppState, explicit: Option<bool>) -> Result<(), TuiError> {
+    super::render::navigation::finish(state)?;
     ensure_selected(state)?;
     if let Some(item) = state.screen.viewport.selected() {
         let current = state
@@ -138,6 +139,7 @@ fn expand(state: &mut AppState, explicit: Option<bool>) -> Result<(), TuiError> 
 }
 
 fn select_row(state: &mut AppState, upwards: bool) -> Result<(), TuiError> {
+    super::render::navigation::finish(state)?;
     let selected = state.screen.viewport.selected();
     let mut ids = Vec::new();
     for anchor in &state.screen.visible {
@@ -163,6 +165,7 @@ fn select_row(state: &mut AppState, upwards: bool) -> Result<(), TuiError> {
 }
 
 fn resize_split(state: &mut AppState, left: bool) -> Result<(), TuiError> {
+    super::render::navigation::finish(state)?;
     let Layout::Ready {
         upper:
             UpperLayout::Split {

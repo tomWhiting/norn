@@ -228,6 +228,11 @@ impl Transcript {
         Ok(true)
     }
 
+    /// Oldest accepted cursor, used only to observe progress of a deferred scroll.
+    pub(in crate::app) fn oldest_cursor(&self) -> Option<&HistoryCursor> {
+        self.oldest.as_ref()
+    }
+
     /// Request one earlier owner-bound page; concurrent duplicate requests are coalesced.
     pub fn load_older(&mut self, store: &Arc<EventStore>) -> Result<bool, TuiError> {
         if self.pending_history || !self.has_older {

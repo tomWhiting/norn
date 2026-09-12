@@ -443,8 +443,12 @@ fn collapsed_recorded_tool_header_and_real_diff_rows_are_selectable_without_expa
         );
         app.assert_last_copy(support::TOOL_DESCRIPTION)?;
         app.command("/view focus composer", support::TOOL_DESCRIPTION)?;
-        // The heading exists before approved argument bytes finish loading.
-        let diff = app.command("/pane diff", "old fixture text")?;
+        // Arguments and results load independently. The result inserts an evidence
+        // row, so take drag coordinates only after both real bodies are displayed.
+        app.command("/pane diff", "old fixture text")?;
+        let diff = app.observe(|screen| {
+            screen.contains("old fixture text") && screen.contains("reported committed field: true")
+        })?;
         assert!(diff.contains("Requested edit fragment"));
         assert!(diff.contains("Changes · recorded call only"));
         let start = locate(&diff, "old fixture text")?;

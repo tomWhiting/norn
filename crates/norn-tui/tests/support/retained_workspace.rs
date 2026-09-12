@@ -606,7 +606,12 @@ impl Workspace {
 
     /// Observe the already-published frame without requiring a redundant repaint.
     pub fn screen(&self) -> io::Result<Screen> {
-        self.frame(0, |_| true)
+        self.observe(|_| true)
+    }
+
+    /// Await a matching published state, including an already-complete current frame.
+    pub fn observe(&self, predicate: impl Fn(&Screen) -> bool) -> io::Result<Screen> {
+        self.frame(0, predicate)
     }
 
     /// The physical send key selected by this fixture's actual launch preferences.

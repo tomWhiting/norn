@@ -2,7 +2,9 @@
 
 use std::sync::{Arc, Weak};
 
-use norn::session_view::{ItemDirection, ItemInclusion, ViewItem, ViewItemKind, ViewSource};
+use norn::session_view::{
+    HistoryCursor, ItemDirection, ItemInclusion, ViewItem, ViewItemKind, ViewSource,
+};
 
 use crate::TuiError;
 use crate::app::state::AppState;
@@ -34,6 +36,11 @@ struct Motion {
 pub(in crate::app) struct PendingNavigation {
     source: ViewSource,
     motions: Vec<Motion>,
+    waiting: Option<PageWait>,
+}
+
+struct PageWait {
+    frontier: Option<HistoryCursor>,
 }
 
 /// An exact cached display row disambiguates several rows mapping to the same original byte.
@@ -54,6 +61,9 @@ pub(in crate::app) fn queue(
         return Ok(());
     }
     state.transcript.cancel_latest();
+    if !backwards {
+        cancel_deferred(state);
+    }
     let columns = match state.screen.layout {
         Layout::Ready {
             upper: UpperLayout::Split { conversation, .. },
@@ -90,6 +100,7 @@ pub(in crate::app) fn queue(
         state.screen.navigation = Some(PendingNavigation {
             source: state.transcript.projection.source().clone(),
             motions: Vec::new(),
+            waiting: None,
         });
     }
     let plan = state
@@ -122,7 +133,7 @@ pub(in crate::app) fn queue(
 }
 
 pub(in crate::app) fn apply(state: &mut AppState) -> Result<(), TuiError> {
-    let Some(plan) = state.screen.navigation.take() else {
+    let Some(mut plan) = state.screen.navigation.take() else {
         return Ok(());
     };
     if plan.source != *state.transcript.projection.source() {
@@ -131,10 +142,57 @@ pub(in crate::app) fn apply(state: &mut AppState) -> Result<(), TuiError> {
             actual: Box::new(state.transcript.projection.source().clone()),
         }));
     }
-    for motion in plan.motions {
-        advance(state, &motion)?;
+    if let Some(waiting) = plan.waiting.take()
+        && waiting.frontier.as_ref() == state.transcript.oldest_cursor()
+        && state.transcript.has_older
+    {
+        plan.waiting = Some(waiting);
+        state.screen.navigation = Some(plan);
+        return Ok(());
+    }
+    let mut motions = plan.motions.into_iter();
+    while let Some(mut motion) = motions.next() {
+        let remaining = advance(state, &motion)?;
+        if motion.backwards
+            && remaining > 0
+            && state.transcript.has_older
+            && !motions.as_slice().iter().any(|later| !later.backwards)
+        {
+            motion.rows = remaining;
+            let mut pending = vec![motion];
+            pending.extend(motions);
+            state.screen.navigation = Some(PendingNavigation {
+                source: plan.source,
+                motions: pending,
+                waiting: Some(PageWait {
+                    frontier: state.transcript.oldest_cursor().cloned(),
+                }),
+            });
+            state.screen.request_older = true;
+            break;
+        }
     }
     Ok(())
+}
+
+/// An explicit interaction retires motion whose rows have not arrived yet.
+pub(in crate::app) fn finish(state: &mut AppState) -> Result<(), TuiError> {
+    apply(state)?;
+    cancel_deferred(state);
+    Ok(())
+}
+
+/// A failed/nonprogressing page must not leave an automatic retry armed.
+pub(in crate::app) fn cancel_deferred(state: &mut AppState) {
+    if state
+        .screen
+        .navigation
+        .as_ref()
+        .is_some_and(|plan| plan.waiting.is_some())
+    {
+        state.screen.navigation = None;
+        state.screen.request_older = false;
+    }
 }
 
 pub(super) fn locate_cursor(
@@ -163,7 +221,7 @@ pub(super) fn locate_cursor(
     })
 }
 
-fn advance(state: &mut AppState, motion: &Motion) -> Result<(), TuiError> {
+fn advance(state: &mut AppState, motion: &Motion) -> Result<usize, TuiError> {
     let anchor = state.screen.viewport.anchor().cloned();
     let direction = if motion.backwards {
         ItemDirection::Earlier
@@ -292,9 +350,6 @@ fn advance(state: &mut AppState, motion: &Motion) -> Result<(), TuiError> {
             break;
         }
     }
-    if motion.backwards && remaining > 0 && state.transcript.has_older {
-        state.screen.request_older = true;
-    }
     if let Some(target) = target {
         state
             .screen
@@ -303,9 +358,13 @@ fn advance(state: &mut AppState, motion: &Motion) -> Result<(), TuiError> {
             .map_err(interaction)?;
         state.screen.row_cursor = Some(target);
     }
-    Ok(())
+    Ok(remaining)
 }
 
 #[cfg(test)]
 #[path = "navigation_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "navigation_page_tests.rs"]
+mod page_tests;

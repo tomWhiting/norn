@@ -355,8 +355,15 @@ pub(in crate::app) fn finish_history(
         }
         _ => None,
     };
+    let earlier = matches!(&result, Ok((request, _))
+        if request.direction == HistoryDirection::Before
+            && &request.source == state.transcript.projection.source());
+    let previous_frontier = state.transcript.oldest_cursor().cloned();
     let failed = matches!(&result, Err(_) | Ok((_, Err(_))));
     let accepted = state.transcript.finish_history(result)?;
+    if earlier && (!accepted || previous_frontier.as_ref() == state.transcript.oldest_cursor()) {
+        crate::app::render::navigation::cancel_deferred(state);
+    }
     if let Some(older) = state.screen.search.older.as_mut() {
         if accepted && matches!(older.phase, OlderPhase::History) {
             if let Some(items) = accepted_items {
