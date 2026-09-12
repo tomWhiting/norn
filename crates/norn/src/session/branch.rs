@@ -79,10 +79,13 @@ use crate::session::store::{DurabilityPolicy, EventStore};
 mod child;
 #[path = "branch_materialize.rs"]
 mod materialize;
+#[path = "recorded_directory.rs"]
+mod recorded_directory;
 #[cfg(test)]
 use child::mint_child_name;
 #[cfg(test)]
 use materialize::materialize_child;
+pub use recorded_directory::{RecordedSession, RecordedSessionDirectory};
 
 /// The canonical path address of a primary line (a root session). Child
 /// addresses nest under it: `root/fork-1a2b3c4d/spawn-9e8f7a6b`.

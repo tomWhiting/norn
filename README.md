@@ -2,7 +2,7 @@
 
 Norn is an AI agent runtime for interactive terminal work, command-line automation, and embedding in other applications. It can read and edit files, run commands, search code, use MCP tools, coordinate agents, and resume saved sessions. The Rust library, terminal UI, print mode, and driven JSON-RPC mode share the same `AgentBuilder` assembly path.
 
-**Current source version: `0.1.0-preview.19`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [candidate verification record](docs/release-notes/PREVIEW-9.md) for the tested scope and open findings.
+**Current source version: `0.1.0-preview.20`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [candidate verification record](docs/release-notes/PREVIEW-9.md) for the tested scope and open findings.
 
 ## Install and start
 
@@ -209,3 +209,9 @@ The pending diagnostic queue inherits the CLI's existing agent-event capacity (4
 ### Resume names and project scope
 
 `norn --resume NAME`, `norn --fork NAME`, `norn session resume NAME` and `norn session fork NAME` select names within the effective working directory (`--working-dir` when supplied). Duplicate names in that directory are refused with their candidate session IDs. Exact IDs and unique ID prefixes of at least eight characters remain usable across directories. Existing directory aliases are compared by canonical path; missing recorded directories match only the same path. Global storage commands also refuse ambiguous names. Assigning a session name to a fresh launch does not resume an old session.
+
+### Recorded child sessions
+
+The `action_log` tool accepts `{"query":"branches"}` to discover the calling session and its registered descendants after resume. It returns persisted session IDs and generations in tree order. This reads the session index on demand; it does not load child transcripts, start agents, or establish that a recipient is live. An ephemeral session is identified explicitly. Coverage excludes unregistered and ephemeral branch reservations, and timeline readability is not checked. Omit `filter`, `call_id` and `scope` for this query. Selected child-transcript browsing remains tracked work.
+
+Interactive turns run on a named execution thread so synchronous provider preparation does not occupy the terminal input/render task. The same context and inbox return after each turn; provider and session errors retain their existing handling. This does not claim that all rendering latency or flicker is resolved.

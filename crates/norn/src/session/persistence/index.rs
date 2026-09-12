@@ -22,6 +22,9 @@ use super::types::{SessionIndexEntry, SessionPersistError};
 
 #[path = "index_codec.rs"]
 mod codec;
+#[path = "index_descendants.rs"]
+mod descendants;
+pub(crate) use descendants::registered_subtree;
 #[path = "index_deletion.rs"]
 mod deletion;
 #[path = "index_deletion_recovery.rs"]

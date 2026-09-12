@@ -6,7 +6,10 @@
 //! builder. It never holds the log itself, mirroring `tool_search`'s use of
 //! a context-published catalogue.
 //!
-//! Six query modes are supported:
+//! Seven query modes are supported:
+//!
+//! * `branches` — registered session identities in the caller's persisted subtree,
+//!   including after resume. Index coverage only; not live agent addresses.
 //!
 //! * `list` — Level 1 compact summaries (via
 //!   [`ActionLogEntry::compact_json`](crate::session::action_log::ActionLogEntry::compact_json)),
@@ -71,6 +74,8 @@ use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 use crate::tools::action_log_scope_resolve::{
     Scope, agents_legend, parse_scope, resolve_scoped_logs,
 };
+#[path = "action_log_branches.rs"]
+mod branches;
 
 /// Queryable view over the session action log.
 pub struct ActionLogTool;
@@ -93,7 +98,7 @@ impl Default for ActionLogTool {
 #[derive(Debug, Deserialize)]
 struct ActionLogArgs {
     /// One of `list`, `detail`, `context`, `mutations`, `follow_ups`,
-    /// `events`.
+    /// `events`, or `branches`.
     query: String,
     /// Optional scoping filter for `list`, `mutations`, `follow_ups`,
     /// and `events` queries.
@@ -438,7 +443,10 @@ impl Tool for ActionLogTool {
          (your whole sub-agent subtree), or one specific sub-agent by \
          path or UUID. Federated results are labeled per agent and \
          interleaved by time; you can never query a parent's or \
-         sibling's log."
+         sibling's log. `branches` discovers registered session IDs and generations \
+         in your persisted subtree, including after resume. It reads only the index, \
+         not child transcripts, and does not establish live messaging recipients. \
+         Omit filter, call_id and scope for branches."
     }
 
     fn category(&self) -> ToolCategory {
@@ -452,8 +460,8 @@ impl Tool for ActionLogTool {
             "properties": {
                 "query": {
                     "type": "string",
-                    "enum": ["list", "detail", "context", "mutations", "follow_ups", "events"],
-                    "description": "list: Level 1 summaries with optional filter. detail: Level 2 data for one call_id. context: Level 3 data for one call_id. mutations: file-change ledger with live revert status, optionally scoped by filter.file. follow_ups: unexpired follow-up actions, optionally scoped by filter.tool (registering tool) and filter.outcome. events: the session's typed Custom audit events (subagent.started/completed, agent_message.sent/delivered/queued/dequeued, embedder-defined types) with payloads verbatim, optionally scoped by filter.event_type and filter.last."
+                    "enum": ["list", "detail", "context", "mutations", "follow_ups", "events", "branches"],
+                    "description": "list: Level 1 summaries with optional filter. detail: Level 2 data for one call_id. context: Level 3 data for one call_id. mutations: file-change ledger with live revert status, optionally scoped by filter.file. follow_ups: unexpired follow-up actions, optionally scoped by filter.tool (registering tool) and filter.outcome. events: the session's typed Custom audit events (subagent.started/completed, agent_message.sent/delivered/queued/dequeued, embedder-defined types) with payloads verbatim, optionally scoped by filter.event_type and filter.last. branches: index-only directory of this caller and registered descendants, including after resume; omit all other arguments. Does not establish readable histories or live recipients."
                 },
                 "filter": {
                     "type": "object",
@@ -517,6 +525,9 @@ impl Tool for ActionLogTool {
                 }
             })?;
 
+        if args.query == "branches" {
+            return branches::query(&args, ctx).await;
+        }
         let action_log: Arc<ActionLog> = ctx.require_extension::<ActionLog>()?;
 
         let scope = parse_scope(args.scope.as_deref());
@@ -1076,7 +1087,8 @@ mod tests {
                 json!("context"),
                 json!("mutations"),
                 json!("follow_ups"),
-                json!("events")
+                json!("events"),
+                json!("branches")
             ]
         );
         assert_eq!(schema["required"], json!(["query"]));

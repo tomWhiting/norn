@@ -180,3 +180,12 @@ Rebuilding the action log on resume now uses each persisted ToolResult timestamp
 ## 0.1.0-preview.19 — unambiguous project-scoped resume names
 
 Agent resume/fork and their session-command aliases resolve names within the effective working directory, refusing duplicates with candidate IDs. Exact session IDs and unique prefixes retain cross-project access; global storage inspection/removal refuses duplicate names too. Directory aliases are canonicalized; missing paths cannot manufacture an alias and other lookup I/O failures are reported with the path. No timeline schema or historical session rewrite is involved. Local verification passed: 6,514 standard workspace/all-target tests across 39 suites, channel stdio 14, channel TUI four and frontend preference restart five; zero failed/ignored. Strict release workspace/all-target Clippy, formatting and 17-file AST comparison passed. The preference-restart fixture now waits for both the completion notice and independently loaded answer in a complete frame before asserting original text, colour and composer state. Release build passed. Actual-binary probe and installation follow this source commit.
+
+## Recorded descendant directory (candidate, verification pending)
+
+- `action_log` query `branches` discovers registered descendant session identities after resume, from the caller-bound index subtree. It performs no startup work or child-history loads and does not imply live messaging eligibility. Stale registrations and reachable parent cycles refuse explicitly.
+- Full selected descendant-history reading and TUI conversation selection remain separate outstanding work.
+
+## 0.1.0-preview.20 — turn input responsiveness (verification pending)
+
+Agent turn execution now runs on an owned `norn-turn` thread using the existing runtime, so synchronous provider preparation cannot occupy the terminal task or exhaust the host blocking pool. The exact mutable context and inbound receiver return on completion and provider errors. Terminal-error cleanup cancels and joins execution; a worker panic is a named fatal failure. The screen renderer and styling remain unchanged. A controlled PTY reproducer failed before this change and now paints input during the simulated blocking work; full checks and installation are still pending. This preview also adds the registered descendant-directory query described above. Intermittent flicker, stale pinned-view handling and measured large-history performance remain open.

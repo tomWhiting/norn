@@ -8,10 +8,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use norn::agent_loop::active_input_channel;
 use norn::agent_loop::inbound::InboundChannel;
-use norn::agent_loop::runner::{
-    AgentMessageStepRequest, AgentStepRequest, AgentStepResult, run_agent_step,
-    run_agent_step_from_messages,
-};
+use norn::agent_loop::runner::AgentStepResult;
 
 use crate::TuiError;
 use crate::render::streaming_indicator::StreamingIndicator;
@@ -27,6 +24,9 @@ use crate::app::render::{load_visible, redraw_all, redraw_streaming_tick, write_
 use crate::app::state::AppState;
 
 use super::seed::{TurnSeed, reset_turn_state};
+
+#[path = "worker.rs"]
+mod worker;
 
 use super::mid::{
     handle_active_input_delivery, handle_mid_turn_agent_event, handle_mid_turn_event,
@@ -267,18 +267,13 @@ async fn run_turn(
     state.turn_start = Some(Instant::now());
     state.in_flight_input.set_running(true);
 
-    let model = runtime.model.clone();
-    let agent_config = runtime.agent_config.clone();
-    let tools = runtime.tools.clone();
-
     // Prompt commands are evaluated by the library request builder. The TUI
     // must not pre-run them: uncached commands may have side effects, and a
     // driver-side pass would be discarded and then executed again.
 
-    let mut seed = seed;
+    let channel_wake = matches!(&seed, TurnSeed::McpChannelWake);
     let mut tick = tokio::time::interval(RENDER_TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut step_result: Option<Result<AgentStepResult, norn::error::NornError>> = None;
     let mut cancel_requested = false;
     // Turn-local, but rooted: cancelling it ends this step only, while an
     // app-exit cancel of the root ends this step and every descendant's
@@ -291,86 +286,18 @@ async fn run_turn(
 
     runtime.loop_context.active_input_rx = Some(active_input_rx);
 
-    {
-        let step_future = async {
-            match &mut seed {
-                TurnSeed::Operator(crate::app::transcript::publication::SubmittedInput {
-                    text: prompt,
-                    ..
-                })
-                | TurnSeed::ChildResult(prompt) => {
-                    run_agent_step(AgentStepRequest {
-                        provider: runtime.provider.as_ref(),
-                        // `&Arc<dyn ToolExecutor>` (not `.as_ref()`) so the
-                        // loop's concurrent batch steps get an owned handle
-                        // and spawn each batch member on its own task —
-                        // matching `Agent::run` so the TUI and library paths
-                        // share identical concurrent-batch semantics.
-                        executor: &runtime.executor,
-                        store: runtime.store.as_ref(),
-                        user_prompt: prompt,
-                        tools: &tools,
-                        output_schema: None,
-                        model: &model,
-                        config: &agent_config,
-                        event_tx: Some(&event_sender),
-                        inbound: runtime.root_inbound.as_mut(),
-                        loop_context: &mut runtime.loop_context,
-                        cancel: Some(cancel.clone()),
-                    })
-                    .await
-                }
-                TurnSeed::AgentMessages(messages) => {
-                    let initial_messages = std::mem::take(messages);
-                    run_agent_step_from_messages(AgentMessageStepRequest {
-                        provider: runtime.provider.as_ref(),
-                        // `&Arc<dyn ToolExecutor>` (not `.as_ref()`) so the
-                        // loop's concurrent batch steps get an owned handle
-                        // and spawn each batch member on its own task —
-                        // matching `Agent::run` so the TUI and library paths
-                        // share identical concurrent-batch semantics.
-                        executor: &runtime.executor,
-                        store: runtime.store.as_ref(),
-                        tools: &tools,
-                        output_schema: None,
-                        model: &model,
-                        config: &agent_config,
-                        event_tx: Some(&event_sender),
-                        initial_messages,
-                        inbound: runtime.root_inbound.as_mut(),
-                        loop_context: &mut runtime.loop_context,
-                        cancel: Some(cancel.clone()),
-                    })
-                    .await
-                }
-                TurnSeed::McpChannelWake => {
-                    run_agent_step_from_messages(AgentMessageStepRequest {
-                        provider: runtime.provider.as_ref(),
-                        executor: &runtime.executor,
-                        store: runtime.store.as_ref(),
-                        tools: &tools,
-                        output_schema: None,
-                        model: &model,
-                        config: &agent_config,
-                        event_tx: Some(&event_sender),
-                        initial_messages: Vec::new(),
-                        inbound: runtime.root_inbound.as_mut(),
-                        loop_context: &mut runtime.loop_context,
-                        cancel: Some(cancel.clone()),
-                    })
-                    .await
-                }
-            }
-        };
-        tokio::pin!(step_future);
-        while step_result.is_none() {
+    let worker_cancel = cancel.clone().drop_guard();
+    let mut worker = worker::start(runtime, seed, event_sender, cancel.clone())?;
+    let mut completion = None;
+    let ui_result: Result<(), TuiError> = async {
+        while completion.is_none() {
             redraw_all(state, guard)?;
             load_visible(state, &runtime.store)?;
             redraw_all(state, guard)?;
             tokio::select! {
                 biased;
-                res = &mut step_future => {
-                    step_result = Some(res);
+                res = worker.wait() => {
+                    completion = Some(res);
                 }
                 delivery = active_delivery_rx.recv(), if !active_delivery_closed => {
                     if let Some(delivery) = delivery {
@@ -462,7 +389,25 @@ async fn run_turn(
                 }
             }
         }
+        Ok(())
+    }.await;
+    if ui_result.is_err() {
+        cancel.cancel();
     }
+    // A terminal failure still joins execution and restores its exact owners.
+    // Never run finalisation or another turn with the temporary moved-out context.
+    let joined = match completion {
+        Some(result) => result,
+        None => worker.wait().await,
+    };
+    let completed = joined.inspect_err(|worker_error| {
+        if let Err(error) = &ui_result {
+            tracing::error!(%error, %worker_error, "terminal handling also failed before execution worker joined");
+        }
+    })?;
+    let step_result = Some(completed.restore(runtime));
+    drop(worker_cancel);
+    ui_result?;
 
     loop {
         match agent_event_rx.try_recv() {
@@ -521,7 +466,7 @@ async fn run_turn(
             ))
         );
     state.screen.allow_body_load = true;
-    let channel_wake_pause = matches!(seed, TurnSeed::McpChannelWake)
+    let channel_wake_pause = channel_wake
         .then(|| channel_wake_pause_reason(step_result.as_ref(), cancel_requested))
         .flatten();
     finalise_turn(state, step_result)?;

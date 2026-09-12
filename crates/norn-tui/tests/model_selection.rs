@@ -545,6 +545,17 @@ impl PtySession {
             self.writer.write_all(b" ")?;
         }
         self.writer.write_all(b"\r")?;
+        self.writer.flush()?;
+        // A provider prompt retires only after its opening-input receipt. These
+        // are sequential policy probes, not concurrent edits to a pending draft.
+        // Wait for admission before issuing the separate navigation command.
+        self.wait_frame(self.recent_start, |screen| {
+            let lines = screen.lines();
+            screen
+                .composer_rows()
+                .iter()
+                .all(|row| lines[*row].trim().is_empty())
+        })?;
         // Typing pins the reading viewport. Settings and provider replies are
         // appended at the tail; only the explicit status view keeps its anchor.
         if command != "/view status" {

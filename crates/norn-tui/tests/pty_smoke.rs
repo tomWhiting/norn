@@ -30,6 +30,9 @@ use portable_pty::{Child, CommandBuilder, ExitStatus, PtySize, native_pty_system
 pub mod retained_screen;
 use retained_screen::{Lifecycle, Screen as TerminalScreen};
 
+#[path = "support/busy_input.rs"]
+mod busy_input;
+
 const PTY_LIFECYCLE_CHILD_ENV: &str = "NORN_TUI_RUN_TUI_PTY_CHILD";
 const PTY_APP_CHILD_ENV: &str = "NORN_TUI_RUN_APP_PTY_CHILD";
 const PTY_APP_SCENARIO_ENV: &str = "NORN_TUI_RUN_APP_PTY_SCENARIO";
@@ -73,6 +76,7 @@ fn run_app_child_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     let result = tokio::runtime::Builder::new_current_thread()
+        .max_blocking_threads(1)
         .enable_all()
         .build()?
         .block_on(run_fixture_app());
@@ -810,6 +814,12 @@ fn scenario_runtime(scenario: &str) -> Result<ScenarioRuntime, Box<dyn std::erro
             LoopContext::default(),
             None,
         )),
+        "synchronous-provider-work" => Ok((
+            Arc::new(busy_input::BusyProvider),
+            Some("synchronous preparation fixture".into()),
+            LoopContext::default(),
+            None,
+        )),
         "submit-clear-before-stream" => Ok((
             Arc::new(DelayedProvider {
                 events: vec![
@@ -1065,6 +1075,7 @@ fn register_child_agent(
 
 #[derive(Clone, Copy)]
 enum PtyInteraction<'a> {
+    TypeDuringSynchronousWork,
     None,
     WaitForCommittedBasicThenExit,
     InspectEmptyComposerThenExit,
@@ -1192,6 +1203,9 @@ fn run_child_to_completion(
         }
         match interaction {
             PtyInteraction::None => {}
+            PtyInteraction::TypeDuringSynchronousWork => {
+                busy_input::interact(&mut writer, &output, size)?;
+            }
             PtyInteraction::InspectEmptyComposerThenExit => {
                 let screen = wait_for_frame(
                     &output,

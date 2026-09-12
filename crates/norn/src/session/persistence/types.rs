@@ -41,6 +41,14 @@ pub struct SessionFileHeader {
 /// Errors produced by the session persistence layer (NC-002).
 #[derive(Debug, Error)]
 pub enum SessionPersistError {
+    /// Registered parent links form a cycle within the requested subtree.
+    #[error("registered session subtree rooted at {root} contains a cycle at {id}")]
+    DescendantCycle {
+        /// Session whose subtree was requested.
+        root: String,
+        /// Session reached more than once.
+        id: String,
+    },
     /// Filesystem I/O failed.
     #[error("session persistence I/O failed: {0}")]
     Io(std::io::Error),

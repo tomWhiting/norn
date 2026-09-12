@@ -5,6 +5,12 @@ use std::io;
 /// Errors that can occur during TUI operation.
 #[derive(Debug, thiserror::Error)]
 pub enum TuiError {
+    /// The owned agent execution failed to return its session state; continuation is refused.
+    #[error("agent execution worker failed; session cannot continue: {source}")]
+    ExecutionTask {
+        /// Thread start, panic, or completion-channel failure.
+        source: std::io::Error,
+    },
     /// A reversible composer operation was refused by the editor.
     #[error(transparent)]
     Composer(#[from] crate::input::composer_kernel::ComposerError),
