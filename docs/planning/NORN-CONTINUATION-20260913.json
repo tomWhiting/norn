@@ -328,7 +328,7 @@
       "log": "var/verification/continuation-20260913/p02-modifiers-workspace.log",
       "source_binding": "P02.3 on 8ae9e96; installation receipt binds final source commit."
     },
-    "release_build": "preview.20 cargo build --locked --release -p norn-cli --bin norn -j 6 passed; p02-turn-build.log"
+    "release_build": "preview.21 release build in progress; exact installation receipt records completion and final source commit."
   },
   "installed_checkpoint": {
     "installed_at_melbourne": "2026-09-13T08:29:38.134156+10:00",
