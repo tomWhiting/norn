@@ -413,3 +413,7 @@ pub(super) fn load_visible(
         .retain(|reference, _| pinned.contains(reference));
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "render/resumed_compaction_tests.rs"]
+mod resumed_compaction_tests;

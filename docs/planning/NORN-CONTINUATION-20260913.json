@@ -205,11 +205,19 @@
     },
     {
       "id": "D02.2",
-      "status": "locally_verified_install_pending_preview_17",
+      "status": "installed_local_preview_17_venue_running_review_pending",
       "scope": "Retain finite backward scroll remainder across asynchronous earlier-page completion; cancel on explicit navigation barriers and failed/nonprogressing reads",
       "wall": "See D02.2 Markdown wall",
       "tests": "6504 standard tests across 39 suites, zero failed/ignored; channel stdio 14 and channel TUI 4 passed. Strict release workspace/all-target Clippy with live-api-smoke compilation, 10-file AST comparison, formatting and release build passed.",
-      "remaining": "Exact-binary PTY probe and installation; independent review and preview.17 venue receipt; D02 long-compacted-session acceptance remains separate."
+      "remaining": "Preview.17 venue run and independent review; extended history acceptance tracked in D02.3 and subsequent cases."
+    },
+    {
+      "id": "D02.3",
+      "status": "verified_local_test_only",
+      "scope": "Actual SessionManager create/close/resume; 61 persisted events and two compactions; tool call and result on different history pages; retained old result, cache eviction/reload, Latest and unchanged two-line draft/timeline bytes/event identities.",
+      "wall": "render.rs test declaration and render/resumed_compaction_tests.rs; queue JSON/Markdown",
+      "tests": "951 TUI library tests passed, zero failures/ignored; strict workspace/all-target release Clippy with live-api-smoke compilation, formatting and two-file AST comparison passed.",
+      "limits": "Adapter/frame integration, not physical terminal or CLI picker acceptance; oversized/spooled results and descendant-history cases remain."
     }
   ],
   "policy_debt": [
@@ -226,14 +234,14 @@
       "last_run_version": "preview.17 full workspace/all-target feature union"
     },
     "tui_library_cli_feature_set": {
-      "passed": 950,
+      "passed": 951,
       "failed": 0,
       "ignored": 0,
-      "last_run_version": "preview.17 full workspace/all-target feature union"
+      "last_run_version": "preview.17 plus test-only D02.3 source; standalone norn-tui library feature set"
     },
     "clippy": "cargo clippy --locked --release --workspace --all-targets --features norn/live-api-smoke -j 6 -- -D warnings passed",
     "format": "cargo fmt --all -- --check passed",
-    "ast": "10 changed Rust files compared with preview.16 HEAD: no added unwrap/expect or bypass/discard matches; inherited debt remains separate",
+    "ast": "D02.3: two changed Rust files against installed preview.17; no added unwrap/expect or bypass/discard matches",
     "cli_library": {
       "passed": 577,
       "failed": 0,
@@ -246,7 +254,7 @@
       "ignored": 0,
       "last_run_version": "preview.17 full workspace/all-target feature union"
     },
-    "diagnostic_pty": "Last installed actual-executable proof is preview.16; preview.17 exact-binary probe pending installation",
+    "diagnostic_pty": "Installed preview.17 exact-binary probe passed; test-only D02.3 does not replace the binary",
     "workspace_all_targets": {
       "version": "preview.17",
       "standard_suites": 39,
@@ -255,47 +263,32 @@
       "ignored": 0,
       "channel_stdio": 14,
       "channel_tui": 4,
-      "log": "var/verification/continuation-20260913/d02-page-workspace.log"
+      "log": "var/verification/continuation-20260913/d02-page-workspace.log",
+      "source_commit": "68802a046310784faff301db1f0277a68f4b87d9"
     }
   },
   "installed_checkpoint": {
-    "installed_at_melbourne": "2026-09-13T05:38:34.503775+10:00",
-    "version": "norn 0.1.0-preview.16",
-    "binary": "/Users/tom/.cargo/bin/norn",
-    "sha256": "24be78274746ad1ec1d6707bb667eecb6915e6e6b4b1fb3e2e546acc9f6a8040",
-    "source_commit": "7105f43ec3c79af6ddc526c6884cb5aaaa9e5cef",
-    "source_worktree": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate",
-    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.16-canonical-storage/previous-norn-preview.15",
-    "previous_version": "norn 0.1.0-preview.15",
-    "verification": [
-      "4716 core library tests, 577 CLI library tests, 942 TUI library tests and 23 PTY smoke tests passed; zero failed/ignored",
-      "strict release workspace/all-target Clippy passed; live-api-smoke compiled/linted only",
-      "11 changed Rust files AST-scanned against prior commit; no added unwrap/expect or lint bypass/discard matches",
-      "format and whitespace checks passed",
-      "release build passed",
-      "exact candidate hash unchanged across loopback-only HTTP-429 warning probe: collapsed notice, no raw tracing writes, two requests, Kitty and terminal restoration passed"
-    ],
-    "pending": [
-      "physical Herdr test drive",
-      "remaining storage and ordered product work",
-      "independent final-source review and exact-commit venue battery; preview.15 has a green receipt that does not cover this source"
-    ],
-    "scope": "local preview installation on codex/norn-integration-candidate; main remains preview.9"
+    "version": "preview.17",
+    "source_commit": "68802a046310784faff301db1f0277a68f4b87d9",
+    "installed_at_melbourne": "2026-09-13T06:14:18.067552+10:00",
+    "sha256": "fd9917a4750f55c9e2c75f2de667df3bef8606898e05479b9f5c074cd968226e",
+    "receipt": "var/releases/preview.17-history-scroll/installation.json",
+    "note": "Current changes are test/documentation only; the installed production binary is unchanged."
   },
-  "next_slice": "Install locally verified D02.2 preview.17, dispatch exact-source venue battery, then finish D02 long-compacted-session acceptance audit and proceed to D03 identity/timestamps/child history.",
+  "next_slice": "D03: remove first-match name ambiguity with settled project-scoped resolution and retain persisted action-log times. D02 oversized/spooled-result and child-history acceptance remains tracked, not inferred from the bounded D02.3 fixture. Continue existing preview.17 venue handle; do not duplicate the active run.",
   "disk_checkpoint": {
-    "available_gib": 12,
+    "available_gib": 10,
     "build_cache_gib": 4.5,
     "release_receipts_and_rollbacks_mib": 235,
     "obsolete_test_executable_bytes_removed_this_goal": 836883840,
-    "note": "D02.2 removed 344065477 bytes in eight unopened obsolete Norn library artifacts; d02-page-cleanup.json records each. Build ended before cleanup; current artifacts, binaries, rollback copies and session data preserved.",
-    "obsolete_build_artifact_bytes_removed_this_goal": 2689963328,
+    "note": "D02.3 removed another 276964672 bytes in four unopened obsolete test executables, identified by Cargo package-version depfiles. Receipt: d02-resume-cleanup.json. Current executable, rollback files and all sessions preserved.",
+    "obsolete_build_artifact_bytes_removed_this_goal": 2966928000,
     "observed_at_melbourne": "2026-09-13T06:13:00.343387+10:00"
   },
   "venue_discovery": {
     "workflow_type": "repo_battery_205",
     "route_active_hash": "56cd8d0a1d3ba94811c605432b0e3730a4f87d1ab9cfe732c62cda46f0f5b0e9",
-    "status": "Completed: green exact-source preview.16 receipt, all six declared legs green",
+    "status": "Running preview.17; describe_run confirms live run with venue activity, workers at capacity",
     "input_fields": [
       "subject_repo",
       "subject_ref",
@@ -305,10 +298,11 @@
     "workspace_root": "/home/aion/venue/.battery",
     "task_queue": "lane_repo_battery",
     "node": "venue205",
-    "workflow_id": "f6a6994a-d35a-4b6d-82e9-2c4590d2bb76",
-    "run_id": "2d23e3a3-76d2-4a6b-8096-f164746a510f",
-    "source_commit": "7105f43ec3c79af6ddc526c6884cb5aaaa9e5cef",
-    "receipt": "var/releases/preview.16-canonical-storage/venue-result.json"
+    "workflow_id": "99c739bf-f305-4061-bc66-4c8817ce87df",
+    "run_id": "bff3126e-fe31-4075-9118-2946c2939857",
+    "source_commit": "68802a046310784faff301db1f0277a68f4b87d9",
+    "receipt": "var/releases/preview.17-history-scroll/venue-run.json",
+    "prior_green_receipt": "var/releases/preview.16-canonical-storage/venue-result.json"
   },
   "main_checkpoint": {
     "local_and_remote": "7ec7ee272788e940cbacc030001bfb3c58e48f41",
@@ -316,9 +310,9 @@
     "note": "Refreshed remote main revealed it already contained preview.9; stale local main was fast-forwarded from preview.8 preserving its four-line documentation edit in working tree, stash and repository-local backup. No preview.14 landing claimed."
   },
   "review_handoff": {
-    "source_commit": "7105f43ec3c79af6ddc526c6884cb5aaaa9e5cef",
+    "source_commit": "68802a046310784faff301db1f0277a68f4b87d9",
     "base_commit": "7ec7ee272788e940cbacc030001bfb3c58e48f41",
-    "directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview16-20260913",
-    "status": "pinned package ready, independent verdict pending; preview.15 package remains available"
+    "directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview17-20260913",
+    "status": "Preview.17 package ready; launch rejected by automatic approval review pending explicit user authorization to transmit private source to Anthropic Fable. No review launched."
   }
 }
