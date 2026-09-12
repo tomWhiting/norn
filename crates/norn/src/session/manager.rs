@@ -238,6 +238,24 @@ impl SessionManager {
         resolve_session_with_deadline(&self.data_dir, id_or_name, self.index_lock_deadline)
     }
 
+    /// Resolve names in `working_dir`, retaining global exact-ID and prefix lookup.
+    /// An empty identifier selects the latest session in that directory.
+    ///
+    /// # Errors
+    /// Returns missing/ambiguous selection, index, lock or directory I/O errors.
+    pub fn resolve_in_working_dir(
+        &self,
+        id_or_name: &str,
+        working_dir: &Path,
+    ) -> Result<SessionIndexEntry, SessionPersistError> {
+        crate::session::persistence::index::resolve_session_in_working_dir_with_deadline(
+            &self.data_dir,
+            id_or_name,
+            working_dir,
+            self.index_lock_deadline,
+        )
+    }
+
     /// Read a session's events without opening it for appending (the export /
     /// inspection path): resolve `id_or_name`, then strictly read the format-2
     /// event file in one pass. Returns the resolved entry and derived replay

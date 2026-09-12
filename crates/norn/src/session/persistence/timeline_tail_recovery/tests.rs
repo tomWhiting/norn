@@ -337,6 +337,7 @@ fn provider_identity_adoption_recovers_a_torn_tail() -> TestResult {
         .open_with_affinity(Some(identity))
         .resume_with_policy(
             &torn.entry.id,
+            std::path::Path::new(&torn.entry.working_dir),
             DurabilityPolicy::FsyncPerEvent,
             crate::session::ResumePolicy::RequireCanonical,
         )?;

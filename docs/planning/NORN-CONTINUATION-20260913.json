@@ -221,11 +221,20 @@
     },
     {
       "id": "D03.1",
-      "status": "verified_local_install_pending",
+      "status": "installed_local_preview_18_venue_green_review_pending",
       "scope": "Replay action-log completions with original ToolResult event timestamps, preserving precision, event order, tied and backward times; live dispatch clock behaviour unchanged.",
       "wall": "session/action_log.rs; agent/resume.rs and new resume_time_tests.rs; Cargo manifests, README, release notes and continuation queue.",
       "tests": "6506 standard workspace/all-target tests across 39 suites, zero failed/ignored; channel stdio 14 passed. Strict release workspace/all-target Clippy with live-api-smoke compilation, formatting and three-file AST comparison passed. Timestamp regression covers wire precision, repeated replay, detail output and unchanged event-store bytes. Release binary build passed; channel TUI four scenarios passed.",
-      "remaining": "Actual-binary installation probe; independent final-source review and exact-commit venue battery. Duplicate-name/project-scope resolution and descendant-history access remain separate D03 work."
+      "remaining": "Tom-arranged independent review; duplicate-name scope and child histories remain separate D03 work."
+    },
+    {
+      "id": "D03.2",
+      "status": "verified_local_install_pending",
+      "scope": "Explicit project-scoped name lookup for agent resume/fork and CLI aliases; typed name ambiguity for all name lookups, global exact-ID/prefix access preserved.",
+      "wall": "See D03.2 Markdown wall and recovery-fixture extension.",
+      "acceptance": "Duplicate names across and within projects, exact-ID/prefix precedence, symlink/missing/error directory behavior, persisted resume/fork selection, unchanged timelines/index on refusal, CLI alias forwarding and existing provider-affinity/recovery assertions.",
+      "remaining": "Actual-binary probe and installation; independent review and exact-commit venue verification. Child-history access remains the next D03 slice.",
+      "verification": "6514 standard tests across 39 suites passed, zero failed/ignored; channel stdio 14, channel TUI four and frontend preference restart five passed. Strict release workspace/all-target Clippy with live-api-smoke compilation, 17-file AST comparison and formatting passed. Earlier missing-scope, invalid-fixture-layout and premature-frame assertions are preserved in named logs; no lint or runtime validation bypass. Release binary build passed."
     }
   ],
   "policy_debt": [
@@ -236,67 +245,68 @@
   ],
   "verification_completed": {
     "core_library": {
-      "passed": 4722,
+      "passed": 4729,
       "failed": 0,
       "ignored": 0,
-      "last_run_version": "preview.18 full workspace/all-target feature union"
+      "last_run_version": "preview.19 full workspace/all-target feature union"
     },
     "tui_library_cli_feature_set": {
       "passed": 951,
       "failed": 0,
       "ignored": 0,
-      "last_run_version": "preview.18 full workspace/all-target feature union"
+      "last_run_version": "preview.19 full workspace/all-target feature union"
     },
     "clippy": "cargo clippy --locked --release --workspace --all-targets --features norn/live-api-smoke -j 6 -- -D warnings passed",
     "format": "cargo fmt --all -- --check passed",
-    "ast": "D03.1: three changed Rust files against 256a3e6; no added unwrap/expect or bypass/discard matches",
+    "ast": "D03.2: 17 changed Rust files against f525686; no added unwrap/expect calls or bypass/discard matches.",
     "cli_library": {
-      "passed": 577,
+      "passed": 578,
       "failed": 0,
       "ignored": 0,
-      "last_run_version": "preview.18 full workspace/all-target feature union"
+      "last_run_version": "preview.19 full workspace/all-target feature union"
     },
     "pty_smoke": {
       "passed": 23,
       "failed": 0,
       "ignored": 0,
-      "last_run_version": "preview.18 full workspace/all-target feature union"
+      "last_run_version": "preview.19 full workspace/all-target feature union"
     },
-    "diagnostic_pty": "Installed preview.17 probe remains the latest; preview.18 build/probe pending at this source checkpoint.",
+    "diagnostic_pty": "Installed preview.18 exact-binary probe remains the checkpoint until preview.19 is built and probed.",
     "workspace_all_targets": {
-      "version": "preview.18",
+      "version": "preview.19",
       "standard_suites": 39,
-      "passed": 6506,
+      "passed": 6514,
       "failed": 0,
       "ignored": 0,
       "channel_stdio": 14,
-      "log": "var/verification/continuation-20260913/d03-time-workspace.log",
-      "source_binding": "D03.1 source changes on 256a3e6, before final source commit; installation receipt will pin the built commit.",
-      "channel_tui": 4
+      "channel_tui": 4,
+      "frontend_preferences_restart": 5,
+      "log": "var/verification/continuation-20260913/d03-name-workspace.log",
+      "source_binding": "D03.2 changes on f525686; installation receipt will pin the final source commit."
     }
   },
   "installed_checkpoint": {
-    "version": "preview.17",
-    "source_commit": "68802a046310784faff301db1f0277a68f4b87d9",
-    "installed_at_melbourne": "2026-09-13T06:14:18.067552+10:00",
-    "sha256": "fd9917a4750f55c9e2c75f2de667df3bef8606898e05479b9f5c074cd968226e",
-    "receipt": "var/releases/preview.17-history-scroll/installation.json",
-    "note": "Preview.18 source, release build, tests and Clippy passed. Atomic installation follows this source commit; the repository-local release receipt records installed state."
+    "version": "preview.18",
+    "source_commit": "f525686c44b7dc7ea0fe6c3c3854e200118f35cd",
+    "installed_at_melbourne": "2026-09-13T06:48:45.327063+10:00",
+    "sha256": "9ed22f7db0427fa8c3b3b04902b1731659c4e84c87129df3d7cdc871bd548e97",
+    "receipt": "var/releases/preview.18-replay-timestamps/installation.json",
+    "note": "Preview.19 name-resolution changes are not yet installed."
   },
-  "next_slice": "Finish D03.1 persisted action-log timestamp verification and installation, then correct name ambiguity and project scope. D02 oversized/spooled results and descendant-history acceptance remain explicit. Tom owns independent Fable review; no agent transmission is authorized.",
+  "next_slice": "Complete D03.2 name-resolution verification and local installation, then inspect registered descendant histories. D02 oversized/spooled history acceptance, remaining storage work and D04 onward stay in the queue. Tom owns independent Fable review.",
   "disk_checkpoint": {
-    "available_gib": 8.1,
-    "build_cache_gib": 5.3,
-    "release_receipts_and_rollbacks_mib": 529,
-    "obsolete_test_executable_bytes_removed_this_goal": 836883840,
-    "note": "D03.1 removed 344106166 bytes in eight unopened, positively versioned obsolete Norn library artifacts after the owned build ended; receipt d03-time-cleanup.json. Current artifacts, rollback binaries and all sessions preserved.",
-    "obsolete_build_artifact_bytes_removed_this_goal": 3311034166,
-    "observed_at_melbourne": "2026-09-13T06:47:59.326816+10:00"
+    "available_gib": 41,
+    "build_cache_gib": 5.8,
+    "release_receipts_and_rollbacks_mib": 588,
+    "obsolete_test_executable_bytes_removed_this_goal": 1114057184,
+    "note": "D03.2 removed 709092903 bytes after the owned build ended: six obsolete core libraries, 38 CLI/TUI libraries and four obsolete unit-test executables, each positively versioned and unopened. Receipts: d03-name-cleanup.json, d03-name-other-libraries-cleanup.json and d03-name-old-tests-cleanup.json. Current artifacts, binaries, rollback copies and all sessions preserved.",
+    "obsolete_build_artifact_bytes_removed_this_goal": 4020127069,
+    "observed_at_melbourne": "2026-09-13T07:25:44.864849+10:00"
   },
   "venue_discovery": {
     "workflow_type": "repo_battery_205",
     "route_active_hash": "56cd8d0a1d3ba94811c605432b0e3730a4f87d1ab9cfe732c62cda46f0f5b0e9",
-    "status": "Completed green for preview.17: all six declared legs returned zero; independent review still pending.",
+    "status": "Preview.18 completed green on exact f525686c44b7dc7ea0fe6c3c3854e200118f35cd; all six declared legs returned zero. Independent review remains with Tom.",
     "input_fields": [
       "subject_repo",
       "subject_ref",
@@ -306,11 +316,11 @@
     "workspace_root": "/home/aion/venue/.battery",
     "task_queue": "lane_repo_battery",
     "node": "venue205",
-    "workflow_id": "99c739bf-f305-4061-bc66-4c8817ce87df",
-    "run_id": "bff3126e-fe31-4075-9118-2946c2939857",
-    "source_commit": "68802a046310784faff301db1f0277a68f4b87d9",
-    "receipt": "var/releases/preview.17-history-scroll/venue-result.json",
-    "prior_green_receipt": "var/releases/preview.16-canonical-storage/venue-result.json"
+    "workflow_id": "034f3524-4f12-4fe2-925c-5eda1d30ecd3",
+    "run_id": "cc674e54-0623-41d9-8abf-5793fae6d75b",
+    "source_commit": "f525686c44b7dc7ea0fe6c3c3854e200118f35cd",
+    "receipt": "var/releases/preview.18-replay-timestamps/venue-result.json",
+    "prior_green_receipt": "var/releases/preview.17-history-scroll/venue-result.json"
   },
   "main_checkpoint": {
     "local_and_remote": "7ec7ee272788e940cbacc030001bfb3c58e48f41",
@@ -322,6 +332,9 @@
     "base_commit": "7ec7ee272788e940cbacc030001bfb3c58e48f41",
     "directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview17-20260913",
     "status": "Tom will arrange the independent Fable review. He explicitly declined agent transmission of source to Anthropic. No review was launched by Ripley; reviewed commit and verdict await Tom.",
-    "owner": "Tom"
+    "owner": "Tom",
+    "additional_candidate_commit": "f525686c44b7dc7ea0fe6c3c3854e200118f35cd",
+    "supplement_directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview18-20260913",
+    "supplement_note": "Local preparation only. SINCE-PREVIEW17.patch isolates later changes; Tom owns submission and returned verdict."
   }
 }

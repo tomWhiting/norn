@@ -204,9 +204,12 @@ impl SessionRequest {
         let manager = self.manager.open_with_affinity(provider_state_identity);
         match self.spec {
             SessionSpec::Create { name } => manager.create(options(name), self.durability),
-            SessionSpec::Resume { id_or_name, policy } => {
-                manager.resume_with_policy(&id_or_name, self.durability, policy)
-            }
+            SessionSpec::Resume { id_or_name, policy } => manager.resume_with_policy(
+                &id_or_name,
+                std::path::Path::new(working_dir),
+                self.durability,
+                policy,
+            ),
             SessionSpec::ResumeLatestInWorkingDir {
                 working_dir,
                 policy,
@@ -370,3 +373,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "session_name_tests.rs"]
+mod name_tests;

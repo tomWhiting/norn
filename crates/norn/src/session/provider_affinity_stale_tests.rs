@@ -84,6 +84,7 @@ fn stale_same_identity_validation_reuses_the_winners_single_adoption_cut() -> Te
         .open_with_affinity(Some(selected))
         .resume_with_policy(
             &session_id,
+            std::path::Path::new(&options().working_dir),
             DurabilityPolicy::Flush,
             ResumePolicy::RequireCanonical,
         )?;
@@ -105,6 +106,7 @@ fn stale_same_identity_validation_reuses_the_winners_single_adoption_cut() -> Te
         .open_with_affinity(Some(selected))
         .resume_with_policy(
             &session_id,
+            std::path::Path::new(&options().working_dir),
             DurabilityPolicy::Flush,
             ResumePolicy::RequireCanonical,
         )?;
@@ -158,6 +160,7 @@ fn stale_loaded_store_must_reopen_after_peer_adopts_the_same_identity() -> TestR
         .open_with_affinity(Some(selected))
         .resume_with_policy(
             &session_id,
+            std::path::Path::new(&options().working_dir),
             DurabilityPolicy::Flush,
             ResumePolicy::RequireCanonical,
         )?;

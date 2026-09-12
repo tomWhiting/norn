@@ -86,6 +86,7 @@ fn invalid_provenance_precedes_affinity_mutation_and_fork_publication(
             .open_with_affinity(Some(selected))
             .resume_with_policy(
                 &entry.id,
+                std::path::Path::new(&entry.working_dir),
                 DurabilityPolicy::Flush,
                 ResumePolicy::RequireCanonical,
             ),

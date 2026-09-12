@@ -413,7 +413,11 @@ impl App {
         })?;
         self.send(b"\r")?;
         self.command("/view follow")?;
-        let screen = self.wait_contains("Turn completed")?;
+        // Completion and the retained answer body arrive independently. Inspect
+        // a completed frame containing both before asserting original styling.
+        let screen = self.frame(after, |screen| {
+            screen.contains("Turn completed") && screen.contains("restart fixture answer")
+        })?;
         assert!(screen.contains("restart fixture answer"));
         let prefix = format!("> {prompt}");
         let row = screen

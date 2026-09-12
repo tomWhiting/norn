@@ -345,14 +345,17 @@ impl SessionAffinityRequest<'_> {
     pub(crate) fn resume_with_policy(
         self,
         id_or_name: &str,
+        name_scope: &Path,
         durability: DurabilityPolicy,
         policy: ResumePolicy,
     ) -> Result<OpenSession, SessionPersistError> {
-        let entry = resolve_session_with_deadline(
-            &self.manager.data_dir,
-            id_or_name,
-            self.manager.index_lock_deadline,
-        )?;
+        let entry =
+            crate::session::persistence::index::resolve_session_in_working_dir_with_deadline(
+                &self.manager.data_dir,
+                id_or_name,
+                name_scope,
+                self.manager.index_lock_deadline,
+            )?;
         self.manager.resume_entry(
             &entry,
             durability,

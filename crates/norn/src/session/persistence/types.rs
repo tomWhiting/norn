@@ -82,6 +82,24 @@ pub enum SessionPersistError {
         input: String,
     },
 
+    /// More than one session has the requested name in the lookup scope.
+    #[error("session name '{name}' is ambiguous; use a session ID; matches: {}", matches.join(", "))]
+    AmbiguousName {
+        /// Exact requested name.
+        name: String,
+        /// All matching session IDs, in index order.
+        matches: Vec<String>,
+    },
+
+    /// A directory could not be inspected while matching session names.
+    #[error("cannot resolve session-name directory {}: {source}", path.display())]
+    NameScopeDirectory {
+        /// Directory that could not be canonicalized.
+        path: std::path::PathBuf,
+        /// Original filesystem failure.
+        source: std::io::Error,
+    },
+
     /// An ID prefix matched more than one entry in the index.
     #[error("identifier '{prefix}' is ambiguous; matches: {}", matches.join(", "))]
     AmbiguousPrefix {

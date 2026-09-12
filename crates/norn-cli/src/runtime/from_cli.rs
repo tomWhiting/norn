@@ -216,8 +216,8 @@ pub fn builder_from_cli(
 /// [`SessionSpec::ForkLatestInWorkingDir`] carrying `working_dir`, so the
 /// library resolves it scoped to the current working directory — never the
 /// globally most-recently-updated session in an unrelated directory. A
-/// non-empty value keeps the exact-id [`SessionSpec::Resume`] /
-/// [`SessionSpec::Fork`] resolution.
+/// non-empty value uses [`SessionSpec::Resume`] / [`SessionSpec::Fork`]:
+/// exact IDs and unique prefixes remain global; names are scoped to this directory.
 #[must_use]
 fn session_spec_from_cli(cli: &Cli, working_dir: &std::path::Path) -> Option<SessionSpec> {
     if cli.no_session {

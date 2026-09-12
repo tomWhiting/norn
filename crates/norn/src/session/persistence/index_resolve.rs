@@ -1,3 +1,5 @@
+//! Session identifiers resolve globally; names can be constrained to an explicit project.
+
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -92,13 +94,40 @@ fn working_dir_matches(
     false
 }
 
+/// Resolve names within an explicit project; IDs and prefixes remain global.
+pub(crate) fn resolve_session_in_working_dir_with_deadline(
+    data_dir: &Path,
+    input: &str,
+    working_dir: &Path,
+    lock_deadline: Option<Duration>,
+) -> Result<SessionIndexEntry, SessionPersistError> {
+    let entry = resolve_in_entries_with_scope(
+        read_index_with_deadline(data_dir, lock_deadline)?,
+        input,
+        Some(working_dir),
+    )?;
+    ensure_session_id_path_safe(&entry.id)?;
+    Ok(entry)
+}
+
 pub(super) fn resolve_in_entries(
     entries: Vec<SessionIndexEntry>,
     input: &str,
 ) -> Result<SessionIndexEntry, SessionPersistError> {
+    resolve_in_entries_with_scope(entries, input, None)
+}
+
+fn resolve_in_entries_with_scope(
+    entries: Vec<SessionIndexEntry>,
+    input: &str,
+    name_scope: Option<&Path>,
+) -> Result<SessionIndexEntry, SessionPersistError> {
     let trimmed = input.trim();
 
     if trimmed.is_empty() {
+        if let Some(scope) = name_scope {
+            return resolve_latest_in_working_dir_entries(entries, scope);
+        }
         return entries
             .into_iter()
             .max_by_key(|entry| entry.updated_at)
@@ -110,11 +139,27 @@ pub(super) fn resolve_in_entries(
     if let Some(entry) = entries.iter().find(|entry| entry.id == trimmed) {
         return Ok(entry.clone());
     }
-    if let Some(entry) = entries
+    let mut names = Vec::new();
+    for entry in entries
         .iter()
-        .find(|entry| entry.name.as_deref() == Some(trimmed))
+        .filter(|entry| entry.name.as_deref() == Some(trimmed))
     {
-        return Ok(entry.clone());
+        if let Some(scope) = name_scope
+            && !name_directory_matches(Path::new(&entry.working_dir), scope)?
+        {
+            continue;
+        }
+        names.push(entry);
+    }
+    match names.as_slice() {
+        [] => {}
+        [only] => return Ok((*only).clone()),
+        many => {
+            return Err(SessionPersistError::AmbiguousName {
+                name: trimmed.to_owned(),
+                matches: many.iter().map(|entry| entry.id.clone()).collect(),
+            });
+        }
     }
 
     if trimmed.len() < 8 {
@@ -139,6 +184,34 @@ pub(super) fn resolve_in_entries(
     }
 }
 
+fn name_directory_matches(stored: &Path, requested: &Path) -> Result<bool, SessionPersistError> {
+    if stored == requested {
+        return Ok(true);
+    }
+    let permit = acquire_private_fs()?;
+    let left = canonical_name_directory(stored)?;
+    let right = canonical_name_directory(requested)?;
+    drop(permit);
+    Ok(matches!((left, right), (Some(left), Some(right)) if left == right))
+}
+
+fn canonical_name_directory(
+    path: &Path,
+) -> Result<Option<std::path::PathBuf>, SessionPersistError> {
+    match fs::canonicalize(path) {
+        Ok(canonical) => Ok(Some(canonical)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(SessionPersistError::NameScopeDirectory {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+#[cfg(test)]
+#[path = "index_name_tests.rs"]
+mod name_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,7 +220,7 @@ mod tests {
     };
     use chrono::Utc;
 
-    fn entry(id: &str, name: Option<&str>, updated_seconds: i64) -> SessionIndexEntry {
+    pub(super) fn entry(id: &str, name: Option<&str>, updated_seconds: i64) -> SessionIndexEntry {
         let timestamp = Utc::now() + chrono::TimeDelta::seconds(updated_seconds);
         SessionIndexEntry {
             id: id.to_owned(),

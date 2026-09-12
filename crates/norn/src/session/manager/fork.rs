@@ -241,11 +241,13 @@ impl SessionAffinityRequest<'_> {
         durability: DurabilityPolicy,
         policy: ResumePolicy,
     ) -> Result<OpenSession, SessionPersistError> {
-        let source_entry = resolve_session_with_deadline(
-            &self.manager.data_dir,
-            source,
-            self.manager.index_lock_deadline,
-        )?;
+        let source_entry =
+            crate::session::persistence::index::resolve_session_in_working_dir_with_deadline(
+                &self.manager.data_dir,
+                source,
+                std::path::Path::new(&options.working_dir),
+                self.manager.index_lock_deadline,
+            )?;
         self.manager.fork_entry(
             &source_entry,
             options,

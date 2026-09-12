@@ -148,6 +148,7 @@ fn managed_create_and_store_binding_are_durable() -> TestResult {
         .open_with_affinity(Some(selected))
         .resume_with_policy(
             &session_id,
+            std::path::Path::new(&options().working_dir),
             DurabilityPolicy::Flush,
             ResumePolicy::RequireCanonical,
         )?;
@@ -155,6 +156,7 @@ fn managed_create_and_store_binding_are_durable() -> TestResult {
     assert!(matches!(
         manager.open_with_affinity(None).resume_with_policy(
             &session_id,
+            std::path::Path::new(&options().working_dir),
             DurabilityPolicy::Flush,
             ResumePolicy::RequireCanonical,
         ),
@@ -167,6 +169,7 @@ fn managed_create_and_store_binding_are_durable() -> TestResult {
         .open_with_affinity(Some(identity("different")))
         .resume_with_policy(
             &session_id,
+            std::path::Path::new(&options().working_dir),
             DurabilityPolicy::Flush,
             ResumePolicy::RequireCanonical,
         )?;
@@ -197,6 +200,7 @@ fn resume_under_a_different_credential_rebinds_via_epoch_boundary() -> TestResul
         .open_with_affinity(Some(second))
         .resume_with_policy(
             &session_id,
+            std::path::Path::new(&options().working_dir),
             DurabilityPolicy::Flush,
             ResumePolicy::RequireCanonical,
         )?;
@@ -219,6 +223,7 @@ fn resume_under_a_different_credential_rebinds_via_epoch_boundary() -> TestResul
         .open_with_affinity(Some(second))
         .resume_with_policy(
             &session_id,
+            std::path::Path::new(&options().working_dir),
             DurabilityPolicy::Flush,
             ResumePolicy::RequireCanonical,
         )?;
@@ -241,6 +246,7 @@ fn resume_under_a_different_credential_rebinds_via_epoch_boundary() -> TestResul
     // than duplicated.
     let back = manager.open_with_affinity(Some(first)).resume_with_policy(
         &session_id,
+        std::path::Path::new(&options().working_dir),
         DurabilityPolicy::Flush,
         ResumePolicy::RequireCanonical,
     )?;
@@ -310,6 +316,7 @@ fn interrupted_adoption_leaves_boundary_before_any_identity_binding() -> TestRes
         .open_with_affinity(Some(selected))
         .resume_with_policy(
             &session_id,
+            std::path::Path::new(&options().working_dir),
             DurabilityPolicy::Flush,
             ResumePolicy::RequireCanonical,
         )?;
@@ -348,6 +355,7 @@ fn concurrent_legacy_adoption_converges_on_one_identity() -> TestResult {
                 .open_with_affinity(Some(candidate))
                 .resume_with_policy(
                     &session_id,
+                    std::path::Path::new(&options().working_dir),
                     DurabilityPolicy::Flush,
                     ResumePolicy::RequireCanonical,
                 )
@@ -540,6 +548,7 @@ fn denied_resume_and_fork_do_not_claim_an_identity() -> TestResult {
             .open_with_affinity(Some(affinity))
             .resume_with_policy(
                 &session_id,
+                std::path::Path::new(&options().working_dir),
                 DurabilityPolicy::Flush,
                 ResumePolicy::RequireCanonical,
             ),

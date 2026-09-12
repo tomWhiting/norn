@@ -2,7 +2,7 @@
 
 Norn is an AI agent runtime for interactive terminal work, command-line automation, and embedding in other applications. It can read and edit files, run commands, search code, use MCP tools, coordinate agents, and resume saved sessions. The Rust library, terminal UI, print mode, and driven JSON-RPC mode share the same `AgentBuilder` assembly path.
 
-**Current source version: `0.1.0-preview.18`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [candidate verification record](docs/release-notes/PREVIEW-9.md) for the tested scope and open findings.
+**Current source version: `0.1.0-preview.19`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [candidate verification record](docs/release-notes/PREVIEW-9.md) for the tested scope and open findings.
 
 ## Install and start
 
@@ -205,3 +205,7 @@ The repository requires clean strict lint and formatting checks; see [CLAUDE.md]
 While the full-screen UI is active, Norn's tracing diagnostics appear as compact local notices labelled with severity and the emitting module. Expand a notice for its complete diagnostic text. The UI consumes them while idle and while an agent is running. `RUST_LOG` still selects diagnostic verbosity (default `warn`). Print and driven RPC modes keep diagnostics on stderr, leaving machine output on stdout. Arbitrary direct stderr writes are outside this tracing route.
 
 The pending diagnostic queue inherits the CLI's existing agent-event capacity (4096 events). Override it at launch through the usual settings layers, for example `{"tui":{"diagnostics":{"capacity":128}}}`. Capacity must be a positive integer; unknown diagnostic keys are rejected. Tokio rounds the pending buffer up to the next power of two. This bounds pending event count, not bytes or retained conversation history. Interactive preference saves preserve this launch-only section. If the receiver falls behind, Norn shows the number of overwritten pending events. Diagnostics not retained before exit are printed only after the terminal is restored; no extra diagnostic file or background service is created.
+
+### Resume names and project scope
+
+`norn --resume NAME`, `norn --fork NAME`, `norn session resume NAME` and `norn session fork NAME` select names within the effective working directory (`--working-dir` when supplied). Duplicate names in that directory are refused with their candidate session IDs. Exact IDs and unique ID prefixes of at least eight characters remain usable across directories. Existing directory aliases are compared by canonical path; missing recorded directories match only the same path. Global storage commands also refuse ambiguous names. Assigning a session name to a fresh launch does not resume an old session.

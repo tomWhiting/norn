@@ -311,12 +311,24 @@ fn run_show(data_dir: &Path, input: &str) -> ExitCode {
     ExitCode::Success
 }
 
+fn resolve_forwarded_session(
+    cli: &Cli,
+    data_dir: &Path,
+    input: &str,
+) -> Result<SessionIndexEntry, SessionPersistError> {
+    let working_dir = match &cli.working_dir {
+        Some(path) => path.clone(),
+        None => std::env::current_dir()?,
+    };
+    SessionManager::new(data_dir).resolve_in_working_dir(input, &working_dir)
+}
+
 // ---------------------------------------------------------------------------
 // R4: resume — validate, then forward to the agent path
 // ---------------------------------------------------------------------------
 
 fn run_resume(mut cli: Cli, data_dir: &Path, input: &str, agent: AgentEntry<'_>) -> ExitCode {
-    let resolved = match SessionManager::new(data_dir).resolve(input) {
+    let resolved = match resolve_forwarded_session(&cli, data_dir, input) {
         Ok(entry) => entry,
         Err(err) => return fail_forwarded_resolve(&cli, &err),
     };
@@ -331,7 +343,7 @@ fn run_resume(mut cli: Cli, data_dir: &Path, input: &str, agent: AgentEntry<'_>)
 // ---------------------------------------------------------------------------
 
 fn run_fork(mut cli: Cli, data_dir: &Path, input: &str, agent: AgentEntry<'_>) -> ExitCode {
-    let resolved = match SessionManager::new(data_dir).resolve(input) {
+    let resolved = match resolve_forwarded_session(&cli, data_dir, input) {
         Ok(entry) => entry,
         Err(err) => return fail_forwarded_resolve(&cli, &err),
     };
@@ -784,3 +796,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "session_name_tests.rs"]
+mod name_tests;

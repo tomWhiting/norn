@@ -45,7 +45,8 @@ pub(crate) use publication::{
 };
 pub use resolve::{resolve_latest_session_in_working_dir, resolve_session};
 pub(crate) use resolve::{
-    resolve_latest_session_in_working_dir_with_deadline, resolve_session_with_deadline,
+    resolve_latest_session_in_working_dir_with_deadline,
+    resolve_session_in_working_dir_with_deadline, resolve_session_with_deadline,
 };
 #[cfg(test)]
 pub(crate) use timeline::append_events_transaction;
