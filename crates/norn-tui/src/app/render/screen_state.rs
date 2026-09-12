@@ -33,6 +33,8 @@ pub struct ScreenState {
     pub(in crate::app) tool_overrides: HashMap<ItemId, bool>,
     pub(in crate::app) selection: Option<crate::app::selection::Selection>,
     pub(in crate::app) selection_item: Option<ItemId>,
+    pub(in crate::app) reading_snapshot: Option<super::reading_snapshot::ReadingSnapshot>,
+    pub(in crate::app) prepared_reading: Option<Rect>,
     pub(in crate::app) display_frame: Option<Arc<Frame>>,
     pub(in crate::app) display_selection: Option<crate::app::display_selection::DisplaySelection>,
     pub(in crate::app) feedback: Option<String>,
@@ -93,6 +95,8 @@ impl ScreenState {
             tool_overrides: HashMap::new(),
             selection: None,
             selection_item: None,
+            reading_snapshot: None,
+            prepared_reading: None,
             display_frame: None,
             display_selection: None,
             feedback: None,
@@ -144,6 +148,8 @@ impl ScreenState {
             self.tool_overrides.clear();
             self.selection = None;
             self.selection_item = None;
+            self.reading_snapshot = None;
+            self.prepared_reading = None;
             self.display_frame = None;
             self.display_selection = None;
             self.feedback = None;

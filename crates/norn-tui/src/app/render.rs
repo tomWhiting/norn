@@ -20,6 +20,7 @@ use super::viewport::{AnchorPosition, ViewAnchor};
 
 mod agents;
 pub(in crate::app) mod navigation;
+pub(in crate::app) mod reading_snapshot;
 mod screen_state;
 pub(super) use screen_state::AuxiliaryPane;
 use screen_state::DisplayCache;
@@ -179,6 +180,7 @@ fn prepare(state: &mut AppState, columns: u16, rows: u16) -> Result<Frame, TuiEr
     state.screen.pane_switch = None;
     state.screen.prepared_latest = None;
     state.screen.composer_send_key_area = None;
+    state.screen.prepared_reading = None;
     state.screen.visible.clear();
     state.screen.hit_rows.clear();
     state.screen.demands.clear();

@@ -142,6 +142,7 @@ pub(in crate::app) fn follow_latest(state: &mut AppState) {
     state.screen.row_cursor = None;
     state.screen.request_older = false;
     state.screen.viewport.follow_tail();
+    state.screen.reading_snapshot = None;
     state.transcript.request_latest();
     state.screen.dirty = true;
     state.screen.allow_body_load = true;
@@ -170,11 +171,13 @@ pub(in crate::app) fn finish_publication(
 ) -> Result<(), TuiError> {
     match publication {
         Ok(()) => {
+            crate::app::render::reading_snapshot::published(screen, &frame);
             commit_hit(screen, &frame);
             screen.display_frame = Some(frame);
             Ok(())
         }
         Err(error) => {
+            screen.prepared_reading = None;
             screen.prepared_latest = None;
             screen.latest_hit = None;
             screen.display_frame = None;

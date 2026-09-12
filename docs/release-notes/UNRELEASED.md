@@ -193,3 +193,9 @@ Agent turn execution now runs on an owned `norn-turn` thread using the existing 
 ## 0.1.0-preview.21 — terminal word movement
 
 Repair Ghostty's default Option+Left/Right Escape-B/F sequences and Control+Left/Right, using the existing Iridium word-motion commands. Preserve Shift selection, repeats, Command/Home/End line movement and the Ctrl+E thinking toggle. Reserve Alt-B/F editor motions from conflicting view bindings. Physical terminal/multiplexer acceptance and the separate typing-related frame-stability investigation remain open.
+
+## 0.1.0-preview.22 — preserve the reading view during response completion
+
+When typing pins a streaming response and that body revision is replaced, retain the successfully published conversation text instead of replacing the pane with a stale-revision warning. Resize reflows its visible bytes, styles and selection highlights; unseen body content is not fetched. Original-body copy/export still refuses retired revisions, while explicit displayed-text selection remains available. Latest returns to current history. Snapshot capture follows successful publication, and source changes retire it. The composer and active status remain live.
+
+An actual-App PTY reproduces the disappearing response before the fix and retains the response and editable draft afterwards. Source/resize/display-copy and failed-publication tests cover the authority boundaries. Local verification passed: 6,528 standard workspace/all-target tests in 39 suites, zero failed/ignored, including 957 TUI unit tests and 12 actual-App composer tests. Separate channel/restart/MCP-launch suites, strict Clippy and seven-file AST comparison passed. Release build passed; installed-binary probe and local installation follow this source commit. General flicker and physical terminal acceptance remain open.

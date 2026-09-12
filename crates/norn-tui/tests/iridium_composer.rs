@@ -352,3 +352,44 @@ fn control_e_remains_a_local_visibility_toggle_idle_and_active() -> TestResult {
         Ok("visibility fixture".to_owned())
     })
 }
+
+#[test]
+fn typing_keeps_published_response_visible_after_stream_replacement() -> TestResult {
+    with_composer("enter", |app| {
+        edit(app, b"reading fixture", &["reading fixture"])?;
+        submit(app, "reading fixture")?;
+        app.command("/view follow", "workspace provider held")?;
+        let small = app.resize(100, 6)?;
+        assert!(
+            small.contains("workspace provider held"),
+            "{}",
+            small.debug_text()
+        );
+        let pinned = edit(app, b"keep my draft", &["keep my draft"])?;
+        assert!(
+            pinned.contains("workspace provider held"),
+            "{}",
+            pinned.debug_text()
+        );
+        let completed = app.release_provider()?;
+        assert!(
+            completed.contains("workspace provider held"),
+            "{}",
+            completed.debug_text()
+        );
+        assert!(!completed.contains("Pinned content revision is no longer current"));
+        plain(&completed, &["keep my draft"])?;
+        let edited = edit(app, b"!", &["keep my draft!"])?;
+        assert!(edited.contains("workspace provider held"));
+        let wide = app.resize(120, 24)?;
+        assert!(
+            wide.contains("workspace provider held"),
+            "{}",
+            wide.debug_text()
+        );
+        plain(&wide, &["keep my draft!"])?;
+        let followed = app.command("/view follow", "workspace provider released")?;
+        assert!(followed.contains("Turn completed"));
+        Ok("reading fixture".to_owned())
+    })
+}

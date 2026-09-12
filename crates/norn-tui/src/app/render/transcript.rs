@@ -41,6 +41,12 @@ pub(super) fn conversation(
         reconciliation.anchor,
         Some(AnchorState::BodyStale | AnchorState::ItemUnavailable)
     ) {
+        if super::reading_snapshot::paint(state, frame, area)? {
+            if let (Some(status), Some(area)) = (status, status_area) {
+                push_text(frame, &status, area, false, false)?;
+            }
+            return Ok(());
+        }
         push_text(
             frame,
             "Pinned content revision is no longer current. Its original selection remains pinned; use /view follow to return to live content.",
@@ -119,6 +125,7 @@ pub(super) fn conversation(
             composer: false,
         });
     }
+    state.screen.prepared_reading = Some(area);
     if let (Some(status), Some(area)) = (status, status_area) {
         push_text(frame, &status, area, false, false)?;
     }

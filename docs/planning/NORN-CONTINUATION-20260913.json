@@ -265,20 +265,29 @@
     },
     {
       "id": "P02.1",
-      "status": "verified_local_release_pending",
+      "status": "installed_local_preview",
       "scope": "Move the exact turn owners off the terminal task onto one named execution thread, reuse existing runtime drivers, return context and inbox, cancel/join on terminal errors and fail explicitly on worker panic.",
       "evidence": "p02-busy-before.log failed within 2.08 seconds; p02-busy-after.log passed in 5.04 seconds with 1.84 ms observed input publication. Synthetic case only.",
-      "remaining": "Strict Clippy, full regression suite, installed executable and physical terminal acceptance; flicker and stale pinned-view behavior remain P02."
+      "remaining": "Physical terminal acceptance and independent final-source review/exact-commit venue battery remain. Local checks and installation are evidenced in installed_checkpoint."
     },
     {
       "id": "P02.3",
-      "status": "verified_local_release_pending",
+      "status": "installed_local_preview",
       "scope": "Repair delivered Escape-B/F and Control-arrow word movement; exact actual-App idle/active coverage of Option/Control arrows, Command/Home/End, Control+A/E, Shift selection and unchanged provider history",
       "wall": "See P02.3 Markdown wall",
       "provenance": "Tom reports Option/Control skipping failure and requests all combinations checked. Installed Ghostty default Option arrows send esc:b/f.",
       "baseline": "p02-modifiers-before.log: actual-App Escape-B motion failed, initial idle frame 21.9 ms; preserve all original movement assertions.",
-      "remaining": "Strict workspace checks, release build, executable probe and install; physical terminal/multiplexer delivery remains acceptance.",
+      "remaining": "Physical terminal acceptance and independent final-source review/exact-commit venue battery remain. Local checks and installation are evidenced in installed_checkpoint.",
       "tests": "All 11 actual-App composer tests passed, including idle/active exact word/line motion and Control+E visibility; 955 TUI unit tests, strict Clippy, seven-file AST and format passed. Full workspace 6525 tests plus separate harnesses passed."
+    },
+    {
+      "id": "P02.2",
+      "status": "verified_local_release_pending",
+      "scope": "Retain the successfully published reading viewport when its pinned body revision is retired; reflow displayed bytes/styles on resize without granting old bodies current source authority.",
+      "wall": "See P02.2 Markdown wall",
+      "baseline": "p02-reading-followed-before.log reproduces whole-pane warning after provider completion while the draft survives; p02-reading-before.log did not exercise stale body anchoring.",
+      "tests": "6528 standard workspace/all-target tests across 39 suites passed, zero failed/ignored; 4733 core, 578 CLI, 957 TUI, 24 PTY, 12 actual-App composer tests. Separate channel stdio 14, channel TUI 4, frontend preference restart 5, composer preference restart 4 and MCP launch 10 passed. Strict Clippy and seven-file AST passed.",
+      "remaining": "Release executable build/probe/installation and physical terminal acceptance; main needs independent review and exact-commit venue battery."
     }
   ],
   "policy_debt": [
@@ -328,22 +337,28 @@
       "log": "var/verification/continuation-20260913/p02-modifiers-workspace.log",
       "source_binding": "P02.3 on 8ae9e96; installation receipt binds final source commit."
     },
-    "release_build": "preview.21 release build in progress; exact installation receipt records completion and final source commit."
+    "release_build": "preview.21 release build in progress; exact installation receipt records completion and final source commit.",
+    "p02_reading": {
+      "logs": "var/verification/continuation-20260913/p02-reading-{clippy,workspace,build}.log; p02-reading-ast.json",
+      "tests": "6528 standard workspace/all-target tests across 39 suites passed, zero failed/ignored; 4733 core, 578 CLI, 957 TUI, 24 PTY, 12 actual-App composer tests. Separate channel stdio 14, channel TUI 4, frontend preference restart 5, composer preference restart 4 and MCP launch 10 passed. Strict Clippy and seven-file AST passed.",
+      "build": "Release norn executable build passed; installed-binary probe and atomic install follow final source commit.",
+      "source_binding": "P02.2 on 84f33f729e7678953f1aaa3063a77a230189070b; final commit/installation receipt to follow."
+    }
   },
   "installed_checkpoint": {
-    "installed_at_melbourne": "2026-09-13T08:29:38.134156+10:00",
-    "version": "norn 0.1.0-preview.20",
+    "installed_at_melbourne": "2026-09-13T08:53:17.458428+10:00",
+    "version": "norn 0.1.0-preview.21",
     "binary": "/Users/tom/.cargo/bin/norn",
-    "sha256": "559a28f74a72e3b5d83d3f9cb272e650b85aaeacc198b2b51decccc7bfa97d77",
-    "source_commit": "8ae9e96cf17d2665b71ab0ce040f191f63c142b7",
+    "sha256": "b14b9e8e77427bc7bb2b86f8dad8e04c192f2cf0845b35e96ad60014c7c4e00e",
+    "source_commit": "84f33f729e7678953f1aaa3063a77a230189070b",
     "source_worktree": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate",
-    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.20-responsive-turns/previous-norn-preview.19",
-    "previous_version": "norn 0.1.0-preview.19",
+    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.21-word-motion/previous-norn-preview.20",
+    "previous_version": "norn 0.1.0-preview.20",
     "verification": [
-      "Release workspace/all-target tests passed, including 4733 core, 578 CLI, 953 TUI, 24 PTY and 14 real Rust stdio channel scenarios; zero failures/ignored",
+      "Release workspace/all-target tests passed, including 4733 core, 578 CLI, 955 TUI, 24 PTY and 14 real Rust stdio channel scenarios; zero failures/ignored",
       "strict release workspace/all-target Clippy passed; live-api-smoke compiled/linted only",
-      "16 changed Rust files AST-scanned against prior commit; no added unwrap/expect or lint bypass/discard matches",
-      "busy synchronous-provider PTY reproducer fails before the fix and passes with input visible during work; current-thread host with one blocking slot",
+      "7 changed Rust files AST-scanned against prior commit; no added unwrap/expect or lint bypass/discard matches",
+      "Ghostty Escape-B/F reproducer fails before fix; actual App word/line movement and Control+E tests cover idle/active execution, exact provider-history census and terminal restoration",
       "context and inbound-receiver preservation on provider success/error plus fatal-worker handling tested",
       "format and whitespace checks passed",
       "release build passed",
@@ -357,7 +372,7 @@
     ],
     "scope": "local preview installation on codex/norn-integration-candidate; main remains preview.9"
   },
-  "next_slice": "Finish and install preview.21 word-motion repair, then P02.2 stable pinned conversation during typing/streaming and progressive synchronized-output replies. P01 latency, D03.3b and full D01-D20/S01/U01 programme remain open.",
+  "next_slice": "Finish P02.2 verification and install; investigate progressive synchronized-output replies and sustained-event fairness. P01 latency, D03.3b and all remaining D01-D20/S01/U01 programme items remain open.",
   "disk_checkpoint": {
     "available_gib": 41,
     "build_cache_gib": 5.8,
