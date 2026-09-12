@@ -289,3 +289,56 @@ fn shift_send_accepts_only_exact_delivered_shift_press() {
         }
     }
 }
+
+#[test]
+fn terminal_word_motion_preserves_repeat_selection_and_host_controls() {
+    for (code, modifiers, action) in [
+        (KeyCode::Char('b'), Modifiers::ALT, InputAction::WordLeft),
+        (KeyCode::Char('f'), Modifiers::ALT, InputAction::WordRight),
+        (KeyCode::Left, Modifiers::CONTROL, InputAction::WordLeft),
+        (KeyCode::Right, Modifiers::CONTROL, InputAction::WordRight),
+    ] {
+        let mut event = KeyEvent::new(code, modifiers);
+        assert_eq!(
+            map_key_event(event, ComposerSendKey::Enter, false),
+            Some(action)
+        );
+        event.kind = KeyEventKind::Repeat;
+        assert_eq!(
+            map_key_event(event, ComposerSendKey::Enter, false),
+            Some(action)
+        );
+        event.kind = KeyEventKind::Release;
+        assert_eq!(map_key_event(event, ComposerSendKey::Enter, false), None);
+        event.kind = KeyEventKind::Press;
+        event.modifiers |= Modifiers::SHIFT;
+        assert_eq!(
+            map_key_event(event, ComposerSendKey::Enter, false),
+            Some(InputAction::KernelKey(event))
+        );
+        assert_eq!(
+            motion_command(event),
+            Some(if action == InputAction::WordLeft {
+                "cursor.wordLeftSelect"
+            } else {
+                "cursor.wordRightSelect"
+            })
+        );
+    }
+    assert_eq!(
+        map_key_event(
+            KeyEvent::new(KeyCode::Char('e'), Modifiers::CONTROL),
+            ComposerSendKey::Enter,
+            false
+        ),
+        Some(InputAction::ToggleThinking)
+    );
+    assert_eq!(
+        map_key_event(
+            KeyEvent::new(KeyCode::Char('a'), Modifiers::CONTROL),
+            ComposerSendKey::Enter,
+            false
+        ),
+        Some(InputAction::LineStart)
+    );
+}

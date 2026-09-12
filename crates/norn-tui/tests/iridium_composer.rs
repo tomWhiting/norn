@@ -281,3 +281,74 @@ fn recover_draft(app: &mut Workspace, prefix: &str, confirmed: bool) -> TestResu
     edit(app, b"\x1a", &[&edited])?;
     Ok(edited)
 }
+
+#[test]
+fn terminal_word_and_line_motion_work_idle_and_during_execution() -> TestResult {
+    with_composer("enter", |app| {
+        for active in [false, true] {
+            let before = app.snapshot()?;
+            paste(app, "alpha beta gamma", &["alpha beta gamma"])?;
+            // Ghostty's actual default Option+arrows emit Escape-B/F.
+            app.input(b"\x1bb", |screen| screen.cursor.0 == 11)?;
+            app.input(b"\x1bf", |screen| screen.cursor.0 == 16)?;
+            app.input(b"\x1b[1;5D", |screen| screen.cursor.0 == 11)?;
+            app.input(b"\x1b[1;5C", |screen| screen.cursor.0 == 16)?;
+            app.input(b"\x1b[1;3D", |screen| screen.cursor.0 == 11)?;
+            app.input(b"\x1b[1;3C", |screen| screen.cursor.0 == 16)?;
+            app.input(b"\x01", |screen| screen.cursor.0 == 0)?;
+            app.input(b"\x1b[F", |screen| screen.cursor.0 == 16)?;
+            app.input(b"\x1b[1;9D", |screen| screen.cursor.0 == 0)?;
+            app.input(b"\x1b[1;9C", |screen| screen.cursor.0 == 16)?;
+            app.input(b"\x1b[H", |screen| screen.cursor.0 == 0)?;
+            app.input(b"\x1b[F", |screen| screen.cursor.0 == 16)?;
+            app.input(b"\x1b[1;6D", |screen| screen.cursor.0 == 11)?;
+            edit(app, b"G", &["alpha beta G"])?;
+            assert_eq!(app.snapshot()?, before, "motion/edit admitted a turn");
+            edit(app, b"\x1b", &[""])?;
+            if !active {
+                edit(app, b"motion fixture", &["motion fixture"])?;
+                submit(app, "motion fixture")?;
+            }
+        }
+        Ok("motion fixture".to_owned())
+    })
+}
+
+#[test]
+fn control_e_remains_a_local_visibility_toggle_idle_and_active() -> TestResult {
+    with_composer("enter", |app| {
+        for active in [false, true] {
+            let before = app.snapshot()?;
+            app.input(b"\x05/view status \r", |screen| {
+                screen.contains("Thinking visible: false")
+            })?;
+            app.input(b"\x05/view status \r", |screen| {
+                screen.contains("Thinking visible: true")
+            })?;
+            assert_eq!(app.snapshot()?, before, "Control+E admitted a turn");
+            app.command("/view follow ", "")?;
+            if !active {
+                let screen = edit(app, b"visibility fixture", &["visibility fixture"])?;
+                // The long status report is deliberately pinned by typing. Use
+                // the actual Latest control before waiting for the new reply.
+                let lines = screen.lines();
+                let (row, line) = lines
+                    .iter()
+                    .enumerate()
+                    .find(|(_, line)| line.contains("↓ Latest"))
+                    .ok_or("Latest control missing above pinned status")?;
+                let byte = line.find("↓ Latest").ok_or("Latest label missing")?;
+                let column = line[..byte].chars().count() + 1;
+                let row = row + 1;
+                app.input(
+                    format!("\x1b[<0;{column};{row}M\x1b[<0;{column};{row}m").as_bytes(),
+                    |screen| {
+                        draft(screen) == ["visibility fixture"] && !screen.contains("↓ Latest")
+                    },
+                )?;
+                submit(app, "visibility fixture")?;
+            }
+        }
+        Ok("visibility fixture".to_owned())
+    })
+}

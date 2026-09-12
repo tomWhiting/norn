@@ -35,7 +35,16 @@ pub(crate) fn to_kernel_key(event: KeyEvent) -> Option<EditorKey> {
 pub(crate) fn motion_command(event: KeyEvent) -> Option<&'static str> {
     let shift = event.modifiers.contains(Modifiers::SHIFT);
     let meta = event.modifiers.contains(Modifiers::SUPER);
-    let word = event.modifiers.contains(Modifiers::ALT);
+    let word = event
+        .modifiers
+        .intersects(Modifiers::ALT | Modifiers::CONTROL);
+    if event.modifiers == Modifiers::ALT.union(Modifiers::SHIFT) {
+        match event.code {
+            KeyCode::Char('b' | 'B') => return Some("cursor.wordLeftSelect"),
+            KeyCode::Char('f' | 'F') => return Some("cursor.wordRightSelect"),
+            _ => {}
+        }
+    }
     match (event.code, meta, word, shift) {
         (KeyCode::Left, true, _, false) => Some("cursor.lineStart"),
         (KeyCode::Left, true, _, true) => Some("cursor.lineStartSelect"),

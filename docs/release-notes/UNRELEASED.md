@@ -189,3 +189,7 @@ Agent resume/fork and their session-command aliases resolve names within the eff
 ## 0.1.0-preview.20 — turn input responsiveness (verification pending)
 
 Agent turn execution now runs on an owned `norn-turn` thread using the existing runtime, so synchronous provider preparation cannot occupy the terminal task or exhaust the host blocking pool. The exact mutable context and inbound receiver return on completion and provider errors. Terminal-error cleanup cancels and joins execution; a worker panic is a named fatal failure. The screen renderer and styling remain unchanged. A controlled PTY reproducer failed before this change and now paints input during the simulated blocking work; full checks and installation are still pending. This preview also adds the registered descendant-directory query described above. Intermittent flicker, stale pinned-view handling and measured large-history performance remain open.
+
+## 0.1.0-preview.21 — terminal word movement
+
+Repair Ghostty's default Option+Left/Right Escape-B/F sequences and Control+Left/Right, using the existing Iridium word-motion commands. Preserve Shift selection, repeats, Command/Home/End line movement and the Ctrl+E thinking toggle. Reserve Alt-B/F editor motions from conflicting view bindings. Physical terminal/multiplexer acceptance and the separate typing-related frame-stability investigation remain open.

@@ -2,7 +2,7 @@
 
 Norn is an AI agent runtime for interactive terminal work, command-line automation, and embedding in other applications. It can read and edit files, run commands, search code, use MCP tools, coordinate agents, and resume saved sessions. The Rust library, terminal UI, print mode, and driven JSON-RPC mode share the same `AgentBuilder` assembly path.
 
-**Current source version: `0.1.0-preview.20`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [candidate verification record](docs/release-notes/PREVIEW-9.md) for the tested scope and open findings.
+**Current source version: `0.1.0-preview.21`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [candidate verification record](docs/release-notes/PREVIEW-9.md) for the tested scope and open findings.
 
 ## Install and start
 
@@ -154,6 +154,8 @@ Automatic compaction summarizes the currently visible older context. Its text tr
 
 The pane shortcuts are **Option/Alt+P** (toggle), **Option/Alt+D** (diff), and **Option/Alt+A** (agents); **Option/Alt+S** cycles the send key. The terminal must report those modifiers. Bindings are editable with `/view keys set`, or in `tui.input.bindings` in settings. Enter sends by default; selecting Shift+Enter or Alt+Enter lets bare Enter insert newlines.
 
+Composer movement accepts Option+Left/Right, Ghostty's Escape-B/F word-motion bindings, and Control+Left/Right. Shift extends the selection. Home/End, Command+Left/Right and Control+A retain their line-movement behavior. Control+E remains Norn's thinking-display toggle, not line-end movement. These paths are shared during idle and active turns; Ghostty must deliver the key to Norn.
+
 Frontend changes save to personal settings by default. Use `/view preferences run` for temporary changes or `/view preferences local` to save workspace-local preferences. See [TUI preferences](docs/TUI-PREFERENCES.md) for JSON examples, shortcuts, precedence, and save conflicts.
 
 ## Automation and structured output
@@ -215,3 +217,4 @@ The pending diagnostic queue inherits the CLI's existing agent-event capacity (4
 The `action_log` tool accepts `{"query":"branches"}` to discover the calling session and its registered descendants after resume. It returns persisted session IDs and generations in tree order. This reads the session index on demand; it does not load child transcripts, start agents, or establish that a recipient is live. An ephemeral session is identified explicitly. Coverage excludes unregistered and ephemeral branch reservations, and timeline readability is not checked. Omit `filter`, `call_id` and `scope` for this query. Selected child-transcript browsing remains tracked work.
 
 Interactive turns run on a named execution thread so synchronous provider preparation does not occupy the terminal input/render task. The same context and inbox return after each turn; provider and session errors retain their existing handling. This does not claim that all rendering latency or flicker is resolved.
+

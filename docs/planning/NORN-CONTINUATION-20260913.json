@@ -269,6 +269,16 @@
       "scope": "Move the exact turn owners off the terminal task onto one named execution thread, reuse existing runtime drivers, return context and inbox, cancel/join on terminal errors and fail explicitly on worker panic.",
       "evidence": "p02-busy-before.log failed within 2.08 seconds; p02-busy-after.log passed in 5.04 seconds with 1.84 ms observed input publication. Synthetic case only.",
       "remaining": "Strict Clippy, full regression suite, installed executable and physical terminal acceptance; flicker and stale pinned-view behavior remain P02."
+    },
+    {
+      "id": "P02.3",
+      "status": "verified_local_release_pending",
+      "scope": "Repair delivered Escape-B/F and Control-arrow word movement; exact actual-App idle/active coverage of Option/Control arrows, Command/Home/End, Control+A/E, Shift selection and unchanged provider history",
+      "wall": "See P02.3 Markdown wall",
+      "provenance": "Tom reports Option/Control skipping failure and requests all combinations checked. Installed Ghostty default Option arrows send esc:b/f.",
+      "baseline": "p02-modifiers-before.log: actual-App Escape-B motion failed, initial idle frame 21.9 ms; preserve all original movement assertions.",
+      "remaining": "Strict workspace checks, release build, executable probe and install; physical terminal/multiplexer delivery remains acceptance.",
+      "tests": "All 11 actual-App composer tests passed, including idle/active exact word/line motion and Control+E visibility; 955 TUI unit tests, strict Clippy, seven-file AST and format passed. Full workspace 6525 tests plus separate harnesses passed."
     }
   ],
   "policy_debt": [
@@ -282,52 +292,72 @@
       "passed": 4733,
       "failed": 0,
       "ignored": 0,
-      "last_run_version": "preview.20 full workspace/all-target feature union"
+      "last_run_version": "preview.21 full workspace/all-target feature union"
     },
     "tui_library_cli_feature_set": {
-      "passed": 953,
+      "passed": 955,
       "failed": 0,
       "ignored": 0,
-      "last_run_version": "preview.20 full workspace/all-target feature union"
+      "last_run_version": "preview.21 full workspace/all-target feature union"
     },
     "clippy": "cargo clippy --locked --release --workspace --all-targets --features norn/live-api-smoke -j 6 -- -D warnings passed",
     "format": "cargo fmt --all -- --check passed",
-    "ast": "P02.1 and D03.3a: 16 changed Rust files against 8349de1; no added unwrap/expect calls or bypass/discard matches.",
+    "ast": "P02.3: seven changed Rust files against 8ae9e96; no added unwrap/expect calls or bypass/discard matches.",
     "cli_library": {
       "passed": 578,
       "failed": 0,
       "ignored": 0,
-      "last_run_version": "preview.20 full workspace/all-target feature union"
+      "last_run_version": "preview.21 full workspace/all-target feature union"
     },
     "pty_smoke": {
       "passed": 24,
       "failed": 0,
       "ignored": 0,
-      "last_run_version": "preview.20 full workspace/all-target feature union"
+      "last_run_version": "preview.21 full workspace/all-target feature union"
     },
-    "diagnostic_pty": "Installed preview.19 exact-binary probe passed; preview.20 release build and candidate probe pending.",
+    "diagnostic_pty": "Installed preview.20 exact-binary probe passed; preview.21 release build and candidate probe pending.",
     "workspace_all_targets": {
-      "version": "preview.20",
+      "version": "preview.21",
       "standard_suites": 39,
-      "passed": 6521,
+      "passed": 6525,
       "failed": 0,
       "ignored": 0,
       "channel_stdio": 14,
       "channel_tui": 4,
       "frontend_preferences_restart": 5,
-      "log": "var/verification/continuation-20260913/p02-turn-workspace.log",
-      "source_binding": "P02.1/D03.3a on 8349de1; final installation receipt will bind the source commit."
+      "log": "var/verification/continuation-20260913/p02-modifiers-workspace.log",
+      "source_binding": "P02.3 on 8ae9e96; installation receipt binds final source commit."
     },
     "release_build": "preview.20 cargo build --locked --release -p norn-cli --bin norn -j 6 passed; p02-turn-build.log"
   },
   "installed_checkpoint": {
-    "version": "norn 0.1.0-preview.19",
-    "source_commit": "8349de1538f15d23b26f4343f653d68ceb3d1f04",
-    "installed_at_melbourne": "2026-09-13T07:26:36.471466+10:00",
-    "sha256": "e79b8456a0f5c32194daac6296588fed24d686db4ab75ba8f6468df21a3c5967",
-    "receipt": "var/releases/preview.19-resume-names/installation.json"
+    "installed_at_melbourne": "2026-09-13T08:29:38.134156+10:00",
+    "version": "norn 0.1.0-preview.20",
+    "binary": "/Users/tom/.cargo/bin/norn",
+    "sha256": "559a28f74a72e3b5d83d3f9cb272e650b85aaeacc198b2b51decccc7bfa97d77",
+    "source_commit": "8ae9e96cf17d2665b71ab0ce040f191f63c142b7",
+    "source_worktree": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate",
+    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.20-responsive-turns/previous-norn-preview.19",
+    "previous_version": "norn 0.1.0-preview.19",
+    "verification": [
+      "Release workspace/all-target tests passed, including 4733 core, 578 CLI, 953 TUI, 24 PTY and 14 real Rust stdio channel scenarios; zero failures/ignored",
+      "strict release workspace/all-target Clippy passed; live-api-smoke compiled/linted only",
+      "16 changed Rust files AST-scanned against prior commit; no added unwrap/expect or lint bypass/discard matches",
+      "busy synchronous-provider PTY reproducer fails before the fix and passes with input visible during work; current-thread host with one blocking slot",
+      "context and inbound-receiver preservation on provider success/error plus fatal-worker handling tested",
+      "format and whitespace checks passed",
+      "release build passed",
+      "exact candidate hash unchanged across loopback-only HTTP-429 warning probe: collapsed notice, no raw tracing writes, two requests, Kitty and terminal restoration passed"
+    ],
+    "pending": [
+      "physical Herdr test drive and broader input/frame latency measurement",
+      "intermittent flicker and stale pinned-view behavior",
+      "remaining storage and ordered product work",
+      "independent final-source review and exact-commit venue battery"
+    ],
+    "scope": "local preview installation on codex/norn-integration-candidate; main remains preview.9"
   },
-  "next_slice": "Complete preview.20 verification and local installation, then P02.2 stale pinned-view/visual responsiveness and P01 measured request latency. D03.3b selected history and the original programme remain open.",
+  "next_slice": "Finish and install preview.21 word-motion repair, then P02.2 stable pinned conversation during typing/streaming and progressive synchronized-output replies. P01 latency, D03.3b and full D01-D20/S01/U01 programme remain open.",
   "disk_checkpoint": {
     "available_gib": 41,
     "build_cache_gib": 5.8,

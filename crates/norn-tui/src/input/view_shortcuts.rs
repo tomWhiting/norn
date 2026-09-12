@@ -326,8 +326,11 @@ impl ViewShortcuts {
                 // Function keys are already Norn-owned view controls. Character
                 // bindings may never shadow editor commands or fixed host input.
                 if let EditorCode::Char(character) = stroke.code {
-                    if stroke.bits & Modifiers::CONTROL.bits() != 0
-                        && "acefktou".contains(character)
+                    if (stroke.bits & Modifiers::CONTROL.bits() != 0
+                        && "acefktou".contains(character))
+                        || (stroke.bits == Modifiers::ALT.bits()
+                            || stroke.bits == Modifiers::ALT.union(Modifiers::SHIFT).bits())
+                            && "bf".contains(character)
                     {
                         return Err(ShortcutError::Reserved {
                             path,

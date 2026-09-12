@@ -252,3 +252,13 @@ fn complete_replacement_can_move_a_function_key_without_a_partial_registry() -> 
     );
     Ok(())
 }
+
+#[test]
+fn terminal_word_motion_cannot_be_stolen_by_view_bindings() {
+    for key in ["alt+b", "alt+f", "alt+shift+b", "alt+shift+f"] {
+        assert!(matches!(
+            ViewShortcuts::decode(Some(&json!({"pane_toggle": [key]}))),
+            Err(ShortcutError::Reserved { .. })
+        ));
+    }
+}

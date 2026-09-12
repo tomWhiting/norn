@@ -335,7 +335,7 @@ fn shortcut_restart() -> TestResult {
         app.observe("/view keys", "pane_toggle: alt+p, f7")?;
         app.observe("/view preferences local", "Preference scope: Local")?;
         app.observe(
-            "/view keys set pane_toggle alt+b",
+            "/view keys set pane_toggle alt+l",
             "View shortcuts updated: pane_toggle",
         )?;
         Ok(())
@@ -343,11 +343,11 @@ fn shortcut_restart() -> TestResult {
     let saved_local = document(&local)?;
     assert_eq!(
         saved_local["tui"]["input"]["bindings"]["pane_toggle"],
-        json!(["alt+b"])
+        json!(["alt+l"])
     );
     assert_eq!(saved_local["tui"]["extension_data"]["preserve"], "local");
     environment.session(0, true, |app| {
-        app.observe("/view keys", "pane_toggle: alt+b")?;
+        app.observe("/view keys", "pane_toggle: alt+l")?;
         Ok(())
     })?;
     environment.session(1, true, |app| {

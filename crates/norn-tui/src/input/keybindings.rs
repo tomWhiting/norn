@@ -113,6 +113,17 @@ pub fn map_key_event(
             {
                 Some(InputAction::KernelKey(event))
             }
+            KeyCode::Char('b' | 'B' | 'f' | 'F')
+                if mods == Modifiers::ALT || mods == Modifiers::ALT.union(Modifiers::SHIFT) =>
+            {
+                if mods.contains(Modifiers::SHIFT) {
+                    Some(InputAction::KernelKey(event))
+                } else if matches!(event.code, KeyCode::Char('b' | 'B')) {
+                    Some(InputAction::WordLeft)
+                } else {
+                    Some(InputAction::WordRight)
+                }
+            }
             KeyCode::Char('c') if mods.contains(Modifiers::CONTROL) => Some(InputAction::Exit),
             KeyCode::Char('o' | 'O') if mods.contains(Modifiers::CONTROL) => {
                 Some(InputAction::ToggleVerbosity)
@@ -153,10 +164,14 @@ pub fn map_key_event(
                 Some(InputAction::DeleteToLineEnd)
             }
             KeyCode::Left if mods.contains(Modifiers::SUPER) => Some(InputAction::LineStart),
-            KeyCode::Left if mods.contains(Modifiers::ALT) => Some(InputAction::WordLeft),
+            KeyCode::Left if mods.intersects(Modifiers::ALT | Modifiers::CONTROL) => {
+                Some(InputAction::WordLeft)
+            }
             KeyCode::Left => Some(InputAction::CursorLeft),
             KeyCode::Right if mods.contains(Modifiers::SUPER) => Some(InputAction::LineEnd),
-            KeyCode::Right if mods.contains(Modifiers::ALT) => Some(InputAction::WordRight),
+            KeyCode::Right if mods.intersects(Modifiers::ALT | Modifiers::CONTROL) => {
+                Some(InputAction::WordRight)
+            }
             KeyCode::Right => Some(InputAction::CursorRight),
             KeyCode::Up | KeyCode::Down
                 if !popup_open && mods != Modifiers::NONE && !mods.contains(Modifiers::SUPER) =>
