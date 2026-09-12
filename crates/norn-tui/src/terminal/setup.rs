@@ -1,6 +1,8 @@
 //! Full-screen terminal ownership with push resize and restoration on every exit path.
 
 use std::io::{self, Write as _};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use termina::escape::csi::{self, Csi, KittyKeyboardFlags};
 use termina::{PlatformTerminal, Terminal};
 
@@ -21,6 +23,7 @@ pub struct TerminalGuard {
     caps: TerminalCaps,
     columns: u16,
     rows: u16,
+    restoration: Arc<AtomicU8>,
 }
 
 impl TerminalGuard {
@@ -32,7 +35,15 @@ impl TerminalGuard {
         };
         let terminal = admission.terminal_mut()?;
         terminal.enter_raw_mode()?;
-        terminal.set_panic_hook(cleanup_handle);
+        // Guard drop and the panic hook share only restoration ownership. Taking
+        // it once prevents an unwind from popping the parent screen's stack.
+        let restoration = Arc::new(AtomicU8::new(INACTIVE));
+        let panic_restoration = Arc::clone(&restoration);
+        terminal.set_panic_hook(move |handle| {
+            if let Err(error) = cleanup_owned(handle, &panic_restoration) {
+                tracing::error!(%error, "failed to restore retained TUI terminal state during panic");
+            }
+        });
         let caps = TerminalCaps::detect(terminal)?;
         let dimensions = terminal.get_dimensions()?;
         let mut guard = Self {
@@ -40,16 +51,13 @@ impl TerminalGuard {
             caps,
             columns: dimensions.cols,
             rows: dimensions.rows,
+            restoration,
         };
-        if guard.caps.kitty_keyboard {
-            write!(
-                guard.terminal,
-                "{}",
-                Csi::Keyboard(csi::Keyboard::PushFlags(KITTY_FLAGS))
-            )?;
-        }
-        guard.terminal.write_all(ENTER_SCREEN)?;
-        guard.terminal.flush()?;
+        enter_screen(
+            &mut guard.terminal,
+            &guard.restoration,
+            guard.caps.kitty_keyboard,
+        )?;
         Ok(guard)
     }
 
@@ -85,7 +93,7 @@ impl TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        if let Err(error) = cleanup(&mut self.terminal, self.caps.kitty_keyboard) {
+        if let Err(error) = cleanup_owned(&mut self.terminal, &self.restoration) {
             tracing::error!(%error, "failed to restore retained TUI terminal state");
         }
         if let Err(error) = self.terminal.enter_cooked_mode() {
@@ -123,6 +131,41 @@ impl Drop for TerminalAdmission {
     }
 }
 
+const INACTIVE: u8 = 0;
+const SCREEN_ENTERED: u8 = 1;
+const KEYBOARD_PUSHED: u8 = 2;
+
+fn enter_screen(
+    writer: &mut impl io::Write,
+    restoration: &AtomicU8,
+    kitty: bool,
+) -> io::Result<()> {
+    // A partial screen write still needs mode cleanup, but cannot own a keyboard
+    // push. Flush the screen switch before allowing a pop on any failure path.
+    restoration.store(SCREEN_ENTERED, Ordering::Release);
+    writer.write_all(ENTER_SCREEN)?;
+    writer.flush()?;
+    if kitty {
+        // Keyboard stacks are separate for the primary and alternate screens.
+        // An uncertain push is safe to pop only after entering the alternate one.
+        restoration.store(KEYBOARD_PUSHED, Ordering::Release);
+        write!(
+            writer,
+            "{}",
+            Csi::Keyboard(csi::Keyboard::PushFlags(KITTY_FLAGS))
+        )?;
+        writer.flush()?;
+    }
+    Ok(())
+}
+
+fn cleanup_owned(writer: &mut impl io::Write, restoration: &AtomicU8) -> io::Result<()> {
+    match restoration.swap(INACTIVE, Ordering::AcqRel) {
+        INACTIVE => Ok(()),
+        state => cleanup(writer, state == KEYBOARD_PUSHED),
+    }
+}
+
 fn cleanup(writer: &mut impl io::Write, kitty: bool) -> io::Result<()> {
     let mut bytes = Vec::new();
     if kitty {
@@ -141,21 +184,6 @@ fn cleanup(writer: &mut impl io::Write, kitty: bool) -> io::Result<()> {
     }
 }
 
-fn cleanup_handle(handle: &mut termina::PlatformHandle) {
-    if let Err(error) = cleanup(handle, true) {
-        tracing::error!(%error, "failed to restore retained TUI terminal state during panic");
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn cleanup_leaves_alternate_screen_and_all_requested_modes() -> io::Result<()> {
-        let mut bytes = Vec::new();
-        cleanup(&mut bytes, false)?;
-        assert_eq!(bytes, LEAVE_SCREEN);
-        assert!(!String::from_utf8_lossy(ENTER_SCREEN).contains(";r"));
-        Ok(())
-    }
-}
+#[path = "setup_tests.rs"]
+mod tests;

@@ -128,3 +128,7 @@ NFP integration, 6 September 2026 (Melbourne): preview.4 now inherits installed 
 - Notification metadata is deserialized from borrowed JSON, avoiding a copy of unrelated custom-event payloads.
 
 NUI-005 records local verification and its limits. Existing compaction-test policy debt remains open; this release does not claim a venue-205 battery or Fable approval.
+
+## 0.1.0-preview.11 — keyboard restoration
+
+13 September 2026, Melbourne. Enter the alternate screen before pushing Kitty keyboard flags, and pop them before leaving that screen. Previously the push changed the primary screen's stack and the pop changed the alternate screen's stack, leaving extended keys enabled for the shell after exit. Guard drop and panic restoration now share a single cleanup owner, and capability probing owns no screen or keyboard cleanup. This addresses escaped key fragments after leaving Norn; it does not claim a Herdr test or fix resumed-history navigation.

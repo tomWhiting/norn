@@ -19,3 +19,18 @@ Investigation only; no mouse-mode source change. crates/norn-tui/src/terminal/se
 ## Local preview.10 integration
 
 Tom authorized build/install on 12 September at 23:49 Melbourne. Patch moved onto integration-candidate at 7ec7ee2, preserving installed preview.9 source (f86ffac) and later documentation. Root main is still preview.8; do not build this delivery from that older checkout. The existing actual-CLI PTY fixture now observes the first-press confirmation frame before sending the second press and retains its terminal-restoration assertions. Release build and focused verification are in progress; no venue receipt or mouse-leak fix is claimed.
+
+## Local verification and keyboard follow-up — 13 September 2026
+
+Preview.10 installed from 9d13a7b: release build, actual-binary double-Ctrl+C PTY probe, all 934 TUI library tests, and the CLI automatic-user-restart/temporary-run PTY scenario passed. Earlier source-only status above is superseded by these results. Tom reports mouse movement works after exit, but Option+Delete emits escape fragments.
+
+Row 3 wall: crates/norn-tui/src/terminal/{setup.rs,setup_tests.rs}, Cargo.toml, Cargo.lock, README.md, docs/release-notes/UNRELEASED.md, this document. The actual installed preview.10 PTY byte stream reproduces a keyboard push on the primary screen followed by a pop on the alternate screen; the simulated parent's stack ends [1,5] instead of [1]. The probe lives at var/releases/preview.10-ctrl-c/check_kitty_pty.py. Preview.11 moves the push inside alternate-screen ownership and shares restoration state between normal drop and panic cleanup. Focused regression cases cover screen-local stacks, repeated cleanup, pre-screen admission and failed screen flush. Verification: release build, all 937 TUI library tests, formatting and diff whitespace checks passed. Targeted AST checks found no unwrap/expect calls in the two changed Rust files; no lint-bypass attributes or discarded-result bindings were found there. The actual preview.11 binary PTY probe observes enter-alternate, push, pop, leave-alternate in that order; the simulated parent keyboard stack remains [1]. Logs are in var/releases/preview.11-keyboard. Strict Clippy, physical Herdr verification and the venue battery are not yet claimed; no main landing.
+
+## Test-drive UI follow-ups — 13 September 2026
+
+These are requested work, not implemented by preview.11.
+
+- Resumed scrollback: navigation exhausting the loaded initial page must request older events through the existing request_older/load_older path. Current automatic navigation does not set that flag; /view older does. Preserve source-bound anchors and avoid eager full-history loading. References: app/session_replay.rs, app/render/navigation.rs, app/render.rs, app/view_actions/commands.rs.
+- Transcript gap: investigate forward scrolling beyond a full final viewport and placement of short follow-latest windows in app/render/transcript.rs. Confirm expected geometry before changing alignment.
+- Tool rows: colour the tool name, follow with tool_use_description on a plain collapsed background; reserve background emphasis for expanded details. Show readable inputs/outputs and command text, with raw input as an explicit alternate view. Retain brief live preview and single-line completion.
+- File pane: one tab per changed file, syntax colouring and distinct addition/deletion highlighting are required. Follow the latest edit while idle; preserve a user's historical inspection. Allow browsing successive recorded versions/diffs within that file's tab. Identify writes versus edits clearly. Keep the conversation/composer geometry and avoid new global header rows. Version provenance and retention need a separate bounded brief before implementation.
