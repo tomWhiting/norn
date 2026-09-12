@@ -201,7 +201,7 @@ impl StepMachine<'_> {
         //
         // Read into a local before the args block mutably borrows the state.
         let layout_prefix_len = self.conversation_state.prefix_len();
-        let preflight = match run_context_preflight(PreflightArgs {
+        let preflight = run_context_preflight(PreflightArgs {
             store: self.store,
             provider: self.provider,
             model: self.model,
@@ -220,8 +220,14 @@ impl StepMachine<'_> {
             cancel: self.cancel.as_ref(),
             event_tx: self.event_tx,
         })
-        .await?
+        .await;
+        if let Err(crate::error::SessionError::CompactionSummaryFailed(failure)) = &preflight
+            && let Some(usage) = &failure.usage
         {
+            self.total_usage += usage.clone();
+            self.timeout_state.lock().usage = self.total_usage.clone();
+        }
+        let preflight = match preflight? {
             PreflightDecision::Ran(outcome) => outcome,
             // The step's token fired while the preflight's compaction
             // summarization was in flight (or waiting between its retry

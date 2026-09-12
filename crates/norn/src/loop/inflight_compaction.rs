@@ -239,8 +239,11 @@ pub(super) async fn run_context_preflight(
         retry_policy: &retry_policy,
         event_tx: args.event_tx,
     })
-    .await?;
-    let run = match decision {
+    .await;
+    if let Err(SessionError::CompactionSummaryFailed(failure)) = &decision {
+        super::compaction_failure::record_failure(args.store, hooks.as_deref(), failure).await?;
+    }
+    let run = match decision? {
         AutoCompactDecision::Fired(run) => *run,
         AutoCompactDecision::NotFired => {
             return Ok(PreflightDecision::Ran(PreflightOutcome {

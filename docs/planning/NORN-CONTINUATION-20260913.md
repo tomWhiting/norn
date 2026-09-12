@@ -68,3 +68,13 @@ D01.1 and D02.1 are installed local slices; the overall D01 and D02 deliveries r
 Disk checkpoint: 25 GiB available; one 3.5 GiB repository-local build cache and 235 MiB release receipts/rollbacks. Removed 191,361,440 bytes of identified obsolete test executables during this goal. Current artifacts and all rollback binaries remain.
 
 The installed Aion CLI confirmed an active `repo_battery_205` route (`56cd8d0a1d3ba94811c605432b0e3730a4f87d1ab9cfe732c62cda46f0f5b0e9`). This was a read-only availability check; no battery has been dispatched and main has not advanced. Inspect its current input and venue resource contract before dispatching.
+
+## D01.2 — semantic summary failure preserves context
+
+Tom's authorized continuity repair now replaces the existing automatic mechanical fallback policy: a provider failure or unusable summary stops the step with a typed error, leaves all context marks and the compaction trigger unchanged, and does not send the oversized ordinary request. Cancellation remains cancellation. Explicit manual mechanical compaction is unchanged. The error retains the provider cause or stop reason/text length and the known summary usage; preflight records a versioned `loop.compaction_failed` audit with that usage before returning the error. No failure is relabelled as successful compaction. Retry classification follows the underlying provider cause; unusable output is terminal.
+
+Wall: `crates/norn/src/error.rs`, `error/{subsystems.rs,compaction.rs}`, `loop/{compaction.rs,compaction_failure.rs,inflight_compaction.rs,mod.rs}`, `loop/runner/prompt.rs`, `loop/runner/tests/local_compaction.rs`, `loop/compaction_failure_tests.rs`, Cargo.toml, Cargo.lock, README.md, release notes and this queue. Provenance: NEXT-WORK D01's explicit failure-policy recommendation, no-silent-fallback house rule, and existing cancellation/usage contracts. A later slice handles general stderr tracing ownership and semantic rendering of opaque response items.
+
+Acceptance: permanent provider failure, empty/truncated output and cancellation commit no compaction or hidden-event marks; trigger remains re-usable; actual runner sends no normal model request after failure; original accepted input survives; known rejected-summary usage and typed error survive in the returned error and durable audit; a later successful retry can compact. Run core/runner and TUI regressions, strict Clippy, formatting and changed-file AST scans. Historical fallback records remain readable. No live session rewrite or inferred recovery of facts lost by earlier semantic fallbacks is claimed.
+
+D01.2 also permits source-documentation correction in `crates/norn/src/loop/summarization.rs`; the summary renderer is unchanged by this slice.

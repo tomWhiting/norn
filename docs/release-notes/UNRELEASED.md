@@ -1,3 +1,7 @@
+## 0.1.0-preview.13 — preserve context on failed automatic compaction
+
+Automatic compaction now stops with a typed error when the summary request fails permanently or returns empty/truncated text. It preserves current history and context marks, reports the original cause, and records known summary usage in a versioned `loop.compaction_failed` event. No ordinary provider request follows that failure. Retry and cancellation policy remain unchanged; explicit mechanical compaction remains available. Validation and installation are pending for this checkpoint.
+
 # Unreleased — local preview candidates and recorded checkpoints
 
 ## 0.1.0-preview.10 — idle exit confirmation (local test candidate)

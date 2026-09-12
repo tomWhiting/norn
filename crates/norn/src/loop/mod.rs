@@ -38,6 +38,7 @@ mod classify;
 
 pub mod commands;
 pub mod compaction;
+mod compaction_failure;
 mod compaction_progress;
 mod compaction_prompt;
 pub mod config;

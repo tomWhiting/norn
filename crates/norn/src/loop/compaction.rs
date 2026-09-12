@@ -9,9 +9,8 @@
 //! That call runs under the step's own retry policy and cancellation
 //! token (design D11), so a transient backend fault is waited out rather
 //! than costing the model its continuity. A summarization failure no
-//! retry can fix never aborts the step: it is logged at `warn` and the
-//! mechanical event digest is committed instead, explicitly marked as a
-//! non-semantic fallback. A cancelled call commits nothing at all and
+//! retry can fix stops the step with a typed error and preserves the
+//! current context. Automatic compaction never substitutes a mechanical digest. A cancelled call commits nothing at all and
 //! reports [`AutoCompactDecision::Cancelled`], which ends the step as
 //! cancelled. The trigger fires once per
 //! `run_agent_step` call — the runner threads a [`CompactionState`]
@@ -22,7 +21,7 @@
 //! the most recent assistant text and iteration count to populate
 //! [`crate::agent_loop::runner::AgentStepResult::TimedOut`].
 
-use crate::error::SessionError;
+use crate::error::{CompactionFailure, CompactionFailureReason, SessionError};
 use crate::integration::hooks::{HookOutcome, HookRegistry};
 use crate::r#loop::compaction_progress::CompactionProgressGuard;
 use crate::r#loop::retry::RetryPolicy;
@@ -33,7 +32,7 @@ use crate::r#loop::tokens::TokenEstimator;
 use crate::provider::agent_event::AgentEventSender;
 use crate::provider::traits::Provider;
 use crate::provider::usage::Usage;
-use crate::session::context_edit::{AutoCompactionOutcome, ContextEdits, build_compaction_digest};
+use crate::session::context_edit::{AutoCompactionOutcome, ContextEdits};
 use crate::session::events::SessionEvent;
 use crate::session::store::EventStore;
 
@@ -46,9 +45,8 @@ pub use crate::r#loop::timeout_state::{
 pub enum CompactionSummarySource {
     /// The provider wrote a semantic summary of the elided events.
     Llm,
-    /// LLM summarization failed or produced an unusable response; the
-    /// mechanical event digest was committed instead, marked as a
-    /// non-semantic fallback.
+    /// Legacy compatibility shape for previously committed mechanical fallbacks.
+    /// Automatic compaction no longer constructs this variant.
     MechanicalDigestFallback {
         /// Why the LLM summary was unavailable.
         error: String,
@@ -275,16 +273,15 @@ pub struct AutoCompactArgs<'a> {
 ///
 /// When it fires, the events below the cut are summarized through the
 /// step's provider and model, under the step's retry policy and
-/// cancellation token; a summarization failure no retry can fix commits
-/// the mechanical digest instead (logged, marked — see
-/// [`CompactionSummarySource`]). The three outcomes are the arms of
+/// cancellation token; an unusable summary or final provider failure
+/// returns a typed error without changing context. Non-error outcomes are the arms of
 /// [`AutoCompactDecision`].
 ///
 /// # Errors
 ///
 /// Propagates any [`SessionError`] from committing the compaction plan.
-/// Summarization-call failures are *not* errors: they degrade to the
-/// digest fallback. Cancellation is not an error either: it is
+/// Summarization-call failures retain their typed cause and known usage.
+/// Cancellation is not an error: it is
 /// [`AutoCompactDecision::Cancelled`], which the caller turns into the
 /// step's cancelled outcome.
 pub async fn maybe_auto_compact(
@@ -371,11 +368,10 @@ pub async fn maybe_auto_compact(
             tokio::select! {
                 biased;
                 () = token.cancelled() => None,
-                result = summarize_or_fall_back(SummarizeArgs {
+                result = summarize_or_fail(SummarizeArgs {
                     provider: args.provider,
                     model: args.model,
                     elided: &elided,
-                    token_estimate_freed,
                     retry: SummarizationRetry {
                         policy: args.retry_policy,
                         cancel: args.cancel,
@@ -384,11 +380,10 @@ pub async fn maybe_auto_compact(
                 }) => result.inspect_err(|_| progress.failed())?,
             }
         }
-        None => summarize_or_fall_back(SummarizeArgs {
+        None => summarize_or_fail(SummarizeArgs {
             provider: args.provider,
             model: args.model,
             elided: &elided,
-            token_estimate_freed,
             retry: SummarizationRetry {
                 policy: args.retry_policy,
                 cancel: None,
@@ -425,7 +420,7 @@ pub async fn maybe_auto_compact(
     })))
 }
 
-/// Borrowed inputs for [`summarize_or_fall_back`].
+/// Borrowed inputs for [`summarize_or_fail`].
 struct SummarizeArgs<'a> {
     /// The step's provider, issuing the summarization call.
     provider: &'a dyn Provider,
@@ -433,101 +428,50 @@ struct SummarizeArgs<'a> {
     model: &'a str,
     /// The events about to be elided from the prompt view.
     elided: &'a [SessionEvent],
-    /// Freed-token estimate carried into the fallback digest.
-    token_estimate_freed: usize,
     /// Retry brain inputs for the summarization call.
     retry: SummarizationRetry<'a>,
 }
 
-/// Produce the compaction summary: the LLM-written summary when the
-/// provider call succeeds, otherwise the mechanical digest explicitly
-/// marked as a non-semantic fallback (with the failure logged at `warn`).
-///
-/// `Ok(None)` means the step was cancelled during the call — not a
-/// failure, and explicitly not a reason to commit a digest: a cancelled
-/// step must not rewrite the conversation on its way out.
-///
-/// # Errors
-///
-/// Returns [`SessionError::EventAppendFailed`] only if the fallback
-/// digest cannot be serialised to JSON.
-async fn summarize_or_fall_back(
+/// Produce a usable semantic summary or preserve the failure without committing a digest.
+/// Cancellation returns `None`; errors retain their cause and known token usage.
+async fn summarize_or_fail(
     args: SummarizeArgs<'_>,
 ) -> Result<Option<(String, CompactionSummarySource, Option<Usage>)>, SessionError> {
     let SummarizeArgs {
         provider,
         model,
         elided,
-        token_estimate_freed,
         retry,
     } = args;
-    let (failure, usage) = match request_compaction_summary(provider, model, elided, retry).await {
+    let (reason, usage) = match request_compaction_summary(provider, model, elided, retry).await {
         SummarizationOutcome::Completed(response) => {
-            let usage = response.usage.clone();
             if let Some(summary) = response.usable_summary() {
                 return Ok(Some((
-                    summary.to_string(),
+                    summary.to_owned(),
                     CompactionSummarySource::Llm,
-                    Some(usage),
+                    Some(response.usage),
                 )));
             }
             (
-                format!(
-                    "summarization response unusable (stop_reason={:?}, {} text chars)",
-                    response.stop_reason,
-                    response.text.chars().count(),
-                ),
-                Some(usage),
+                CompactionFailureReason::Unusable {
+                    stop_reason: response.stop_reason,
+                    text_chars: response.text.chars().count(),
+                },
+                Some(response.usage),
             )
         }
         SummarizationOutcome::Cancelled => return Ok(None),
         SummarizationOutcome::Failed(error) => {
-            (format!("summarization call failed: {error}"), None)
+            (CompactionFailureReason::Provider(Box::new(error)), None)
         }
     };
-
-    tracing::warn!(
-        error = %failure,
-        elided_events = elided.len(),
-        "auto-compaction LLM summarization failed; committing the \
-         mechanical digest as a non-semantic fallback",
-    );
-    let digest = fallback_digest(elided, token_estimate_freed, &failure)?;
-    Ok(Some((
-        digest,
-        CompactionSummarySource::MechanicalDigestFallback { error: failure },
-        usage,
+    Err(SessionError::CompactionSummaryFailed(Box::new(
+        CompactionFailure {
+            model: model.to_owned(),
+            reason,
+            usage,
+        },
     )))
-}
-
-/// Build the marked fallback digest for a failed summarization.
-fn fallback_digest(
-    elided: &[SessionEvent],
-    token_estimate_freed: usize,
-    failure: &str,
-) -> Result<String, SessionError> {
-    let mut digest = build_compaction_digest(elided, token_estimate_freed);
-    if let Some(object) = digest.as_object_mut() {
-        object.insert(
-            "summary_kind".to_string(),
-            serde_json::Value::String("mechanical_digest_fallback".to_string()),
-        );
-        object.insert(
-            "summarization_error".to_string(),
-            serde_json::Value::String(failure.to_string()),
-        );
-        object.insert(
-            "note".to_string(),
-            serde_json::Value::String(
-                "non-semantic fallback: LLM summarization failed, so this is a \
-                 mechanical digest of the elided events, not a semantic summary"
-                    .to_string(),
-            ),
-        );
-    }
-    serde_json::to_string(&digest).map_err(|e| SessionError::EventAppendFailed {
-        reason: format!("failed to serialise fallback compaction digest: {e}"),
-    })
 }
 
 #[cfg(test)]
@@ -966,112 +910,6 @@ mod tests {
                 .all(|e| !matches!(e, SessionEvent::Compaction { .. })),
             "no compaction event may be committed after a cancelled summarization",
         );
-    }
-
-    #[tokio::test]
-    async fn provider_failure_falls_back_to_marked_digest() {
-        let store = EventStore::new();
-        for i in 0..30 {
-            store.append(assistant(&format!("t{i}"))).expect("append");
-        }
-        // No scripted responses: the summarization call errors.
-        let provider = MockProvider::new(vec![]);
-        let mut state = CompactionState::new();
-        let mut edits = ContextEdits::new();
-
-        let run = run_trigger(
-            &mut state,
-            &mut edits,
-            &store,
-            &provider,
-            10_000,
-            Some(8_000),
-            None,
-        )
-        .await
-        .expect("trigger must not abort the step on summarization failure")
-        .expect("compaction still fires with the fallback digest");
-
-        let CompactionSummarySource::MechanicalDigestFallback { error } = &run.summary_source
-        else {
-            panic!("expected fallback source, got {:?}", run.summary_source);
-        };
-        assert!(error.contains("summarization call failed"), "{error}");
-        assert!(
-            run.summarization_usage.is_none(),
-            "no usage when the call failed before assembly",
-        );
-
-        let compaction = store
-            .get(&run.outcome.compaction_id)
-            .expect("compaction stored");
-        let SessionEvent::Compaction { summary, .. } = compaction else {
-            panic!("expected Compaction variant");
-        };
-        let parsed: serde_json::Value =
-            serde_json::from_str(&summary).expect("fallback digest is JSON");
-        assert_eq!(parsed["summary_kind"], "mechanical_digest_fallback");
-        assert!(
-            parsed["summarization_error"]
-                .as_str()
-                .is_some_and(|e| e.contains("summarization call failed")),
-            "digest must carry the failure: {parsed}",
-        );
-        assert!(
-            parsed["note"]
-                .as_str()
-                .is_some_and(|n| n.contains("non-semantic fallback")),
-            "digest must be marked for humans: {parsed}",
-        );
-        assert_eq!(parsed["event_count_suppressed"], 20);
-        assert!(state.has_fired());
-    }
-
-    #[tokio::test]
-    async fn truncated_summary_falls_back_but_accounts_usage() {
-        let store = EventStore::new();
-        for i in 0..30 {
-            store.append(assistant(&format!("t{i}"))).expect("append");
-        }
-        let provider = MockProvider::new(vec![vec![
-            ProviderEvent::TextDelta {
-                text: "cut off mid-sent".to_string(),
-            },
-            ProviderEvent::Done {
-                stop_reason: StopReason::MaxTokens,
-                usage: Usage {
-                    input_tokens: 25,
-                    output_tokens: 4,
-                    ..Usage::default()
-                },
-                response_id: None,
-            },
-        ]]);
-        let mut state = CompactionState::new();
-        let mut edits = ContextEdits::new();
-
-        let run = run_trigger(
-            &mut state,
-            &mut edits,
-            &store,
-            &provider,
-            10_000,
-            Some(8_000),
-            None,
-        )
-        .await
-        .expect("ok")
-        .expect("compaction fires");
-
-        assert!(matches!(
-            run.summary_source,
-            CompactionSummarySource::MechanicalDigestFallback { .. }
-        ));
-        let usage = run
-            .summarization_usage
-            .expect("truncated responses still spent tokens");
-        assert_eq!(usage.input_tokens, 25);
-        assert_eq!(usage.output_tokens, 4);
     }
 
     #[tokio::test]

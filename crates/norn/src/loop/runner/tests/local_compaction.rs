@@ -419,16 +419,15 @@ async fn auto_compaction_broadcasts_live_event_and_hides_summarization_stream() 
     Ok(())
 }
 
-/// Track L finding 1 (failure policy): a failed summarization call
-/// must not abort the step — the compaction still fires with the
-/// mechanical digest, explicitly marked as a non-semantic fallback.
+/// A failed automatic summary stops before the normal provider request and
+/// records known spend without committing a replacement for current history.
 #[tokio::test]
-async fn summarization_failure_falls_back_without_aborting_the_step() -> TestResult {
+async fn summarization_failure_stops_without_replacing_context() -> TestResult {
     let store = EventStore::new();
     seed_compaction_history(&store)?;
 
     // A truncated summarization response (MaxTokens) is unusable; the
-    // main call then succeeds. Its usage must still be accounted.
+    // main call must remain unused. Summary usage must still be accounted.
     let provider = MockProvider::new(vec![
         vec![text_delta("cut off"), done_event(StopReason::MaxTokens)],
         vec![text_delta("done"), done_event(StopReason::EndTurn)],
@@ -446,50 +445,62 @@ async fn summarization_failure_falls_back_without_aborting_the_step() -> TestRes
         ..AgentLoopConfig::default()
     };
 
-    let result = run_step_with(
-        StepArgs {
-            provider: &provider,
-            executor: &executor,
-            store: &store,
-            tools: &[],
-            schema: None,
-            config: &config,
-            event_tx: None,
-            inbound: None,
-        },
-        &mut loop_ctx,
-    )
+    let result = run_agent_step(AgentStepRequest {
+        provider: &provider,
+        executor: &executor,
+        store: &store,
+        user_prompt: "prompt",
+        tools: &[],
+        output_schema: None,
+        model: "test-model",
+        config: &config,
+        event_tx: None,
+        inbound: None,
+        loop_context: &mut loop_ctx,
+        cancel: None,
+    })
     .await;
-    let (_, usage) = assert_completed(result);
+    let failure = match result {
+        Err(crate::error::NornError::Session(
+            crate::error::SessionError::CompactionSummaryFailed(failure),
+        )) => failure,
+        other => {
+            return Err(
+                std::io::Error::other(format!("expected summary failure: {other:?}")).into(),
+            );
+        }
+    };
     assert_eq!(
-        usage.input_tokens, 20,
-        "rejected summarization tokens were still spent and must be accounted",
+        provider.call_count(),
+        1,
+        "no normal request after failed compaction"
     );
-
-    let persisted_summary = store.events().into_iter().find_map(|e| match e {
-        SessionEvent::Compaction { summary, .. } => Some(summary),
-        _ => None,
-    });
-    let summary = persisted_summary
-        .ok_or_else(|| std::io::Error::other("compaction did not fire on fallback"))?;
-    let parsed: serde_json::Value = serde_json::from_str(&summary)?;
-    assert_eq!(parsed["summary_kind"], "mechanical_digest_fallback");
+    assert_eq!(
+        failure.usage.as_ref().map(|usage| usage.input_tokens),
+        Some(10)
+    );
+    let events = store.events();
     assert!(
-        parsed["summarization_error"]
-            .as_str()
-            .is_some_and(|e| !e.is_empty()),
-        "the fallback must carry why the LLM summary was unavailable: {parsed}",
+        !events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::Compaction { .. }))
     );
-
-    let audit = store.events().into_iter().find_map(|e| match e {
-        SessionEvent::Custom {
-            event_type, data, ..
-        } if event_type == "loop.compaction_summarization" => Some(data),
-        _ => None,
-    });
-    let audit =
-        audit.ok_or_else(|| std::io::Error::other("audit event was not persisted on fallback"))?;
-    assert_eq!(audit["summary_kind"], "mechanical_digest_fallback");
+    assert_eq!(events.iter().filter(|event| matches!(event, SessionEvent::UserMessage { content, .. } if content.starts_with("seed question"))).count(), 6);
+    assert_eq!(events.iter().filter(|event| matches!(event, SessionEvent::AssistantMessage { content, .. } if content.starts_with("seed answer"))).count(), 6);
+    let audit = events
+        .iter()
+        .find_map(|event| match event {
+            SessionEvent::Custom {
+                event_type, data, ..
+            } if event_type == "loop.compaction_failed" => Some(data),
+            _ => None,
+        })
+        .ok_or_else(|| std::io::Error::other("missing compaction failure receipt"))?;
+    assert_eq!(audit["schema_version"], 1);
+    assert_eq!(audit["context_changed"], false);
+    assert_eq!(audit["failure_kind"], "unusable_response");
+    assert_eq!(audit["usage"]["input_tokens"], 10);
+    assert!(!events.iter().any(|event| matches!(event, SessionEvent::Custom { event_type, .. } if event_type == "loop.compaction_summarization")));
     Ok(())
 }
 

@@ -2,7 +2,7 @@
 
 Norn is an AI agent runtime for interactive terminal work, command-line automation, and embedding in other applications. It can read and edit files, run commands, search code, use MCP tools, coordinate agents, and resume saved sessions. The Rust library, terminal UI, print mode, and driven JSON-RPC mode share the same `AgentBuilder` assembly path.
 
-**Current source version: `0.1.0-preview.12`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [candidate verification record](docs/release-notes/PREVIEW-9.md) for the tested scope and open findings.
+**Current source version: `0.1.0-preview.13`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [candidate verification record](docs/release-notes/PREVIEW-9.md) for the tested scope and open findings.
 
 ## Install and start
 
@@ -136,6 +136,8 @@ See [MCP launch and Channels](docs/MCP-LAUNCH.md) for HTTP tool definitions, mer
 Colour detection never prevents interactive startup. `COLORTERM=truecolor` or `24bit` enables RGB; `TERM` names ending in `ghostty`, `kitty`, `alacritty`, or `wezterm`, and names containing `256color`, enable indexed colour without terminfo. Without explicit RGB evidence, other names use 16 ANSI colours; unset, empty, or `dumb` `TERM` uses the terminal’s default foreground and background. Reduced colour gets one notice inside the TUI, with selection and emphasis retained. Terminal I/O failures still report errors.
 
 The TUI owns the screen, retains conversation history, and uses **Iridium** for its full-width composer. Tool rows show the tool name, supplied `tool_use_description`, and outcome compactly; click a row to inspect its details. The status line shows approximate context usage against the active configured window, separately from cumulative token usage.
+
+Automatic compaction summarizes the currently visible older context. If that request fails or returns an empty/truncated summary, Norn stops the turn and preserves the existing context. The error names the cause; retry after resolving it, or explicitly choose mechanical compaction. Known summary token usage is retained in the failure record. This does not rewrite old session files or repair information lost in earlier summaries.
 
 | Command | Action |
 | --- | --- |

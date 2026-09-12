@@ -155,6 +155,12 @@
       "status": "installed_local_preview_12",
       "scope": "Demand one earlier page at the loaded boundary; preserve anchor/draft; residual gesture replay still pending",
       "remaining": "Herdr test drive and source-bound venue landing; broader D01/D02 work remains"
+    },
+    {
+      "id": "D01.2",
+      "status": "implementation_under_verification",
+      "scope": "Stop failed automatic semantic compaction; preserve context and known spend; durable failure audit; manual mechanical compaction unchanged",
+      "remaining": "Core/TUI tests, strict Clippy, build, local installation, exact-commit venue battery"
     }
   ],
   "policy_debt": [
@@ -195,6 +201,15 @@
   "venue_discovery": {
     "workflow_type": "repo_battery_205",
     "route_active_hash": "56cd8d0a1d3ba94811c605432b0e3730a4f87d1ab9cfe732c62cda46f0f5b0e9",
-    "status": "read-only availability confirmed; not dispatched; input/venue resource contract still to inspect"
+    "status": "Input contract recovered from WorkflowStarted seq 1 of 62bd3f87-a13b-4fa7-bce5-6dc07fec1229 (same active package); no running repo_battery_205 runs at inspection; dispatch pending checked source commit",
+    "input_fields": [
+      "subject_repo",
+      "subject_ref",
+      "workspace_root",
+      "waivers_json"
+    ],
+    "workspace_root": "/home/aion/venue/.battery",
+    "task_queue": "lane_repo_battery",
+    "node": "venue205"
   }
 }

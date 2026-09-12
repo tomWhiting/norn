@@ -13,6 +13,9 @@
 
 use std::time::Duration;
 
+mod compaction;
+pub use compaction::{CompactionFailure, CompactionFailureReason};
+
 mod subsystems;
 pub use subsystems::*;
 

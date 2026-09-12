@@ -59,22 +59,15 @@ pub enum NornError {
 impl NornError {
     /// Typed retry classification of this error.
     ///
-    /// [`NornError::Provider`] delegates to [`ProviderError::class`] -
-    /// transport-level provider faults are the only errors that classify
-    /// as retryable. Every other variant ([`Schema`](Self::Schema),
-    /// [`Tool`](Self::Tool), [`Rules`](Self::Rules),
-    /// [`Agent`](Self::Agent), [`Session`](Self::Session),
-    /// [`Integration`](Self::Integration), [`Config`](Self::Config),
-    /// [`Skill`](Self::Skill), [`HookBlocked`](Self::HookBlocked)) is
-    /// [`ErrorClass::Terminal`]: they describe deterministic faults in the
-    /// request, configuration, local state, or operator policy that
-    /// re-running the identical operation cannot resolve. This mirrors the
-    /// agent loop's own retry behaviour, which only ever retries provider
-    /// errors.
+    /// Provider errors, including those retained by a failed compaction
+    /// summary, preserve [`ProviderError::class`]. Other errors are terminal:
+    /// retrying an identical configuration, schema, or local-state fault does
+    /// not repair it. An unusable completed summary is also terminal.
     #[must_use]
     pub fn class(&self) -> ErrorClass {
         match self {
             Self::Provider(provider_err) => provider_err.class(),
+            Self::Session(SessionError::CompactionSummaryFailed(failure)) => failure.reason.class(),
             Self::Schema(_)
             | Self::Tool(_)
             | Self::Rules(_)
@@ -255,6 +248,10 @@ pub enum AgentError {
 /// Errors from the session event store and context editing.
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
+    /// Semantic compaction failed without replacing any context.
+    #[error(transparent)]
+    CompactionSummaryFailed(#[from] Box<super::CompactionFailure>),
+
     /// Exact local execution observation or publication binding failed.
     #[error(transparent)]
     Observation(#[from] Box<crate::provider::agent_event::ObservationError>),

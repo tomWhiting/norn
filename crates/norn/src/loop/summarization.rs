@@ -8,19 +8,13 @@
 //! to a labelled transcript and sent alongside fixed summarization
 //! instructions.
 //!
-//! Failure policy lives in the caller ([`super::compaction`]): a failed or
-//! unusable summarization response is logged and the mechanical digest is
-//! committed instead, explicitly marked as a non-semantic fallback.
+//! Failure policy lives in the caller ([`super::compaction`]): an unusable
+//! or failed response stops the step, preserving current context and known
+//! usage. No mechanical digest is substituted by automatic compaction.
 //!
-//! The call runs under the loop's own retry brain (design D11). It used to
-//! be the one provider call in the step with zero retries — and it runs in
-//! the request-build preflight, *before* the retry brain gets control, so a
-//! transient `5xx` during auto-compaction degraded the model's continuity
-//! to a mechanical digest for no better reason than a bad minute on the
-//! backend. Now a transient failure retries indefinitely under the step's
-//! [`RetryPolicy`] and cancellation token, exactly like every other
-//! provider call; the digest fallback stays for the failures retrying
-//! cannot fix (non-transient errors, truncated or empty responses).
+//! The call uses the step's [`RetryPolicy`] and cancellation token. Transient
+//! failures retry under that policy; exhausted retries and permanent errors
+//! retain their provider cause for the caller's failure receipt.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
