@@ -17,6 +17,7 @@
 pub mod cli;
 pub mod commands;
 pub mod config;
+mod diagnostics;
 pub mod nofile;
 pub mod print;
 pub mod runtime;

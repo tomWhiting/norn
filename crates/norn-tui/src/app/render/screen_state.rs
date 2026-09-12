@@ -1,6 +1,6 @@
 //! Frontend-owned geometry, publication baselines and bounded current display caches.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -28,6 +28,8 @@ pub struct ScreenState {
     pub(in crate::app) auxiliary: AuxiliaryPane,
     pub(in crate::app) split: SplitPreference,
     pub(in crate::app) upper: UpperPane,
+    /// Frontend-only diagnostic identities; bodies remain in the existing local notice owner.
+    pub(in crate::app) diagnostic_items: HashSet<ItemId>,
     pub(in crate::app) tool_overrides: HashMap<ItemId, bool>,
     pub(in crate::app) selection: Option<crate::app::selection::Selection>,
     pub(in crate::app) selection_item: Option<ItemId>,
@@ -87,6 +89,7 @@ impl ScreenState {
             auxiliary: AuxiliaryPane::Diff,
             split: SplitPreference::default(),
             upper: UpperPane::Conversation,
+            diagnostic_items: HashSet::new(),
             tool_overrides: HashMap::new(),
             selection: None,
             selection_item: None,

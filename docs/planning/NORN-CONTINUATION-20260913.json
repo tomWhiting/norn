@@ -133,7 +133,8 @@
     {
       "id": "S01",
       "delivery": "Measure session storage duplication; reduce redundant new writes only with replay/backward compatibility tests; no deletion or rewriting of live session files",
-      "status": "in_progress_with_D01"
+      "status": "in_progress_with_D01",
+      "next_audit": "Canonical response items versus compatibility assistant fields: check replay, action-log/child readers and publication commitment digests before reducing new writes. See session/events.rs, session/conversion.rs, session/jsonl_sink.rs."
     },
     {
       "id": "U01",
@@ -176,6 +177,21 @@
       "scope": "Borrow event store for compaction plan/commit validation; remove two full-history clones",
       "tests": "4714 core library tests passed; strict workspace/all-target Clippy passed; new-module AST scans clean and changed-file existing counts retained",
       "remaining": "Physical terminal acceptance; independent review and exact-commit venue evidence"
+    },
+    {
+      "id": "D01.4",
+      "status": "verified_local_install_pending",
+      "scope": "Process-wide tracing capture with typed expandable notices, idle/active delivery, explicit overflow, post-terminal unread drain and scoped ownership; launch-only diagnostic capacity override",
+      "wall": "See D01.4 Markdown wall; CLI/TUI diagnostic modules and launch/loop wiring, existing TuiInputs fixtures, settings parsing, documentation/version files",
+      "provenance": "NEXT-WORK-20260908 D01; operator report of compaction/retry warnings overwriting the composer",
+      "remaining": "actual-binary warning probe, local install and exact-source venue/review"
+    },
+    {
+      "id": "D20.1",
+      "status": "verified_local",
+      "scope": "PTY fixtures use visible two-press confirmation, preserve resize geometry and wait for accepted input before draft-retirement assertions; no production exit semantics changed",
+      "tests": "All 23 pty_smoke cases passed; old small-terminal fixture reproduced its five-second exit timeout before repair",
+      "remaining": "Re-run final-source venue battery; old preview.13 receipt is red"
     }
   ],
   "policy_debt": [
@@ -188,17 +204,31 @@
     "core_library": {
       "passed": 4714,
       "failed": 0,
-      "ignored": 0
+      "ignored": 0,
+      "last_run_version": "preview.14; core source unchanged in preview.15"
     },
     "tui_library_cli_feature_set": {
-      "passed": 939,
+      "passed": 942,
       "failed": 0,
       "ignored": 0,
-      "last_run_version": "preview.13; TUI source unchanged in preview.14"
+      "last_run_version": "preview.15"
     },
     "clippy": "cargo clippy --locked --release --workspace --all-targets --features norn/live-api-smoke -j 6 -- -D warnings passed",
     "format": "cargo fmt --all -- --check passed",
-    "ast": "Summary projection modules clean; counts on all five changed Rust files compared with baseline, no added unwrap/expect or bypass/discard matches"
+    "ast": "23 changed Rust files compared with HEAD: no added unwrap/expect or bypass/discard matches; existing debt retained separately",
+    "cli_library": {
+      "passed": 574,
+      "failed": 0,
+      "ignored": 0,
+      "last_run_version": "preview.15"
+    },
+    "pty_smoke": {
+      "passed": 23,
+      "failed": 0,
+      "ignored": 0,
+      "last_run_version": "preview.15"
+    },
+    "diagnostic_pty": "Actual executable: two loopback HTTP-429 requests, collapsed warning visible, raw tracing absent from owned terminal, terminal/Kitty restoration passed"
   },
   "installed_checkpoint": {
     "installed_at_melbourne": "2026-09-13T04:14:16.958771+10:00",
@@ -225,17 +255,18 @@
     ],
     "scope": "local preview installation on codex/norn-integration-candidate"
   },
-  "next_slice": "D01.4 terminal-safe diagnostics; then continue S01 persisted compatibility/publication audit and D02 history acceptance",
+  "next_slice": "Complete preview.15 installation and final-source venue dispatch; continue S01 compatibility audit and D02 retained-history navigation",
   "disk_checkpoint": {
-    "available_gib": 24,
+    "available_gib": 17,
     "build_cache_gib": 3.6,
     "release_receipts_and_rollbacks_mib": 235,
-    "obsolete_test_executable_bytes_removed_this_goal": 414807184
+    "obsolete_test_executable_bytes_removed_this_goal": 836883840,
+    "note": "Exact removal recorded in d01-diagnostics-cleanup.json; current build cache and all rollback copies retained"
   },
   "venue_discovery": {
     "workflow_type": "repo_battery_205",
     "route_active_hash": "56cd8d0a1d3ba94811c605432b0e3730a4f87d1ab9cfe732c62cda46f0f5b0e9",
-    "status": "Preview.13 exact-commit run still active, latest step tests; this run does not validate preview.14",
+    "status": "Completed with red verdict: 5 legs green, tests red; receipt var/releases/preview.13-compaction-failure/venue-result.json",
     "input_fields": [
       "subject_repo",
       "subject_ref",

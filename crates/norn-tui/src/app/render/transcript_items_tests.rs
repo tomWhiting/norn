@@ -233,3 +233,47 @@ fn expanded_tool_background_preserves_original_source_spans() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn process_diagnostic_is_compact_until_explicitly_expanded() -> TestResult {
+    let store = norn::session::EventStore::new();
+    let source = store.bind_view_source(
+        &norn::session::SessionBinding::ephemeral_root(),
+        uuid::Uuid::new_v4(),
+        None,
+    )?;
+    let mut transcript = Transcript::new(source.clone());
+    let mut screen = ScreenState::new(source);
+    let id = transcript.notice(
+        ViewItemKind::Notice,
+        "WARN · actual::target",
+        Some("complete diagnostic body"),
+    )?;
+    let item = transcript
+        .projection
+        .item(&id)
+        .ok_or("diagnostic missing")?
+        .clone();
+    screen.diagnostic_items.insert(id.clone());
+    let groups = item_groups(&transcript, &mut screen, &item, 80, false, false)?;
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].text.styled.text(), "▸ WARN · actual::target");
+    screen.tool_overrides.insert(id.clone(), true);
+    let groups = item_groups(&transcript, &mut screen, &item, 80, false, false)?;
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0].text.styled.text(), "▾ WARN · actual::target");
+    let reference = item.bodies.first().ok_or("diagnostic detail missing")?;
+    let demand = transcript
+        .demand_body(&id, reference, false)?
+        .ok_or("diagnostic demand missing")?;
+    let loaded = transcript.read_local_body(&demand)?;
+    transcript.accept_body(&demand, loaded)?;
+    let groups = item_groups(&transcript, &mut screen, &item, 80, false, false)?;
+    assert_eq!(groups[1].text.styled.text(), "complete diagnostic body");
+    screen.tool_overrides.clear();
+    assert_eq!(
+        item_groups(&transcript, &mut screen, &item, 80, false, false)?.len(),
+        1
+    );
+    Ok(())
+}

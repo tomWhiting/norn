@@ -50,6 +50,8 @@ use super::turn::{
 /// `clippy::too_many_arguments` budget and isolates the TUI from the
 /// norn-cli crate's concrete builder types.
 pub struct TuiInputs {
+    /// Scoped process diagnostics; absent for hosts that own their own routing.
+    pub diagnostics: Option<crate::diagnostics::DiagnosticReceiver>,
     /// Validated frontend choices and immutable save authority, loaded by the caller.
     pub frontend_preferences: crate::frontend_preferences::FrontendPreferencesLaunch,
     /// Concrete provider built by `norn-cli::print::build_provider`.
@@ -215,6 +217,7 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         source,
         inputs.status_bar,
     );
+    state.diagnostics = inputs.diagnostics;
     super::frontend_preferences::install(&mut state, inputs.frontend_preferences);
     state
         .context_status
@@ -436,6 +439,9 @@ async fn outer_loop(
             }
             result = super::frontend_preferences::wait(&mut state.preferences) => {
                 super::frontend_preferences::finish(state, result)?;
+            }
+            diagnostic = super::diagnostics::wait(&mut state.diagnostics) => {
+                super::diagnostics::finish(state, diagnostic)?;
             }
             update = super::voice::wait(&mut state.voice) => {
                 super::voice::finish(state, update)?;

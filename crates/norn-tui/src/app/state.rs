@@ -59,6 +59,7 @@ fn estimated_tokens(bytes: usize) -> u64 {
 /// constructed once at startup and threaded through the event loop by
 /// `&mut`.
 pub struct AppState {
+    pub(super) diagnostics: Option<crate::diagnostics::DiagnosticReceiver>,
     pub(super) voice: super::voice::VoiceOwner,
     pub(super) voice_preferences: crate::voice_preferences::VoicePreferences,
     pub(super) preferences: super::frontend_preferences::PreferenceOwner,
@@ -167,6 +168,7 @@ impl AppState {
     ) -> Self {
         let root_id = source.agent_id;
         Self {
+            diagnostics: None,
             voice: super::voice::VoiceOwner::default(),
             voice_preferences: crate::voice_preferences::VoicePreferences::default(),
             preferences: super::frontend_preferences::PreferenceOwner::new(

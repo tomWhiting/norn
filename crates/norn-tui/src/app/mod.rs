@@ -8,6 +8,7 @@ pub(crate) mod composer_effects;
 pub(crate) mod composer_geometry;
 pub(crate) mod composer_submission;
 mod context_status;
+mod diagnostics;
 pub mod dispatch;
 mod display_selection;
 pub mod edit;

@@ -150,3 +150,9 @@ NUI-005 records local verification and its limits. Existing compaction-test poli
 Scrolling above the loaded history requests an earlier bounded page through the existing asynchronous loader. The page preserves the reader's anchor and draft; another scroll moves into it after arrival. Forward navigation and the true beginning of history do not request older pages. Large-gesture residual motion remains separate work.
 
 Verification is recorded in docs/planning/NORN-CONTINUATION-20260913.md. This version heading is source state until an installation receipt exists; no venue battery or main landing is claimed here.
+
+## 0.1.0-preview.15 — local verification
+
+Process tracing is routed through a bounded typed channel while the TUI owns the terminal. Idle and active loops retain expandable severity/module notices; overflow is explicit. The exit guard reports unread diagnostics after terminal restoration, and print/RPC keep stderr diagnostics. Launch-only tui.diagnostics.capacity overrides the existing CLI event-channel capacity. No session event schema or storage migration changes. Strict release workspace/all-target Clippy, 574 CLI library tests, 942 TUI library tests, all 23 PTY smoke tests, formatting and changed-file AST scans passed. The actual executable restored Kitty/terminal state correctly. The final controlled HTTP-429 probe made two loopback requests and proved collapsed diagnostic rendering without raw terminal writes. Local installation and final-source venue/review evidence are recorded separately.
+
+The exact-source preview.13 venue run completed with a red test leg: 12 pty_smoke cases failed; five other declared legs passed. The stored receipt is var/releases/preview.13-compaction-failure/venue-result.json. The workflow's Completed status is receipt publication, not a pass. No landing is authorized by this result.

@@ -22,9 +22,13 @@
 /// pre-existing default the binary has always used.
 pub fn ensure_stderr_tracing() -> bool {
     use tracing_subscriber::util::SubscriberInitExt as _;
-    stderr_tracing_subscriber(std::io::stderr)
+    let installed = stderr_tracing_subscriber(crate::diagnostics::writer())
         .try_init()
-        .is_ok()
+        .is_ok();
+    if installed {
+        crate::diagnostics::installed();
+    }
+    installed
 }
 
 /// Build the stderr-routed subscriber over `writer`. Split out so the
@@ -35,6 +39,7 @@ where
 {
     tracing_subscriber::fmt()
         .with_writer(writer)
+        .with_ansi(false)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),

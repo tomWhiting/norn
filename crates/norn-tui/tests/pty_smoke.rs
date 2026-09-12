@@ -609,6 +609,7 @@ async fn run_fixture_app() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let inputs = norn_tui::TuiInputs {
+        diagnostics: None,
         frontend_preferences: norn_tui::frontend_preferences::FrontendPreferencesLaunch::run_only(),
         session_binding: Arc::new(norn::session::SessionBinding::ephemeral_root()),
         model_selection: norn::model_selection::ModelRuntime::new(
@@ -1201,8 +1202,7 @@ fn run_child_to_completion(
                 screen.assert_composer(1)?;
                 assert_eq!(screen.lines()[usize::from(size.rows) - 3], "");
                 assert_eq!(screen.cursor.0, 0);
-                writer.write_all(b"\x03")?;
-                writer.flush()?;
+                request_idle_exit(&mut writer, &output, &[(size.rows, size.cols)])?;
             }
             PtyInteraction::WaitForCommittedBasicThenExit => {
                 let screen = wait_for_frame(
@@ -1287,8 +1287,7 @@ fn run_child_to_completion(
                     !details.cursor_visible,
                     "conversation detail focus retained composer caret"
                 );
-                writer.write_all(b"\x03")?;
-                writer.flush()?;
+                request_idle_exit(&mut writer, &output, &[(size.rows, size.cols)])?;
             }
             PtyInteraction::InspectResumedThenExit => {
                 let compact = wait_for_frame(
@@ -1312,8 +1311,7 @@ fn run_child_to_completion(
                     size,
                     Duration::from_secs(5),
                 )?;
-                writer.write_all(b"\x03")?;
-                writer.flush()?;
+                request_idle_exit(&mut writer, &output, &[(size.rows, size.cols)])?;
             }
             PtyInteraction::GrowAndClear { bytes } => {
                 writer.write_all(bytes)?;
@@ -1338,8 +1336,7 @@ fn run_child_to_completion(
                     Duration::from_secs(5),
                 )?;
                 cleared.assert_composer(1)?;
-                writer.write_all(b"\x03")?;
-                writer.flush()?;
+                request_idle_exit(&mut writer, &output, &[(size.rows, size.cols)])?;
             }
             PtyInteraction::WaitForOutputThenCtrlC { marker } => {
                 wait_for_screen(
@@ -1348,8 +1345,7 @@ fn run_child_to_completion(
                     size,
                     Duration::from_secs(5),
                 )?;
-                writer.write_all(b"\x03")?;
-                writer.flush()?;
+                request_idle_exit(&mut writer, &output, &[(size.rows, size.cols)])?;
             }
             PtyInteraction::WaitForOutputWaitForOutputThenCtrlC {
                 first_marker,
@@ -1367,8 +1363,7 @@ fn run_child_to_completion(
                     size,
                     Duration::from_secs(5),
                 )?;
-                writer.write_all(b"\x03")?;
-                writer.flush()?;
+                request_idle_exit(&mut writer, &output, &[(size.rows, size.cols)])?;
             }
             PtyInteraction::WaitForOutputScreenThenCancelThenCtrlC {
                 marker,
@@ -1413,8 +1408,7 @@ fn run_child_to_completion(
                     },
                     Duration::from_secs(5),
                 )?;
-                writer.write_all(b"\x03")?;
-                writer.flush()?;
+                request_idle_exit(&mut writer, &output, &[(size.rows, size.cols)])?;
             }
             PtyInteraction::ResizeAfterOutputThenCtrlC { marker, rows, cols } => {
                 wait_for_screen(
@@ -1450,8 +1444,11 @@ fn run_child_to_completion(
                     },
                     Duration::from_secs(5),
                 )?;
-                writer.write_all(b"\x03")?;
-                writer.flush()?;
+                request_idle_exit(
+                    &mut writer,
+                    &output,
+                    &[(size.rows, size.cols), (rows, cols)],
+                )?;
             }
             PtyInteraction::WriteWaitForOutputThenCtrlC { bytes, marker } => {
                 wait_for_frame(
@@ -1470,8 +1467,7 @@ fn run_child_to_completion(
                     size,
                     Duration::from_secs(5),
                 )?;
-                writer.write_all(b"\x03")?;
-                writer.flush()?;
+                request_idle_exit(&mut writer, &output, &[(size.rows, size.cols)])?;
             }
             PtyInteraction::WaitForOutputWriteWaitForCleanScreenThenExit {
                 first_marker,
@@ -1514,9 +1510,10 @@ fn run_child_to_completion(
                     )
                 });
                 writer.write_all(b"\x15")?;
-                writer.write_all(b"\x03\x03\x03\x03")?;
                 writer.flush()?;
                 assertion?;
+                wait_for_screen(&output, "Turn completed", size, Duration::from_secs(5))?;
+                request_idle_exit(&mut writer, &output, &[(size.rows, size.cols)])?;
             }
             PtyInteraction::WriteWaitForSubmittedPromptThenCancel {
                 bytes,
@@ -1532,7 +1529,20 @@ fn run_child_to_completion(
                 )?;
                 writer.write_all(bytes)?;
                 writer.flush()?;
-                wait_for_screen(&output, submitted_prompt, size, Duration::from_secs(5))?;
+                // The provisional row may precede admission. Require the next accepted
+                // input frame to retire the exact draft, while the provider is still blocked.
+                wait_for_frame(
+                    &output,
+                    &[(size.rows, size.cols)],
+                    |screen| {
+                        screen.contains(submitted_prompt)
+                            && screen
+                                .composer_rows()
+                                .iter()
+                                .all(|row| !screen.lines()[*row].contains(submitted_prompt))
+                    },
+                    Duration::from_secs(5),
+                )?;
                 let snapshot = clone_output(&output)?;
                 assert_screen_text_above_boundary(
                     &snapshot,
@@ -1556,8 +1566,7 @@ fn run_child_to_completion(
                 writer.write_all(b"\x03")?;
                 writer.flush()?;
                 wait_for_screen(&output, "Turn cancelled", size, Duration::from_secs(5))?;
-                writer.write_all(b"\x03")?;
-                writer.flush()?;
+                request_idle_exit(&mut writer, &output, &[(size.rows, size.cols)])?;
             }
             PtyInteraction::WriteWaitForSlashOutputThenCtrlC {
                 bytes,
@@ -1576,10 +1585,7 @@ fn run_child_to_completion(
                 let snapshot = clone_output(&output)?;
                 assert_screen_text_above_boundary(&snapshot, size, marker, boundary_marker)?;
                 assert_screen_text_not_below_boundary(&snapshot, size, marker, boundary_marker)?;
-                writer.write_all(b"\x03")?;
-                writer.flush()?;
-                writer.write_all(b"\x03")?;
-                writer.flush()?;
+                request_idle_exit(&mut writer, &output, &[(size.rows, size.cols)])?;
             }
         }
 
@@ -1851,6 +1857,26 @@ fn thread_panic_error(payload: Box<dyn Any + Send + 'static>) -> io::Error {
         },
     };
     io::Error::other(format!("PTY reader thread panicked: {message}"))
+}
+
+// Keep intentional turn cancellation above separate from the two-press idle exit.
+fn request_idle_exit(
+    writer: &mut impl std::io::Write,
+    output: &Arc<OutputBuffer>,
+    sizes: &[(u16, u16)],
+) -> io::Result<()> {
+    writer.write_all(b"\x03")?;
+    writer.flush()?;
+    // The deadline suffix may be clipped by a narrow pane's Latest control.
+    // Observe the actual confirmation before delivering the distinct second press.
+    wait_for_frame(
+        output,
+        sizes,
+        |screen| screen.contains("Press Ctrl+C again"),
+        Duration::from_secs(5),
+    )?;
+    writer.write_all(b"\x03")?;
+    writer.flush()
 }
 
 fn wait_for_child(

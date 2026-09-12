@@ -192,3 +192,22 @@ fn shortcut_preferences_project_all_effective_bindings_and_refuse_invalid_object
     }
     Ok(())
 }
+
+#[test]
+fn diagnostic_capacity_is_launch_only_validated_and_preserved_as_unowned() -> TestResult {
+    let mut launch = FrontendPreferencesLaunch::run_only();
+    assert_eq!(launch.diagnostic_capacity(32)?.get(), 32);
+    assert!(launch.diagnostic_capacity(0).is_err());
+    launch.initial = FrontendPreferences::decode(Some(&json!({"diagnostics":{"capacity":7}})))?;
+    assert_eq!(launch.diagnostic_capacity(32)?.get(), 7);
+    assert!(!launch.initial.projection()?.contains_key("diagnostics"));
+    for value in [
+        json!({"capacity":0}),
+        json!({"capacity":-1}),
+        json!({"capacity":"7"}),
+        json!({"unknown":7}),
+    ] {
+        assert!(FrontendPreferences::decode(Some(&json!({"diagnostics":value}))).is_err());
+    }
+    Ok(())
+}

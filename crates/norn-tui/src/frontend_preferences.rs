@@ -54,6 +54,7 @@ impl ComposerSendKey {
 /// Existing frontend choices; no transcript identity, draft or runtime authority is stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrontendPreferences {
+    pub(crate) diagnostic_capacity: Option<NonZeroUsize>,
     pub(crate) changes_open: bool,
     pub(crate) split: SplitPreference,
     pub(crate) upper: UpperPane,
@@ -68,6 +69,7 @@ pub struct FrontendPreferences {
 impl Default for FrontendPreferences {
     fn default() -> Self {
         Self {
+            diagnostic_capacity: None,
             changes_open: false,
             split: SplitPreference::default(),
             upper: UpperPane::Conversation,
@@ -103,6 +105,20 @@ pub struct FrontendPreferencesLaunch {
 }
 
 impl FrontendPreferencesLaunch {
+    /// Pending process diagnostics; absence inherits the host's existing event-channel capacity.
+    pub fn diagnostic_capacity(
+        &self,
+        host_capacity: usize,
+    ) -> Result<NonZeroUsize, crate::TuiError> {
+        self.initial
+            .diagnostic_capacity
+            .or_else(|| NonZeroUsize::new(host_capacity))
+            .ok_or(crate::TuiError::InvalidViewDemand {
+                name: "diagnostic events",
+                value: host_capacity,
+            })
+    }
+
     /// Isolated embedders receive current defaults with no filesystem save authority.
     #[must_use]
     pub fn run_only() -> Self {
@@ -217,6 +233,13 @@ impl FrontendPreferences {
             return Ok(result);
         };
         let root = object(value, "tui")?;
+        if let Some(value) = root.get("diagnostics") {
+            let diagnostics = object(value, "tui.diagnostics")?;
+            known(diagnostics, "tui.diagnostics", &["capacity"])?;
+            if let Some(value) = diagnostics.get("capacity") {
+                result.diagnostic_capacity = Some(positive(value, "tui.diagnostics.capacity")?);
+            }
+        }
         result.voice = crate::voice_preferences::VoicePreferences::decode(root.get("voice"))?;
         if let Some(value) = root.get("view") {
             let view = object(value, "tui.view")?;

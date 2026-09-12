@@ -290,7 +290,10 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         .and_then(|context| context.get_extension::<norn::tools::agent::AgentToolInfra>())
         .map(|infra| Arc::clone(&infra.session))
         .ok_or_else(|| format!("TUI root {} has no assembled session binding", parts.id))?;
+    let capacity = frontend_preferences.diagnostic_capacity(AGENT_EVENT_CHANNEL_CAPACITY)?;
+    let (diagnostic_guard, diagnostics) = crate::diagnostics::begin(capacity)?;
     let tui_inputs = TuiInputs {
+        diagnostics: Some(diagnostics),
         frontend_preferences,
         provider: Arc::clone(&parts.provider),
         executor,
@@ -328,12 +331,20 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     startup_trace.mark("handoff_to_tui_app");
 
     let app_result = Box::pin(norn_tui::run_app(tui_inputs)).await;
+    let diagnostic_result = diagnostic_guard.finish();
 
     // NH-006 R8 / C61: fire on_session_end after the TUI returns, including
     // terminal/runtime errors. The hook is observational; preserve the
     // original TUI result after it runs.
     if let Some(hooks) = session_hooks.as_ref() {
         hooks.run_session_end(&session_id).await;
+    }
+    if let Err(error) = diagnostic_result {
+        if app_result.is_err() {
+            eprintln!("Norn diagnostic drain also failed: {error}");
+        } else {
+            return Err(error.into());
+        }
     }
     app_result?;
 

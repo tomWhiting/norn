@@ -171,6 +171,7 @@ impl PreferenceOwner {
 
 fn capture(state: &AppState) -> FrontendPreferences {
     FrontendPreferences {
+        diagnostic_capacity: state.preferences.current.diagnostic_capacity,
         changes_open: state.screen.changes_open,
         split: state.screen.split,
         upper: state.screen.upper,

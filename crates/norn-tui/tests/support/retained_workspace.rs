@@ -130,6 +130,7 @@ async fn child_app() -> TestResult {
         serve_control(control, &control_store, &control_provider, &gate)
     });
     let result = Box::pin(norn_tui::run_app(norn_tui::TuiInputs {
+        diagnostics: None,
         frontend_preferences,
         session_binding: Arc::new(norn::session::SessionBinding::ephemeral_root()),
         model_selection: norn::model_selection::ModelRuntime::new(

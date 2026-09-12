@@ -7,6 +7,7 @@ mod error;
 
 pub mod agents;
 pub mod app;
+pub mod diagnostics;
 pub mod events;
 pub mod frontend_preferences;
 pub mod input;

@@ -31,6 +31,7 @@ pub(super) fn item_groups(
     let expanded = screen.tool_overrides.get(&item.id).copied().unwrap_or(
         crate::app::view_actions::default_expanded(&item.kind, transcript.config.expanded_tools),
     );
+    let diagnostic = screen.diagnostic_items.contains(&item.id);
     let bound_notification = transcript.projection.is_bound_notification(&item.id);
     let label = match &item.kind {
         ViewItemKind::Tool(tool) => crate::app::tool_calls::label(tool, expanded),
@@ -41,6 +42,11 @@ pub(super) fn item_groups(
             item.label.as_str()
         ),
         ViewItemKind::Context => format!(
+            "{} {}",
+            if expanded { "▾" } else { "▸" },
+            item.label.as_str()
+        ),
+        _ if diagnostic => format!(
             "{} {}",
             if expanded { "▾" } else { "▸" },
             item.label.as_str()
@@ -58,7 +64,9 @@ pub(super) fn item_groups(
         header.text = Arc::new(header_text(&label, &item.kind)?);
         groups.push(header);
     }
-    if ((matches!(&item.kind, ViewItemKind::Tool(_) | ViewItemKind::Context) || bound_notification)
+    if ((matches!(&item.kind, ViewItemKind::Tool(_) | ViewItemKind::Context)
+        || bound_notification
+        || diagnostic)
         && !expanded)
         || (transcript.completion_compact(&item.id)
             && !screen
