@@ -132,3 +132,11 @@ NUI-005 records local verification and its limits. Existing compaction-test poli
 ## 0.1.0-preview.11 — keyboard restoration
 
 13 September 2026, Melbourne. Enter the alternate screen before pushing Kitty keyboard flags, and pop them before leaving that screen. Previously the push changed the primary screen's stack and the pop changed the alternate screen's stack, leaving extended keys enabled for the shell after exit. Guard drop and panic restoration now share a single cleanup owner, and capability probing owns no screen or keyboard cleanup. This addresses escaped key fragments after leaving Norn; it does not claim a Herdr test or fix resumed-history navigation.
+
+## 0.1.0-preview.12 — compaction input and earlier history
+
+13 September 2026, Melbourne. Automatic compaction summarizes the visible portion of its planned cut, retaining current summaries and valid tool pairs while excluding already superseded or suppressed history. This prevents sending the original history plus old summaries again. Persisted event files and the current fallback policy are unchanged; omitted HTTP-400 response bodies still prevent an exact diagnosis of those earlier failures.
+
+Scrolling above the loaded history requests an earlier bounded page through the existing asynchronous loader. The page preserves the reader's anchor and draft; another scroll moves into it after arrival. Forward navigation and the true beginning of history do not request older pages. Large-gesture residual motion remains separate work.
+
+Verification is recorded in docs/planning/NORN-CONTINUATION-20260913.md. This version heading is source state until an installation receipt exists; no venue battery or main landing is claimed here.

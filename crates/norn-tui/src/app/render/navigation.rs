@@ -292,6 +292,9 @@ fn advance(state: &mut AppState, motion: &Motion) -> Result<(), TuiError> {
             break;
         }
     }
+    if motion.backwards && remaining > 0 && state.transcript.has_older {
+        state.screen.request_older = true;
+    }
     if let Some(target) = target {
         state
             .screen

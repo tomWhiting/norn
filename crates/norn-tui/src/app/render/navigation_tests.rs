@@ -283,3 +283,82 @@ fn checked_batch_count_refuses_overflow_without_replacing_prior_motion() -> Test
     assert_eq!(first_text(&state)?, "line 00");
     Ok(())
 }
+
+#[tokio::test]
+async fn scrolling_before_resumed_tail_loads_one_older_page_without_resetting_view() -> TestResult {
+    use norn::session::events::{EventBase, SessionEvent};
+
+    let store = Arc::new(EventStore::new());
+    for number in 0..27 {
+        store.append(SessionEvent::UserMessage {
+            base: EventBase::new(None),
+            content: format!("history message {number}"),
+        })?;
+    }
+    let source = store.bind_view_source(
+        &SessionBinding::ephemeral_root(),
+        uuid::Uuid::new_v4(),
+        None,
+    )?;
+    let mut state = AppState::new(
+        crate::terminal::caps::TerminalCaps::baseline(),
+        crate::input::history::InputHistory::in_memory(),
+        norn::agent::registry::AgentRegistry::shared(),
+        source,
+        crate::render::fixed_panel::StatusBar::default(),
+    );
+    state.input_editor.paste_cells("draft to keep")?;
+    let initial = store.history_page(&state.transcript.initial_history()?)?;
+    state.transcript.accept_history(&initial)?;
+    assert_eq!(state.transcript.projection.items().len(), 20);
+    assert!(state.transcript.has_older);
+    super::super::prepare(&mut state, 80, 14)?;
+    queue(&mut state, true, 10_000)?;
+    super::super::prepare(&mut state, 80, 14)?;
+    assert!(state.screen.request_older);
+    assert!(
+        state.transcript.history_tasks.is_empty(),
+        "paint must not start I/O"
+    );
+    let anchor = state.screen.viewport.anchor().cloned();
+    let draft = state.input_editor.text();
+    super::super::load_visible(&mut state, &store)?;
+    assert_eq!(state.transcript.history_tasks.len(), 1);
+    super::super::load_visible(&mut state, &store)?;
+    assert_eq!(state.transcript.history_tasks.len(), 1);
+    let result = state
+        .transcript
+        .history_tasks
+        .join_next()
+        .await
+        .ok_or("history task absent")?;
+    crate::app::view_actions::reading::finish_history(&mut state, result)?;
+    assert_eq!(
+        state
+            .transcript
+            .projection
+            .items()
+            .filter(|item| matches!(item.kind, ViewItemKind::Input))
+            .count(),
+        27
+    );
+    assert!(!state.transcript.has_older);
+    assert_eq!(state.screen.viewport.anchor(), anchor.as_ref());
+    assert!(!state.screen.viewport.follows_tail());
+    assert_eq!(state.input_editor.text(), draft);
+    Ok(())
+}
+
+#[test]
+fn forward_scroll_and_true_history_start_do_not_request_older_pages() -> TestResult {
+    let mut state = fixture(&numbered()?, 80, 14)?;
+    state.transcript.has_older = true;
+    queue(&mut state, false, 10_000)?;
+    super::super::prepare(&mut state, 80, 14)?;
+    assert!(!state.screen.request_older);
+    state.transcript.has_older = false;
+    queue(&mut state, true, 10_000)?;
+    super::super::prepare(&mut state, 80, 14)?;
+    assert!(!state.screen.request_older);
+    Ok(())
+}

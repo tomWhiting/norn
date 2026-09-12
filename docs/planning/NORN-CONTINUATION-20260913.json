@@ -17,7 +17,7 @@
     {
       "id": "D02",
       "delivery": "Resumed conversation history and earlier-page loading",
-      "status": "queued_for_live_audit",
+      "status": "in_progress",
       "acceptance": "Resume a long compacted session, scroll into prior turns, expand old tool results, then return to Latest without disturbing the draft."
     },
     {
@@ -142,5 +142,40 @@
     }
   ],
   "verification": "Per-row focused tests, changed-file AST scans and strict Clippy; full source-bound venue battery required for landing. Historical status is not live proof.",
-  "resource_policy": "One Cargo lane, one repository-local target. Check disk before/after builds. Delete only identified obsolete artifacts with no owned build active. Preserve sessions, source, receipts and rollback binaries."
+  "resource_policy": "One Cargo lane, one repository-local target. Check disk before/after builds. Delete only identified obsolete artifacts with no owned build active. Preserve sessions, source, receipts and rollback binaries.",
+  "slices": [
+    {
+      "id": "D01.1",
+      "status": "locally_verified_awaiting_install",
+      "tests": "4709 core library tests passed, zero ignored; all three new regressions failed against raw-prefix behavior before the fix",
+      "remaining": "release binary build, PTY probe and installation; broader D01/D02 work remains"
+    },
+    {
+      "id": "D02.1",
+      "status": "locally_verified_awaiting_install",
+      "scope": "Demand one earlier page at the loaded boundary; preserve anchor/draft; residual gesture replay still pending",
+      "remaining": "release binary build, PTY probe and installation; broader D01/D02 work remains"
+    }
+  ],
+  "policy_debt": [
+    {
+      "file": "crates/norn/src/loop/compaction.rs",
+      "finding": "Two pre-existing test allow attributes remain; none added. Targeted new-module/navigation scans are clean; no whole-file AST-clean claim."
+    }
+  ],
+  "verification_completed": {
+    "core_library": {
+      "passed": 4709,
+      "failed": 0,
+      "ignored": 0
+    },
+    "tui_library_cli_feature_set": {
+      "passed": 939,
+      "failed": 0,
+      "ignored": 0
+    },
+    "clippy": "cargo clippy --locked --release --workspace --all-targets --features norn/live-api-smoke -j 6 -- -D warnings passed",
+    "format": "cargo fmt --all -- --check passed",
+    "ast": "new helper/tests and navigation files clean for unwrap/expect and bypass/discard patterns; existing compaction allowances explicitly retained as debt"
+  }
 }
