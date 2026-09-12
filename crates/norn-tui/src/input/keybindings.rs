@@ -79,7 +79,7 @@ pub enum InputAction {
     DeleteToLineEnd,
     /// Clear the input buffer.
     ClearInput,
-    /// Signal TUI exit (the editor decides empty-vs-clear on Ctrl+C).
+    /// Request idle TUI exit confirmation; active turns handle cancellation separately.
     Exit,
     /// Toggle the global tool-call verbosity (Ctrl+O).
     ToggleVerbosity,
@@ -264,6 +264,13 @@ mod tests {
             ),
             Some(InputAction::Submit)
         );
+    }
+
+    #[test]
+    fn ctrl_c_repeat_does_not_confirm_exit() {
+        let mut event = KeyEvent::new(KeyCode::Char('c'), Modifiers::CONTROL);
+        event.kind = KeyEventKind::Repeat;
+        assert_eq!(map_key_event(event, ComposerSendKey::Enter, false), None);
     }
 
     #[test]

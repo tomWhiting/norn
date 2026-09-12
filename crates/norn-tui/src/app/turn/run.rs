@@ -263,6 +263,7 @@ async fn run_turn(
     )?;
     let observation = state.transcript.observation();
     crate::app::composer_submission::bind(state, local_input.as_ref(), observation.as_ref())?;
+    state.screen.dirty |= state.exit_confirmation.clear();
     state.turn_start = Some(Instant::now());
     state.in_flight_input.set_running(true);
 

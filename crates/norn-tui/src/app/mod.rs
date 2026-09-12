@@ -12,6 +12,7 @@ pub mod dispatch;
 mod display_selection;
 pub mod edit;
 pub mod event_loop;
+mod exit_confirmation;
 mod export;
 mod focus;
 mod frontend_preferences;

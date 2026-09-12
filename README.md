@@ -2,7 +2,7 @@
 
 Norn is an AI agent runtime for interactive terminal work, command-line automation, and embedding in other applications. It can read and edit files, run commands, search code, use MCP tools, coordinate agents, and resume saved sessions. The Rust library, terminal UI, print mode, and driven JSON-RPC mode share the same `AgentBuilder` assembly path.
 
-**Current source version: `0.1.0-preview.9`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [candidate verification record](docs/release-notes/PREVIEW-9.md) for the tested scope and open findings.
+**Current source version: `0.1.0-preview.10`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [candidate verification record](docs/release-notes/PREVIEW-9.md) for the tested scope and open findings.
 
 ## Install and start
 
@@ -105,6 +105,10 @@ norn --mcp-config ./mcp-servers.json \
 ```
 
 `--mcp-config` loads server definitions, not a general settings file. `-c channels=JSON` supplies only the channel object. Channel precedence is **user < project < local < `-c channels=JSON` < dedicated flags**. Fields override lower values and source entries merge by name; an empty source map does not clear inherited entries. Restart to change channel policy or quotas: MCP reload retains the policy captured at startup.
+
+### Leaving the terminal UI
+
+While idle, press Ctrl+C twice within three seconds to exit. The first press clears the draft and shows the confirmation in the existing footer. Other keyboard input or pasting cancels confirmation; holding Ctrl+C does not confirm it on terminals that report key repeats. During a turn, Ctrl+C cancels that turn without exiting. `/exit` remains an explicit exit command.
 
 ### Policies, flags, and limits
 

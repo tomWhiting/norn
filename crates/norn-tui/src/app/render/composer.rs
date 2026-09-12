@@ -91,11 +91,20 @@ pub(super) fn paint_chrome(
     let send_shortcut = state
         .view_shortcuts
         .hint(crate::input::view_shortcuts::ViewAction::SendKeyCycle);
-    let hints = format!(
-        "{button}  {send_shortcut} send key  {newline} newline  {}  ^O verbose  ^E thinking  ^T {}",
-        status.key_hints,
-        if mode == "steer" { "queue" } else { "steer" }
-    );
+    let exit_hint = if state.in_flight_input.is_running() {
+        "^C cancel turn"
+    } else {
+        state.exit_confirmation.hint()
+    };
+    let hints = if state.exit_confirmation.is_armed() {
+        // Confirmation comes first so narrow panes cannot clip the exit instruction.
+        format!("{exit_hint}  {button}  {newline} newline")
+    } else {
+        format!(
+            "{button}  {send_shortcut} send key  {newline} newline  {exit_hint}  ^O verbose  ^E thinking  ^T {}",
+            if mode == "steer" { "queue" } else { "steer" }
+        )
+    };
     let latest = crate::app::view_actions::latest::LABEL;
     let latest_width =
         u16::try_from(latest.width()).map_err(|source| TuiError::FrameCoordinate {

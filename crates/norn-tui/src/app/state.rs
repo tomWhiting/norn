@@ -103,6 +103,8 @@ pub struct AppState {
     /// drop the indicator back to [`StreamingIndicator::Idle`] after
     /// [`STREAMING_COMPLETE_HOLD`].
     pub complete_at: Option<Instant>,
+    /// Idle exit confirmation, owned by this frontend rather than the agent runtime.
+    pub(super) exit_confirmation: super::exit_confirmation::ExitConfirmation,
     /// Live autocomplete popup, populated by the event loop's
     /// `refresh_autocomplete` helper. `None` when no trigger is active.
     /// Owned by `AppState` so the popup survives across event-loop
@@ -185,6 +187,7 @@ impl AppState {
             terminal_caps: caps,
             turn_start: None,
             complete_at: None,
+            exit_confirmation: super::exit_confirmation::ExitConfirmation::default(),
             autocomplete: None,
             est_output_bytes: 0,
             current_tool_use: None,
@@ -288,6 +291,7 @@ impl AppState {
     /// complete, transitions back to idle once [`STREAMING_COMPLETE_HOLD`]
     /// has passed. While idle, this is a no-op.
     pub fn tick(&mut self, now: Instant) {
+        self.screen.dirty |= self.exit_confirmation.expire(now);
         match self.streaming_indicator {
             StreamingIndicator::Generating { .. } => {
                 if let Some(start) = self.turn_start {

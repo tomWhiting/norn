@@ -1,5 +1,11 @@
 # Unreleased — local preview candidates and recorded checkpoints
 
+## 0.1.0-preview.10 — idle exit confirmation (local test candidate)
+
+13 September 2026, Melbourne. Based on preview.9 integration commit 7ec7ee2, preserving native voice, persistent driven RPC and terminal-colour fixes. The first idle Ctrl+C clears the draft and displays a confirmation in the existing footer; a second distinct press within three seconds exits. Other keyboard input, paste, expiry or a new turn disarms confirmation. Ctrl+C during a turn remains turn-local cancellation, and `/exit` remains explicit exit. Terminals reporting repeat events cannot confirm exit through key-repeat.
+
+Build/install was requested by Tom on 12 September at 23:49 Melbourne for a Herdr test drive. The first release build lost its target directory during concurrent user cleanup; the retry uses repository-local `var/build-preview10`, with logs and the eventual installation receipt in `var/releases/preview.10-ctrl-c`. No fix for the reported post-exit mouse leak is claimed. Source and verification details: docs/planning/CTRL-C-EXIT-20260912.md. This candidate does not assert a full-suite, Fable or exact-commit venue battery pass.
+
 ## 0.1.0-preview.9 — native read-aloud and driven sessions candidate
 
 9 September 2026, Melbourne. The candidate adds opt-in Locutus read-aloud,

@@ -164,7 +164,14 @@ impl Environment {
         .map_err(|payload| panic_error(payload.as_ref(), "restart assertions"))
         .and_then(|result| result.map_err(|error| io::Error::other(error.to_string())));
         let exit = if result.is_ok() {
-            app.send(b"\x03").and_then(|()| app.finish(false))
+            app.send(b"\x03")
+                .and_then(|()| {
+                    app.frame(0, |screen| {
+                        screen.contains("Press Ctrl+C again within 3s to exit")
+                    })
+                })
+                .and_then(|_| app.send(b"\x03"))
+                .and_then(|()| app.finish(false))
         } else {
             app.finish(true)
         };

@@ -189,7 +189,7 @@ pub(super) fn turn_cancel_token(
 /// Drive the TUI to completion.
 ///
 /// Sets up the terminal, constructs [`AppState`], and enters the main
-/// `tokio::select!` loop. Returns on Ctrl+C with an empty input buffer
+/// `tokio::select!` loop. Returns on confirmed idle Ctrl+C or `/exit`
 /// or on a fatal terminal I/O error.
 ///
 /// # Errors
@@ -522,6 +522,12 @@ async fn dispatch_input(
     agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
     child_results: &mut ChildResultState,
 ) -> Result<InputOutcome, TuiError> {
+    if matches!(&event, Event::Paste(_))
+        || matches!(&event, Event::Key(key) if key.kind != KeyEventKind::Release
+            && !(key.code == KeyCode::Char('c') && key.modifiers.contains(Modifiers::CONTROL)))
+    {
+        state.screen.dirty |= state.exit_confirmation.clear();
+    }
     match event {
         Event::Key(key) => {
             let cols = guard.terminal_columns();
@@ -615,15 +621,15 @@ async fn handle_action(
     let mut outcome = InputOutcome::Continue;
     match action {
         InputAction::Exit => {
-            if state.input_editor.is_empty() {
-                if mcp_exit_is_blocked(runtime.mcp_command.as_ref()) {
-                    render_pending_mcp_exit(state)?;
-                } else {
-                    return Ok(InputOutcome::Exit);
-                }
+            if mcp_exit_is_blocked(runtime.mcp_command.as_ref()) {
+                state.screen.dirty |= state.exit_confirmation.clear();
+                render_pending_mcp_exit(state)?;
+            } else if state.exit_confirmation.press(Instant::now()) {
+                return Ok(InputOutcome::Exit);
             }
             state.input_editor.clear()?;
             dismiss_autocomplete(state);
+            state.screen.dirty = true;
         }
         InputAction::Submit => {
             dismiss_autocomplete(state);
