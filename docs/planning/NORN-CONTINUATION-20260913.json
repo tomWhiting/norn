@@ -125,7 +125,7 @@
     {
       "id": "D20",
       "delivery": "Release, installer, remaining review findings and cleanup",
-      "status": "queued_for_live_audit",
+      "status": "in_progress_local_previews_installed_venue_not_run",
       "acceptance": "Install a checked main-branch artifact, identify its version, and roll back safely; no completed work is stranded on an install-invisible branch."
     }
   ],
@@ -146,15 +146,15 @@
   "slices": [
     {
       "id": "D01.1",
-      "status": "locally_verified_awaiting_install",
+      "status": "installed_local_preview_12",
       "tests": "4709 core library tests passed, zero ignored; all three new regressions failed against raw-prefix behavior before the fix",
-      "remaining": "release binary build, PTY probe and installation; broader D01/D02 work remains"
+      "remaining": "Herdr test drive and source-bound venue landing; broader D01/D02 work remains"
     },
     {
       "id": "D02.1",
-      "status": "locally_verified_awaiting_install",
+      "status": "installed_local_preview_12",
       "scope": "Demand one earlier page at the loaded boundary; preserve anchor/draft; residual gesture replay still pending",
-      "remaining": "release binary build, PTY probe and installation; broader D01/D02 work remains"
+      "remaining": "Herdr test drive and source-bound venue landing; broader D01/D02 work remains"
     }
   ],
   "policy_debt": [
@@ -177,5 +177,24 @@
     "clippy": "cargo clippy --locked --release --workspace --all-targets --features norn/live-api-smoke -j 6 -- -D warnings passed",
     "format": "cargo fmt --all -- --check passed",
     "ast": "new helper/tests and navigation files clean for unwrap/expect and bypass/discard patterns; existing compaction allowances explicitly retained as debt"
+  },
+  "installed_checkpoint": {
+    "version": "norn 0.1.0-preview.12",
+    "source_commit": "0d87f8a4b99af4982dc09868bccb16b8d4680847",
+    "installed_at_melbourne": "2026-09-13T03:27:17.906557+10:00",
+    "sha256": "ded53f31ea3829cfe530d8a70d4efb6cd19b85ae48e62a6cb5dad3cea20fbc0d",
+    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.12-continuity/previous-norn-preview.11"
+  },
+  "next_slice": "D01.2: compaction failure policy, bounded semantic summary projection and terminal-safe diagnostics; scope each change before editing. S01 compatibility/publication audit continues.",
+  "disk_checkpoint": {
+    "available_gib": 25,
+    "build_cache_gib": 3.5,
+    "release_receipts_and_rollbacks_mib": 235,
+    "obsolete_test_executable_bytes_removed_this_goal": 191361440
+  },
+  "venue_discovery": {
+    "workflow_type": "repo_battery_205",
+    "route_active_hash": "56cd8d0a1d3ba94811c605432b0e3730a4f87d1ab9cfe732c62cda46f0f5b0e9",
+    "status": "read-only availability confirmed; not dispatched; input/venue resource contract still to inspect"
   }
 }

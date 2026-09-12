@@ -58,3 +58,13 @@ AST scans on the new modules and changed navigation files found no unwrap/expect
 S01 observation: one live session snapshot had 11,455,311 serialized bytes in canonical assistant response items, plus 7,335,349 bytes in populated compatibility reasoning fields and 2,739,352 bytes in compatibility tool-call fields. Field totals alone do not establish which bytes can safely be removed. Older readers, replay projections and publication commitments must be checked before changing serialization. Compaction planning and commit validation also currently clone the raw event store; that allocation audit is separate from D01.1's reduced summary input.
 
 D02.1 verification: all 939 TUI library tests passed with the installed CLI's libyggd-ast feature set, including the actual navigation-to-history-loader fixture. Strict release-profile workspace/all-target Clippy with live-api-smoke enabled passed, as did format and diff checks. Live provider smoke was compiled/linted only. Release build/install remain pending at this checkpoint. Obsolete preview.11 core/TUI test executables were removed only after checks finished; current executables, dependency cache, logs and rollback binaries remain.
+
+## Installed checkpoint — 13 September 2026, 03:27 Melbourne
+
+Preview.12 installed from `0d87f8a4b99af4982dc09868bccb16b8d4680847`; SHA-256 `ded53f31ea3829cfe530d8a70d4efb6cd19b85ae48e62a6cb5dad3cea20fbc0d`. `var/releases/preview.12-continuity/installation.json` records the atomic replacement and preview.11 rollback. Release build and actual-executable Kitty keyboard/restoration probe passed after the 4,709 core / 939 TUI tests, strict release workspace/all-target Clippy and formatting checks. Mac announcement completed. No live-provider or physical Herdr pass is claimed.
+
+D01.1 and D02.1 are installed local slices; the overall D01 and D02 deliveries remain in progress. Next: compaction failure policy and semantic projection/diagnostic handling, with a separate file wall; S01 storage compatibility/publication audit continues. Tool lifecycle styling, channel distinction and file-pane highlighting/version browsing remain on D04–D06/D17, not included here.
+
+Disk checkpoint: 25 GiB available; one 3.5 GiB repository-local build cache and 235 MiB release receipts/rollbacks. Removed 191,361,440 bytes of identified obsolete test executables during this goal. Current artifacts and all rollback binaries remain.
+
+The installed Aion CLI confirmed an active `repo_battery_205` route (`56cd8d0a1d3ba94811c605432b0e3730a4f87d1ab9cfe732c62cda46f0f5b0e9`). This was a read-only availability check; no battery has been dispatched and main has not advanced. Inspect its current input and venue resource contract before dispatching.
