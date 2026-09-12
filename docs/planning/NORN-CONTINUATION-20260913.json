@@ -1,0 +1,146 @@
+{
+  "id": "NORN-CONTINUATION-20260913",
+  "authorized_by": "Tom, 13 September 2026 Melbourne: complete the remaining list with AST-grep, strict Clippy, regular disk checks and build cleanup",
+  "branch": "codex/norn-integration-candidate",
+  "starting_commit": "cc3fd60",
+  "starting_installed_version": "0.1.0-preview.11",
+  "estate_index": "/Users/tom/Developer/ablative/docs/tracking/INDEX-20260904.md",
+  "source_plan": "NEXT-WORK-20260908.md",
+  "preserved_programme": "CARRY-FORWARD-20260908.json",
+  "rows": [
+    {
+      "id": "D01",
+      "delivery": "Compaction failure diagnosis, continuity policy, and terminal-safe diagnostics",
+      "status": "in_progress",
+      "acceptance": "Trigger a controlled summary failure: see the actual cause and recovery choices, retain original history, cancel safely, and keep the screen intact."
+    },
+    {
+      "id": "D02",
+      "delivery": "Resumed conversation history and earlier-page loading",
+      "status": "queued_for_live_audit",
+      "acceptance": "Resume a long compacted session, scroll into prior turns, expand old tool results, then return to Latest without disturbing the draft."
+    },
+    {
+      "id": "D03",
+      "delivery": "Correct resume selection, action-log times, and child-history access",
+      "status": "queued_for_live_audit",
+      "acceptance": "Duplicate names cannot select the wrong session; old tool rows retain their real times; descendant work is inspectable after resume."
+    },
+    {
+      "id": "D04",
+      "delivery": "Tool lifecycle presentation and readable input/output",
+      "status": "queued_for_live_audit",
+      "acceptance": "A running Bash call shows its command and a short preview, collapses when complete, and opens into readable inputs/results with optional raw JSON."
+    },
+    {
+      "id": "D05",
+      "delivery": "Typed channel history and faint inbound-content styling",
+      "status": "queued_for_live_audit",
+      "acceptance": "A channel message has the same attributed appearance live and after resume, and can be found by source without parsing XML."
+    },
+    {
+      "id": "D06",
+      "delivery": "Diff highlighting, follow-latest, and remaining reading/composer polish",
+      "status": "queued_for_live_audit",
+      "acceptance": "Read a syntax-highlighted diff; scrolling or selecting pins it; Latest resumes following; Markdown drafting remains responsive."
+    },
+    {
+      "id": "D07",
+      "delivery": "In-session action-log search and compaction retrieval links",
+      "status": "queued_for_live_audit",
+      "acceptance": "Find earlier work by text, open a child's transcript, and follow a compaction reference to the exact recorded call."
+    },
+    {
+      "id": "D08",
+      "delivery": "First external voice adapter: read-aloud",
+      "status": "queued_for_live_audit",
+      "acceptance": "Play, stop and replay a completed answer; disabled voice starts no service and consumes no background audio resources."
+    },
+    {
+      "id": "D09",
+      "delivery": "Dictation into the Iridium draft",
+      "status": "queued_for_live_audit",
+      "acceptance": "Push to talk, edit the transcription, then send; switching conversations cannot insert or send speech to the wrong recipient."
+    },
+    {
+      "id": "D10",
+      "delivery": "Seat identity and lifetime-memory design decisions",
+      "status": "queued_for_live_audit",
+      "acceptance": "Inspect a proposed session identity and query scope; legacy associations are explicitly labelled, never silently merged."
+    },
+    {
+      "id": "D11",
+      "delivery": "Derived lifetime timeline, temporal queries, and retention protections",
+      "status": "queued_for_live_audit",
+      "acceptance": "Search across permitted sessions, inspect coverage, open an event at its recorded time, and see named gaps rather than false empty results."
+    },
+    {
+      "id": "D12",
+      "delivery": "Authored memories and addenda anchored to events and time",
+      "status": "queued_for_live_audit",
+      "acceptance": "Write a note, add a later correction, recall both in another permitted session, and open the events around the note."
+    },
+    {
+      "id": "D13",
+      "delivery": "Agent directory, selected conversations, direct @ addressing and CC",
+      "status": "queued_for_live_audit",
+      "acceptance": "View an actual child conversation and send to it; a message to main can explicitly CC another agent with individual delivery results."
+    },
+    {
+      "id": "D14",
+      "delivery": "Visible queued messages",
+      "status": "queued_for_live_audit",
+      "acceptance": "Queue three messages; one fires after each normal completed turn. Pause, edit, reorder or cancel the remainder."
+    },
+    {
+      "id": "D15",
+      "delivery": "Independent live session host and attach/detach",
+      "status": "queued_for_live_audit",
+      "acceptance": "Attach to the original live agent mid-tool, detach, and reattach without restarting work or replaying effects."
+    },
+    {
+      "id": "D16",
+      "delivery": "Linked goals/plans/tasks and additive feature activations",
+      "status": "queued_for_live_audit",
+      "acceptance": "Navigate goal/plan/task links; combine /plan, /goal and /coordinate; see acknowledged progress and explicit completion evidence."
+    },
+    {
+      "id": "D17",
+      "delivery": "Editable workspace, session controls, request-time output contracts",
+      "status": "queued_for_live_audit",
+      "acceptance": "Edit a changed file without overwriting agent work; inspect per-request structured output and effective settings beside the conversation."
+    },
+    {
+      "id": "D18",
+      "delivery": "Cross-harness conversation import and continuation",
+      "status": "queued_for_live_audit",
+      "acceptance": "Import a Codex conversation without losing its source records; continue under a new Norn session without re-executing old tools."
+    },
+    {
+      "id": "D19",
+      "delivery": "Liminal extension interfaces and Manifold reconciliation",
+      "status": "queued_for_live_audit",
+      "acceptance": "Replace one permitted adapter by generation without interrupting unrelated sessions; independently prove later module/tool loading."
+    },
+    {
+      "id": "D20",
+      "delivery": "Release, installer, remaining review findings and cleanup",
+      "status": "queued_for_live_audit",
+      "acceptance": "Install a checked main-branch artifact, identify its version, and roll back safely; no completed work is stranded on an install-invisible branch."
+    }
+  ],
+  "additional_scope": [
+    {
+      "id": "S01",
+      "delivery": "Measure session storage duplication; reduce redundant new writes only with replay/backward compatibility tests; no deletion or rewriting of live session files",
+      "status": "in_progress_with_D01"
+    },
+    {
+      "id": "U01",
+      "delivery": "One tab per changed file; browse recorded edit versions; syntax plus addition/deletion highlighting; follow latest only while not inspecting older versions",
+      "status": "queued_under_D06_D17"
+    }
+  ],
+  "verification": "Per-row focused tests, changed-file AST scans and strict Clippy; full source-bound venue battery required for landing. Historical status is not live proof.",
+  "resource_policy": "One Cargo lane, one repository-local target. Check disk before/after builds. Delete only identified obsolete artifacts with no owned build active. Preserve sessions, source, receipts and rollback binaries."
+}
