@@ -320,35 +320,37 @@ impl ContextEdits {
         store: &EventStore,
         keep_turns: usize,
     ) -> Option<CompactionPlan> {
-        let events = store.events();
-        let assistant_positions: Vec<usize> = events
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, e)| {
-                matches!(e, SessionEvent::AssistantMessage { .. }).then_some(idx)
+        store.with_events(|events| {
+            let assistant_positions: Vec<usize> = events
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, e)| {
+                    matches!(e, SessionEvent::AssistantMessage { .. }).then_some(idx)
+                })
+                .collect();
+            if assistant_positions.len() <= keep_turns {
+                return None;
+            }
+            let prior_assistant_idx =
+                assistant_positions[assistant_positions.len() - keep_turns - 1];
+            let cut_exclusive = compact_boundary_after_tool_results(events, prior_assistant_idx);
+            let replaced_ids: Vec<EventId> = events[..cut_exclusive]
+                .iter()
+                .map(|e| e.base().id.clone())
+                .collect();
+            if replaced_ids.is_empty() {
+                return None;
+            }
+            let newly_superseded: Vec<EventId> = replaced_ids
+                .iter()
+                .filter(|id| !self.superseded.contains(*id) && !self.suppressed.contains(*id))
+                .cloned()
+                .collect();
+            Some(CompactionPlan {
+                cut_exclusive,
+                replaced_ids,
+                newly_superseded,
             })
-            .collect();
-        if assistant_positions.len() <= keep_turns {
-            return None;
-        }
-        let prior_assistant_idx = assistant_positions[assistant_positions.len() - keep_turns - 1];
-        let cut_exclusive = compact_boundary_after_tool_results(&events, prior_assistant_idx);
-        let replaced_ids: Vec<EventId> = events[..cut_exclusive]
-            .iter()
-            .map(|e| e.base().id.clone())
-            .collect();
-        if replaced_ids.is_empty() {
-            return None;
-        }
-        let newly_superseded: Vec<EventId> = replaced_ids
-            .iter()
-            .filter(|id| !self.superseded.contains(*id) && !self.suppressed.contains(*id))
-            .cloned()
-            .collect();
-        Some(CompactionPlan {
-            cut_exclusive,
-            replaced_ids,
-            newly_superseded,
         })
     }
 
@@ -370,13 +372,14 @@ impl ContextEdits {
         plan: CompactionPlan,
         summary: String,
     ) -> Result<AutoCompactionOutcome, SessionError> {
-        let events = store.events();
-        let prefix_matches = events.len() >= plan.cut_exclusive
-            && events[..plan.cut_exclusive]
-                .iter()
-                .zip(&plan.replaced_ids)
-                .all(|(event, id)| event.base().id == *id)
-            && plan.replaced_ids.len() == plan.cut_exclusive;
+        let prefix_matches = store.with_events(|events| {
+            events.len() >= plan.cut_exclusive
+                && events[..plan.cut_exclusive]
+                    .iter()
+                    .zip(&plan.replaced_ids)
+                    .all(|(event, id)| event.base().id == *id)
+                && plan.replaced_ids.len() == plan.cut_exclusive
+        });
         if !prefix_matches {
             return Err(SessionError::EventAppendFailed {
                 reason: "compaction plan does not match the event store it is committed against"

@@ -158,10 +158,24 @@
     },
     {
       "id": "D01.2",
-      "status": "local_checks_passed_build_install_pending",
+      "status": "installed_local_preview_13",
       "scope": "Stop failed automatic semantic compaction; preserve context and known spend; durable failure audit; manual mechanical compaction unchanged",
       "remaining": "Release build, actual-binary probe, local installation, exact-commit venue battery",
       "tests": "4711 core library and 939 TUI library tests passed, zero failed or ignored; strict release workspace/all-target Clippy passed"
+    },
+    {
+      "id": "D01.3",
+      "status": "local_checks_passed_build_install_pending",
+      "scope": "Summary-only omission of typed nonempty encrypted reasoning/compaction payloads; raw replay and persistence unchanged",
+      "tests": "4714 core library tests passed; strict workspace/all-target Clippy passed; new-module AST scans clean and changed-file existing counts retained",
+      "remaining": "Release build/probe/install; independent review and exact-commit venue evidence"
+    },
+    {
+      "id": "S01.1",
+      "status": "local_checks_passed_build_install_pending",
+      "scope": "Borrow event store for compaction plan/commit validation; remove two full-history clones",
+      "tests": "4714 core library tests passed; strict workspace/all-target Clippy passed; new-module AST scans clean and changed-file existing counts retained",
+      "remaining": "Release build/probe/install; independent review and exact-commit venue evidence"
     }
   ],
   "policy_debt": [
@@ -172,27 +186,46 @@
   ],
   "verification_completed": {
     "core_library": {
-      "passed": 4711,
+      "passed": 4714,
       "failed": 0,
       "ignored": 0
     },
     "tui_library_cli_feature_set": {
       "passed": 939,
       "failed": 0,
-      "ignored": 0
+      "ignored": 0,
+      "last_run_version": "preview.13; TUI source unchanged in preview.14"
     },
     "clippy": "cargo clippy --locked --release --workspace --all-targets --features norn/live-api-smoke -j 6 -- -D warnings passed",
     "format": "cargo fmt --all -- --check passed",
-    "ast": "New compaction modules clean; all 11 changed Rust files scanned against prior commit with no increase in unwrap/expect or bypass/discard counts. Existing findings remain policy debt."
+    "ast": "Summary projection modules clean; counts on all five changed Rust files compared with baseline, no added unwrap/expect or bypass/discard matches"
   },
   "installed_checkpoint": {
-    "version": "norn 0.1.0-preview.12",
-    "source_commit": "0d87f8a4b99af4982dc09868bccb16b8d4680847",
-    "installed_at_melbourne": "2026-09-13T03:27:17.906557+10:00",
-    "sha256": "ded53f31ea3829cfe530d8a70d4efb6cd19b85ae48e62a6cb5dad3cea20fbc0d",
-    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.12-continuity/previous-norn-preview.11"
+    "installed_at_melbourne": "2026-09-13T03:57:43.296989+10:00",
+    "version": "norn 0.1.0-preview.13",
+    "binary": "/Users/tom/.cargo/bin/norn",
+    "sha256": "98c6451ec7f5453dc3040c4c200e33e09f2d1e78600d24b61081f7eccc06f444",
+    "source_commit": "39b5e6364659e243e5668f606d239a1842c1d734",
+    "source_worktree": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate",
+    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.13-compaction-failure/previous-norn-preview.12",
+    "previous_version": "norn 0.1.0-preview.12",
+    "verification": [
+      "4711 core library tests passed; zero failed/ignored",
+      "939 TUI library tests passed; zero failed/ignored",
+      "strict release workspace/all-target Clippy including live-api-smoke passed; no live API call",
+      "format and whitespace checks passed",
+      "new compaction module AST scans clean; changed-file baseline counts recorded separately",
+      "release build passed",
+      "actual-binary Kitty PTY stack restoration and double Ctrl+C passed"
+    ],
+    "pending": [
+      "physical Herdr test drive",
+      "remaining compaction and storage work",
+      "venue exact-commit battery ea369582-aae2-4c22-8272-476133e9d524 and main landing"
+    ],
+    "scope": "local preview installation on codex/norn-integration-candidate"
   },
-  "next_slice": "D01.3: exclude opaque encrypted response payloads from the semantic summary transcript without changing persistence or normal replay. Then terminal-safe diagnostics and S01 storage/allocation audit.",
+  "next_slice": "D01.4 terminal-safe diagnostics; then continue S01 persisted compatibility/publication audit and D02 history acceptance",
   "disk_checkpoint": {
     "available_gib": 24,
     "build_cache_gib": 3.6,
@@ -202,7 +235,7 @@
   "venue_discovery": {
     "workflow_type": "repo_battery_205",
     "route_active_hash": "56cd8d0a1d3ba94811c605432b0e3730a4f87d1ab9cfe732c62cda46f0f5b0e9",
-    "status": "Input contract recovered from WorkflowStarted seq 1 of 62bd3f87-a13b-4fa7-bce5-6dc07fec1229 (same active package); no running repo_battery_205 runs at inspection; dispatch pending checked source commit",
+    "status": "Exact-commit preview.13 battery in progress; fmt passed; Clippy leg running at last inspection",
     "input_fields": [
       "subject_repo",
       "subject_ref",
@@ -211,6 +244,8 @@
     ],
     "workspace_root": "/home/aion/venue/.battery",
     "task_queue": "lane_repo_battery",
-    "node": "venue205"
+    "node": "venue205",
+    "workflow_id": "ea369582-aae2-4c22-8272-476133e9d524",
+    "run_id": "b3a1adc7-29f7-4dd0-a01e-f492883c2baa"
   }
 }

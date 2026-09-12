@@ -239,7 +239,7 @@ fn render_message(message: &Message) -> String {
             block.push_str("\n[response item: ");
             block.push_str(entry.item.item_type());
             block.push_str("]\n");
-            block.push_str(&entry.item.raw().to_string());
+            block.push_str(&super::summary_item::render(&entry.item));
         }
         return block;
     }

@@ -77,6 +77,7 @@ pub mod runner;
 pub mod schema;
 mod stop_records;
 mod summarization;
+mod summary_item;
 mod timeout_state;
 mod tool_dispatch;
 mod tool_result_repair;
