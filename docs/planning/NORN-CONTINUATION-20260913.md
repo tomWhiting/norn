@@ -2,7 +2,7 @@
 
 Tom authorized completing the remaining list, with regular disk checks, build cleanup, AST-grep and strict Clippy. The JSON companion records the queue; September 8 planning and all 54 original programme rows are preserved beside it. Historical statuses are not fresh verification. This product queue links to the estate index rather than replacing it.
 
-Current branch: `codex/norn-integration-candidate`, starting `cc3fd60`; installed preview.11. Existing voice/driven work must be audited before classifying it as absent. Local installation is distinct from source-bound venue verification and main landing.
+At this continuation's start: branch `codex/norn-integration-candidate`, commit `cc3fd60`, installed preview.11. The latest installed checkpoint is recorded below and in the JSON companion. Existing voice/driven work must be audited before classifying it as absent. Local installation is distinct from source-bound venue verification and main landing.
 
 ## Order
 
@@ -96,3 +96,11 @@ D01.3 omits only the typed reasoning/compaction item's nonempty top-level `encry
 S01.1 replaces whole-event-store clones in planning and commit validation with bounded borrows through `EventStore::with_events`, releasing the borrow before append. Cuts, IDs, context marks and persisted event shape remain identical. Existing plan mismatch, replay, cancellation and repeated-compaction tests cover semantics; inspect that neither method calls `store.events()`. No unmeasured performance percentage or storage saving is claimed. This reduces allocations, not duplicated on-disk compatibility fields.
 
 D01.3/S01.1 local check: 4,714 core library tests passed, zero failed or ignored, including the actual summary request/replay preservation fixture and existing plan mismatch, tool-boundary, repeated-summary and cancellation tests. Strict release workspace/all-target Clippy, format and changed-file AST checks passed. New summary modules are scan-clean; old files' existing test-policy debt remains recorded. TUI source is unchanged; its preview.13 939-test result is retained as historical evidence, not claimed rerun. Logs: `var/verification/continuation-20260913/d01-projection-*`. Release build, actual-binary probe and installation remain next. Independent final-source review and exact-commit venue evidence are still required for landing.
+
+## Installed preview.14 — 13 September 2026, 04:14 Melbourne
+
+Installed from `9d19fc2711b9be85c1cb5f436dd3c41c864a9f71`, SHA-256 `f0c8356782e92da8487058bfa7175fc771080ce03cddad71370aad617c73c34a`. Release build and actual-binary Kitty keyboard/restoration probe passed. The atomic installer retained preview.13 for rollback and the Mac announcement completed. Receipt: `var/releases/preview.14-summary-projection/installation.json`. Removed 85,140,592 bytes of unused preview.13 core test executable after verifying no open handle; 24 GiB free at checkpoint.
+
+Remote-main refresh corrected an earlier assumption: remote main already held preview.9 at `7ec7ee2`; only the local main checkout was stale at preview.8. Local main is now fast-forwarded to that already-published commit. Its pre-existing four-line planning link remains as the same uncommitted change, backed up under `var/main-refresh-20260913` and stash `f2f72ed8053602fc0f5e91e334aa4ac8780ac402`. No candidate landing or new main push occurred.
+
+Pinned independent-review handoff: `var/reviews/preview14-20260913` includes PROMPT.txt, SCHEMA.json, SOURCE.tar.gz, DIFF.patch, FILES.json and SHA-256 MANIFEST.json. It reviews exact preview.14 source `9d19fc2` against remote main `7ec7ee2` (39 changed files). Tom has been asked to arrange the review he offered. No review verdict is claimed. The live venue battery `ea369582-aae2-4c22-8272-476133e9d524` measures preview.13 `39b5e636`; it cannot validate newer preview.14 code. It passed fmt/Clippy and reached later legs at last inspection. Continue D01.4 terminal-safe diagnostics while those independent checks proceed.

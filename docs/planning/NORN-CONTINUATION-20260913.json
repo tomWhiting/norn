@@ -165,17 +165,17 @@
     },
     {
       "id": "D01.3",
-      "status": "local_checks_passed_build_install_pending",
+      "status": "installed_local_preview_14",
       "scope": "Summary-only omission of typed nonempty encrypted reasoning/compaction payloads; raw replay and persistence unchanged",
       "tests": "4714 core library tests passed; strict workspace/all-target Clippy passed; new-module AST scans clean and changed-file existing counts retained",
-      "remaining": "Release build/probe/install; independent review and exact-commit venue evidence"
+      "remaining": "Physical terminal acceptance; independent review and exact-commit venue evidence"
     },
     {
       "id": "S01.1",
-      "status": "local_checks_passed_build_install_pending",
+      "status": "installed_local_preview_14",
       "scope": "Borrow event store for compaction plan/commit validation; remove two full-history clones",
       "tests": "4714 core library tests passed; strict workspace/all-target Clippy passed; new-module AST scans clean and changed-file existing counts retained",
-      "remaining": "Release build/probe/install; independent review and exact-commit venue evidence"
+      "remaining": "Physical terminal acceptance; independent review and exact-commit venue evidence"
     }
   ],
   "policy_debt": [
@@ -201,27 +201,27 @@
     "ast": "Summary projection modules clean; counts on all five changed Rust files compared with baseline, no added unwrap/expect or bypass/discard matches"
   },
   "installed_checkpoint": {
-    "installed_at_melbourne": "2026-09-13T03:57:43.296989+10:00",
-    "version": "norn 0.1.0-preview.13",
+    "installed_at_melbourne": "2026-09-13T04:14:16.958771+10:00",
+    "version": "norn 0.1.0-preview.14",
     "binary": "/Users/tom/.cargo/bin/norn",
-    "sha256": "98c6451ec7f5453dc3040c4c200e33e09f2d1e78600d24b61081f7eccc06f444",
-    "source_commit": "39b5e6364659e243e5668f606d239a1842c1d734",
+    "sha256": "f0c8356782e92da8487058bfa7175fc771080ce03cddad71370aad617c73c34a",
+    "source_commit": "9d19fc2711b9be85c1cb5f436dd3c41c864a9f71",
     "source_worktree": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate",
-    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.13-compaction-failure/previous-norn-preview.12",
-    "previous_version": "norn 0.1.0-preview.12",
+    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.14-summary-projection/previous-norn-preview.13",
+    "previous_version": "norn 0.1.0-preview.13",
     "verification": [
-      "4711 core library tests passed; zero failed/ignored",
-      "939 TUI library tests passed; zero failed/ignored",
+      "4714 core library tests passed; zero failed/ignored",
+      "TUI source unchanged; 939-test preview.13 result retained; TUI/CLI targets compiled by current Clippy",
       "strict release workspace/all-target Clippy including live-api-smoke passed; no live API call",
       "format and whitespace checks passed",
-      "new compaction module AST scans clean; changed-file baseline counts recorded separately",
+      "new summary projection module AST scans clean; changed-file baseline counts recorded separately",
       "release build passed",
       "actual-binary Kitty PTY stack restoration and double Ctrl+C passed"
     ],
     "pending": [
       "physical Herdr test drive",
       "remaining compaction and storage work",
-      "venue exact-commit battery ea369582-aae2-4c22-8272-476133e9d524 and main landing"
+      "independent review and exact-commit preview.14 venue battery; ongoing ea369582-aae2-4c22-8272-476133e9d524 measures preview.13 only"
     ],
     "scope": "local preview installation on codex/norn-integration-candidate"
   },
@@ -230,12 +230,12 @@
     "available_gib": 24,
     "build_cache_gib": 3.6,
     "release_receipts_and_rollbacks_mib": 235,
-    "obsolete_test_executable_bytes_removed_this_goal": 191361440
+    "obsolete_test_executable_bytes_removed_this_goal": 414807184
   },
   "venue_discovery": {
     "workflow_type": "repo_battery_205",
     "route_active_hash": "56cd8d0a1d3ba94811c605432b0e3730a4f87d1ab9cfe732c62cda46f0f5b0e9",
-    "status": "Exact-commit preview.13 battery in progress; fmt passed; Clippy leg running at last inspection",
+    "status": "Preview.13 exact-commit run still active, latest step tests; this run does not validate preview.14",
     "input_fields": [
       "subject_repo",
       "subject_ref",
@@ -247,5 +247,16 @@
     "node": "venue205",
     "workflow_id": "ea369582-aae2-4c22-8272-476133e9d524",
     "run_id": "b3a1adc7-29f7-4dd0-a01e-f492883c2baa"
+  },
+  "main_checkpoint": {
+    "local_and_remote": "7ec7ee272788e940cbacc030001bfb3c58e48f41",
+    "version": "preview.9",
+    "note": "Refreshed remote main revealed it already contained preview.9; stale local main was fast-forwarded from preview.8 preserving its four-line documentation edit in working tree, stash and repository-local backup. No preview.14 landing claimed."
+  },
+  "review_handoff": {
+    "source_commit": "9d19fc2711b9be85c1cb5f436dd3c41c864a9f71",
+    "base_commit": "7ec7ee272788e940cbacc030001bfb3c58e48f41",
+    "directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview14-20260913",
+    "status": "pinned package prepared; Tom asked to arrange independent review; no verdict yet"
   }
 }
