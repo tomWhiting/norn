@@ -166,8 +166,9 @@ pub struct Message {
     /// Ordered completed Responses items for an assistant turn.
     ///
     /// When present, the `OpenAI` Responses serializer replays this vector
-    /// directly; the normalized text, reasoning and tool-call fields below are
-    /// compatibility projections for provider-neutral consumers.
+    /// directly. Norn leaves the normalized text, reasoning and tool-call fields
+    /// below empty for canonical turns, including restored historical rows.
+    /// Provider-neutral turns use those flat fields when this vector is empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub response_items: Vec<crate::provider::response_item::ResponseTranscriptItem>,
     /// The role of this message's author.

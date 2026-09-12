@@ -79,7 +79,8 @@ fn assistant_event_round_trip_and_resume_keep_canonical_items() -> TestResult {
     let Some(message) = messages.first() else {
         return Err(io::Error::other("assistant event did not resume as a message").into());
     };
-    assert_eq!(message.content.as_deref(), Some("answer"));
+    assert!(message.content.is_none());
+    assert_eq!(decoded.assistant_text().as_deref(), Some("answer"));
     let preserved = message
         .response_items
         .iter()
@@ -130,7 +131,7 @@ fn canonical_calls_override_conflicting_flat_projection() -> TestResult {
         0,
     )?;
     let event = SessionEvent::AssistantMessage {
-        response_items: vec![canonical],
+        response_items: vec![canonical.clone()],
         base: EventBase::new(None),
         content: String::new(),
         thinking: String::new(),
@@ -155,9 +156,8 @@ fn canonical_calls_override_conflicting_flat_projection() -> TestResult {
     assert_eq!(authoritative[0].name, "read");
 
     let resumed = events_to_messages(&[event]);
-    assert_eq!(resumed[0].tool_calls.len(), 1);
-    assert_eq!(resumed[0].tool_calls[0].call_id, "call_actual");
-    assert_eq!(resumed[0].tool_calls[0].name, "read");
+    assert!(resumed[0].tool_calls.is_empty());
+    assert_eq!(resumed[0].response_items, vec![canonical]);
     Ok(())
 }
 

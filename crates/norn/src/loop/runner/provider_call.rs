@@ -163,9 +163,13 @@ impl StepMachine<'_> {
                     .saturating_add(response.usage.output_tokens),
             );
         }
+        // Canonical items already own text, reasoning and tool-call replay. Only
+        // legacy/provider-neutral turns need separately populated flat projections.
+        let legacy = response.response_items.is_empty();
         let assistant_tool_calls: Vec<AssistantToolCall> = response
             .tool_calls
             .iter()
+            .filter(|_| legacy)
             .map(|tc| AssistantToolCall {
                 call_id: tc.call_id.clone(),
                 name: tc.name.clone(),
@@ -178,6 +182,7 @@ impl StepMachine<'_> {
         let tool_call_events: Vec<ToolCallEvent> = response
             .tool_calls
             .iter()
+            .filter(|_| legacy)
             .map(|tc| ToolCallEvent {
                 call_id: tc.call_id.clone(),
                 name: tc.name.clone(),
@@ -188,8 +193,16 @@ impl StepMachine<'_> {
             })
             .collect();
 
-        let content = response.text.clone();
-        let thinking = response.thinking.clone();
+        let content = if legacy {
+            response.text.clone()
+        } else {
+            String::new()
+        };
+        let thinking = if legacy {
+            response.thinking.clone()
+        } else {
+            String::new()
+        };
         let message_content = if content.is_empty() {
             None
         } else {
@@ -268,11 +281,13 @@ impl StepMachine<'_> {
             base: assistant_base,
             content,
             thinking: thinking.clone(),
-            // Persist the captured reasoning items so a resumed session
-            // rebuilds this assistant turn with its reasoning intact
-            // (encrypted-content items are what the Responses serializer
-            // replays across tool iterations on stateless backends).
-            reasoning: response.reasoning.clone(),
+            // Canonical items above already preserve encrypted reasoning;
+            // legacy turns need this separate replay representation.
+            reasoning: if legacy {
+                response.reasoning.clone()
+            } else {
+                Vec::new()
+            },
             tool_calls: tool_call_events,
             usage: EventUsage {
                 input_tokens: response.usage.input_tokens,
@@ -324,10 +339,12 @@ impl StepMachine<'_> {
             role: MessageRole::Assistant,
             content: message_content,
             thinking,
-            // Structured reasoning items ride on the local replay message so
-            // stateless backends (`response_threading: false`) can replay
-            // encrypted reasoning across tool-call iterations.
-            reasoning: response.reasoning.clone(),
+            // Canonical items carry reasoning once; legacy turns use this field.
+            reasoning: if legacy {
+                response.reasoning.clone()
+            } else {
+                Vec::new()
+            },
             tool_calls: assistant_tool_calls,
             tool_call_id: None,
             tool_name: None,

@@ -74,6 +74,20 @@ fn event_to_message(
             reasoning,
             ..
         } => {
+            if !response_items.is_empty() {
+                return Some(Message {
+                    response_items: response_items.clone(),
+                    role: MessageRole::Assistant,
+                    content: None,
+                    thinking: String::new(),
+                    reasoning: Vec::new(),
+                    tool_calls: Vec::new(),
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_call_kind: None,
+                    tool_call_caller: crate::provider::request::ToolCallCaller::Absent,
+                });
+            }
             let tool_calls = event.assistant_tool_calls()?;
             let content = event.assistant_text()?;
             Some(Message {

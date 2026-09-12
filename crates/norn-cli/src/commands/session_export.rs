@@ -94,18 +94,13 @@ fn export_markdown(entry: &SessionIndexEntry, events: &[SessionEvent]) -> ExitCo
             SessionEvent::UserMessage { content, .. } => {
                 println!("## User\n\n{content}\n");
             }
-            SessionEvent::AssistantMessage {
-                content,
-                tool_calls,
-                ..
-            } => {
-                println!("## Assistant\n");
-                if !content.is_empty() {
-                    println!("{content}\n");
-                }
-                for call in tool_calls {
-                    println!("### Tool Call: {}\n", call.name);
-                    println!("```json\n{}\n```\n", call.arguments);
+            SessionEvent::AssistantMessage { .. } => {
+                if let Err(error) = write_assistant(&mut std::io::stdout().lock(), event) {
+                    eprintln!(
+                        "norn: assistant export failed for {}: {error}",
+                        event.base().id
+                    );
+                    return ExitCode::AgentError;
                 }
             }
             SessionEvent::SpokenResponse { content, .. } => {
@@ -196,3 +191,34 @@ fn export_markdown(entry: &SessionIndexEntry, events: &[SessionEvent]) -> ExitCo
     }
     ExitCode::Success
 }
+
+fn write_assistant(writer: &mut impl std::io::Write, event: &SessionEvent) -> std::io::Result<()> {
+    let content = event.assistant_text().ok_or_else(|| {
+        std::io::Error::other(format!(
+            "event {} is not an assistant message",
+            event.base().id
+        ))
+    })?;
+    let calls = event.assistant_tool_calls().ok_or_else(|| {
+        std::io::Error::other(format!(
+            "event {} has no assistant tool-call projection",
+            event.base().id
+        ))
+    })?;
+    writeln!(writer, "## Assistant\n")?;
+    if !content.is_empty() {
+        writeln!(writer, "{content}\n")?;
+    }
+    for call in calls {
+        writeln!(
+            writer,
+            "### Tool Call: {}\n\n```json\n{}\n```\n",
+            call.name, call.arguments
+        )?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "session_export_tests.rs"]
+mod tests;

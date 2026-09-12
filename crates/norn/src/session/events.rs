@@ -215,14 +215,17 @@ pub enum SessionEvent {
         /// Ordered completed Responses items for this turn. Empty on legacy
         /// sessions and providers without a Responses-compatible item model.
         /// When non-empty, this is the authoritative replay representation;
-        /// the flat fields below are compatibility projections.
+        /// new writes leave the flat fields below empty. Older rows may carry
+        /// compatibility projections; their original serialization is retained
+        /// because response-publication commitments bind those exact values.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         response_items: Vec<crate::provider::response_item::ResponseTranscriptItem>,
-        /// The assistant's text content. Empty string when no text was produced.
+        /// Legacy text; empty when canonical items own this turn.
         content: String,
-        /// The assistant's reasoning/thinking content. Empty string when none.
+        /// Legacy thinking text; empty when canonical items own this turn.
         thinking: String,
-        /// Structured reasoning output items captured from the provider
+        /// Legacy structured reasoning; canonical turns retain this data in
+        /// `response_items` instead. Structured items captured from the provider
         /// stream (`OpenAI` Responses `response.output_item.done` with
         /// `item.type == "reasoning"`). Persisted so a resumed session can
         /// replay the model's reasoning state across tool iterations — on

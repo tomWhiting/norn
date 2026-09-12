@@ -134,7 +134,7 @@
       "id": "S01",
       "delivery": "Measure session storage duplication; reduce redundant new writes only with replay/backward compatibility tests; no deletion or rewriting of live session files",
       "status": "in_progress_with_D01",
-      "next_audit": "Canonical response items versus compatibility assistant fields: check replay, action-log/child readers and publication commitment digests before reducing new writes. See session/events.rs, session/conversion.rs, session/jsonl_sink.rs."
+      "next_audit": "Finish S01.2 installation. Continue auditing remaining journal/cache ownership and storage growth; historical session files are not rewritten. D02 retained-history navigation follows."
     },
     {
       "id": "U01",
@@ -180,7 +180,7 @@
     },
     {
       "id": "D01.4",
-      "status": "verified_local_install_pending",
+      "status": "installed_local_preview_15_venue_green_review_pending",
       "scope": "Process-wide tracing capture with typed expandable notices, idle/active delivery, explicit overflow, post-terminal unread drain and scoped ownership; launch-only diagnostic capacity override",
       "wall": "See D01.4 Markdown wall; CLI/TUI diagnostic modules and launch/loop wiring, existing TuiInputs fixtures, settings parsing, documentation/version files",
       "provenance": "NEXT-WORK-20260908 D01; operator report of compaction/retry warnings overwriting the composer",
@@ -192,6 +192,16 @@
       "scope": "PTY fixtures use visible two-press confirmation, preserve resize geometry and wait for accepted input before draft-retirement assertions; no production exit semantics changed",
       "tests": "All 23 pty_smoke cases passed; old small-terminal fixture reproduced its five-second exit timeout before repair",
       "remaining": "Re-run final-source venue battery; old preview.13 receipt is red"
+    },
+    {
+      "id": "S01.2",
+      "status": "verified_for_local_preview_16_installation",
+      "scope": "Keep only canonical assistant payloads in new canonical events and live/resumed provider messages; repair Markdown export to use authoritative accessors",
+      "wall": "See S01.2 Markdown wall",
+      "invariant": "No live file rewrites or serde schema changes; old commitment hashes and provider-neutral events preserved",
+      "tests": "4716 core, 577 CLI, 942 TUI and 23 PTY tests passed, zero failed/ignored; strict release workspace/all-target Clippy, 11-file AST comparison, fmt and release build passed.",
+      "measurement": "Synthetic duplicated assistant-row comparison: 18789 bytes versus 9820 canonical-only bytes; no claim about whole-session savings or rewritten archives.",
+      "remaining": "Atomic installation receipt, independent review and exact-source venue run"
     }
   ],
   "policy_debt": [
@@ -231,42 +241,42 @@
     "diagnostic_pty": "Actual executable: two loopback HTTP-429 requests, collapsed warning visible, raw tracing absent from owned terminal, terminal/Kitty restoration passed"
   },
   "installed_checkpoint": {
-    "installed_at_melbourne": "2026-09-13T04:14:16.958771+10:00",
-    "version": "norn 0.1.0-preview.14",
+    "installed_at_melbourne": "2026-09-13T05:03:02.662768+10:00",
+    "version": "norn 0.1.0-preview.15",
     "binary": "/Users/tom/.cargo/bin/norn",
-    "sha256": "f0c8356782e92da8487058bfa7175fc771080ce03cddad71370aad617c73c34a",
-    "source_commit": "9d19fc2711b9be85c1cb5f436dd3c41c864a9f71",
+    "sha256": "95a0d47edc9e0357429292ba6b1d522821f2ce9d70522d4926b6cce4fc4b9f8f",
+    "source_commit": "53b4fec3d1bd74da61cc3f15f87bcd8a09fca6db",
     "source_worktree": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate",
-    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.14-summary-projection/previous-norn-preview.13",
-    "previous_version": "norn 0.1.0-preview.13",
+    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.15-terminal-diagnostics/previous-norn-preview.14",
+    "previous_version": "norn 0.1.0-preview.14",
     "verification": [
-      "4714 core library tests passed; zero failed/ignored",
-      "TUI source unchanged; 939-test preview.13 result retained; TUI/CLI targets compiled by current Clippy",
-      "strict release workspace/all-target Clippy including live-api-smoke passed; no live API call",
+      "574 CLI library tests, 942 TUI library tests and 23 PTY smoke tests passed; zero failed/ignored",
+      "strict release workspace/all-target Clippy passed; live-api-smoke compiled/linted only",
+      "23 changed Rust files AST-scanned against prior commit; no added unwrap/expect or lint bypass/discard matches",
       "format and whitespace checks passed",
-      "new summary projection module AST scans clean; changed-file baseline counts recorded separately",
       "release build passed",
-      "actual-binary Kitty PTY stack restoration and double Ctrl+C passed"
+      "exact candidate hash unchanged across loopback-only HTTP-429 warning probe: collapsed notice, no raw tracing writes, two requests, Kitty and terminal restoration passed"
     ],
     "pending": [
       "physical Herdr test drive",
-      "remaining compaction and storage work",
-      "independent review and exact-commit preview.14 venue battery; ongoing ea369582-aae2-4c22-8272-476133e9d524 measures preview.13 only"
+      "remaining storage and ordered product work",
+      "independent final-source review and exact-commit venue battery; preview.13 venue verdict was red"
     ],
-    "scope": "local preview installation on codex/norn-integration-candidate"
+    "scope": "local preview installation on codex/norn-integration-candidate; main remains preview.9"
   },
-  "next_slice": "Complete preview.15 installation and final-source venue dispatch; continue S01 compatibility audit and D02 retained-history navigation",
+  "next_slice": "Install verified S01.2 preview.16 and dispatch its exact-source venue run; continue D02 retained-history navigation",
   "disk_checkpoint": {
-    "available_gib": 17,
-    "build_cache_gib": 3.6,
+    "available_gib": 16,
+    "build_cache_gib": 3.4,
     "release_receipts_and_rollbacks_mib": 235,
     "obsolete_test_executable_bytes_removed_this_goal": 836883840,
-    "note": "Exact removal recorded in d01-diagnostics-cleanup.json; current build cache and all rollback copies retained"
+    "note": "This slice removed 1509014011 bytes in 35 unopened Norn preview.10\u201315 library archives/metadata using Cargo version depfiles; s01-storage-cleanup.json records each artifact. Current version, executables and rollback copies retained.",
+    "obsolete_build_artifact_bytes_removed_this_goal": 2345897851
   },
   "venue_discovery": {
     "workflow_type": "repo_battery_205",
     "route_active_hash": "56cd8d0a1d3ba94811c605432b0e3730a4f87d1ab9cfe732c62cda46f0f5b0e9",
-    "status": "Completed with red verdict: 5 legs green, tests red; receipt var/releases/preview.13-compaction-failure/venue-result.json",
+    "status": "Completed: green receipt, six declared legs green, no waivers; preview.15 only",
     "input_fields": [
       "subject_repo",
       "subject_ref",
@@ -276,8 +286,10 @@
     "workspace_root": "/home/aion/venue/.battery",
     "task_queue": "lane_repo_battery",
     "node": "venue205",
-    "workflow_id": "ea369582-aae2-4c22-8272-476133e9d524",
-    "run_id": "b3a1adc7-29f7-4dd0-a01e-f492883c2baa"
+    "workflow_id": "62dcf4da-c14c-44a7-8d16-7c1b2753a87c",
+    "run_id": "2c922ad9-23df-494c-9f80-cdd39c20d332",
+    "source_commit": "53b4fec3d1bd74da61cc3f15f87bcd8a09fca6db",
+    "receipt": "var/releases/preview.15-terminal-diagnostics/venue-result.json"
   },
   "main_checkpoint": {
     "local_and_remote": "7ec7ee272788e940cbacc030001bfb3c58e48f41",
@@ -285,9 +297,9 @@
     "note": "Refreshed remote main revealed it already contained preview.9; stale local main was fast-forwarded from preview.8 preserving its four-line documentation edit in working tree, stash and repository-local backup. No preview.14 landing claimed."
   },
   "review_handoff": {
-    "source_commit": "9d19fc2711b9be85c1cb5f436dd3c41c864a9f71",
+    "source_commit": "53b4fec3d1bd74da61cc3f15f87bcd8a09fca6db",
     "base_commit": "7ec7ee272788e940cbacc030001bfb3c58e48f41",
-    "directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview14-20260913",
+    "directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview15-20260913",
     "status": "pinned package prepared; Tom asked to arrange independent review; no verdict yet"
   }
 }

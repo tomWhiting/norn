@@ -193,3 +193,90 @@ fn manager_fork_copies_canonical_items_without_reconstruction() -> TestResult {
     assert_eq!(response_items, vec![canonical]);
     Ok(())
 }
+
+fn committed_canonical_group(duplicated: bool) -> TestResult<Vec<SessionEvent>> {
+    let raw = serde_json::json!({
+        "type": "reasoning", "id": "rs_commit_storage",
+        "summary": [{"type": "summary_text", "text": "Preserve this summary."}],
+        "encrypted_content": "preserve-this-opaque-state",
+        "future_field": [1, 2, 3]
+    });
+    let boundary = SessionEvent::ProviderEpochBoundary {
+        base: EventBase::new(None),
+        reason: super::events::ProviderEpochBoundaryReason::ResponseStatePublication,
+    };
+    let assistant_id = super::events::EventId::new();
+    let provenance = super::ProviderStateProvenance::new(assistant_id.clone(), true)
+        .into_custom_event(EventBase::new(Some(boundary.base().id.clone())))?;
+    let mut base = EventBase::new(Some(provenance.base().id.clone()));
+    base.id = assistant_id;
+    let assistant = SessionEvent::AssistantMessage {
+        base,
+        response_items: vec![transcript_item(raw.clone(), 0)?],
+        content: String::new(),
+        thinking: if duplicated {
+            "Preserve this summary.".to_owned()
+        } else {
+            String::new()
+        },
+        reasoning: if duplicated {
+            vec![serde_json::from_value(raw)?]
+        } else {
+            Vec::new()
+        },
+        tool_calls: Vec::new(),
+        usage: EventUsage::default(),
+        stop_reason: "end_turn".to_owned(),
+        response_id: Some("resp_storage_commit".to_owned()),
+    };
+    let mut group = vec![boundary, provenance, assistant];
+    super::seal_response_publication_group(&mut group)?;
+    Ok(group)
+}
+
+#[test]
+fn canonical_storage_preserves_old_commitments_and_validates_new_lean_groups() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    for (name, duplicated) in [("old-duplicate", true), ("new-lean", false)] {
+        let group = committed_canonical_group(duplicated)?;
+        let before = serde_json::to_vec(&group)?;
+        let path = temp.path().join(format!("{name}.jsonl"));
+        let store = EventStore::with_sink(Box::new(JsonlSink::open(&path)?));
+        store.append_batch(&group)?;
+        store.checkpoint()?;
+        drop(store);
+        let disk_before = std::fs::read(&path)?;
+        let artifacts = read_session_events(temp.path(), name)?;
+        super::validate_provider_state_provenance(&artifacts.events)?;
+        assert_eq!(serde_json::to_vec(&artifacts.events)?, before);
+        let messages = events_to_messages(&artifacts.events);
+        assert_eq!(messages.len(), 1);
+        let message = &messages[0];
+        assert_eq!(message.response_items.len(), 1);
+        assert!(message.content.is_none());
+        assert!(message.thinking.is_empty());
+        assert!(message.reasoning.is_empty());
+        assert!(message.tool_calls.is_empty());
+        assert_eq!(
+            message.response_items[0].item.raw()["encrypted_content"],
+            "preserve-this-opaque-state"
+        );
+        assert_eq!(
+            message.response_items[0].item.raw()["future_field"],
+            serde_json::json!([1, 2, 3])
+        );
+        assert_eq!(
+            std::fs::read(&path)?,
+            disk_before,
+            "resume must not rewrite old storage"
+        );
+        let mut tampered = artifacts.events;
+        for event in &mut tampered {
+            if let SessionEvent::AssistantMessage { content, .. } = event {
+                *content = "tampered after sealing".to_owned();
+            }
+        }
+        assert!(super::validate_provider_state_provenance(&tampered).is_err());
+    }
+    Ok(())
+}

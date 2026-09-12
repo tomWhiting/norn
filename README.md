@@ -2,7 +2,7 @@
 
 Norn is an AI agent runtime for interactive terminal work, command-line automation, and embedding in other applications. It can read and edit files, run commands, search code, use MCP tools, coordinate agents, and resume saved sessions. The Rust library, terminal UI, print mode, and driven JSON-RPC mode share the same `AgentBuilder` assembly path.
 
-**Current source version: `0.1.0-preview.15`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [candidate verification record](docs/release-notes/PREVIEW-9.md) for the tested scope and open findings.
+**Current source version: `0.1.0-preview.16`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [candidate verification record](docs/release-notes/PREVIEW-9.md) for the tested scope and open findings.
 
 ## Install and start
 

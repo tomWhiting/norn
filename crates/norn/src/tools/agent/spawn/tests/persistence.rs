@@ -69,10 +69,9 @@ async fn spawn_under_persistent_parent_persists_child_timeline() -> TestResult {
         "the child's file carries its ChildBranch provenance header",
     );
     assert!(
-        child_events.iter().any(|e| matches!(
-            e,
-            SessionEvent::AssistantMessage { content, .. } if content.contains("branched child")
-        )),
+        child_events.iter().any(|event| event
+            .assistant_text()
+            .is_some_and(|content| content.contains("branched child"))),
         "the child's own run output must reach its on-disk timeline",
     );
     assert_eq!(

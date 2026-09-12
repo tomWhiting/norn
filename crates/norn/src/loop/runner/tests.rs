@@ -26,6 +26,7 @@ use crate::session::store::EventStore;
 
 mod abnormal_stops;
 mod cancellation;
+mod canonical_storage;
 mod children_usage;
 mod d3_anchor_transitions;
 mod d3_legacy_upgrade;
