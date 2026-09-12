@@ -39,6 +39,7 @@ mod classify;
 pub mod commands;
 pub mod compaction;
 mod compaction_progress;
+mod compaction_prompt;
 pub mod config;
 pub mod context;
 mod conversation_state;

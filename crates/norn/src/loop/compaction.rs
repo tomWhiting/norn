@@ -356,8 +356,7 @@ pub async fn maybe_auto_compact(
     let token_estimate_freed =
         usize::try_from(effective.saturating_sub(threshold)).unwrap_or(usize::MAX);
 
-    let events = args.store.events();
-    let elided = &events[..plan.cut_exclusive()];
+    let elided = super::compaction_prompt::summary_prompt_events(args.store, edits, &plan);
     // The summarization call owns cancellation in its own right: the
     // retry brain re-checks the token before every attempt and races it
     // against every inter-attempt wait (design D11). This outer select
@@ -375,7 +374,7 @@ pub async fn maybe_auto_compact(
                 result = summarize_or_fall_back(SummarizeArgs {
                     provider: args.provider,
                     model: args.model,
-                    elided,
+                    elided: &elided,
                     token_estimate_freed,
                     retry: SummarizationRetry {
                         policy: args.retry_policy,
@@ -388,7 +387,7 @@ pub async fn maybe_auto_compact(
         None => summarize_or_fall_back(SummarizeArgs {
             provider: args.provider,
             model: args.model,
-            elided,
+            elided: &elided,
             token_estimate_freed,
             retry: SummarizationRetry {
                 policy: args.retry_policy,
