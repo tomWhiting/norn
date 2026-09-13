@@ -26,7 +26,11 @@ impl ComposerStamp {
     }
 
     fn validate(&self, editor: &InputEditor) -> Result<(), ComposerError> {
-        let state = editor.kernel().state();
+        self.validate_kernel(editor.kernel())
+    }
+
+    fn validate_kernel(&self, editor: &iridium_editor::Editor) -> Result<(), ComposerError> {
+        let state = editor.state();
         if self.document != state.document.id()
             || self.revision != state.document.revision()
             || self.cursor != state.cursor
@@ -61,6 +65,13 @@ impl std::fmt::Debug for ComposerSnapshot {
 }
 
 impl ComposerSnapshot {
+    pub(super) fn validate_kernel(
+        &self,
+        editor: &iridium_editor::Editor,
+    ) -> Result<(), ComposerError> {
+        self.stamp.validate_kernel(editor)
+    }
+
     /// Exact original bytes; callers must not emit these as terminal controls.
     #[must_use]
     pub fn text(&self) -> &str {
@@ -226,6 +237,13 @@ impl InputEditor {
                 revision: snapshot.stamp.revision,
             });
         }
+        self.record_validated_snapshot(snapshot)
+    }
+
+    pub(super) fn record_validated_snapshot(
+        &mut self,
+        snapshot: &ComposerSnapshot,
+    ) -> Result<(), ComposerError> {
         self.history
             .append(snapshot.text())
             .map_err(|source| ComposerError::History {

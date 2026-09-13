@@ -1,6 +1,7 @@
 //! One plain Iridium composer, host completion and independent submission recall.
 
 pub(crate) mod composer_clipboard;
+pub mod composer_draft;
 pub mod composer_kernel;
 pub(crate) mod composer_keys;
 pub mod composer_transactions;
@@ -20,5 +21,6 @@ pub use keybindings::{InputAction, map_key_event};
 
 pub mod autocomplete;
 
+pub use composer_draft::DetachedComposerDraft;
 pub use composer_kernel::ComposerError;
 pub use composer_transactions::{CompletionContext, ComposerSnapshot, PreparedComposerCut};
