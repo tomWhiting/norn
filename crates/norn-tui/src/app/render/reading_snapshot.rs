@@ -13,7 +13,7 @@ use crate::render::layout::Rect;
 use crate::render::retained_markdown::{RenderedMarkdown, SourceDisplaySpan, SourceMapping};
 use crate::render::retained_text::{StyleSpan, StyledText, TextRow};
 
-use super::ScreenState;
+use super::ConversationScreen;
 use super::hit::HitRow;
 
 /// Shares only the last published visible rows until their revision is retired.
@@ -41,7 +41,7 @@ struct Piece {
 }
 
 /// Prepared rows acquire display authority only after the terminal flush succeeds.
-pub(in crate::app) fn published(screen: &mut ScreenState, frame: &Arc<Frame>) {
+pub(in crate::app) fn published(screen: &mut ConversationScreen, frame: &Arc<Frame>) {
     let Some(area) = screen.prepared_reading.take() else {
         return;
     };

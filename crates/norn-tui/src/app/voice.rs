@@ -63,7 +63,7 @@ pub(super) async fn wait(owner: &mut VoiceOwner) -> VoiceUpdate {
 pub(super) fn finish(state: &mut AppState, update: VoiceUpdate) -> Result<(), TuiError> {
     match update {
         VoiceUpdate::Progress(progress) => {
-            state.screen.feedback = Some(match progress {
+            state.screen.conversation.feedback = Some(match progress {
                 ReadAloudProgress::Connecting => "Voice: connecting".to_owned(),
                 ReadAloudProgress::Submitted => "Voice: awaiting admission".to_owned(),
                 ReadAloudProgress::Accepted { id } => {
@@ -112,7 +112,7 @@ pub(super) fn finish(state: &mut AppState, update: VoiceUpdate) -> Result<(), Tu
                 ),
                 Ok(Err(error)) => {
                     notices::error(state, "Read-aloud failed", &error.to_string())?;
-                    state.screen.feedback =
+                    state.screen.conversation.feedback =
                         Some("Voice failed; inspect the retained error".to_owned());
                     state.screen.dirty = true;
                     return Ok(());
@@ -124,7 +124,7 @@ pub(super) fn finish(state: &mut AppState, update: VoiceUpdate) -> Result<(), Tu
                 &format!("Voice {}: {receipt}", playback.request_id),
                 None,
             )?;
-            state.screen.feedback = Some(format!("Voice: {receipt}"));
+            state.screen.conversation.feedback = Some(format!("Voice: {receipt}"));
         }
     }
     state.screen.dirty = true;
@@ -202,7 +202,7 @@ fn start(state: &mut AppState, replay: bool) -> Result<(), TuiError> {
         task,
     });
     state.voice.replay = Some(answer);
-    state.screen.feedback = Some("Voice: connecting".to_owned());
+    state.screen.conversation.feedback = Some("Voice: connecting".to_owned());
     Ok(())
 }
 
@@ -238,7 +238,7 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), TuiError> {
         "replay" => start(state, true)?,
         "stop" => {
             stop(&state.voice);
-            state.screen.feedback = Some(
+            state.screen.conversation.feedback = Some(
                 if state.voice.playback.is_some() {
                     "Voice: stop requested"
                 } else {

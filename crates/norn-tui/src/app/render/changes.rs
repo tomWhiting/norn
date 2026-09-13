@@ -61,7 +61,7 @@ impl ChangesState {
 }
 
 fn selected(state: &AppState) -> Option<(ItemId, ToolView)> {
-    let id = state.screen.viewport.selected()?;
+    let id = state.screen.conversation.viewport.selected()?;
     let item = state.transcript.projection.item(id)?;
     match &item.kind {
         ViewItemKind::Tool(tool) => Some((item.id.clone(), *tool.clone())),
@@ -128,7 +128,7 @@ pub(in crate::app) fn finish(
         operation: "recorded change inspection",
         source,
     })?;
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
     state.screen.dirty = true;
     let Some((id, tool)) = selected(state) else {
         return Ok(());

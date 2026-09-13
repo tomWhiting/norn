@@ -75,7 +75,7 @@ pub(super) fn search(
 ) -> Result<(), TuiError> {
     SearchQuery::new(query).map_err(interaction)?;
     if matches!(scope, SearchScope::RequestedOlderHistory) {
-        if state.screen.search.older.is_some() {
+        if state.screen.conversation.search.older.is_some() {
             return Err(interaction(std::io::Error::other(
                 "an older-page search is already pending",
             )));
@@ -85,25 +85,30 @@ pub(super) fn search(
                 "no older history is advertised by the accepted page; use /view search loaded <query>",
             )));
         }
-        state.screen.search.older = Some(OlderSearch {
+        state.screen.conversation.search.older = Some(OlderSearch {
             query: query.to_owned(),
             phase: OlderPhase::Requested,
             items: Vec::new(),
         });
-        state.screen.feedback = Some("Search requested one older history page and one configured prefix per body; remaining ranges will be reported".to_owned());
+        state.screen.conversation.feedback = Some("Search requested one older history page and one configured prefix per body; remaining ranges will be reported".to_owned());
         super::pin_visible(state)?;
-        state.screen.allow_body_load = true;
+        state.screen.conversation.allow_body_load = true;
         return Ok(());
     }
     let items = if matches!(scope, SearchScope::SelectedBody) {
         super::selected_text(state)?;
-        Some(vec![state.screen.selection_item.clone().ok_or_else(
-            || {
-                interaction(std::io::Error::other(
-                    "select an original body before searching selected scope",
-                ))
-            },
-        )?])
+        Some(vec![
+            state
+                .screen
+                .conversation
+                .selection_item
+                .clone()
+                .ok_or_else(|| {
+                    interaction(std::io::Error::other(
+                        "select an original body before searching selected scope",
+                    ))
+                })?,
+        ])
     } else {
         None
     };
@@ -130,7 +135,12 @@ fn scan(
                 || gaps.contains(&CoverageGap::Interrupted),
         },
     );
-    let selected_reference = state.screen.selection.as_ref().map(Selection::reference);
+    let selected_reference = state
+        .screen
+        .conversation
+        .selection
+        .as_ref()
+        .map(Selection::reference);
     let mut hits = Vec::new();
     let mut examined_bytes = 0usize;
     for item in projection
@@ -174,14 +184,14 @@ fn scan(
         }
     }
     let summary = report.summary();
-    state.screen.search.hits = hits;
-    state.screen.search.current = None;
-    state.screen.search.summary = Some(summary);
-    state.screen.feedback = Some(format!(
+    state.screen.conversation.search.hits = hits;
+    state.screen.conversation.search.current = None;
+    state.screen.conversation.search.summary = Some(summary);
+    state.screen.conversation.feedback = Some(format!(
         "{} · {examined_bytes} original bytes examined",
         summary_text(summary)
     ));
-    if !state.screen.search.hits.is_empty() {
+    if !state.screen.conversation.search.hits.is_empty() {
         next_hit(state, false)?;
     }
     state.screen.dirty = true;
@@ -211,13 +221,13 @@ fn summary_text(summary: SearchSummary) -> String {
 }
 
 pub(super) fn next_hit(state: &mut AppState, backwards: bool) -> Result<(), TuiError> {
-    let count = state.screen.search.hits.len();
+    let count = state.screen.conversation.search.hits.len();
     if count == 0 {
         return Err(interaction(std::io::Error::other(
             "no retained search hits; inspect search scope/partial coverage before treating this as no match",
         )));
     }
-    let next = match state.screen.search.current {
+    let next = match state.screen.conversation.search.current {
         None => {
             if backwards {
                 count - 1
@@ -235,7 +245,7 @@ pub(super) fn next_hit(state: &mut AppState, backwards: bool) -> Result<(), TuiE
             )));
         }
     };
-    let hit = state.screen.search.hits[next].clone();
+    let hit = state.screen.conversation.search.hits[next].clone();
     let original = super::original_for(state, &hit.item, &hit.reference)?;
     let selection = Selection::from_original(
         state.transcript.projection.source(),
@@ -251,6 +261,7 @@ pub(super) fn next_hit(state: &mut AppState, backwards: bool) -> Result<(), TuiE
         .clone();
     state
         .screen
+        .conversation
         .viewport
         .scroll_to(
             ViewAnchor {
@@ -265,21 +276,27 @@ pub(super) fn next_hit(state: &mut AppState, backwards: bool) -> Result<(), TuiE
         .map_err(interaction)?;
     state
         .screen
+        .conversation
         .viewport
         .select(item.clone(), &state.transcript.projection)
         .map_err(interaction)?;
-    state.screen.tool_overrides.insert(item.clone(), true);
+    state
+        .screen
+        .conversation
+        .tool_overrides
+        .insert(item.clone(), true);
     state.screen.display_selection = None;
-    state.screen.selection = Some(selection);
-    state.screen.selection_item = Some(item);
-    state.screen.search.current = Some(next);
+    state.screen.conversation.selection = Some(selection);
+    state.screen.conversation.selection_item = Some(item);
+    state.screen.conversation.search.current = Some(next);
     state.screen.dirty = true;
-    state.screen.feedback = Some(format!(
+    state.screen.conversation.feedback = Some(format!(
         "Match {}/{count} · original bytes {:?} · {}",
         next + 1,
         hit.range,
         state
             .screen
+            .conversation
             .search
             .summary
             .map_or_else(|| "coverage unavailable".to_owned(), summary_text)
@@ -292,7 +309,7 @@ pub(in crate::app) fn load_requests(
     state: &mut AppState,
     pinned: &mut HashSet<BodyRef>,
 ) -> Result<(), TuiError> {
-    let Some(mut older) = state.screen.search.older.take() else {
+    let Some(mut older) = state.screen.conversation.search.older.take() else {
         return Ok(());
     };
     match older.phase {
@@ -300,9 +317,9 @@ pub(in crate::app) fn load_requests(
             if state.transcript.load_older(&mut state.read_tasks)? {
                 older.phase = OlderPhase::History;
             }
-            state.screen.search.older = Some(older);
+            state.screen.conversation.search.older = Some(older);
         }
-        OlderPhase::History => state.screen.search.older = Some(older),
+        OlderPhase::History => state.screen.conversation.search.older = Some(older),
         OlderPhase::Bodies => {
             let bodies: Vec<_> = older
                 .items
@@ -321,7 +338,7 @@ pub(in crate::app) fn load_requests(
                     .load_body(&mut state.read_tasks, item, reference, false)?;
             }
             if state.transcript.bodies_pending() {
-                state.screen.search.older = Some(older);
+                state.screen.conversation.search.older = Some(older);
             } else {
                 scan(
                     state,
@@ -367,20 +384,20 @@ pub(in crate::app) fn finish_history(
     if earlier && (!accepted || previous_frontier.as_ref() == state.transcript.oldest_cursor()) {
         crate::app::render::navigation::cancel_deferred(state);
     }
-    if let Some(older) = state.screen.search.older.as_mut() {
+    if let Some(older) = state.screen.conversation.search.older.as_mut() {
         if accepted && matches!(older.phase, OlderPhase::History) {
             if let Some(items) = accepted_items {
                 older.items = items;
                 older.phase = OlderPhase::Bodies;
             }
         } else if failed {
-            state.screen.search.older = None;
-            state.screen.feedback = Some(
+            state.screen.conversation.search.older = None;
+            state.screen.conversation.feedback = Some(
                 "Older-history search failed; its unsearched range remains unavailable".to_owned(),
             );
         }
     }
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
     state.screen.dirty = true;
     Ok(())
 }
@@ -398,12 +415,15 @@ pub(super) fn export(
         std::env::current_dir()?.join(path)
     };
     let bytes = super::selected_text(state)?.as_bytes().to_vec();
-    let selection =
-        state.screen.selection.as_ref().ok_or_else(|| {
-            interaction(std::io::Error::other("export has no original selection"))
-        })?;
+    let selection = state
+        .screen
+        .conversation
+        .selection
+        .as_ref()
+        .ok_or_else(|| interaction(std::io::Error::other("export has no original selection")))?;
     let item = state
         .screen
+        .conversation
         .selection_item
         .clone()
         .ok_or_else(|| interaction(std::io::Error::other("export has no selected owner")))?;
@@ -417,7 +437,7 @@ pub(super) fn export(
             .body(selection.reference())
             .is_some_and(|body| body.next_offset.is_none()),
     };
-    state.screen.feedback = Some(format!(
+    state.screen.conversation.feedback = Some(format!(
         "Export requested to {} ({mode:?}); completion pending",
         destination.display()
     ));
@@ -457,7 +477,7 @@ pub(in crate::app) fn finish_export(
         }
     };
     crate::app::notices::notice(state, "Original selection export", Some(&message))?;
-    state.screen.feedback = Some(message);
+    state.screen.conversation.feedback = Some(message);
     Ok(())
 }
 

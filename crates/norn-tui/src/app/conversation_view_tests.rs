@@ -7,7 +7,7 @@ use norn::session::{EventStore, SessionBinding};
 use uuid::Uuid;
 
 use super::*;
-use crate::app::render::{navigation, transcript};
+use crate::app::render::{ScreenState, navigation, transcript};
 use crate::app::selection::Selection;
 use crate::input::history::InputHistory;
 use crate::render::fixed_panel::StatusBar;
@@ -60,7 +60,7 @@ fn paint(view: &mut ConversationView<'_>) -> TestResult<Frame> {
             ..area
         },
     };
-    view.screen.layout = layout;
+    view.layout = layout;
     view.screen.visible.clear();
     view.screen.hit_rows.clear();
     view.screen.demands.clear();
@@ -104,13 +104,18 @@ fn conversation_view_renders_and_scrolls_child_without_mutating_root_or_draft() 
     root.input_editor.paste_cells("next main draft: é🙂")?;
     let draft = root.input_editor.snapshot()?;
     let root_frame = paint(&mut ConversationView::root(&mut root)?)?;
-    let root_viewport = root.screen.viewport.clone();
+    let root_viewport = root.screen.conversation.viewport.clone();
     let root_revision = root.transcript.projection.revision();
     let (mut child, mut child_screen) = loaded(
         "Child first\nChild second\nChild third\nChild fourth\nChild fifth\nChild last",
         Some(root.tab_state.root_id()),
     )?;
-    let mut view = ConversationView::new(&mut child, &mut child_screen, root.display_toggles)?;
+    let mut view = ConversationView::new(
+        &mut child,
+        &mut child_screen.conversation,
+        child_screen.layout,
+        root.display_toggles,
+    )?;
     let tail = paint(&mut view)?;
     assert!(displayed(&tail)?.contains("Child last"));
     assert!(!displayed(&tail)?.contains("Root narrative"));
@@ -120,7 +125,7 @@ fn conversation_view_renders_and_scrolls_child_without_mutating_root_or_draft() 
     assert!(!view.screen.viewport.follows_tail());
     assert!(root.read_tasks.history.is_empty());
     assert!(root.read_tasks.bodies.is_empty());
-    assert_eq!(root.screen.viewport, root_viewport);
+    assert_eq!(root.screen.conversation.viewport, root_viewport);
     assert_eq!(root.transcript.projection.revision(), root_revision);
     root.input_editor.validate_snapshot(&draft)?;
     let root_again = paint(&mut ConversationView::root(&mut root)?)?;
@@ -132,14 +137,23 @@ fn conversation_view_renders_and_scrolls_child_without_mutating_root_or_draft() 
 fn conversation_view_refuses_mismatched_sources_without_changing_either_owner() -> TestResult {
     let (mut first, mut first_screen) = loaded("first private message", None)?;
     let (second, mut second_screen) = loaded("second private message", None)?;
-    let viewport = second_screen.viewport.clone();
+    let viewport = second_screen.conversation.viewport.clone();
     let revision = first.projection.revision();
-    assert!(ConversationView::new(&mut first, &mut second_screen, DisplayToggles::new()).is_err());
-    assert_eq!(second_screen.viewport, viewport);
+    assert!(
+        ConversationView::new(
+            &mut first,
+            &mut second_screen.conversation,
+            second_screen.layout,
+            DisplayToggles::new()
+        )
+        .is_err()
+    );
+    assert_eq!(second_screen.conversation.viewport, viewport);
     assert_eq!(first.projection.revision(), revision);
     let frame = paint(&mut ConversationView::new(
         &mut first,
-        &mut first_screen,
+        &mut first_screen.conversation,
+        first_screen.layout,
         DisplayToggles::new(),
     )?)?;
     assert!(displayed(&frame)?.contains("first private message"));
@@ -158,14 +172,17 @@ fn conversation_view_selection_reads_only_its_exact_body_owner() -> TestResult {
         .next()
         .ok_or("child item missing")?;
     let reference = item.bodies.first().ok_or("child body missing")?;
-    child_screen.selection = Some(Selection::from_original(
+    child_screen.conversation.selection = Some(Selection::from_original(
         child.projection.source(),
-        original_for(&child, &child_screen, &item.id, reference)?,
+        original_for(&child, &child_screen.conversation, &item.id, reference)?,
         0.."child selected text".len(),
     )?);
-    child_screen.selection_item = Some(item.id.clone());
-    assert_eq!(selected_text(&child, &child_screen)?, "child selected text");
-    assert!(selected_text(&root, &child_screen).is_err());
-    assert!(original_for(&root, &root_screen, &item.id, reference).is_err());
+    child_screen.conversation.selection_item = Some(item.id.clone());
+    assert_eq!(
+        selected_text(&child, &child_screen.conversation)?,
+        "child selected text"
+    );
+    assert!(selected_text(&root, &child_screen.conversation).is_err());
+    assert!(original_for(&root, &root_screen.conversation, &item.id, reference).is_err());
     Ok(())
 }

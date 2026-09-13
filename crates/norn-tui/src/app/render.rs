@@ -19,11 +19,13 @@ use super::state::AppState;
 use super::viewport::{AnchorPosition, ViewAnchor};
 
 mod agents;
+mod conversation_screen;
 pub(in crate::app) mod navigation;
 pub(in crate::app) mod reading_snapshot;
 mod screen_state;
+pub(in crate::app) use conversation_screen::ConversationScreen;
+use conversation_screen::DisplayCache;
 pub(super) use screen_state::AuxiliaryPane;
-use screen_state::DisplayCache;
 pub use screen_state::ScreenState;
 pub(in crate::app) mod changes;
 mod composer;
@@ -51,7 +53,7 @@ pub(crate) fn sync_input_area(
     };
     if geometry_changed {
         navigation::finish(state)?;
-        state.screen.row_cursor = None;
+        state.screen.conversation.row_cursor = None;
     }
     super::display_selection::sync_geometry(&mut state.screen, cols, terminal_rows);
     if state.screen.display_frame.is_none() {
@@ -88,7 +90,7 @@ pub(crate) fn write_user_message(
     state: &mut AppState,
 ) -> Result<super::transcript::publication::SubmittedInput, TuiError> {
     let local = super::notices::input(state, "You · submitted", &text)?;
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
     Ok(super::transcript::publication::SubmittedInput { text, local })
 }
 
@@ -185,10 +187,10 @@ fn prepare(state: &mut AppState, columns: u16, rows: u16) -> Result<Frame, TuiEr
     state.screen.prepared_recovery = None;
     state.screen.prepared_latest = None;
     state.screen.composer_send_key_area = None;
-    state.screen.prepared_reading = None;
-    state.screen.visible.clear();
-    state.screen.hit_rows.clear();
-    state.screen.demands.clear();
+    state.screen.conversation.prepared_reading = None;
+    state.screen.conversation.visible.clear();
+    state.screen.conversation.hit_rows.clear();
+    state.screen.conversation.demands.clear();
     let mut frame = Frame {
         layout,
         rows: Vec::new(),
@@ -344,18 +346,19 @@ pub(super) fn load_visible(state: &mut AppState) -> Result<(), TuiError> {
     if state.screen.ready_batch_remaining > 0 {
         return Ok(());
     }
-    if !state.screen.viewport.follows_tail() {
+    if !state.screen.conversation.viewport.follows_tail() {
         state.transcript.cancel_latest();
     }
     state.transcript.load_latest(&mut state.read_tasks)?;
-    if state.screen.request_older
+    if state.screen.conversation.request_older
         && (!state.transcript.has_older || state.transcript.load_older(&mut state.read_tasks)?)
     {
-        state.screen.request_older = false;
+        state.screen.conversation.request_older = false;
     }
-    if std::mem::take(&mut state.screen.request_more)
+    if std::mem::take(&mut state.screen.conversation.request_more)
         && let Some(item) = state
             .screen
+            .conversation
             .viewport
             .selected()
             .and_then(|id| state.transcript.projection.item(id))
@@ -368,15 +371,16 @@ pub(super) fn load_visible(state: &mut AppState) -> Result<(), TuiError> {
                 .load_body(&mut state.read_tasks, &id, &body, true)?;
         }
     }
-    if !state.screen.allow_body_load {
+    if !state.screen.conversation.allow_body_load {
         return Ok(());
     }
-    state.screen.allow_body_load = false;
-    let mut demands = std::mem::take(&mut state.screen.demands);
+    state.screen.conversation.allow_body_load = false;
+    let mut demands = std::mem::take(&mut state.screen.conversation.demands);
     if state.screen.changes_open
         && state.screen.auxiliary == AuxiliaryPane::Diff
         && let Some(item) = state
             .screen
+            .conversation
             .viewport
             .selected()
             .and_then(|id| state.transcript.projection.item(id))
@@ -395,11 +399,11 @@ pub(super) fn load_visible(state: &mut AppState) -> Result<(), TuiError> {
     if let Some(ViewAnchor {
         position: AnchorPosition::Body { reference, .. },
         ..
-    }) = state.screen.viewport.anchor()
+    }) = state.screen.conversation.viewport.anchor()
     {
         pinned.insert(reference.clone());
     }
-    if let Some(selection) = &state.screen.selection {
+    if let Some(selection) = &state.screen.conversation.selection {
         pinned.insert(selection.reference().clone());
     }
     super::view_actions::reading::load_requests(state, &mut pinned)?;
@@ -414,6 +418,7 @@ pub(super) fn load_visible(state: &mut AppState) -> Result<(), TuiError> {
     state.transcript.retain_bodies(&pinned);
     state
         .screen
+        .conversation
         .displayed
         .retain(|reference, _| pinned.contains(reference));
     Ok(())

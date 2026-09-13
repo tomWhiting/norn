@@ -364,12 +364,12 @@ async fn run_turn(
                 () = async { match &observation { Some(owner) => owner.changed().await, None => std::future::pending().await } } => {
                     state.transcript.drain_publications()?;
                     crate::app::composer_submission::resolve(state)?;
-                    state.screen.allow_body_load = true;
+                    state.screen.conversation.allow_body_load = true;
                     redraw_all(state, guard)?;
                 }
                 Some(result) = state.transcript.input_tasks.join_next() => {
                     state.transcript.finish_input(result)?;
-                    state.screen.allow_body_load = true;
+                    state.screen.conversation.allow_body_load = true;
                 }
                 result = crate::app::frontend_preferences::wait(&mut state.preferences) => { crate::app::frontend_preferences::finish(state, result)?; }
                 diagnostic = crate::app::diagnostics::wait(&mut state.diagnostics) => { crate::app::diagnostics::finish(state, diagnostic)?; }
@@ -485,7 +485,7 @@ async fn run_turn(
                 AgentStepResult::Completed { .. } | AgentStepResult::Refused { .. }
             ))
         );
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
     let channel_wake_pause = channel_wake
         .then(|| channel_wake_pause_reason(step_result.as_ref(), cancel_requested))
         .flatten();

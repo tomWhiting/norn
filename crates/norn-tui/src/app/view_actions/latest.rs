@@ -138,14 +138,14 @@ fn position_count(position: &HistoryPosition) -> Result<usize, TuiError> {
 }
 
 pub(in crate::app) fn follow_latest(state: &mut AppState) {
-    state.screen.navigation = None;
-    state.screen.row_cursor = None;
-    state.screen.request_older = false;
-    state.screen.viewport.follow_tail();
-    state.screen.reading_snapshot = None;
+    state.screen.conversation.navigation = None;
+    state.screen.conversation.row_cursor = None;
+    state.screen.conversation.request_older = false;
+    state.screen.conversation.viewport.follow_tail();
+    state.screen.conversation.reading_snapshot = None;
     state.transcript.request_latest();
     state.screen.dirty = true;
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
 }
 
 /// Hit regions belong to one successfully published surface, never prepared geometry alone.
@@ -158,7 +158,7 @@ pub(in crate::app) struct LatestHit {
 fn commit_hit(screen: &mut ScreenState, frame: &Arc<Frame>) {
     screen.latest_hit = screen.prepared_latest.take().map(|area| LatestHit {
         area,
-        source: screen.viewport.source().clone(),
+        source: screen.conversation.viewport.source().clone(),
         frame: Arc::clone(frame),
     });
 }
@@ -171,14 +171,14 @@ pub(in crate::app) fn finish_publication(
 ) -> Result<(), TuiError> {
     match publication {
         Ok(()) => {
-            crate::app::render::reading_snapshot::published(screen, &frame);
+            crate::app::render::reading_snapshot::published(&mut screen.conversation, &frame);
             commit_hit(screen, &frame);
             crate::app::composer_recovery::published(screen, &frame);
             screen.display_frame = Some(frame);
             Ok(())
         }
         Err(error) => {
-            screen.prepared_reading = None;
+            screen.conversation.prepared_reading = None;
             screen.prepared_latest = None;
             screen.latest_hit = None;
             screen.prepared_recovery = None;

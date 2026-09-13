@@ -89,7 +89,7 @@ pub(super) fn prepare(
 pub(super) fn published(screen: &mut ScreenState, frame: &Arc<Frame>) {
     screen.recovery_hit = screen.prepared_recovery.take().map(|prepared| RecoveryHit {
         prepared,
-        source: screen.viewport.source().clone(),
+        source: screen.conversation.viewport.source().clone(),
         frame: Arc::clone(frame),
     });
 }
@@ -129,7 +129,7 @@ pub(super) fn activate(state: &mut AppState, column: u16, row: u16) -> bool {
     state.screen.prepared_recovery = None;
     state.autocomplete = None;
     state.screen.focus = super::focus::FocusState::new();
-    state.screen.feedback =
+    state.screen.conversation.feedback =
         Some("Draft recovered; your other draft is saved. Nothing was sent.".to_owned());
     state.screen.dirty = true;
     true

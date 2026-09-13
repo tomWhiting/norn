@@ -24,12 +24,12 @@ pub(in crate::app) fn mouse(event: MouseEvent, state: &mut AppState) -> bool {
         Ok(handled) => {
             if handled {
                 state.screen.dirty = true;
-                state.screen.allow_body_load = true;
+                state.screen.conversation.allow_body_load = true;
             }
             handled
         }
         Err(error) => {
-            state.screen.feedback = Some(error.to_string());
+            state.screen.conversation.feedback = Some(error.to_string());
             state.screen.dirty = true;
             true
         }
@@ -79,7 +79,7 @@ fn apply_mouse(event: MouseEvent, state: &mut AppState) -> Result<bool, TuiError
             .is_some_and(|area| contains(area, event))
     {
         state.composer_send_key = state.composer_send_key.next_policy();
-        state.screen.feedback = Some(format!(
+        state.screen.conversation.feedback = Some(format!(
             "Composer send key: {}",
             state.composer_send_key.label()
         ));
@@ -153,7 +153,7 @@ fn apply_mouse(event: MouseEvent, state: &mut AppState) -> Result<bool, TuiError
             Ok(true)
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            state.screen.feedback = None;
+            state.screen.conversation.feedback = None;
             state
                 .screen
                 .focus
@@ -212,20 +212,21 @@ fn begin_display(
         state.transcript.projection.source().clone(),
         std::sync::Arc::clone(frame),
         pane,
-        &state.screen.hit_rows,
+        &state.screen.conversation.hit_rows,
         event.column,
         event.row,
     )
     .map_err(interaction)?;
     let hit = selection.hit(event.column, event.row).cloned();
     let column = selection.focus_column().map_err(interaction)?;
-    state.screen.selection = None;
-    state.screen.selection_item = None;
+    state.screen.conversation.selection = None;
+    state.screen.conversation.selection_item = None;
     state.screen.display_selection = Some(selection);
     state.screen.dragging_selection = true;
     if let Some(hit) = hit {
         state
             .screen
+            .conversation
             .viewport
             .select(hit.anchor.item.clone(), &state.transcript.projection)
             .map_err(interaction)?;
@@ -254,6 +255,7 @@ fn extend_display(state: &mut AppState, event: MouseEvent) -> Result<(), TuiErro
         hit.body.as_ref()
             == state
                 .screen
+                .conversation
                 .selection
                 .as_ref()
                 .map(crate::app::selection::Selection::reference)
@@ -262,8 +264,8 @@ fn extend_display(state: &mut AppState, event: MouseEvent) -> Result<(), TuiErro
             attempt_original(state, hit, column, true);
         }
     } else {
-        state.screen.selection = None;
-        state.screen.selection_item = None;
+        state.screen.conversation.selection = None;
+        state.screen.conversation.selection_item = None;
     }
     if released
         && !moved
@@ -294,9 +296,9 @@ fn attempt_original(
     extend: bool,
 ) {
     if let Err(error) = select_hit(state, hit, column, extend) {
-        state.screen.selection = None;
-        state.screen.selection_item = None;
-        state.screen.feedback = Some(format!(
+        state.screen.conversation.selection = None;
+        state.screen.conversation.selection_item = None;
+        state.screen.conversation.feedback = Some(format!(
             "Displayed-text selection; original mapping unavailable: {error}"
         ));
     }

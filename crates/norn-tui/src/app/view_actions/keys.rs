@@ -14,7 +14,7 @@ pub(in crate::app) fn key(key: KeyEvent, state: &mut AppState) -> bool {
     match apply_key(key, state) {
         Ok(handled) => handled,
         Err(error) => {
-            state.screen.feedback = Some(error.to_string());
+            state.screen.conversation.feedback = Some(error.to_string());
             state.screen.dirty = true;
             true
         }
@@ -26,7 +26,7 @@ fn apply_key(key: KeyEvent, state: &mut AppState) -> Result<bool, TuiError> {
     if key.kind != KeyEventKind::Press {
         return Ok(action.is_some());
     }
-    state.screen.feedback = None;
+    state.screen.conversation.feedback = None;
     let available = state.screen.availability();
     if !available.composer {
         return Ok(false);
@@ -96,7 +96,7 @@ fn apply_key(key: KeyEvent, state: &mut AppState) -> Result<bool, TuiError> {
     if handled {
         crate::app::frontend_preferences::edited(state)?;
         state.screen.dirty = true;
-        state.screen.allow_body_load = true;
+        state.screen.conversation.allow_body_load = true;
     }
     Ok(handled)
 }
@@ -123,13 +123,13 @@ fn apply_shortcut(action: ViewAction, state: &mut AppState) -> Result<(), TuiErr
         }
         ViewAction::SendKeyCycle => {
             state.composer_send_key = state.composer_send_key.next_policy();
-            state.screen.feedback = Some(format!(
+            state.screen.conversation.feedback = Some(format!(
                 "Composer send key: {}",
                 state.composer_send_key.label()
             ));
         }
         ViewAction::Search => prepare_command(state, "/view search ")?,
-        ViewAction::Copy => state.screen.request_copy = true,
+        ViewAction::Copy => state.screen.conversation.request_copy = true,
         ViewAction::Export => prepare_command(state, "/view export ")?,
         ViewAction::FocusNext | ViewAction::FocusPrevious => {
             crate::app::autocomplete::dismiss(state);

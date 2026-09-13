@@ -429,7 +429,7 @@ async fn outer_loop(
             }
             event = agent_event_rx.recv(), if !events_closed => {
                 match event {
-                    Ok(event) => { handle_agent_event(state, event)?; state.screen.allow_body_load = true; }
+                    Ok(event) => { handle_agent_event(state, event)?; state.screen.conversation.allow_body_load = true; }
                     Err(broadcast::error::RecvError::Lagged(missed)) => { state.mark_live_events_lagged(missed)?; }
                     Err(broadcast::error::RecvError::Closed) => {
                         events_closed = true;
@@ -460,7 +460,7 @@ async fn outer_loop(
             }
             result = wait_mcp_result(&mut runtime.mcp_command) => {
                 render_completed_mcp(state, &mut runtime.mcp_command, result)?;
-                state.screen.allow_body_load = true;
+                state.screen.conversation.allow_body_load = true;
             }
             readiness = async {
                 match runtime.loop_context.mcp_channel_session.as_ref() {
@@ -482,7 +482,7 @@ async fn outer_loop(
             }
             Some(first) = super::child_results::recv_child_result(&mut child_results.rx) => {
                 super::child_results::render_child_result_batch(state, &mut child_results.rx, &mut child_results.pending_prompts, first)?;
-                state.screen.allow_body_load = true;
+                state.screen.conversation.allow_body_load = true;
                 run_pending_child_prompts(state, runtime, guard, &mut term_rx, agent_event_rx, &mut child_results).await?;
             }
             _ = tick.tick() => { state.tick(Instant::now()); }
@@ -587,7 +587,7 @@ async fn dispatch_input(
         }
         Event::WindowResized(size) => {
             guard.handle_resize(size.cols, size.rows);
-            state.screen.allow_body_load = false;
+            state.screen.conversation.allow_body_load = false;
             sync_input_for_current_geometry(state, guard)?;
             redraw_all(state, guard)?;
             Ok(InputOutcome::Continue)

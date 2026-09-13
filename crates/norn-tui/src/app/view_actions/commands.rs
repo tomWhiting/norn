@@ -32,7 +32,7 @@ pub(in crate::app) fn command_named(
         if !matches!(arguments.trim(), "" | "diff" | "agents") {
             command_error(state, "Use /pane [diff|agents]")?;
             state.screen.dirty = true;
-            state.screen.allow_body_load = true;
+            state.screen.conversation.allow_body_load = true;
             return Ok(LocalCommandOutcome::Rejected);
         }
         return command(
@@ -83,7 +83,7 @@ pub(in crate::app) fn command(
         outcome = LocalCommandOutcome::after_reported_failure(error, reporting);
     }
     state.screen.dirty = true;
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
     Ok(outcome)
 }
 
@@ -91,6 +91,7 @@ fn command_error(state: &mut AppState, message: &str) -> Result<(), TuiError> {
     let item = crate::app::notices::error(state, "View command", message)?;
     state
         .screen
+        .conversation
         .viewport
         .scroll_to(
             crate::app::viewport::ViewAnchor {
@@ -141,14 +142,14 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
                     );
                 }
             };
-            state.screen.feedback = Some(format!("Composer send key: {key}"));
+            state.screen.conversation.feedback = Some(format!("Composer send key: {key}"));
             Ok(())
         }
         ["next"] => super::reading::next_hit(state, false).map_err(|error| error.to_string()),
         ["previous"] => super::reading::next_hit(state, true).map_err(|error| error.to_string()),
         ["status"] => status(state),
         ["copy"] => {
-            state.screen.request_copy = true;
+            state.screen.conversation.request_copy = true;
             Ok(())
         }
         ["clipboard", capability] => {
@@ -159,7 +160,8 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
                 "osc52" => ClipboardCapability::Osc52,
                 _ => return Err("Use /view clipboard unspecified|disabled|osc52".to_owned()),
             };
-            state.screen.feedback = Some(format!("Clipboard capability: {capability}"));
+            state.screen.conversation.feedback =
+                Some(format!("Clipboard capability: {capability}"));
             Ok(())
         }
         ["select", index] => select_original(
@@ -186,13 +188,13 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
         )
         .map_err(|error| error.to_string()),
         ["selection", "clear"] => {
-            state.screen.selection = None;
-            state.screen.selection_item = None;
+            state.screen.conversation.selection = None;
+            state.screen.conversation.selection_item = None;
             state.screen.display_selection = None;
             Ok(())
         }
         ["selection"] => {
-            state.screen.feedback = Some(match &state.screen.selection {
+            state.screen.conversation.feedback = Some(match &state.screen.conversation.selection {
                 Some(selection) => format!(
                     "Original selection {:?} in {:?}",
                     selection.range(),
@@ -212,6 +214,7 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
                 .map_err(|error| error.to_string())?;
             state
                 .screen
+                .conversation
                 .viewport
                 .scroll_to(
                     crate::app::viewport::ViewAnchor {
@@ -267,12 +270,12 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
         }
         ["pin"] => pin_visible(state).map_err(|error| error.to_string()),
         ["older"] => {
-            state.screen.request_older = true;
+            state.screen.conversation.request_older = true;
             pin_visible(state).map_err(|error| error.to_string())
         }
         ["more"] => {
             ensure_selected(state).map_err(|error| error.to_string())?;
-            state.screen.request_more = true;
+            state.screen.conversation.request_more = true;
             Ok(())
         }
         ["compact"] => {
@@ -284,7 +287,7 @@ fn execute(text: &str, state: &mut AppState) -> Result<(), String> {
             Ok(())
         }
         ["reset"] => {
-            state.screen.tool_overrides.clear();
+            state.screen.conversation.tool_overrides.clear();
             Ok(())
         }
         ["expand"] => expand(state, Some(true)).map_err(|error| error.to_string()),
@@ -369,6 +372,7 @@ fn status(state: &mut AppState) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     state
         .screen
+        .conversation
         .viewport
         .scroll_to(
             crate::app::viewport::ViewAnchor {

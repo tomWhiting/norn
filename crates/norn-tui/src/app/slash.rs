@@ -307,7 +307,7 @@ async fn handle_new(
     state
         .screen
         .replace_source(state.transcript.projection.source());
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
     if let Some(new_id) = new_id {
         runtime.session_id = Some(new_id.clone());
         runtime.agent_config.cache_key = Some(new_id.clone());

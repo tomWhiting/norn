@@ -122,7 +122,7 @@ async fn connect_failure_becomes_a_retained_error_and_releases_playback() -> Tes
     ) && item.label.as_str()
         == "Read-aloud failed"));
     assert_eq!(
-        state.screen.feedback.as_deref(),
+        state.screen.conversation.feedback.as_deref(),
         Some("Voice failed; inspect the retained error")
     );
     Ok(())
@@ -201,6 +201,7 @@ async fn completion_notice_retains_a_late_stop_request() -> TestResult {
     assert!(
         state
             .screen
+            .conversation
             .feedback
             .as_deref()
             .is_some_and(|text| text.contains("server reports completed playback")

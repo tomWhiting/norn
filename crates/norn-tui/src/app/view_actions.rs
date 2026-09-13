@@ -35,15 +35,16 @@ fn focus(state: &mut AppState, target: Focus) -> Result<(), TuiError> {
 pub(super) fn pin_visible(state: &mut AppState) -> Result<(), TuiError> {
     super::render::navigation::finish(state)?;
     state.transcript.cancel_latest();
-    if state.screen.viewport.anchor().is_none() {
-        if let Some(anchor) = state.screen.visible.first().cloned() {
+    if state.screen.conversation.viewport.anchor().is_none() {
+        if let Some(anchor) = state.screen.conversation.visible.first().cloned() {
             state
                 .screen
+                .conversation
                 .viewport
                 .scroll_to(anchor, &state.transcript.projection)
                 .map_err(interaction)?;
         } else {
-            state.screen.viewport.pin();
+            state.screen.conversation.viewport.pin();
         }
     }
     Ok(())
@@ -93,10 +94,11 @@ fn browse_target_rows(
 }
 
 fn ensure_selected(state: &mut AppState) -> Result<(), TuiError> {
-    if state.screen.viewport.selected().is_none() {
-        if let Some(anchor) = state.screen.visible.first() {
+    if state.screen.conversation.viewport.selected().is_none() {
+        if let Some(anchor) = state.screen.conversation.visible.first() {
             state
                 .screen
+                .conversation
                 .viewport
                 .select(anchor.item.clone(), &state.transcript.projection)
                 .map_err(interaction)?;
@@ -119,9 +121,10 @@ pub(super) const fn default_expanded(
 fn expand(state: &mut AppState, explicit: Option<bool>) -> Result<(), TuiError> {
     super::render::navigation::finish(state)?;
     ensure_selected(state)?;
-    if let Some(item) = state.screen.viewport.selected() {
+    if let Some(item) = state.screen.conversation.viewport.selected() {
         let current = state
             .screen
+            .conversation
             .tool_overrides
             .get(item)
             .copied()
@@ -132,6 +135,7 @@ fn expand(state: &mut AppState, explicit: Option<bool>) -> Result<(), TuiError> 
             });
         state
             .screen
+            .conversation
             .tool_overrides
             .insert(item.clone(), explicit.unwrap_or(!current));
     }
@@ -140,9 +144,9 @@ fn expand(state: &mut AppState, explicit: Option<bool>) -> Result<(), TuiError> 
 
 fn select_row(state: &mut AppState, upwards: bool) -> Result<(), TuiError> {
     super::render::navigation::finish(state)?;
-    let selected = state.screen.viewport.selected();
+    let selected = state.screen.conversation.viewport.selected();
     let mut ids = Vec::new();
-    for anchor in &state.screen.visible {
+    for anchor in &state.screen.conversation.visible {
         if ids.last() != Some(&&anchor.item) {
             ids.push(&anchor.item);
         }
@@ -156,6 +160,7 @@ fn select_row(state: &mut AppState, upwards: bool) -> Result<(), TuiError> {
     if let Some(item) = ids.get(next) {
         state
             .screen
+            .conversation
             .viewport
             .select((*item).clone(), &state.transcript.projection)
             .map_err(interaction)?;
@@ -204,11 +209,16 @@ fn original_for<'a>(
     item: &norn::session_view::ItemId,
     reference: &'a norn::session_view::BodyRef,
 ) -> Result<super::selection::OriginalBody<'a>, TuiError> {
-    super::conversation_view::original_for(&state.transcript, &state.screen, item, reference)
+    super::conversation_view::original_for(
+        &state.transcript,
+        &state.screen.conversation,
+        item,
+        reference,
+    )
 }
 
 pub(in crate::app) fn selected_text(state: &AppState) -> Result<&str, TuiError> {
-    super::conversation_view::selected_text(&state.transcript, &state.screen)
+    super::conversation_view::selected_text(&state.transcript, &state.screen.conversation)
 }
 
 fn select_original(
@@ -219,6 +229,7 @@ fn select_original(
     ensure_selected(state)?;
     let id = state
         .screen
+        .conversation
         .viewport
         .selected()
         .cloned()
@@ -254,10 +265,10 @@ fn select_original(
         range,
     )
     .map_err(interaction)?;
-    state.screen.selection = Some(selection);
-    state.screen.selection_item = Some(id);
+    state.screen.conversation.selection = Some(selection);
+    state.screen.conversation.selection_item = Some(id);
     state.screen.display_selection = None;
-    state.screen.feedback =
+    state.screen.conversation.feedback =
         Some("Original text selected; F4 copies, F5 prepares export".to_owned());
     Ok(())
 }
@@ -278,7 +289,7 @@ fn select_hit(
     let original = original_for(state, &hit.anchor.item, reference)?;
     let mapped = super::selection::MappedBody::new(reference, &hit.text);
     let selection = if extend {
-        let mut selection = state.screen.selection.clone().ok_or_else(|| {
+        let mut selection = state.screen.conversation.selection.clone().ok_or_else(|| {
             interaction(std::io::Error::other(
                 "selection drag has no original starting point",
             ))
@@ -305,11 +316,12 @@ fn select_hit(
     };
     state
         .screen
+        .conversation
         .viewport
         .select(hit.anchor.item.clone(), &state.transcript.projection)
         .map_err(interaction)?;
-    state.screen.selection = Some(selection);
-    state.screen.selection_item = Some(hit.anchor.item.clone());
+    state.screen.conversation.selection = Some(selection);
+    state.screen.conversation.selection_item = Some(hit.anchor.item.clone());
     Ok(())
 }
 
@@ -320,7 +332,7 @@ pub(super) fn flush_copy(
 ) -> Result<(), TuiError> {
     use crate::terminal::clipboard::{CopyPreparation, prepare_copy};
     use std::io::Write as _;
-    if !std::mem::take(&mut state.screen.request_copy) {
+    if !std::mem::take(&mut state.screen.conversation.request_copy) {
         return Ok(());
     }
     let selected = match selected_text(state) {
@@ -357,7 +369,7 @@ pub(super) fn flush_copy(
             Err(error) => format!("Clipboard send failed: {error}"),
         },
     };
-    state.screen.feedback = Some(message.clone());
+    state.screen.conversation.feedback = Some(message.clone());
     super::notices::notice(state, "Copy", Some(&message))?;
     state.screen.dirty = true;
     Ok(())
@@ -365,7 +377,8 @@ pub(super) fn flush_copy(
 
 fn prepare_command(state: &mut AppState, command: &str) -> Result<(), TuiError> {
     if !state.input_editor.is_empty() {
-        state.screen.feedback = Some(format!("Draft preserved; use {command} when ready"));
+        state.screen.conversation.feedback =
+            Some(format!("Draft preserved; use {command} when ready"));
         return Ok(());
     }
     state

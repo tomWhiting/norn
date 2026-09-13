@@ -127,7 +127,8 @@ pub(super) fn paint_chrome(
             value: latest.width(),
             source,
         })?;
-    let show_latest = (!state.screen.viewport.follows_tail() || state.transcript.latest_pending())
+    let show_latest = (!state.screen.conversation.viewport.follows_tail()
+        || state.transcript.latest_pending())
         && latest_width <= panel.width;
     let hints_width = if show_latest {
         panel.width.saturating_sub(latest_width).saturating_sub(1)
@@ -299,7 +300,7 @@ pub(super) fn input_margin(
 
 pub(super) fn activity_status(state: &AppState) -> Option<String> {
     use crate::render::streaming_indicator::StreamingIndicator;
-    if let Some(feedback) = &state.screen.feedback {
+    if let Some(feedback) = &state.screen.conversation.feedback {
         return Some(feedback.clone());
     }
     let model = &state.fixed_panel.status_bar().model_name;

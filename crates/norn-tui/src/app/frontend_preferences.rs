@@ -254,7 +254,7 @@ pub(super) fn finish(state: &mut AppState, result: SaveResult) -> Result<(), Tui
                     Some(TuiPreferenceLayer::SharedProject | TuiPreferenceLayer::WorkspaceLocal)
                 )
             {
-                state.screen.feedback = Some("Personal preferences saved but shadowed on restart; /view preferences status or local".to_owned());
+                state.screen.conversation.feedback = Some("Personal preferences saved but shadowed on restart; /view preferences status or local".to_owned());
                 state.screen.dirty = true;
             }
             state.preferences.status = match change.publication {
@@ -315,10 +315,10 @@ pub(super) fn command(
         }
         "save" => {
             if state.preferences.scope == PreferenceScope::Run {
-                state.screen.feedback = Some("Temporary run preferences: choose /view preferences user or local before saving".to_owned());
+                state.screen.conversation.feedback = Some("Temporary run preferences: choose /view preferences user or local before saving".to_owned());
                 LocalCommandOutcome::Rejected
             } else if state.preferences.pending.is_some() {
-                state.screen.feedback = Some(
+                state.screen.conversation.feedback = Some(
                     "Preference save pending; latest edits remain unsaved until its outcome"
                         .to_owned(),
                 );
@@ -332,7 +332,7 @@ pub(super) fn command(
             }
         }
         _ => {
-            state.screen.feedback =
+            state.screen.conversation.feedback =
                 Some("Use /view preferences status|run|user|local|save".to_owned());
             return Ok(LocalCommandOutcome::Rejected);
         }
@@ -346,6 +346,7 @@ pub(super) fn command(
         let item = super::notices::notice(state, "Frontend preferences", Some(&detail))?;
         state
             .screen
+            .conversation
             .viewport
             .scroll_to(
                 super::viewport::ViewAnchor {
@@ -372,6 +373,7 @@ fn command_failure(state: &mut AppState, error: &TuiError) -> Result<(), TuiErro
     let item = super::notices::error(state, "View command", &error.to_string())?;
     state
         .screen
+        .conversation
         .viewport
         .scroll_to(
             super::viewport::ViewAnchor {

@@ -97,7 +97,7 @@ async fn settle(state: &mut AppState) -> TestResult<Frame> {
         }
         while let Some(result) = state.read_tasks.bodies.join_next().await {
             state.transcript.finish_body(result)?;
-            state.screen.allow_body_load = true;
+            state.screen.conversation.allow_body_load = true;
             state.screen.dirty = true;
         }
     }
@@ -186,7 +186,7 @@ async fn disk_resume_browses_superseded_tools_and_returns_to_latest_without_writ
     navigation::queue(&mut state, true, 10_000)?;
     settle(&mut state).await?;
     assert!(!state.transcript.has_older);
-    assert!(state.screen.navigation.is_none());
+    assert!(state.screen.conversation.navigation.is_none());
     assert_eq!(
         state
             .transcript
@@ -207,9 +207,10 @@ async fn disk_resume_browses_superseded_tools_and_returns_to_latest_without_writ
         .clone();
     state
         .screen
+        .conversation
         .viewport
         .select(tool.clone(), &state.transcript.projection)?;
-    state.screen.viewport.scroll_to(
+    state.screen.conversation.viewport.scroll_to(
         ViewAnchor {
             item: tool.clone(),
             position: AnchorPosition::Header,
@@ -234,7 +235,7 @@ async fn disk_resume_browses_superseded_tools_and_returns_to_latest_without_writ
             .iter()
             .all(|body| state.transcript.body(body).is_none())
     );
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
     let reloaded = settle(&mut state).await?;
     assert!(text(&reloaded).contains(OLD_RESULT));
     assert!(
@@ -244,7 +245,7 @@ async fn disk_resume_browses_superseded_tools_and_returns_to_latest_without_writ
     );
     crate::app::view_actions::command("follow", &mut state)?;
     let latest = settle(&mut state).await?;
-    assert!(state.screen.viewport.follows_tail());
+    assert!(state.screen.conversation.viewport.follows_tail());
     assert!(text(&latest).contains("newest post-compaction turn"));
     assert_eq!(state.input_editor.text(), DRAFT);
     assert_eq!(

@@ -10,6 +10,7 @@ pub(super) fn command(arguments: &[&str], state: &mut AppState) -> Result<(), St
                 .map_err(|error| error.to_string())?;
             state
                 .screen
+                .conversation
                 .viewport
                 .scroll_to(
                     crate::app::viewport::ViewAnchor {
@@ -26,7 +27,7 @@ pub(super) fn command(arguments: &[&str], state: &mut AppState) -> Result<(), St
                 .replacement(action, keys)
                 .map_err(|error| error.to_string())?;
             state.view_shortcuts = std::sync::Arc::new(replacement);
-            state.screen.feedback = Some(format!("View shortcuts updated: {action}"));
+            state.screen.conversation.feedback = Some(format!("View shortcuts updated: {action}"));
             Ok(())
         }
         ["clear", action] => {
@@ -35,7 +36,7 @@ pub(super) fn command(arguments: &[&str], state: &mut AppState) -> Result<(), St
                 .replacement(action, &[])
                 .map_err(|error| error.to_string())?;
             state.view_shortcuts = std::sync::Arc::new(replacement);
-            state.screen.feedback = Some(format!("View shortcuts unbound: {action}"));
+            state.screen.conversation.feedback = Some(format!("View shortcuts unbound: {action}"));
             Ok(())
         }
         _ => Err(

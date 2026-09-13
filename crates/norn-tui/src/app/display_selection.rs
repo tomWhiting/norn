@@ -325,7 +325,7 @@ pub(super) fn paint(
     let Some(selection) = screen.display_selection.as_ref() else {
         return Ok(());
     };
-    if &selection.source != screen.viewport.source() {
+    if &selection.source != screen.conversation.viewport.source() {
         return Err(DisplaySelectionError::Source);
     }
     if !selection.pane.matches(frame.layout, screen.auxiliary) {

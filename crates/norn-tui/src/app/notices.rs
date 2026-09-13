@@ -12,14 +12,14 @@ pub(super) fn notice(
     label: &str,
     detail: Option<&str>,
 ) -> Result<ItemId, TuiError> {
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
     state.screen.dirty = true;
     state.transcript.notice(ViewItemKind::Notice, label, detail)
 }
 
 /// Retain an explicit frontend/runtime failure with its original approved details.
 pub(super) fn error(state: &mut AppState, label: &str, detail: &str) -> Result<ItemId, TuiError> {
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
     state.screen.dirty = true;
     state
         .transcript
@@ -28,7 +28,7 @@ pub(super) fn error(state: &mut AppState, label: &str, detail: &str) -> Result<I
 
 /// Retain human input until its exact producer-owned committed receipt is available.
 pub(super) fn input(state: &mut AppState, label: &str, text: &str) -> Result<ItemId, TuiError> {
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
     state.screen.dirty = true;
     state
         .transcript
@@ -42,7 +42,7 @@ pub(super) fn child_result(
     role: &str,
     text: &str,
 ) -> Result<ItemId, TuiError> {
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
     state.screen.dirty = true;
     state.transcript.notice(
         ViewItemKind::Child,

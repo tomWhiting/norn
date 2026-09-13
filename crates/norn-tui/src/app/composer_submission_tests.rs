@@ -148,6 +148,7 @@ fn prepare_blank_and_pending_input_preserves_original_draft() -> TestResult {
     assert!(
         state
             .screen
+            .conversation
             .feedback
             .as_deref()
             .is_some_and(|message| message.contains("previous input's acceptance"))
@@ -276,6 +277,7 @@ async fn actual_opening_rejection_preserves_draft_undo_and_empty_recall() -> Tes
     assert!(
         state
             .screen
+            .conversation
             .feedback
             .as_deref()
             .is_some_and(|message| message.contains("not accepted"))
@@ -302,9 +304,16 @@ fn accepted_stale_snapshot_keeps_new_draft_and_records_only_accepted_text() -> T
     let reloaded = InputHistory::load_from(&path);
     assert_eq!(reloaded.len(), 1);
     assert_eq!(reloaded.entry(0), Some("accepted"));
-    assert!(state.screen.feedback.as_deref().is_some_and(|message| {
-        message.contains("Input accepted") && message.contains("not been resent")
-    }));
+    assert!(
+        state
+            .screen
+            .conversation
+            .feedback
+            .as_deref()
+            .is_some_and(|message| {
+                message.contains("Input accepted") && message.contains("not been resent")
+            })
+    );
     Ok(())
 }
 
@@ -333,11 +342,18 @@ fn accepted_history_failure_is_explicit_and_original_input_remains_undoable() ->
     ));
     assert!(returned.to_string().contains("secondary effect"));
     assert!(state.input_editor.is_empty());
-    assert!(state.screen.feedback.as_deref().is_some_and(|message| {
-        message.contains("Input accepted")
-            && message.contains("recall history could not be saved")
-            && message.contains("Do not resend")
-    }));
+    assert!(
+        state
+            .screen
+            .conversation
+            .feedback
+            .as_deref()
+            .is_some_and(|message| {
+                message.contains("Input accepted")
+                    && message.contains("recall history could not be saved")
+                    && message.contains("Do not resend")
+            })
+    );
     assert!(path.is_dir());
     assert!(!state.input_editor.history_prev()?);
     state
@@ -394,7 +410,7 @@ async fn opening_acceptance_keeps_independent_new_draft_without_stale_warning() 
     resolve(&mut state)?;
     state.input_editor.validate_snapshot(&next)?;
     assert_eq!(history_witness(&state)?, next_history);
-    assert!(state.screen.feedback.is_none());
+    assert!(state.screen.conversation.feedback.is_none());
     let recall = InputHistory::load_from(&path);
     assert_eq!(recall.len(), 1);
     assert_eq!(recall.entry(0), Some("original"));

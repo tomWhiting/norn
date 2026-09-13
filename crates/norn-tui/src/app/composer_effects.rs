@@ -57,7 +57,7 @@ pub(super) fn finish(
             format!("Editor command {command} requires a workspace control")
         }
     };
-    state.screen.feedback = Some(message);
+    state.screen.conversation.feedback = Some(message);
     state.screen.dirty = true;
     Ok(())
 }
@@ -73,7 +73,7 @@ fn route_pane_clipboard(
     {
         return false;
     }
-    state.screen.request_copy = true;
+    state.screen.conversation.request_copy = true;
     state.screen.dirty = true;
     true
 }
@@ -103,14 +103,14 @@ mod tests {
             &mut state,
             &iridium_editor::ClipboardOperation::Copy("private composer draft".to_owned())
         ));
-        assert!(state.screen.request_copy);
+        assert!(state.screen.conversation.request_copy);
         state.input_editor.validate_snapshot(&draft)?;
-        state.screen.request_copy = false;
+        state.screen.conversation.request_copy = false;
         assert!(!route_pane_clipboard(
             &mut state,
             &iridium_editor::ClipboardOperation::Paste
         ));
-        assert!(!state.screen.request_copy);
+        assert!(!state.screen.conversation.request_copy);
         state.screen.focus.focus(
             super::super::focus::Focus::Composer,
             state.screen.availability(),

@@ -4,8 +4,9 @@ use norn::session_view::{BodyRef, ItemId, ViewError};
 
 use crate::TuiError;
 use crate::events::DisplayToggles;
+use crate::render::layout::Layout;
 
-use super::render::{ScreenState, interaction};
+use super::render::{ConversationScreen, interaction};
 use super::selection::OriginalBody;
 use super::state::AppState;
 use super::transcript::Transcript;
@@ -14,7 +15,8 @@ use super::transcript::Transcript;
 /// No store is opened and no history or draft is cloned by constructing this view.
 pub(in crate::app) struct ConversationView<'a> {
     pub transcript: &'a mut Transcript,
-    pub screen: &'a mut ScreenState,
+    pub screen: &'a mut ConversationScreen,
+    pub layout: Layout,
     pub display_toggles: DisplayToggles,
 }
 
@@ -22,13 +24,15 @@ impl<'a> ConversationView<'a> {
     /// Refuse a mismatched view before allowing rendering or navigation to mutate it.
     pub fn new(
         transcript: &'a mut Transcript,
-        screen: &'a mut ScreenState,
+        screen: &'a mut ConversationScreen,
+        layout: Layout,
         display_toggles: DisplayToggles,
     ) -> Result<Self, TuiError> {
         validate_source(transcript, screen)?;
         Ok(Self {
             transcript,
             screen,
+            layout,
             display_toggles,
         })
     }
@@ -37,13 +41,14 @@ impl<'a> ConversationView<'a> {
     pub fn root(state: &'a mut AppState) -> Result<Self, TuiError> {
         Self::new(
             &mut state.transcript,
-            &mut state.screen,
+            &mut state.screen.conversation,
+            state.screen.layout,
             state.display_toggles,
         )
     }
 }
 
-fn validate_source(transcript: &Transcript, screen: &ScreenState) -> Result<(), TuiError> {
+fn validate_source(transcript: &Transcript, screen: &ConversationScreen) -> Result<(), TuiError> {
     if screen.viewport.source() != transcript.projection.source() {
         return Err(ViewError::SourceMismatch {
             expected: Box::new(screen.viewport.source().clone()),
@@ -57,7 +62,7 @@ fn validate_source(transcript: &Transcript, screen: &ScreenState) -> Result<(), 
 /// Revalidate source, item and revision before lending original bytes to the frontend.
 pub(in crate::app) fn original_for<'a>(
     transcript: &'a Transcript,
-    screen: &ScreenState,
+    screen: &ConversationScreen,
     item: &ItemId,
     reference: &'a BodyRef,
 ) -> Result<OriginalBody<'a>, TuiError> {
@@ -87,7 +92,7 @@ pub(in crate::app) fn original_for<'a>(
 /// Original selection is checked against this exact conversation, not the running agent.
 pub(in crate::app) fn selected_text<'a>(
     transcript: &'a Transcript,
-    screen: &'a ScreenState,
+    screen: &'a ConversationScreen,
 ) -> Result<&'a str, TuiError> {
     let selection = screen.selection.as_ref().ok_or_else(|| {
         interaction(std::io::Error::other(

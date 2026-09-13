@@ -67,13 +67,13 @@ pub fn handle_agent_event(state: &mut AppState, agent_event: AgentEvent) -> Resu
             && matches!(&agent_event.event,
             AgentEventKind::Observed(observed) if matches!(observed.scope(), norn::provider::agent_event::ObservationScope::Attempt(_)))
         {
-            state.screen.allow_body_load = true;
+            state.screen.conversation.allow_body_load = true;
             return Ok(());
         }
     } else {
         super::notices::child_event(state, &agent_event)?;
     }
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
     // Child activity changes the status tree independently of the root projection.
     state.screen.dirty = true;
     let event = match agent_event.event {

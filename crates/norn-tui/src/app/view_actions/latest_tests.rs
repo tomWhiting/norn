@@ -192,7 +192,7 @@ fn latest_hit_requires_published_frame_and_source_and_does_not_change_draft_or_f
         crate::render::fixed_panel::StatusBar::default(),
     );
     state.input_editor.paste_cells("draft remains")?;
-    state.screen.viewport.pin();
+    state.screen.conversation.viewport.pin();
     let focus = state.screen.focus;
     let area = Rect {
         column: 70,
@@ -214,7 +214,7 @@ fn latest_hit_requires_published_frame_and_source_and_does_not_change_draft_or_f
     finish_publication(&mut state.screen, Arc::clone(&frame), Ok(()))?;
     assert!(!activate(&mut state, 69, 23));
     assert!(activate(&mut state, 71, 23));
-    assert!(state.screen.viewport.follows_tail());
+    assert!(state.screen.conversation.viewport.follows_tail());
     assert!(state.transcript.latest_pending());
     assert_eq!(state.input_editor.text(), "draft remains");
     assert_eq!(state.screen.focus, focus);
@@ -222,7 +222,7 @@ fn latest_hit_requires_published_frame_and_source_and_does_not_change_draft_or_f
         store.history_page(&view.initial_history()?)?.total_events,
         0
     );
-    state.screen.viewport.pin();
+    state.screen.conversation.viewport.pin();
     state.screen.prepared_latest = Some(area);
     let failed = finish_publication(
         &mut state.screen,

@@ -23,7 +23,7 @@ pub(super) struct PendingSubmission {
 /// Prepare an exact, nonblank draft without clearing or recording it.
 pub(super) fn prepare(state: &mut AppState) -> Result<Option<ComposerSnapshot>, TuiError> {
     if state.pending_composer_submission.is_some() {
-        state.screen.feedback = Some(WAITING.to_owned());
+        state.screen.conversation.feedback = Some(WAITING.to_owned());
         state.screen.dirty = true;
         return Ok(None);
     }
@@ -111,8 +111,8 @@ pub(super) fn resolve(state: &mut AppState) -> Result<(), TuiError> {
             "resolved composer input lost its pending identity",
         ))
     })?;
-    if state.screen.feedback.as_deref() == Some(WAITING) {
-        state.screen.feedback = None;
+    if state.screen.conversation.feedback.as_deref() == Some(WAITING) {
+        state.screen.conversation.feedback = None;
     }
     let untouched = state.input_editor.validate_snapshot(&pending.next).is_ok();
     if untouched {
@@ -131,11 +131,11 @@ pub(super) fn resolve(state: &mut AppState) -> Result<(), TuiError> {
         }
         report_accepted_issues(state, &issues)?;
     } else if untouched {
-        state.screen.feedback =
+        state.screen.conversation.feedback =
             Some("Input was not accepted; draft and undo history retained".to_owned());
     } else {
         state.composer_recovery.retain_rejected(pending.draft);
-        state.screen.feedback = Some(
+        state.screen.conversation.feedback = Some(
             "Input was not accepted; new draft kept. Recover rejected message below.".to_owned(),
         );
     }
@@ -157,7 +157,7 @@ fn report_accepted_issues(state: &mut AppState, issues: &[String]) -> Result<(),
     state.screen.dirty = true;
     if !issues.is_empty() {
         let message = issues.join("\n");
-        state.screen.feedback = Some(message.clone());
+        state.screen.conversation.feedback = Some(message.clone());
         super::notices::error(state, "Input accepted", &message).map_err(|source| {
             super::render::interaction(AcceptedNoticeFailure { message, source })
         })?;

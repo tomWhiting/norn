@@ -75,11 +75,11 @@ async fn admitted_reads_survive_root_rotation_without_touching_the_new_draft_or_
     state
         .input_editor
         .paste_cells("new draft survives old completions")?;
-    state.screen.feedback = Some("new view feedback".to_owned());
-    state.screen.allow_body_load = false;
+    state.screen.conversation.feedback = Some("new view feedback".to_owned());
+    state.screen.conversation.allow_body_load = false;
     state.screen.dirty = false;
     let revision = state.transcript.projection.revision();
-    let viewport = state.screen.viewport.clone();
+    let viewport = state.screen.conversation.viewport.clone();
     let history = state
         .read_tasks
         .history
@@ -95,10 +95,13 @@ async fn admitted_reads_survive_root_rotation_without_touching_the_new_draft_or_
         .ok_or("old body lost at rotation")?;
     finish_body(&mut state, body)?;
     assert_eq!(state.transcript.projection.revision(), revision);
-    assert_eq!(state.screen.viewport, viewport);
-    assert_eq!(state.screen.feedback.as_deref(), Some("new view feedback"));
+    assert_eq!(state.screen.conversation.viewport, viewport);
+    assert_eq!(
+        state.screen.conversation.feedback.as_deref(),
+        Some("new view feedback")
+    );
     assert!(!state.screen.dirty);
-    assert!(!state.screen.allow_body_load);
+    assert!(!state.screen.conversation.allow_body_load);
     assert_eq!(
         state.input_editor.text(),
         "new draft survives old completions"
@@ -119,7 +122,7 @@ async fn late_history_failure_cannot_clear_a_new_sources_search_or_latest_intent
         crate::app::slash::LocalCommandOutcome::Accepted
     ));
     state.transcript.request_latest();
-    state.screen.feedback = Some("new search remains selected".to_owned());
+    state.screen.conversation.feedback = Some("new search remains selected".to_owned());
     state.screen.dirty = false;
     let (release, held) = tokio::sync::oneshot::channel::<()>();
     state.read_tasks.history.spawn(async move {
@@ -141,7 +144,7 @@ async fn late_history_failure_cannot_clear_a_new_sources_search_or_latest_intent
     crate::app::view_actions::reading::finish_history(&mut state, result)?;
     assert!(state.transcript.latest_pending());
     assert_eq!(
-        state.screen.feedback.as_deref(),
+        state.screen.conversation.feedback.as_deref(),
         Some("new search remains selected")
     );
     assert!(!state.screen.dirty);

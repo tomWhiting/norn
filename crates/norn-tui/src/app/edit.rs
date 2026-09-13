@@ -81,7 +81,7 @@ pub(super) fn apply_edit_action(
         InputAction::ToggleVerbosity => {
             state.verbosity = state.verbosity.toggle();
             state.transcript.config.expanded_tools = !state.transcript.config.expanded_tools;
-            state.screen.allow_body_load = true;
+            state.screen.conversation.allow_body_load = true;
             refresh = false;
             EditorKeyResult::None
         }

@@ -1,17 +1,13 @@
 //! Frontend-owned geometry, publication baselines and bounded current display caches.
 
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use super::{changes, hit};
+use super::changes;
 use crate::app::focus::{FocusAvailability, FocusState};
-use crate::app::viewport::{ViewAnchor, Viewport};
 use crate::render::frame::{Frame, PreparedFrame};
 use crate::render::layout::{Layout, Rect, SplitPreference, UpperLayout, UpperPane};
-use crate::render::retained_markdown::RenderedMarkdown;
-use crate::render::retained_text::TextRow;
-use norn::session_view::{BodyRef, ItemId, ViewSource};
+use norn::session_view::ViewSource;
 
 /// Content selected for the auxiliary pane during this frontend session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,29 +18,14 @@ pub(in crate::app) enum AuxiliaryPane {
 
 /// Geometry/cache state owned by one frontend, independent from the running agent.
 pub struct ScreenState {
-    pub(in crate::app) viewport: Viewport,
+    pub(in crate::app) conversation: super::ConversationScreen,
     pub(in crate::app) focus: FocusState,
     pub(in crate::app) changes_open: bool,
     pub(in crate::app) auxiliary: AuxiliaryPane,
     pub(in crate::app) split: SplitPreference,
     pub(in crate::app) upper: UpperPane,
-    /// Frontend-only diagnostic identities; bodies remain in the existing local notice owner.
-    pub(in crate::app) diagnostic_items: HashSet<ItemId>,
-    pub(in crate::app) tool_overrides: HashMap<ItemId, bool>,
-    pub(in crate::app) selection: Option<crate::app::selection::Selection>,
-    pub(in crate::app) selection_item: Option<ItemId>,
-    pub(in crate::app) reading_snapshot: Option<super::reading_snapshot::ReadingSnapshot>,
-    pub(in crate::app) prepared_reading: Option<Rect>,
     pub(in crate::app) display_frame: Option<Arc<Frame>>,
     pub(in crate::app) display_selection: Option<crate::app::display_selection::DisplaySelection>,
-    pub(in crate::app) feedback: Option<String>,
-    pub(in crate::app) request_copy: bool,
-    pub(in crate::app) search: crate::app::view_actions::reading::SearchState,
-    /// Explicit visible body requests to be scheduled by the event owner.
-    pub demands: Vec<(ItemId, BodyRef)>,
-    /// Most recently rendered logical rows for keyboard/mouse hit testing.
-    pub(in crate::app) visible: Vec<ViewAnchor>,
-    pub(in crate::app) hit_rows: Vec<hit::HitRow>,
     pub(in crate::app) dragging_selection: bool,
     pub(in crate::app) dragging_composer: bool,
     pub(in crate::app) dragging_divider: bool,
@@ -55,16 +36,8 @@ pub struct ScreenState {
     pub(in crate::app) recovery_hit: Option<crate::app::composer_recovery::RecoveryHit>,
     pub(in crate::app) prepared_latest: Option<Rect>,
     pub(in crate::app) latest_hit: Option<crate::app::view_actions::latest::LatestHit>,
-    pub(in crate::app) navigation: Option<super::navigation::PendingNavigation>,
-    pub(in crate::app) row_cursor: Option<super::navigation::RowCursor>,
     pub(in crate::app) changes_row: usize,
     pub(in crate::app) changes: changes::ChangesState,
-    pub(in crate::app) request_older: bool,
-    pub(in crate::app) request_more: bool,
-    /// A semantic update permits new visible-body demand; resize alone does not.
-    pub allow_body_load: bool,
-    pub(super) displayed: HashMap<BodyRef, DisplayCache>,
-    pub(super) highlighter: crate::render::syntax::SyntaxHighlighter,
     pub(super) last_frame: Option<PreparedFrame>,
     /// Input/navigation/body completion marks the next ready frame dirty.
     pub dirty: bool,
@@ -74,39 +47,18 @@ pub struct ScreenState {
     pub(super) ready_batch_remaining: usize,
 }
 
-/// One approved original revision, parsed once and laid out once per current width.
-pub(super) struct DisplayCache {
-    pub(super) original_len: usize,
-    pub(super) secondary_fields: bool,
-    pub(super) text: Arc<RenderedMarkdown>,
-    pub(super) columns: u16,
-    pub(super) rows: Arc<[TextRow]>,
-}
-
 impl ScreenState {
     /// Bind frontend navigation to the actual session/store identity.
     pub fn new(source: ViewSource) -> Self {
         Self {
-            viewport: Viewport::new(source, true),
+            conversation: super::ConversationScreen::new(source),
             focus: FocusState::new(),
             changes_open: false,
             auxiliary: AuxiliaryPane::Diff,
             split: SplitPreference::default(),
             upper: UpperPane::Conversation,
-            diagnostic_items: HashSet::new(),
-            tool_overrides: HashMap::new(),
-            selection: None,
-            selection_item: None,
-            reading_snapshot: None,
-            prepared_reading: None,
             display_frame: None,
             display_selection: None,
-            feedback: None,
-            request_copy: false,
-            search: crate::app::view_actions::reading::SearchState::new(),
-            demands: Vec::new(),
-            visible: Vec::new(),
-            hit_rows: Vec::new(),
             dragging_selection: false,
             dragging_composer: false,
             dragging_divider: false,
@@ -117,15 +69,8 @@ impl ScreenState {
             prepared_recovery: None,
             recovery_hit: None,
             latest_hit: None,
-            navigation: None,
-            row_cursor: None,
             changes_row: 0,
             changes: changes::ChangesState::new(),
-            request_older: false,
-            request_more: false,
-            allow_body_load: true,
-            displayed: HashMap::new(),
-            highlighter: crate::render::syntax::SyntaxHighlighter::new(),
             last_frame: None,
             dirty: true,
             last_revision: None,
@@ -147,38 +92,21 @@ impl ScreenState {
 
     /// Retire source-bound caches and anchors while preserving frontend preferences.
     pub fn replace_source(&mut self, source: &ViewSource) {
-        if self.viewport.replace_source(source.clone()) {
-            self.viewport.follow_tail();
-            self.tool_overrides.clear();
-            self.selection = None;
-            self.selection_item = None;
-            self.reading_snapshot = None;
-            self.prepared_reading = None;
+        if self.conversation.replace_source(source) {
             self.display_frame = None;
             self.display_selection = None;
-            self.feedback = None;
-            self.request_copy = false;
-            self.search = crate::app::view_actions::reading::SearchState::new();
-            self.demands.clear();
-            self.visible.clear();
-            self.hit_rows.clear();
             self.dragging_selection = false;
             self.dragging_composer = false;
             self.dragging_divider = false;
-            self.displayed.clear();
             self.last_frame = None;
             self.prepared_latest = None;
             self.latest_hit = None;
             self.prepared_recovery = None;
             self.recovery_hit = None;
-            self.navigation = None;
-            self.row_cursor = None;
             self.changes_row = 0;
             self.changes.clear();
-            self.request_older = false;
-            self.request_more = false;
         }
-        self.allow_body_load = true;
+        self.conversation.allow_body_load = true;
         self.dirty = true;
     }
 

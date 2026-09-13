@@ -26,7 +26,7 @@ pub(super) fn finish(
             } else {
                 super::notices::notice(state, &label, Some(&event.text))?
             };
-            state.screen.diagnostic_items.insert(item);
+            state.screen.conversation.diagnostic_items.insert(item);
             if let Some(receiver) = &state.diagnostics {
                 receiver.acknowledge(event.sequence);
             }

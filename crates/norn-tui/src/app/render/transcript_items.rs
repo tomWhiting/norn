@@ -1,6 +1,6 @@
 //! Cached semantic item presentation with original source maps and generated local labels.
 
-use super::{DisplayCache, ScreenState, interaction, layout_rows, safe_text};
+use super::{ConversationScreen, DisplayCache, interaction, layout_rows, safe_text};
 use crate::TuiError;
 use crate::app::transcript::Transcript;
 use crate::render::retained_markdown::{
@@ -22,7 +22,7 @@ pub(super) struct RowGroup {
 
 pub(super) fn item_groups(
     transcript: &Transcript,
-    screen: &mut ScreenState,
+    screen: &mut ConversationScreen,
     item: &ViewItem,
     columns: u16,
     secondary_fields: bool,

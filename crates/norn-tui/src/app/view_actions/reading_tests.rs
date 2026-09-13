@@ -53,14 +53,14 @@ fn search_hit_uses_original_graphemes_and_refuses_an_evicted_revision() -> TestR
     let mut state = fixture()?.1;
     let id = body(&mut state, "**e\u{301}** 👩‍💻 e\u{301}\nlast")?;
     search(&mut state, SearchScope::LoadedTranscript, "e\u{301}")?;
-    assert_eq!(state.screen.selection_item.as_ref(), Some(&id));
+    assert_eq!(state.screen.conversation.selection_item.as_ref(), Some(&id));
     assert_eq!(super::super::selected_text(&state)?, "e\u{301}");
-    assert_eq!(state.screen.search.hits.len(), 2);
-    let first = state.screen.selection.clone();
+    assert_eq!(state.screen.conversation.search.hits.len(), 2);
+    let first = state.screen.conversation.selection.clone();
     state.transcript.retain_bodies(&HashSet::new());
     assert!(next_hit(&mut state, false).is_err());
-    assert_eq!(state.screen.selection, first);
-    assert_eq!(state.screen.search.current, Some(0));
+    assert_eq!(state.screen.conversation.selection, first);
+    assert_eq!(state.screen.conversation.search.current, Some(0));
     Ok(())
 }
 
@@ -76,7 +76,12 @@ fn missing_body_and_unknown_suffix_never_become_complete_no_match() -> TestResul
         .transcript
         .notice(ViewItemKind::Notice, "unloaded", Some("matching"))?;
     search(&mut state, SearchScope::LoadedTranscript, "matching")?;
-    let report = state.screen.search.summary.ok_or("missing search report")?;
+    let report = state
+        .screen
+        .conversation
+        .search
+        .summary
+        .ok_or("missing search report")?;
     assert_eq!(report.matches_found, 0);
     assert_eq!(report.partial_body_scans, 1);
     assert_eq!(report.unavailable_bodies, 1);
@@ -117,6 +122,7 @@ async fn older_search_reads_exact_requested_page_and_reports_unloaded_suffixes()
     load_requests(&mut state, &mut pinned)?;
     let summary = state
         .screen
+        .conversation
         .search
         .summary
         .ok_or("older search did not complete")?;
@@ -124,7 +130,7 @@ async fn older_search_reads_exact_requested_page_and_reports_unloaded_suffixes()
     assert_eq!(summary.body_scans, 2);
     assert_eq!(summary.matches_found, 2);
     assert_eq!(summary.unavailable_bodies, 0);
-    assert!(state.screen.search.older.is_none());
+    assert!(state.screen.conversation.search.older.is_none());
     Ok(())
 }
 
@@ -134,6 +140,7 @@ async fn export_keeps_exact_original_bytes_and_is_joined_after_view_rotation() -
     let id = body(&mut state, "**original**\nsoft wraps never enter\u{1b}")?;
     state
         .screen
+        .conversation
         .viewport
         .select(id, &state.transcript.projection)?;
     super::super::select_original(&mut state, 0, None)?;
@@ -157,6 +164,7 @@ async fn export_keeps_exact_original_bytes_and_is_joined_after_view_rotation() -
     assert!(
         state
             .screen
+            .conversation
             .feedback
             .as_ref()
             .is_some_and(|value| value.contains("Exported"))

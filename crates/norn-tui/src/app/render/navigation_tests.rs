@@ -54,6 +54,7 @@ fn numbered() -> TestResult<String> {
 fn first_text(state: &AppState) -> TestResult<&str> {
     let hit = state
         .screen
+        .conversation
         .hit_rows
         .first()
         .ok_or("first painted row missing")?;
@@ -61,7 +62,12 @@ fn first_text(state: &AppState) -> TestResult<&str> {
 }
 
 fn body_offset(state: &AppState) -> TestResult<usize> {
-    let anchor = state.screen.viewport.anchor().ok_or("body anchor absent")?;
+    let anchor = state
+        .screen
+        .conversation
+        .viewport
+        .anchor()
+        .ok_or("body anchor absent")?;
     let AnchorPosition::Body {
         reference,
         original_offset,
@@ -91,6 +97,7 @@ fn same_direction_batch_keeps_every_row_and_direction_changes_keep_order() -> Te
     assert_eq!(
         state
             .screen
+            .conversation
             .navigation
             .as_ref()
             .ok_or("pending segment missing")?
@@ -101,6 +108,7 @@ fn same_direction_batch_keeps_every_row_and_direction_changes_keep_order() -> Te
     assert_eq!(
         state
             .screen
+            .conversation
             .navigation
             .as_ref()
             .ok_or("pending segment missing")?
@@ -127,6 +135,7 @@ fn same_direction_batch_keeps_every_row_and_direction_changes_keep_order() -> Te
     assert_eq!(
         state
             .screen
+            .conversation
             .navigation
             .as_ref()
             .ok_or("reversal missing")?
@@ -136,16 +145,17 @@ fn same_direction_batch_keeps_every_row_and_direction_changes_keep_order() -> Te
     );
     super::super::prepare(&mut state, 80, 14)?;
     assert_eq!(first_text(&state)?, "line 03");
-    assert!(!state.screen.viewport.follows_tail());
+    assert!(!state.screen.conversation.viewport.follows_tail());
     Ok(())
 }
 
 #[test]
 fn large_cached_advance_does_not_materialize_travelled_paint_rows() -> TestResult {
     let mut state = fixture(&numbered()?, 80, 14)?;
-    let previous_rows = state.screen.hit_rows.len();
+    let previous_rows = state.screen.conversation.hit_rows.len();
     let reference = state
         .screen
+        .conversation
         .hit_rows
         .first()
         .and_then(|hit| hit.body.clone())
@@ -153,6 +163,7 @@ fn large_cached_advance_does_not_materialize_travelled_paint_rows() -> TestResul
     let text = Arc::clone(
         &state
             .screen
+            .conversation
             .displayed
             .get(&reference)
             .ok_or("display cache missing")?
@@ -161,7 +172,7 @@ fn large_cached_advance_does_not_materialize_travelled_paint_rows() -> TestResul
     queue(&mut state, true, usize::MAX)?;
     apply(&mut state)?;
     assert_eq!(
-        state.screen.hit_rows.len(),
+        state.screen.conversation.hit_rows.len(),
         previous_rows,
         "geometry traversal must not manufacture paint rows"
     );
@@ -169,6 +180,7 @@ fn large_cached_advance_does_not_materialize_travelled_paint_rows() -> TestResul
         &text,
         &state
             .screen
+            .conversation
             .displayed
             .get(&reference)
             .ok_or("display cache evicted")?
@@ -186,12 +198,14 @@ fn transformed_control_rows_keep_exact_cached_display_position() -> TestResult {
     super::super::prepare(&mut state, 3, 8)?;
     let first = state
         .screen
+        .conversation
         .viewport
         .anchor()
         .cloned()
         .ok_or("first anchor missing")?;
     let first_display = state
         .screen
+        .conversation
         .row_cursor
         .as_ref()
         .ok_or("display cursor missing")?
@@ -200,6 +214,7 @@ fn transformed_control_rows_keep_exact_cached_display_position() -> TestResult {
     super::super::prepare(&mut state, 3, 8)?;
     let next = state
         .screen
+        .conversation
         .viewport
         .anchor()
         .cloned()
@@ -211,6 +226,7 @@ fn transformed_control_rows_keep_exact_cached_display_position() -> TestResult {
     assert!(
         state
             .screen
+            .conversation
             .row_cursor
             .as_ref()
             .ok_or("second display cursor missing")?
@@ -222,6 +238,7 @@ fn transformed_control_rows_keep_exact_cached_display_position() -> TestResult {
     assert!(
         state
             .screen
+            .conversation
             .row_cursor
             .as_ref()
             .ok_or("third display cursor missing")?
@@ -247,8 +264,8 @@ fn resize_is_an_ordered_barrier_and_source_replacement_discards_old_motion() -> 
         sequential.transcript.projection.source()
     );
     assert_eq!(body_offset(&batched)?, old_offset);
-    assert!(batched.screen.navigation.is_none());
-    assert!(batched.screen.row_cursor.is_none());
+    assert!(batched.screen.conversation.navigation.is_none());
+    assert!(batched.screen.conversation.row_cursor.is_none());
     queue(&mut batched, false, 2)?;
     queue(&mut sequential, false, 2)?;
     super::super::prepare(&mut batched, 12, 10)?;
@@ -257,8 +274,8 @@ fn resize_is_an_ordered_barrier_and_source_replacement_discards_old_motion() -> 
     queue(&mut batched, true, 5)?;
     let source = crate::app::state::test_view_source(uuid::Uuid::new_v4());
     batched.screen.replace_source(&source);
-    assert!(batched.screen.navigation.is_none());
-    assert!(batched.screen.row_cursor.is_none());
+    assert!(batched.screen.conversation.navigation.is_none());
+    assert!(batched.screen.conversation.row_cursor.is_none());
     assert!(batched.screen.display_frame.is_none());
     Ok(())
 }
@@ -271,6 +288,7 @@ fn checked_batch_count_refuses_overflow_without_replacing_prior_motion() -> Test
     assert_eq!(
         state
             .screen
+            .conversation
             .navigation
             .as_ref()
             .ok_or("prior segment missing")?
@@ -318,12 +336,12 @@ async fn scrolling_before_resumed_tail_loads_one_older_page_without_resetting_vi
     super::super::prepare(&mut state, 80, 14)?;
     queue(&mut state, true, 10_000)?;
     super::super::prepare(&mut state, 80, 14)?;
-    assert!(state.screen.request_older);
+    assert!(state.screen.conversation.request_older);
     assert!(
         state.read_tasks.history.is_empty(),
         "paint must not start I/O"
     );
-    let anchor = state.screen.viewport.anchor().cloned();
+    let anchor = state.screen.conversation.viewport.anchor().cloned();
     let draft = state.input_editor.text();
     super::super::load_visible(&mut state)?;
     assert_eq!(state.read_tasks.history.len(), 1);
@@ -346,8 +364,8 @@ async fn scrolling_before_resumed_tail_loads_one_older_page_without_resetting_vi
         27
     );
     assert!(!state.transcript.has_older);
-    assert_eq!(state.screen.viewport.anchor(), anchor.as_ref());
-    assert!(!state.screen.viewport.follows_tail());
+    assert_eq!(state.screen.conversation.viewport.anchor(), anchor.as_ref());
+    assert!(!state.screen.conversation.viewport.follows_tail());
     assert_eq!(state.input_editor.text(), draft);
     Ok(())
 }
@@ -358,10 +376,10 @@ fn forward_scroll_and_true_history_start_do_not_request_older_pages() -> TestRes
     state.transcript.has_older = true;
     queue(&mut state, false, 10_000)?;
     super::super::prepare(&mut state, 80, 14)?;
-    assert!(!state.screen.request_older);
+    assert!(!state.screen.conversation.request_older);
     state.transcript.has_older = false;
     queue(&mut state, true, 10_000)?;
     super::super::prepare(&mut state, 80, 14)?;
-    assert!(!state.screen.request_older);
+    assert!(!state.screen.conversation.request_older);
     Ok(())
 }

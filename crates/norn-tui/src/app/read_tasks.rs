@@ -49,7 +49,7 @@ pub(in crate::app) fn finish_body(
         return Ok(());
     }
     state.transcript.finish_body(result)?;
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
     state.screen.dirty = true;
     Ok(())
 }

@@ -41,10 +41,11 @@ fn fixture() -> TestResult<AppState> {
 fn scroll_to_boundary(state: &mut AppState) -> TestResult {
     queue(state, true, 10_000)?;
     super::super::prepare(state, 80, 14)?;
-    assert!(state.screen.request_older);
+    assert!(state.screen.conversation.request_older);
     assert!(
         state
             .screen
+            .conversation
             .navigation
             .as_ref()
             .is_some_and(|plan| plan.waiting.is_some())
@@ -76,9 +77,10 @@ async fn one_scroll_crosses_three_pages_without_repeated_motion_or_losing_draft(
     let mut state = fixture()?;
     scroll_to_boundary(&mut state)?;
     for _ in 0..3 {
-        let anchor = state.screen.viewport.anchor().cloned();
+        let anchor = state.screen.conversation.viewport.anchor().cloned();
         let remaining = state
             .screen
+            .conversation
             .navigation
             .as_ref()
             .ok_or("missing deferred motion")?
@@ -87,10 +89,11 @@ async fn one_scroll_crosses_three_pages_without_repeated_motion_or_losing_draft(
         for _ in 0..3 {
             super::super::prepare(&mut state, 80, 14)?;
         }
-        assert_eq!(state.screen.viewport.anchor(), anchor.as_ref());
+        assert_eq!(state.screen.conversation.viewport.anchor(), anchor.as_ref());
         assert_eq!(
             state
                 .screen
+                .conversation
                 .navigation
                 .as_ref()
                 .ok_or("lost waiting motion")?
@@ -105,12 +108,12 @@ async fn one_scroll_crosses_three_pages_without_repeated_motion_or_losing_draft(
         let result = next_page(&mut state).await?;
         crate::app::view_actions::reading::finish_history(&mut state, result)?;
         super::super::prepare(&mut state, 80, 14)?;
-        assert_ne!(state.screen.viewport.anchor(), anchor.as_ref());
+        assert_ne!(state.screen.conversation.viewport.anchor(), anchor.as_ref());
         assert_eq!(state.input_editor.text(), "draft to keep");
     }
     assert!(!state.transcript.has_older);
-    assert!(state.screen.navigation.is_none());
-    assert!(!state.screen.request_older);
+    assert!(state.screen.conversation.navigation.is_none());
+    assert!(!state.screen.conversation.request_older);
     let first = state
         .transcript
         .projection
@@ -118,7 +121,12 @@ async fn one_scroll_crosses_three_pages_without_repeated_motion_or_losing_draft(
         .next()
         .ok_or("no first history item")?;
     assert_eq!(
-        state.screen.viewport.anchor().map(|anchor| &anchor.item),
+        state
+            .screen
+            .conversation
+            .viewport
+            .anchor()
+            .map(|anchor| &anchor.item),
         Some(&first.id)
     );
     super::super::load_visible(&mut state)?;
@@ -133,12 +141,12 @@ async fn reverse_scroll_retires_remainder_before_a_late_page() -> TestResult {
     let result = next_page(&mut state).await?;
     queue(&mut state, false, 1)?;
     super::super::prepare(&mut state, 80, 14)?;
-    let anchor = state.screen.viewport.anchor().cloned();
-    assert!(state.screen.navigation.is_none());
+    let anchor = state.screen.conversation.viewport.anchor().cloned();
+    assert!(state.screen.conversation.navigation.is_none());
     crate::app::view_actions::reading::finish_history(&mut state, result)?;
     super::super::prepare(&mut state, 80, 14)?;
-    assert_eq!(state.screen.viewport.anchor(), anchor.as_ref());
-    assert!(!state.screen.request_older);
+    assert_eq!(state.screen.conversation.viewport.anchor(), anchor.as_ref());
+    assert!(!state.screen.conversation.request_older);
     Ok(())
 }
 
@@ -148,8 +156,8 @@ fn reversal_in_one_input_batch_does_not_wait_for_older_history() -> TestResult {
     queue(&mut state, true, 10_000)?;
     queue(&mut state, false, 1)?;
     super::super::prepare(&mut state, 80, 14)?;
-    assert!(state.screen.navigation.is_none());
-    assert!(!state.screen.request_older);
+    assert!(state.screen.conversation.navigation.is_none());
+    assert!(!state.screen.conversation.request_older);
     Ok(())
 }
 
@@ -198,16 +206,19 @@ async fn explicit_barriers_prevent_late_page_motion() -> TestResult {
                     ),
                     &mut state
                 ));
-                assert!(state.screen.viewport.selected().is_some());
+                assert!(state.screen.conversation.viewport.selected().is_some());
             }
         }
         super::super::prepare(&mut state, columns, rows)?;
-        let anchor = state.screen.viewport.anchor().cloned();
-        assert!(state.screen.navigation.is_none(), "barrier {barrier}");
+        let anchor = state.screen.conversation.viewport.anchor().cloned();
+        assert!(
+            state.screen.conversation.navigation.is_none(),
+            "barrier {barrier}"
+        );
         crate::app::view_actions::reading::finish_history(&mut state, result)?;
         super::super::prepare(&mut state, columns, rows)?;
         assert_eq!(
-            state.screen.viewport.anchor(),
+            state.screen.conversation.viewport.anchor(),
             anchor.as_ref(),
             "barrier {barrier}"
         );
@@ -233,8 +244,8 @@ async fn failed_page_retires_motion_and_does_not_retry_automatically() -> TestRe
     )?;
     super::super::prepare(&mut state, 80, 14)?;
     super::super::load_visible(&mut state)?;
-    assert!(state.screen.navigation.is_none());
-    assert!(!state.screen.request_older);
+    assert!(state.screen.conversation.navigation.is_none());
+    assert!(!state.screen.conversation.request_older);
     assert!(state.read_tasks.history.is_empty());
     assert!(
         state
@@ -252,6 +263,7 @@ fn additional_backward_input_accumulates_while_the_page_is_pending() -> TestResu
     scroll_to_boundary(&mut state)?;
     let remaining = state
         .screen
+        .conversation
         .navigation
         .as_ref()
         .ok_or("no initial motion")?
@@ -261,6 +273,7 @@ fn additional_backward_input_accumulates_while_the_page_is_pending() -> TestResu
     super::super::prepare(&mut state, 80, 14)?;
     let plan = state
         .screen
+        .conversation
         .navigation
         .as_ref()
         .ok_or("lost accumulated motion")?;
@@ -280,8 +293,8 @@ async fn nonprogressing_page_retires_motion_without_an_automatic_read_loop() -> 
     crate::app::view_actions::reading::finish_history(&mut state, Ok((request, Ok(page))))?;
     super::super::prepare(&mut state, 80, 14)?;
     super::super::load_visible(&mut state)?;
-    assert!(state.screen.navigation.is_none());
-    assert!(!state.screen.request_older);
+    assert!(state.screen.conversation.navigation.is_none());
+    assert!(!state.screen.conversation.request_older);
     assert!(state.read_tasks.history.is_empty());
     Ok(())
 }
@@ -290,7 +303,7 @@ async fn nonprogressing_page_retires_motion_without_an_automatic_read_loop() -> 
 fn pointer_motion_without_a_button_does_not_cancel_waiting_scroll() -> TestResult {
     let mut state = fixture()?;
     scroll_to_boundary(&mut state)?;
-    let anchor = state.screen.viewport.anchor().cloned();
+    let anchor = state.screen.conversation.viewport.anchor().cloned();
     assert!(!crate::app::view_actions::mouse(
         termina::event::MouseEvent {
             kind: termina::event::MouseEventKind::Moved,
@@ -303,10 +316,11 @@ fn pointer_motion_without_a_button_does_not_cancel_waiting_scroll() -> TestResul
     assert!(
         state
             .screen
+            .conversation
             .navigation
             .as_ref()
             .is_some_and(|plan| plan.waiting.is_some())
     );
-    assert_eq!(state.screen.viewport.anchor(), anchor.as_ref());
+    assert_eq!(state.screen.conversation.viewport.anchor(), anchor.as_ref());
     Ok(())
 }

@@ -37,7 +37,7 @@ pub(super) fn handle_mid_turn_event(
     match event {
         Event::WindowResized(size) => {
             guard.handle_resize(size.cols, size.rows);
-            state.screen.allow_body_load = false;
+            state.screen.conversation.allow_body_load = false;
             sync_input_for_current_geometry(state, guard)?;
             redraw_all(state, guard)?;
         }
@@ -65,7 +65,7 @@ pub(super) fn handle_mid_turn_agent_event(
     event: AgentEvent,
 ) -> Result<(), TuiError> {
     handle_agent_event(state, event)?;
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
     Ok(())
 }
 
@@ -204,7 +204,7 @@ pub(super) fn handle_active_input_delivery(
     state
         .transcript
         .read_delivered_input(store, item, delivery.event_id.clone());
-    state.screen.allow_body_load = true;
+    state.screen.conversation.allow_body_load = true;
     Ok(())
 }
 

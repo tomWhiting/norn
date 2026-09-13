@@ -13,9 +13,9 @@ use crate::app::viewport::{AnchorPosition, ViewAnchor};
 use crate::render::layout::{Layout, UpperLayout, UpperPane};
 use crate::render::retained_markdown::RenderedMarkdown;
 
+use super::interaction;
 use super::transcript::{locate_anchor, row_position};
 use super::transcript_items::{RowGroup, item_groups};
-use super::{ScreenState, interaction};
 
 #[derive(Debug, thiserror::Error)]
 enum NavigationError {
@@ -74,7 +74,7 @@ pub(in crate::app) fn queue_view(
     if !backwards {
         cancel_deferred_screen(state.screen);
     }
-    let columns = match state.screen.layout {
+    let columns = match state.layout {
         Layout::Ready {
             upper: UpperLayout::Split { conversation, .. },
             ..
@@ -199,10 +199,10 @@ pub(in crate::app) fn finish(state: &mut AppState) -> Result<(), TuiError> {
 
 /// A failed/nonprogressing page must not leave an automatic retry armed.
 pub(in crate::app) fn cancel_deferred(state: &mut AppState) {
-    cancel_deferred_screen(&mut state.screen);
+    cancel_deferred_screen(&mut state.screen.conversation);
 }
 
-fn cancel_deferred_screen(screen: &mut ScreenState) {
+fn cancel_deferred_screen(screen: &mut super::ConversationScreen) {
     if screen
         .navigation
         .as_ref()
@@ -214,7 +214,7 @@ fn cancel_deferred_screen(screen: &mut ScreenState) {
 }
 
 pub(super) fn locate_cursor(
-    screen: &ScreenState,
+    screen: &super::ConversationScreen,
     item: &ViewItem,
     groups: &[RowGroup],
     columns: u16,

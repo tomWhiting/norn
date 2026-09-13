@@ -270,7 +270,7 @@ fn latest_uses_existing_hint_row_without_overlap_or_clipped_click_area() -> Test
         return Err("following composer absent".into());
     };
     assert!(state.screen.prepared_latest.is_none());
-    state.screen.viewport.pin();
+    state.screen.conversation.viewport.pin();
     for columns in [80, 24, 8, 7, 1] {
         let frame = super::super::prepare(&mut state, columns, 24)?;
         let Layout::Ready { composer, .. } = frame.layout else {
@@ -309,7 +309,7 @@ fn latest_uses_existing_hint_row_without_overlap_or_clipped_click_area() -> Test
         );
         assert_eq!(state.input_editor.text(), "draft");
     }
-    state.screen.viewport.follow_tail();
+    state.screen.conversation.viewport.follow_tail();
     state.transcript.request_latest();
     super::super::prepare(&mut state, 80, 24)?;
     assert!(

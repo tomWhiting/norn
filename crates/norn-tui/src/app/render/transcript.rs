@@ -422,7 +422,7 @@ pub(super) fn row_position(group: &RowGroup, row: &TextRow) -> AnchorPosition {
 
 #[cfg(test)]
 mod tests {
-    use super::super::ScreenState;
+    use super::super::ConversationScreen;
     use super::*;
     use crate::app::transcript::{LoadedBody, Transcript};
     use norn::provider::request::{ToolCallCaller, ToolCallKind};
@@ -458,15 +458,16 @@ mod tests {
             .clone();
         state
             .screen
+            .conversation
             .viewport
             .select(item, &state.transcript.projection)?;
         state.screen.terminal_event(1);
-        state.screen.request_older = true;
-        state.screen.request_more = true;
+        state.screen.conversation.request_older = true;
+        state.screen.conversation.request_more = true;
         super::super::load_visible(&mut state)?;
-        assert!(state.screen.request_older);
-        assert!(state.screen.request_more);
-        assert!(state.screen.allow_body_load);
+        assert!(state.screen.conversation.request_older);
+        assert!(state.screen.conversation.request_more);
+        assert!(state.screen.conversation.allow_body_load);
         assert!(state.read_tasks.history.is_empty());
         assert!(state.read_tasks.bodies.is_empty());
         assert!(state.transcript.body(&reference).is_none());
@@ -480,14 +481,15 @@ mod tests {
         assert!(
             state
                 .screen
+                .conversation
                 .demands
                 .iter()
                 .any(|(_, body)| body == &reference)
         );
         super::super::load_visible(&mut state)?;
-        assert!(!state.screen.request_older);
-        assert!(!state.screen.request_more);
-        assert!(!state.screen.allow_body_load);
+        assert!(!state.screen.conversation.request_older);
+        assert!(!state.screen.conversation.request_more);
+        assert!(!state.screen.conversation.allow_body_load);
         assert_eq!(state.input_editor.text(), "draft survives");
         assert_eq!(
             state
@@ -540,7 +542,7 @@ mod tests {
     #[test]
     fn backwards_argument_anchor_excludes_later_result_body() -> TestResult {
         let (transcript, item) = tool_fixture()?;
-        let mut screen = ScreenState::new(transcript.projection.source().clone());
+        let mut screen = ConversationScreen::new(transcript.projection.source().clone());
         screen.tool_overrides.insert(item.id.clone(), true);
         let groups = item_groups(&transcript, &mut screen, &item, 12, false, false)?;
         let argument_group = groups.get(1).ok_or("argument group absent")?;
@@ -586,7 +588,7 @@ mod tests {
     #[test]
     fn header_is_one_row_and_body_anchor_survives_reflow() -> TestResult {
         let (transcript, item) = tool_fixture()?;
-        let mut screen = ScreenState::new(transcript.projection.source().clone());
+        let mut screen = ConversationScreen::new(transcript.projection.source().clone());
         screen.tool_overrides.insert(item.id.clone(), true);
         let narrow = item_groups(&transcript, &mut screen, &item, 8, false, false)?;
         assert_eq!(narrow[0].rows.len(), 1);
@@ -620,7 +622,7 @@ mod tests {
     #[test]
     fn unchanged_body_and_width_reuse_wrapped_geometry() -> TestResult {
         let (transcript, item) = tool_fixture()?;
-        let mut screen = ScreenState::new(transcript.projection.source().clone());
+        let mut screen = ConversationScreen::new(transcript.projection.source().clone());
         screen.tool_overrides.insert(item.id.clone(), true);
         let first = item_groups(&transcript, &mut screen, &item, 40, false, false)?;
         let second = item_groups(&transcript, &mut screen, &item, 40, false, false)?;
@@ -647,7 +649,7 @@ mod tests {
     #[test]
     fn one_row_navigation_advances_past_header_and_repeated_body_rows() -> TestResult {
         let (transcript, item) = tool_fixture()?;
-        let mut screen = ScreenState::new(transcript.projection.source().clone());
+        let mut screen = ConversationScreen::new(transcript.projection.source().clone());
         screen.tool_overrides.insert(item.id.clone(), true);
         let groups = item_groups(&transcript, &mut screen, &item, 8, false, false)?;
         let mut anchor = ViewAnchor {
@@ -744,7 +746,7 @@ mod tests {
             );
             assert!(painted.contains("\x1b[2m"), "thinking emphasis missing");
             assert!(painted.contains("\x1b[3m"), "italic emphasis missing");
-            assert!(state.screen.hit_rows.iter().any(|row| {
+            assert!(state.screen.conversation.hit_rows.iter().any(|row| {
                 row.text
                     .styled
                     .text()
@@ -766,6 +768,7 @@ mod tests {
         let items = state.transcript.projection.items().count();
         let separators: Vec<_> = state
             .screen
+            .conversation
             .hit_rows
             .iter()
             .filter(|row| row.anchor.position == AnchorPosition::BeforeItem)
@@ -776,11 +779,12 @@ mod tests {
             && row.geometry.bytes().is_empty()));
         let first = state
             .screen
+            .conversation
             .hit_rows
             .first()
             .ok_or("first visible row absent")?;
         assert_ne!(first.anchor.position, AnchorPosition::BeforeItem);
-        assert!(state.screen.demands.iter().all(|(id, _)| {
+        assert!(state.screen.conversation.demands.iter().all(|(id, _)| {
             state
                 .transcript
                 .projection
@@ -799,7 +803,7 @@ mod tests {
                 "actual frame omitted {control:?}"
             );
         }
-        assert!(state.screen.hit_rows.iter().any(|row| {
+        assert!(state.screen.conversation.hit_rows.iter().any(|row| {
             row.text
                 .styled
                 .text()
@@ -808,11 +812,12 @@ mod tests {
         assert!(
             !state
                 .screen
+                .conversation
                 .hit_rows
                 .iter()
                 .any(|row| row.text.styled.text() == "Assistant")
         );
-        assert!(state.screen.hit_rows.iter().any(|row| {
+        assert!(state.screen.conversation.hit_rows.iter().any(|row| {
             row.text.styled.text() == "Original α input"
                 && row
                     .text
@@ -888,6 +893,7 @@ mod tests {
         )?;
         state
             .screen
+            .conversation
             .viewport
             .scroll_to(anchor.clone(), &state.transcript.projection)?;
         let narrow = window(
@@ -899,7 +905,7 @@ mod tests {
             false,
         )?;
         assert!(!narrow.is_empty());
-        assert_eq!(state.screen.viewport.anchor(), Some(&anchor));
+        assert_eq!(state.screen.conversation.viewport.anchor(), Some(&anchor));
         assert_eq!(
             selection.read(
                 &source,

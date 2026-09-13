@@ -138,11 +138,12 @@ fn context_details_require_explicit_expansion_even_when_selected() -> TestResult
     state.transcript.accept_body(&demand, loaded)?;
     state
         .screen
+        .conversation
         .viewport
         .select(id.clone(), &state.transcript.projection)?;
     let collapsed = item_groups(
         &state.transcript,
-        &mut state.screen,
+        &mut state.screen.conversation,
         &item,
         80,
         false,
@@ -155,6 +156,7 @@ fn context_details_require_explicit_expansion_even_when_selected() -> TestResult
     assert!(
         state
             .screen
+            .conversation
             .hit_rows
             .iter()
             .filter(|hit| hit.anchor.item == id)
@@ -163,7 +165,7 @@ fn context_details_require_explicit_expansion_even_when_selected() -> TestResult
     crate::app::view_actions::command("toggle", &mut state)?;
     let expanded = item_groups(
         &state.transcript,
-        &mut state.screen,
+        &mut state.screen.conversation,
         &item,
         80,
         false,
@@ -175,7 +177,7 @@ fn context_details_require_explicit_expansion_even_when_selected() -> TestResult
         expanded[1].text.styled.text(),
         "retained summary\nsecond line"
     );
-    state.screen.viewport.scroll_to(
+    state.screen.conversation.viewport.scroll_to(
         crate::app::viewport::ViewAnchor {
             item: id.clone(),
             position: crate::app::viewport::AnchorPosition::Header,
@@ -187,6 +189,7 @@ fn context_details_require_explicit_expansion_even_when_selected() -> TestResult
     assert!(matches!(
         state
             .screen
+            .conversation
             .viewport
             .anchor()
             .map(|anchor| &anchor.position),
@@ -198,6 +201,7 @@ fn context_details_require_explicit_expansion_even_when_selected() -> TestResult
     assert!(
         state
             .screen
+            .conversation
             .hit_rows
             .iter()
             .any(|hit| hit.anchor.item == id && hit.body.as_ref() == Some(reference))
@@ -206,7 +210,7 @@ fn context_details_require_explicit_expansion_even_when_selected() -> TestResult
     assert_eq!(
         item_groups(
             &state.transcript,
-            &mut state.screen,
+            &mut state.screen.conversation,
             &item,
             80,
             false,
@@ -243,7 +247,7 @@ fn process_diagnostic_is_compact_until_explicitly_expanded() -> TestResult {
         None,
     )?;
     let mut transcript = Transcript::new(source.clone());
-    let mut screen = ScreenState::new(source);
+    let mut screen = ConversationScreen::new(source);
     let id = transcript.notice(
         ViewItemKind::Notice,
         "WARN · actual::target",
