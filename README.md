@@ -110,7 +110,7 @@ norn --mcp-config ./mcp-servers.json \
 
 ### Leaving the terminal UI
 
-While idle, press Ctrl+C twice within three seconds to exit. The first press clears the draft and shows the confirmation in the existing footer. Other keyboard input or pasting cancels confirmation; holding Ctrl+C does not confirm it on terminals that report key repeats. During a turn, Ctrl+C cancels that turn without exiting. `/exit` remains an explicit exit command.
+While idle, press Ctrl+C twice within three seconds to exit. The first press clears the draft and shows the confirmation in the existing footer. Other keyboard input or pasting cancels confirmation; holding Ctrl+C does not confirm it on terminals that report key repeats. During a turn, the first Ctrl+C cancels that turn, preserves the next draft, and arms the same exit confirmation. A second distinct press within three seconds exits and cancels the run tree. Automatic messages and child follow-ups stay pending during confirmation. An already-accepted `/mcp` change is collected before exit. `/exit` remains an explicit exit command.
 
 ### Policies, flags, and limits
 

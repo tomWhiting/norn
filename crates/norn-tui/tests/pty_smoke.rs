@@ -39,7 +39,7 @@ const PTY_APP_SCENARIO_ENV: &str = "NORN_TUI_RUN_APP_PTY_SCENARIO";
 const PTY_CAPTURE_ENV: &str = "NORN_TUI_RUN_APP_PTY_CAPTURE";
 const SCREEN_ROWS: u16 = 24;
 const SCREEN_COLS: u16 = 80;
-// Two explicit cancellation outcomes and their visible error details must both fit.
+// Child completion, cancellation details and the confirmation footer must all fit.
 const CHILD_RESULT_ROWS: u16 = 60;
 const APP_OUTPUT_MARKER: &[u8] = b"screen harness output";
 const CHILD_RESULT_MARKER: &[u8] = b"Child spawn/worker";
@@ -1403,27 +1403,12 @@ fn run_child_to_completion(
                             .filter(|line| line.starts_with("Turn cancelled ["))
                             .count()
                             == 1
-                            && screen.contains("generating")
-                    },
-                    Duration::from_secs(5),
-                )?;
-                writer.write_all(b"\x03")?;
-                writer.flush()?;
-                wait_for_frame(
-                    &output,
-                    &[(size.rows, size.cols)],
-                    |screen| {
-                        screen
-                            .lines()
-                            .iter()
-                            .filter(|line| line.starts_with("Turn cancelled ["))
-                            .count()
-                            == 2
                             && !screen.contains("generating")
+                            && screen.contains("Press Ctrl+C again")
                     },
                     Duration::from_secs(5),
                 )?;
-                request_idle_exit(&mut writer, &output, &[(size.rows, size.cols)])?;
+                confirm_exit(&mut writer, &output, &[(size.rows, size.cols)])?;
             }
             PtyInteraction::ResizeAfterOutputThenCtrlC { marker, rows, cols } => {
                 wait_for_screen(
@@ -1581,7 +1566,7 @@ fn run_child_to_completion(
                 writer.write_all(b"\x03")?;
                 writer.flush()?;
                 wait_for_screen(&output, "Turn cancelled", size, Duration::from_secs(5))?;
-                request_idle_exit(&mut writer, &output, &[(size.rows, size.cols)])?;
+                confirm_exit(&mut writer, &output, &[(size.rows, size.cols)])?;
             }
             PtyInteraction::WriteWaitForSlashOutputThenCtrlC {
                 bytes,
@@ -1874,7 +1859,7 @@ fn thread_panic_error(payload: Box<dyn Any + Send + 'static>) -> io::Error {
     io::Error::other(format!("PTY reader thread panicked: {message}"))
 }
 
-// Keep intentional turn cancellation above separate from the two-press idle exit.
+// Idle starts confirmation; an explicitly cancelled turn is already armed.
 fn request_idle_exit(
     writer: &mut impl std::io::Write,
     output: &Arc<OutputBuffer>,
@@ -1882,6 +1867,14 @@ fn request_idle_exit(
 ) -> io::Result<()> {
     writer.write_all(b"\x03")?;
     writer.flush()?;
+    confirm_exit(writer, output, sizes)
+}
+
+fn confirm_exit(
+    writer: &mut impl std::io::Write,
+    output: &Arc<OutputBuffer>,
+    sizes: &[(u16, u16)],
+) -> io::Result<()> {
     // The deadline suffix may be clipped by a narrow pane's Latest control.
     // Observe the actual confirmation before delivering the distinct second press.
     wait_for_frame(

@@ -4,7 +4,9 @@
 
 Valid queued, dequeued, sent and delivered agent-message audit records now appear only with metadata expanded, including audit copies made by another agent. The actual delivered message remains a conversation input. Malformed audits remain explicitly unavailable. Stored session records are unchanged. This corrects the unsupported `agent_message.queued`/`agent_message.dequeued` transcript rows found in Tom's live session; it is not a claim that every observed typing freeze or flicker is solved.
 
-The unfinished D13 agent selection work is preserved separately while this fix is verified. The local install, final-source review and exact-commit venue battery are pending. Cargo uses the worktree's ordinary `target/` directory; the existing cache was moved there without duplication.
+6572 standard workspace/all-target tests across 40 suites passed; separate channel/restart harnesses passed. Strict release workspace/all-target Clippy including live-api-smoke passed (provider smoke execution not enabled); fmt, 17-file AST scan and production LOC maximum 478 passed. Actual-App tests cover held-provider cancellation, independent draft retention, queued Ctrl+C pair, child-result cancellation and terminal restoration. Live typing/flicker under sustained traffic, independent review and exact-commit venue remain open.
+
+The unfinished D13 agent selection work is preserved separately. The local install, final-source review and exact-commit venue battery are pending. Cargo uses the worktree's ordinary `target/` directory; the existing cache was moved there without duplication.
 
 ## 0.1.0-preview.24 — terminal input during turn completion (candidate)
 

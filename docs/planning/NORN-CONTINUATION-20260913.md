@@ -461,3 +461,23 @@ Meridian a6e5edac-d854-440d-a3fa-3b5269c94e66, 13 September 2026 13:36 Melbourne
 Same work, authority, ownership and pending obligations, with truthful uncertainty where recovery is incomplete; remembered prose alone does not establish continuity.
 
 Build temporary-path correction: compiled artifacts remain in the ordinary worktree `target/`. Five Unix-socket fixture binds exceeded macOS SUN_LEN under `target/tmp`; `TMPDIR` now uses the shorter repository-local `/Users/tom/Developer/ablative/stack/norn/var/tmp`. The failed run is retained as `preview26-workspace-long-tmp-failed.log`.
+
+U04 R8 and test wall addition: `crates/norn-tui/tests/pty_smoke.rs`. Existing cancelled-turn scenarios must confirm the already-armed request instead of sending two more Ctrl+C presses. The child-result fixture now asserts one cancelled turn and no automatic follow-up during confirmation. Failed predecessor run retained as `preview26-workspace-old-exit-fixtures-failed.log`.
+
+U04 help wall addition: `README.md`, documenting active-turn cancellation and confirmation consistently with the installed candidate.
+
+### Rolling active context proposal
+
+Meridian fa83f0c4-96f6-4a20-adae-31d308405fe8, 13 September 2026 13:44 Melbourne. Relayed design preference and Mercury guardrails, not verified implementation or a new hardcoded default.
+
+- Keep immutable records separate from curated active context: pinned authority/task/ownership/obligations/gates, recent tail, retrievable evidence index. Roughly 20,000 tokens is a proposed tunable recent-tail starting budget, never an age cutoff for binding constraints.
+
+- Agent supplies a short structured checkpoint before compaction; runtime verifies continuity after it. Do not repeatedly compress only a prior prose summary.
+
+- Latest file identity includes worktree, revision and path. Remove duplicate active-context bodies while preserving historical artifacts, failures, decisions and exact tested bytes.
+
+- Historical inspector/fork explicitly distinguishes as-known-then from review-with-hindsight. Historical snapshots and authority labels, read-only initially, no accidental current-world reads or mutations. Label reconstruction; do not claim retrieval of unrecorded reasoning.
+
+- Proposed sequence: structured checkpoint, revision-aware retrieval, historical read-only inspector, then historical fork execution. Existing current-session fork is not arbitrary historical replay.
+
+U04 verification: 6572 standard workspace/all-target tests across 40 suites passed; separate channel/restart harnesses passed. Strict release workspace/all-target Clippy including live-api-smoke passed (provider smoke execution not enabled); fmt, 17-file AST scan and production LOC maximum 478 passed. Actual-App tests cover held-provider cancellation, independent draft retention, queued Ctrl+C pair, child-result cancellation and terminal restoration. Live typing/flicker under sustained traffic, independent review and exact-commit venue remain open. Release build and local installation follow; no main landing claimed.

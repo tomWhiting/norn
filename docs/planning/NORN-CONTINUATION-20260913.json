@@ -667,7 +667,7 @@
     "note": "No new versioned artifacts eligible for cleanup were introduced; same repository-local cache, installed/rollback binaries and session data preserved."
   },
   "u04_interrupt_storm": {
-    "status": "in_progress",
+    "status": "verified_local_build_pending",
     "owner_request": "13 September 2026 Melbourne: repeated agent message entries prevent typing and reliable quitting",
     "requirements": {
       "R1": "An active Ctrl+C cancels the turn and arms the existing exit confirmation; a second distinct press inside its window requests app exit and cancels the root tree.",
@@ -676,7 +676,8 @@
       "R4": "Diagnose repeated message rendering separately; do not claim the flood or typing latency fixed from cancellation tests.",
       "R5": "An actual-App PTY scenario must cancel a held provider, retain the next draft, show exit confirmation and exit on the second Ctrl+C without releasing the provider; another scenario confirms two queued presses during execution restore the terminal.",
       "R6": "Typed queued/dequeued/sent/delivered message audit records render as metadata even when copied from another agent; actual delivered input remains visible. Invalid phase/type payloads remain explicitly unavailable. Session bytes are not changed.",
-      "R7": "Confirmed exit must collect any already-accepted MCP command result before returning, without admitting new submissions while it settles."
+      "R7": "Confirmed exit must collect any already-accepted MCP command result before returning, without admitting new submissions while it settles.",
+      "R8": "Update existing PTY cancellation scenarios to confirm the already-armed exit without extra keystrokes after terminal restoration; child-result cancellation must assert one cancelled turn and no automatic follow-up while confirmation is armed."
     },
     "files": [
       "crates/norn-tui/src/app/exit_confirmation.rs",
@@ -697,9 +698,11 @@
       "Cargo.toml",
       "Cargo.lock",
       "docs/release-notes/UNRELEASED.md",
-      "crates/norn-tui/src/app/mcp_slash.rs"
+      "crates/norn-tui/src/app/mcp_slash.rs",
+      "crates/norn-tui/tests/pty_smoke.rs",
+      "README.md"
     ],
-    "validation": "Deterministic turn/root cancellation and confirmation deadline tests, focused TUI tests, strict Clippy, AST scans; live storm acceptance still required.",
+    "validation": "6572 standard workspace/all-target tests across 40 suites passed; separate channel/restart harnesses passed. Strict release workspace/all-target Clippy including live-api-smoke passed (provider smoke execution not enabled); fmt, 17-file AST scan and production LOC maximum 478 passed. Actual-App tests cover held-provider cancellation, independent draft retention, queued Ctrl+C pair, child-result cancellation and terminal restoration. Live typing/flicker under sustained traffic, independent review and exact-commit venue remain open.",
     "evidence": "Live session d1dbabd4-36ba-4259-b389-89a3c36a608d: since 13 September 2026 12:45 Melbourne, 24 queued, 19 dequeued, 44 sent and 46 delivered audit records; no repeated lifecycle identity found. Queued/dequeued were not recognized by known_lifecycle and projected as Unavailable rows.",
     "saved_d13_draft": "git stash f351de4efc7dfd4e64f77f9303abba0e39645d10; restore after hotfix installation, preserving D13 R11-R13 scope"
   },
@@ -773,6 +776,17 @@
       "Replay older notifications after a newer checkpoint: preserve occurrence/delivery chronology and staleness; old progress must not overwrite current state.",
       "Diagnostics distinguish context compaction, process restart and session/worker generation replacement. Missing handles are evidence, not proof of a compaction cause."
     ],
-    "continuity_invariant": "Same work, authority, ownership and pending obligations, with truthful uncertainty where recovery is incomplete; remembered prose alone does not establish continuity."
+    "continuity_invariant": "Same work, authority, ownership and pending obligations, with truthful uncertainty where recovery is incomplete; remembered prose alone does not establish continuity.",
+    "rolling_context_proposal": {
+      "source": "Meridian fa83f0c4-96f6-4a20-adae-31d308405fe8, 13 September 2026 13:44 Melbourne",
+      "status": "Relayed design preference and Mercury guardrails, not verified implementation or a new hardcoded default",
+      "design": [
+        "Keep immutable records separate from curated active context: pinned authority/task/ownership/obligations/gates, recent tail, retrievable evidence index. Roughly 20,000 tokens is a proposed tunable recent-tail starting budget, never an age cutoff for binding constraints.",
+        "Agent supplies a short structured checkpoint before compaction; runtime verifies continuity after it. Do not repeatedly compress only a prior prose summary.",
+        "Latest file identity includes worktree, revision and path. Remove duplicate active-context bodies while preserving historical artifacts, failures, decisions and exact tested bytes.",
+        "Historical inspector/fork explicitly distinguishes as-known-then from review-with-hindsight. Historical snapshots and authority labels, read-only initially, no accidental current-world reads or mutations. Label reconstruction; do not claim retrieval of unrecorded reasoning.",
+        "Proposed sequence: structured checkpoint, revision-aware retrieval, historical read-only inspector, then historical fork execution. Existing current-session fork is not arbitrary historical replay."
+      ]
+    }
   }
 }
