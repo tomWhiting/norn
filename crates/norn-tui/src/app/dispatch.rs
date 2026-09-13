@@ -1394,4 +1394,49 @@ mod tests {
         assert!(out.contains("failed"), "got: {out:?}");
         Ok(())
     }
+    #[test]
+    fn child_provider_activity_updates_its_tree_without_parent_notice_flood()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut state, _, child_id) = state_with_one_child()?;
+        let before = state.transcript.projection.items().count();
+        for index in 0..40 {
+            for event in [
+                ProviderEvent::ToolCallComplete {
+                    call_id: format!("call-{index}"),
+                    name: "bash".to_owned(),
+                    arguments: serde_json::json!({"tool_use_description":"check the source"})
+                        .to_string(),
+                    kind: norn::provider::request::ToolCallKind::Function,
+                },
+                ProviderEvent::Done {
+                    stop_reason: norn::provider::events::StopReason::EndTurn,
+                    response_id: None,
+                    usage: Usage {
+                        input_tokens: 7,
+                        output_tokens: 3,
+                        ..Usage::default()
+                    },
+                },
+            ] {
+                handle_agent_event(
+                    &mut state,
+                    AgentEvent {
+                        agent_id: child_id,
+                        agent_role: "spawn/worker".into(),
+                        event: AgentEventKind::Provider(event),
+                    },
+                )?;
+            }
+        }
+        assert_eq!(state.transcript.projection.items().count(), before);
+        assert!(render_agent_panel(&mut state)?.contains("check the source"));
+        assert!(
+            state
+                .activity_log
+                .entries()
+                .iter()
+                .any(|entry| entry.tool_name == "bash")
+        );
+        Ok(())
+    }
 }

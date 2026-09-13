@@ -76,6 +76,8 @@ pub struct AppState {
     pub composer_geometry: super::composer_geometry::ComposerGeometry,
     /// Exact local input and draft snapshot awaiting its opening publication receipt.
     pub(super) pending_composer_submission: Option<super::composer_submission::PendingSubmission>,
+    /// Rejected and displaced drafts, each retaining its editor without a recall store.
+    pub(super) composer_recovery: super::composer_recovery::ComposerRecovery,
     /// Visibility toggles for thinking and secondary structured-output
     /// fields. Flipped by Ctrl+E.
     pub display_toggles: DisplayToggles,
@@ -180,6 +182,7 @@ impl AppState {
             input_editor: InputEditor::new(history),
             composer_geometry: super::composer_geometry::ComposerGeometry::default(),
             pending_composer_submission: None,
+            composer_recovery: super::composer_recovery::ComposerRecovery::default(),
             display_toggles: DisplayToggles::default(),
             verbosity: VerbosityState::default(),
             streaming_indicator: StreamingIndicator::Idle,

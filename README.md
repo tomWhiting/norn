@@ -2,7 +2,7 @@
 
 Norn is an AI agent runtime for interactive terminal work, command-line automation, and embedding in other applications. It can read and edit files, run commands, search code, use MCP tools, coordinate agents, and resume saved sessions. The Rust library, terminal UI, print mode, and driven JSON-RPC mode share the same `AgentBuilder` assembly path.
 
-**Current candidate source version: `0.1.0-preview.24`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [candidate verification record](docs/release-notes/PREVIEW-9.md) for the tested scope and open findings.
+**Current candidate source version: `0.1.0-preview.25`.** This is a development preview, not a stable release. See the [release notes](docs/release-notes/UNRELEASED.md) and [candidate verification record](docs/release-notes/PREVIEW-9.md) for the tested scope and open findings.
 
 The candidate branch is ahead of `main`; switching to `main` installs its landed version, not this local preview. Preview installations and their source hashes are recorded separately under `var/releases/`.
 
@@ -219,3 +219,11 @@ The pending diagnostic queue inherits the CLI's existing agent-event capacity (4
 The `action_log` tool accepts `{"query":"branches"}` to discover the calling session and its registered descendants after resume. It returns persisted session IDs and generations in tree order. This reads the session index on demand; it does not load child transcripts, start agents, or establish that a recipient is live. An ephemeral session is identified explicitly. Coverage excludes unregistered and ephemeral branch reservations, and timeline readability is not checked. Omit `filter`, `call_id` and `scope` for this query. Selected child-transcript browsing remains tracked work.
 
 Interactive turns run on a named execution thread so synchronous provider preparation does not occupy the terminal input/render task. The same context and inbox return after each turn; provider and session errors retain their existing handling. This does not claim that all rendering latency or flicker is resolved.
+
+### Pending input, recovered drafts, and agent activity
+
+Send immediately opens a fresh Iridium draft while the previous message awaits admission. Rejection restores an untouched composer; if you have begun another draft, it keeps that draft and shows **Recover rejected message** in the existing footer. Recovery preserves the displaced draft; **Switch saved draft** switches back. Nothing is resent automatically. These recoverable editor states live for this frontend session, not across process exit. Accepted messages enter the existing single recall history.
+
+Routine subagent tool activity and usage update the **Agents** side pane instead of filling the main conversation. Open it with `/pane agents` or Option+A; `/pane` toggles it. Child failures and actual final results remain attributed in the conversation. The tree no longer takes rows above the composer.
+
+For pane-scoped terminal copy, use `/view clipboard osc52`, then drag-select the pane text and use `/view copy`, F4, or a configured binding such as `/view keys set copy alt+c`. When your terminal forwards Command+C, Norn routes the editor's copy request to the focused pane. Clipboard writes are transport requests; the terminal and any enclosing multiplexer must support them. Read-only pane cut requests copy the selection without deleting conversation text.

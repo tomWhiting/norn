@@ -6,21 +6,25 @@ use norn::session_view::ItemId;
 use super::state::AppState;
 use super::transcript::publication::SubmittedInput;
 use crate::TuiError;
-use crate::input::{ComposerSnapshot, InputEditor};
+use crate::input::{ComposerSnapshot, DetachedComposerDraft, InputEditor};
+
+const WAITING: &str = "Waiting for the previous input's acceptance; draft retained";
 
 /// One operator draft awaiting the existing runner's publication decision.
 /// This is not a second inbox and is never retried by the frontend.
 pub(super) struct PendingSubmission {
     local: ItemId,
     snapshot: ComposerSnapshot,
+    draft: DetachedComposerDraft,
+    next: ComposerSnapshot,
     observation: Option<ExecutionObservation>,
 }
 
 /// Prepare an exact, nonblank draft without clearing or recording it.
 pub(super) fn prepare(state: &mut AppState) -> Result<Option<ComposerSnapshot>, TuiError> {
     if state.pending_composer_submission.is_some() {
-        state.screen.feedback =
-            Some("Waiting for the previous input's acceptance; draft retained".to_owned());
+        state.screen.feedback = Some(WAITING.to_owned());
+        state.screen.dirty = true;
         return Ok(None);
     }
     let snapshot = state.input_editor.snapshot()?;
@@ -38,10 +42,28 @@ pub(super) fn begin(
             "an opening input is already awaiting acceptance",
         )));
     }
-    let input = super::render::write_user_message(snapshot.text().to_owned(), state)?;
+    let mut draft = state.input_editor.detach_draft(&snapshot)?;
+    let next = match state.input_editor.snapshot() {
+        Ok(next) => next,
+        Err(error) => {
+            state.input_editor.exchange_draft(&mut draft);
+            return Err(error.into());
+        }
+    };
+    let input = match super::render::write_user_message(snapshot.text().to_owned(), state) {
+        Ok(input) => input,
+        Err(error) => {
+            state.input_editor.exchange_draft(&mut draft);
+            return Err(error);
+        }
+    };
+    state.autocomplete = None;
+    state.screen.dirty = true;
     state.pending_composer_submission = Some(PendingSubmission {
         local: input.local.clone(),
         snapshot,
+        draft,
+        next,
         observation: None,
     });
     Ok(input)
@@ -84,16 +106,38 @@ pub(super) fn resolve(state: &mut AppState) -> Result<(), TuiError> {
         resolution,
         PublicationResolution::Accepted(_) | PublicationResolution::AcceptedButUnavailable { .. }
     );
-    let pending = state.pending_composer_submission.take().ok_or_else(|| {
+    let mut pending = state.pending_composer_submission.take().ok_or_else(|| {
         super::render::interaction(std::io::Error::other(
             "resolved composer input lost its pending identity",
         ))
     })?;
-    if accepted {
+    if state.screen.feedback.as_deref() == Some(WAITING) {
+        state.screen.feedback = None;
+    }
+    let untouched = state.input_editor.validate_snapshot(&pending.next).is_ok();
+    if untouched {
+        state.input_editor.exchange_draft(&mut pending.draft);
+    }
+    if accepted && untouched {
         accepted_local(state, &pending.snapshot)?;
-    } else {
+    } else if accepted {
+        let mut issues = Vec::new();
+        if !is_secret(pending.snapshot.text())
+            && let Err(error) = state
+                .input_editor
+                .record_detached_accepted(&pending.draft, &pending.snapshot)
+        {
+            issues.push(format!("Input accepted; recall history could not be saved: {error}. Do not resend to repair history."));
+        }
+        report_accepted_issues(state, &issues)?;
+    } else if untouched {
         state.screen.feedback =
             Some("Input was not accepted; draft and undo history retained".to_owned());
+    } else {
+        state.composer_recovery.retain_rejected(pending.draft);
+        state.screen.feedback = Some(
+            "Input was not accepted; new draft kept. Recover rejected message below.".to_owned(),
+        );
     }
     state.screen.dirty = true;
     Ok(())
@@ -106,6 +150,10 @@ pub(super) fn accepted_local(
     snapshot: &ComposerSnapshot,
 ) -> Result<(), TuiError> {
     let issues = retire_accepted(&mut state.input_editor, snapshot);
+    report_accepted_issues(state, &issues)
+}
+
+fn report_accepted_issues(state: &mut AppState, issues: &[String]) -> Result<(), TuiError> {
     state.screen.dirty = true;
     if !issues.is_empty() {
         let message = issues.join("\n");

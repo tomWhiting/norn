@@ -48,6 +48,11 @@ fn apply_mouse(event: MouseEvent, state: &mut AppState) -> Result<bool, TuiError
     {
         return Ok(true);
     }
+    if matches!(event.kind, MouseEventKind::Down(MouseButton::Left))
+        && crate::app::composer_recovery::activate(state, event.column, event.row)
+    {
+        return Ok(true);
+    }
     if !matches!(
         event.kind,
         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown | MouseEventKind::Moved

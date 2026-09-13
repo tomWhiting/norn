@@ -51,6 +51,8 @@ pub struct ScreenState {
     pub(in crate::app) layout: Layout,
     pub(in crate::app) pane_switch: Option<Rect>,
     pub(in crate::app) composer_send_key_area: Option<Rect>,
+    pub(in crate::app) prepared_recovery: Option<crate::app::composer_recovery::PreparedRecovery>,
+    pub(in crate::app) recovery_hit: Option<crate::app::composer_recovery::RecoveryHit>,
     pub(in crate::app) prepared_latest: Option<Rect>,
     pub(in crate::app) latest_hit: Option<crate::app::view_actions::latest::LatestHit>,
     pub(in crate::app) navigation: Option<super::navigation::PendingNavigation>,
@@ -112,6 +114,8 @@ impl ScreenState {
             pane_switch: None,
             composer_send_key_area: None,
             prepared_latest: None,
+            prepared_recovery: None,
+            recovery_hit: None,
             latest_hit: None,
             navigation: None,
             row_cursor: None,
@@ -165,6 +169,8 @@ impl ScreenState {
             self.last_frame = None;
             self.prepared_latest = None;
             self.latest_hit = None;
+            self.prepared_recovery = None;
+            self.recovery_hit = None;
             self.navigation = None;
             self.row_cursor = None;
             self.changes_row = 0;

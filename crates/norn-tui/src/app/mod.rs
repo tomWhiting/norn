@@ -6,6 +6,7 @@ mod changes;
 pub mod child_results;
 pub(crate) mod composer_effects;
 pub(crate) mod composer_geometry;
+mod composer_recovery;
 pub(crate) mod composer_submission;
 mod context_status;
 mod diagnostics;

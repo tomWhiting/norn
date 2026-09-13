@@ -129,12 +129,22 @@ fn prepare_blank_and_pending_input_preserves_original_draft() -> TestResult {
     let pending = state.input_editor.snapshot()?;
     let submitted = begin(&mut state, pending)?;
     assert_eq!(submitted.text, "draft");
-    state.input_editor.validate_snapshot(&snapshot)?;
+    assert!(state.input_editor.is_empty());
+    state
+        .pending_composer_submission
+        .as_ref()
+        .ok_or("pending owner missing")?
+        .draft
+        .validate_snapshot(&snapshot)?;
+    state.input_editor.paste_cells("next draft")?;
+    let next = state.input_editor.snapshot()?;
+    let next_history = history_witness(&state)?;
     assert!(prepare(&mut state)?.is_none());
     let duplicate = state.input_editor.snapshot()?;
     assert!(begin(&mut state, duplicate).is_err());
-    state.input_editor.validate_snapshot(&snapshot)?;
-    assert_eq!(history_witness(&state)?, witness);
+    state.input_editor.validate_snapshot(&next)?;
+    assert_eq!(history_witness(&state)?, next_history);
+    assert_ne!(next_history, witness);
     assert!(
         state
             .screen
@@ -192,7 +202,13 @@ async fn actual_opening_acceptance_retires_once_and_undo_restores_without_resend
         observation.opening_input(),
         Some(PublicationResolution::Accepted(_))
     ));
-    state.input_editor.validate_snapshot(&snapshot)?;
+    assert!(state.input_editor.is_empty());
+    state
+        .pending_composer_submission
+        .as_ref()
+        .ok_or("pending owner missing")?
+        .draft
+        .validate_snapshot(&snapshot)?;
     resolve(&mut state)?;
     assert!(state.input_editor.is_empty());
     assert!(state.pending_composer_submission.is_none());
@@ -351,5 +367,96 @@ fn accepted_auth_and_live_definition_secrets_do_not_enter_recall() -> TestResult
     }
     assert!(InputHistory::load_from(&path).is_empty());
     assert!(!path.exists());
+    Ok(())
+}
+
+#[tokio::test]
+async fn opening_acceptance_keeps_independent_new_draft_without_stale_warning() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("history.txt");
+    let store = EventStore::new();
+    let mut state = state(InputHistory::load_from(&path), &store)?;
+    state.input_editor.paste_cells("original")?;
+    let pending = prepare(&mut state)?.ok_or("draft absent")?;
+    let submitted = begin(&mut state, pending)?;
+    assert!(state.input_editor.is_empty());
+    state.input_editor.paste_cells("new α\r\nline")?;
+    let next = state.input_editor.snapshot()?;
+    let next_history = history_witness(&state)?;
+    let source = state.transcript.projection.source();
+    let (tx, receiver) = broadcast::channel(32);
+    let root = AgentEventSender::new(tx, source.agent_id, "fixture".to_owned());
+    let (sender, observation) = root.observe_execution(&store, source, Uuid::new_v4())?;
+    bind(&mut state, Some(&submitted.local), Some(&observation))?;
+    let provider = provider();
+    run(&store, &sender, &provider, &submitted.text).await?;
+    resolve(&mut state)?;
+    resolve(&mut state)?;
+    state.input_editor.validate_snapshot(&next)?;
+    assert_eq!(history_witness(&state)?, next_history);
+    assert!(state.screen.feedback.is_none());
+    let recall = InputHistory::load_from(&path);
+    assert_eq!(recall.len(), 1);
+    assert_eq!(recall.entry(0), Some("original"));
+    assert_eq!(provider.call_count(), 1);
+    drop(receiver);
+    Ok(())
+}
+
+#[tokio::test]
+async fn opening_rejection_keeps_new_draft_and_offers_visible_recovery() -> TestResult {
+    let store = EventStore::with_sink(Box::new(RejectOpening));
+    let mut state = state(InputHistory::in_memory(), &store)?;
+    state.input_editor.paste_cells("original rejected")?;
+    let original = state.input_editor.snapshot()?;
+    let witness = history_witness(&state)?;
+    let pending = prepare(&mut state)?.ok_or("draft absent")?;
+    let submitted = begin(&mut state, pending)?;
+    state.input_editor.paste_cells("new draft")?;
+    let next = state.input_editor.snapshot()?;
+    let next_history = history_witness(&state)?;
+    let source = state.transcript.projection.source();
+    let (tx, receiver) = broadcast::channel(32);
+    let root = AgentEventSender::new(tx, source.agent_id, "fixture".to_owned());
+    let (sender, observation) = root.observe_execution(&store, source, Uuid::new_v4())?;
+    bind(&mut state, Some(&submitted.local), Some(&observation))?;
+    let provider = provider();
+    assert!(
+        run(&store, &sender, &provider, &submitted.text)
+            .await
+            .is_err()
+    );
+    resolve(&mut state)?;
+    state.input_editor.validate_snapshot(&next)?;
+    assert_eq!(history_witness(&state)?, next_history);
+    let area = crate::render::layout::Rect {
+        column: 0,
+        row: 23,
+        width: 80,
+        height: 1,
+    };
+    for (expected, snapshot, history) in [
+        ("Recover rejected message", &original, &witness),
+        ("Switch saved draft", &next, &next_history),
+    ] {
+        let (label, hit) =
+            crate::app::composer_recovery::prepare(&mut state, area)?.ok_or("recovery absent")?;
+        assert!(label.contains(expected));
+        let frame = Arc::new(crate::render::frame::Frame {
+            layout: crate::render::layout::Layout::ResizeRequired { area },
+            rows: Vec::new(),
+            composer: None,
+            cursor: None,
+        });
+        crate::app::view_actions::latest::finish_publication(&mut state.screen, frame, Ok(()))?;
+        assert!(crate::app::composer_recovery::activate(
+            &mut state, hit.column, hit.row
+        ));
+        state.input_editor.validate_snapshot(snapshot)?;
+        assert_eq!(&history_witness(&state)?, history);
+    }
+    assert_eq!(provider.call_count(), 0);
+    assert!(!state.input_editor.history_prev()?);
+    drop(receiver);
     Ok(())
 }

@@ -36,7 +36,9 @@ fn apply_key(key: KeyEvent, state: &mut AppState) -> Result<bool, TuiError> {
             key.code,
             KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete
         )
-        && !key.modifiers.contains(Modifiers::CONTROL)
+        && !key
+            .modifiers
+            .intersects(Modifiers::CONTROL | Modifiers::SUPER)
     {
         pin_visible(state)?;
     }
@@ -75,7 +77,10 @@ fn apply_key(key: KeyEvent, state: &mut AppState) -> Result<bool, TuiError> {
                 true
             }
             KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete
-                if focus != Focus::Composer && !key.modifiers.contains(Modifiers::CONTROL) =>
+                if focus != Focus::Composer
+                    && !key
+                        .modifiers
+                        .intersects(Modifiers::CONTROL | Modifiers::SUPER) =>
             {
                 // Typing addresses the composer without changing the pinned transcript.
                 state

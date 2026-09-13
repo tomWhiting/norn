@@ -56,6 +56,8 @@ pub(crate) fn sync_input_area(
     super::display_selection::sync_geometry(&mut state.screen, cols, terminal_rows);
     if state.screen.display_frame.is_none() {
         state.screen.latest_hit = None;
+        state.screen.recovery_hit = None;
+        state.screen.prepared_recovery = None;
         state.screen.prepared_latest = None;
     }
     let height = state
@@ -127,6 +129,8 @@ pub fn redraw_all(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(),
         state.screen.dragging_composer = false;
         state.screen.display_frame = None;
         state.screen.latest_hit = None;
+        state.screen.recovery_hit = None;
+        state.screen.prepared_recovery = None;
         state.screen.prepared_latest = None;
         state.screen.dragging_selection = false;
     }
@@ -172,12 +176,13 @@ fn prepare(state: &mut AppState, columns: u16, rows: u16) -> Result<Frame, TuiEr
         layout,
         Instant::now(),
         chrono::Utc::now(),
-    )?;
+    );
     let layout = agent_frame.layout;
     state.screen.next_agent_refresh =
         agent_frame.refresh_deadline(state.screen.auxiliary == AuxiliaryPane::Agents);
     state.screen.layout = layout;
     state.screen.pane_switch = None;
+    state.screen.prepared_recovery = None;
     state.screen.prepared_latest = None;
     state.screen.composer_send_key_area = None;
     state.screen.prepared_reading = None;
@@ -245,7 +250,6 @@ fn prepare(state: &mut AppState, columns: u16, rows: u16) -> Result<Frame, TuiEr
                     paint_auxiliary(state, &agent_frame, &mut frame, right)?;
                 }
             }
-            agents::paint(&agent_frame, &mut frame)?;
             composer::paint_chrome(state, &mut frame, composer)?;
             let input_area = crate::render::layout::composer_input_area(composer);
             let (cells, cursor) = state

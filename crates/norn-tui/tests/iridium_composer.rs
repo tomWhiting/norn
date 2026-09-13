@@ -461,3 +461,62 @@ fn typing_and_resize_continue_while_completed_turn_checkpoint_is_held() -> TestR
         Ok("checkpoint fixture".to_owned())
     })
 }
+
+#[test]
+fn pending_opening_keeps_typing_and_accepts_only_original() -> TestResult {
+    workspace_support::with_opening(false, |app| {
+        edit(app, b"opening original", &["opening original"])?;
+        edit(app, b"\r", &[""])?;
+        app.opening_held()?;
+        edit(app, b"next draft", &["next draft"])?;
+        app.key(b"\r", "Waiting for the previous input's acceptance")?;
+        plain(&app.resize(120, 24)?, &["next draft"])?;
+        app.confirm_checkpoint_held()?;
+        plain(&app.release_opening("next draft")?, &["next draft"])?;
+        plain(
+            &app.click_label("↓ Latest", "workspace provider held")?,
+            &["next draft"],
+        )?;
+        let census = app.snapshot()?;
+        assert_eq!(census["provider_calls"], 1);
+        assert_eq!(census["user_events"], json!(["opening original"]));
+        Ok("opening original".to_owned())
+    })
+}
+
+#[test]
+fn rejected_opening_recovers_from_footer_without_losing_next_draft_or_resending() -> TestResult {
+    workspace_support::with_opening(true, |app| {
+        edit(app, b"rejected original", &["rejected original"])?;
+        edit(app, b"\r", &[""])?;
+        app.opening_held()?;
+        edit(app, b"next draft", &["next draft"])?;
+        app.confirm_checkpoint_held()?;
+        plain(
+            &app.release_opening("[Recover rejected message]")?,
+            &["next draft"],
+        )?;
+        let census = app.snapshot()?;
+        assert_eq!(census["provider_calls"], 0);
+        assert_eq!(census["user_events"], json!([]));
+        plain(
+            &app.click_label("[Recover rejected message]", "Draft recovered")?,
+            &["rejected original"],
+        )?;
+        plain(
+            &app.click_label("[Switch saved draft]", "next draft")?,
+            &["next draft"],
+        )?;
+        assert_eq!(app.snapshot()?, census, "recovery submitted provider input");
+        plain(
+            &app.click_label("[Switch saved draft]", "rejected original")?,
+            &["rejected original"],
+        )?;
+        edit(app, b"\r", &[""])?;
+        app.click_label("↓ Latest", "workspace provider held")?;
+        let accepted = app.snapshot()?;
+        assert_eq!(accepted["provider_calls"], 1);
+        assert_eq!(accepted["user_events"], json!(["rejected original"]));
+        Ok("rejected original".to_owned())
+    })
+}

@@ -685,3 +685,25 @@ fn exercise_option_shortcuts(app: &mut Workspace) -> TestResult {
     app.input(b"\x1b", |screen| screen.lines()[screen.cursor.1].is_empty())?;
     Ok(())
 }
+
+#[test]
+fn agents_pane_command_copy_and_configurable_copy_use_only_selected_pane_text() -> TestResult {
+    with_workspace(|app| {
+        app.command("/view clipboard osc52", "Clipboard capability: osc52")?;
+        app.command("/view keys set copy alt+c", "View shortcuts updated: copy")?;
+        let screen = app.command("/pane agents", " root  ")?;
+        let start = locate(&screen, "root")?;
+        let end = (start.0 + 4, start.1);
+        app.input(&drag_bytes(start, end, true), |screen| {
+            screen.selected_at(usize::from(start.0), usize::from(start.1))
+        })?;
+        let before = app.snapshot()?;
+        app.key(b"\x1b[99;9u", "Sent 4 selected bytes")?;
+        app.assert_last_copy("root")?;
+        app.key(b"\x1bc", "Sent 4 selected bytes")?;
+        app.assert_last_copy("root")?;
+        assert_eq!(app.copy_payloads()?.len(), 2);
+        assert_eq!(app.snapshot()?, before);
+        Ok(())
+    })
+}

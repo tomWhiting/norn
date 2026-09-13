@@ -105,6 +105,22 @@ pub(super) fn paint_chrome(
             if mode == "steer" { "queue" } else { "steer" }
         )
     };
+    let panel = if let Some((label, area)) = crate::app::composer_recovery::prepare(
+        state,
+        Rect {
+            row: last_row,
+            height: 1,
+            ..panel
+        },
+    )? {
+        chrome_line(frame, &label, area)?;
+        Rect {
+            width: panel.width.saturating_sub(area.width).saturating_sub(1),
+            ..panel
+        }
+    } else {
+        panel
+    };
     let latest = crate::app::view_actions::latest::LABEL;
     let latest_width =
         u16::try_from(latest.width()).map_err(|source| TuiError::FrameCoordinate {

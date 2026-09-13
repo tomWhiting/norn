@@ -318,7 +318,8 @@ fn run_app_renders_child_activity_rows_in_screen_model() -> Result<(), Box<dyn s
         "run_app_child_entrypoint",
         PTY_APP_CHILD_ENV,
         Some("child-activity"),
-        PtyInteraction::WaitForOutputThenCtrlC {
+        PtyInteraction::WriteWaitForOutputThenCtrlC {
+            bytes: b"/pane agents\r",
             marker: CHILD_ACTIVITY_MARKER,
         },
         PtySizeSpec::default(),

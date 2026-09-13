@@ -98,11 +98,21 @@ async fn child_app() -> TestResult {
     });
     let checkpoint =
         std::env::var_os(CHECKPOINT_ENV).map(|_| Arc::new(completion_checkpoint::Gate::default()));
-    let store = Arc::new(match &checkpoint {
-        Some(gate) => EventStore::with_sink(Box::new(completion_checkpoint::FixtureSink(
+    let opening = std::env::var(CHECKPOINT_ENV)
+        .ok()
+        .filter(|mode| mode.starts_with("opening-"));
+    let store = Arc::new(match (&checkpoint, opening) {
+        (Some(gate), Some(mode)) => {
+            EventStore::with_sink(Box::new(completion_checkpoint::OpeningSink {
+                gate: Arc::clone(gate),
+                reject: mode == "opening-reject",
+                entered: false,
+            }))
+        }
+        (Some(gate), None) => EventStore::with_sink(Box::new(completion_checkpoint::FixtureSink(
             Arc::clone(gate),
         ))),
-        None => EventStore::new(),
+        (None, _) => EventStore::new(),
     });
     if std::env::var_os(RECORDED_TOOL_ENV).is_some() {
         append_recorded_tool(&store)?;
@@ -372,7 +382,7 @@ pub struct Workspace {
 
 /// Catch fixture assertions, then terminate/reap the child and join its reader before returning.
 pub fn with_workspace(exercise: impl FnOnce(&mut Workspace) -> TestResult) -> TestResult {
-    with_launch(None, false, false, false, |app| {
+    with_launch(None, false, false, None, |app| {
         exercise(app)?;
         Ok("workspace fixture prompt".to_owned())
     })
@@ -380,7 +390,7 @@ pub fn with_workspace(exercise: impl FnOnce(&mut Workspace) -> TestResult) -> Te
 
 /// Replay actual recorded tool events, then hold the one ordinary provider turn.
 pub fn with_recorded_tool(exercise: impl FnOnce(&mut Workspace) -> TestResult) -> TestResult {
-    with_launch(None, false, true, false, |app| {
+    with_launch(None, false, true, None, |app| {
         exercise(app)?;
         Ok("workspace fixture prompt".to_owned())
     })
@@ -400,19 +410,37 @@ pub fn with_composer_keyboard(
     kitty_confirmed: bool,
     exercise: impl FnOnce(&mut Workspace) -> TestResult<String>,
 ) -> TestResult {
-    with_launch(Some(send_key), kitty_confirmed, false, false, exercise)
+    with_launch(Some(send_key), kitty_confirmed, false, None, exercise)
 }
 
 /// Launch the real composer with a checkpoint held until explicitly released.
 pub fn with_checkpoint(exercise: impl FnOnce(&mut Workspace) -> TestResult<String>) -> TestResult {
-    with_launch(Some("enter"), false, false, true, exercise)
+    with_launch(Some("enter"), false, false, Some("checkpoint"), exercise)
+}
+
+/// Hold first opening admission, optionally reject it once, then permit an explicit retry.
+pub fn with_opening(
+    reject: bool,
+    exercise: impl FnOnce(&mut Workspace) -> TestResult<String>,
+) -> TestResult {
+    with_launch(
+        Some("enter"),
+        false,
+        false,
+        Some(if reject {
+            "opening-reject"
+        } else {
+            "opening-accept"
+        }),
+        exercise,
+    )
 }
 
 fn with_launch(
     send_key: Option<&str>,
     kitty_confirmed: bool,
     recorded_tool: bool,
-    checkpoint: bool,
+    checkpoint: Option<&str>,
     exercise: impl FnOnce(&mut Workspace) -> TestResult<String>,
 ) -> TestResult {
     let startup = Instant::now();
@@ -443,7 +471,7 @@ impl Workspace {
         send_key: Option<&str>,
         kitty_confirmed: bool,
         recorded_tool: bool,
-        checkpoint: bool,
+        checkpoint: Option<&str>,
     ) -> TestResult<Self> {
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
         let address = listener.local_addr()?;
@@ -466,8 +494,8 @@ impl Workspace {
         command.env(CHILD_ENV, "1");
         command.env(CONTROL_ENV, address.to_string());
         command.env(REPORT_ENV, &final_report);
-        if checkpoint {
-            command.env(CHECKPOINT_ENV, "1");
+        if let Some(mode) = checkpoint {
+            command.env(CHECKPOINT_ENV, mode);
         }
         if recorded_tool {
             command.env(RECORDED_TOOL_ENV, "1");
@@ -807,6 +835,45 @@ impl Workspace {
                 Ok(retained_screen::latest(bytes, &self.geometries)?
                     .filter(|screen| screen.rows == current.rows && screen.cols == current.cols))
             },
+        )
+    }
+
+    /// Acknowledge that the opening persistence call is still blocked, before releasing it.
+    pub fn opening_held(&mut self) -> io::Result<()> {
+        self.control("wait_checkpoint")?;
+        self.control("confirm_checkpoint_held")?;
+        Ok(())
+    }
+
+    /// Release opening persistence and await its actual UI outcome.
+    pub fn release_opening(&mut self, expected: &str) -> io::Result<Screen> {
+        let after = self.output.bytes()?.len();
+        self.control("release_checkpoint")?;
+        self.frame(after, |screen| screen.contains(expected))
+    }
+
+    /// Click a rendered footer label, without guessing its coordinates.
+    pub fn click_label(&mut self, label: &str, expected: &str) -> io::Result<Screen> {
+        let screen = self.screen()?;
+        let (row, column) = screen
+            .lines()
+            .iter()
+            .enumerate()
+            .find_map(|(row, text)| {
+                text.find(label)
+                    .map(|byte| (row, text[..byte].chars().count()))
+            })
+            .ok_or_else(|| io::Error::other(format!("visible label missing: {label}")))?;
+        self.key(
+            format!(
+                "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+                column + 1,
+                row + 1,
+                column + 1,
+                row + 1
+            )
+            .as_bytes(),
+            expected,
         )
     }
 

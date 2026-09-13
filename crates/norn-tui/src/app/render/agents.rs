@@ -1,4 +1,4 @@
-//! Bounded typed agent rows in spare upper-pane cells; no terminal writer or interaction authority.
+//! Agent status tree occupies only the explicit Agents pane; no extra composer or conversation rows.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -6,7 +6,7 @@ use std::time::Instant;
 use chrono::{DateTime, Utc};
 
 use crate::TuiError;
-use crate::agents::status_line::{AgentStatusPanel, RetainedAgentRow, RetainedAgentRowKind};
+use crate::agents::status_line::{AgentStatusPanel, RetainedAgentRow};
 use crate::render::frame::{Frame, PaintRow};
 use crate::render::layout::{Layout, Rect, UpperLayout, UpperPane};
 use crate::render::retained_markdown::{
@@ -17,10 +17,7 @@ use crate::render::retained_text::{AtomKind, StyleSpan, StyledText};
 /// One agent snapshot and its allocation; the composer rectangle is unchanged.
 pub(super) struct AgentFrame {
     pub layout: Layout,
-    pub next_refresh: Option<Instant>,
     pub pane_next_refresh: Option<Instant>,
-    area: Option<Rect>,
-    rows: Vec<RetainedAgentRow>,
     all_rows: Vec<RetainedAgentRow>,
 }
 
@@ -41,7 +38,7 @@ impl AgentFrame {
         if agents_selected && visible {
             self.pane_next_refresh
         } else {
-            self.next_refresh
+            None
         }
     }
 }
@@ -51,93 +48,13 @@ pub(super) fn prepare(
     layout: Layout,
     now: Instant,
     now_utc: DateTime<Utc>,
-) -> Result<AgentFrame, TuiError> {
+) -> AgentFrame {
     let snapshot = panel.retained_snapshot(now, now_utc);
-    let (layout, area) = allocate(layout, snapshot.rows.len())?;
-    let rows = fit_rows(
-        snapshot.rows,
-        area.map_or(0, |area| usize::from(area.height)),
-    );
-    Ok(AgentFrame {
+    AgentFrame {
         layout,
-        next_refresh: snapshot.next_refresh,
         pane_next_refresh: snapshot.pane_next_refresh,
         all_rows: snapshot.all_rows,
-        area,
-        rows,
-    })
-}
-
-fn allocate(layout: Layout, requested: usize) -> Result<(Layout, Option<Rect>), TuiError> {
-    let Layout::Ready { upper, composer } = layout else {
-        return Ok((layout, None));
-    };
-    let available = match upper {
-        UpperLayout::Single { area, .. } => area.height,
-        UpperLayout::Split { conversation, .. } => conversation.height,
-    };
-    // Preserve the shared layout's one-row minimum for upper content.
-    let count = requested.min(usize::from(available.saturating_sub(1)));
-    let height = u16::try_from(count).map_err(|source| TuiError::FrameCoordinate {
-        value: count,
-        source,
-    })?;
-    if height == 0 {
-        return Ok((layout, None));
     }
-    let area = Rect {
-        column: composer.column,
-        row: composer.row - height,
-        width: composer.width,
-        height,
-    };
-    let shrink = |pane: Rect| Rect {
-        height: pane.height - height,
-        ..pane
-    };
-    let upper = match upper {
-        UpperLayout::Single { pane, area } => UpperLayout::Single {
-            pane,
-            area: shrink(area),
-        },
-        UpperLayout::Split {
-            conversation,
-            divider,
-            changes,
-        } => UpperLayout::Split {
-            conversation: shrink(conversation),
-            divider: shrink(divider),
-            changes: shrink(changes),
-        },
-    };
-    Ok((Layout::Ready { upper, composer }, Some(area)))
-}
-
-fn fit_rows(mut rows: Vec<RetainedAgentRow>, height: usize) -> Vec<RetainedAgentRow> {
-    if height == 0 {
-        return Vec::new();
-    }
-    if rows.len() <= height {
-        return rows;
-    }
-    let hidden = rows
-        .iter()
-        .skip(height - 1)
-        .map(|row| match row.kind {
-            RetainedAgentRowKind::Agent { .. } => 1,
-            RetainedAgentRowKind::Overflow { count } => count,
-        })
-        .sum();
-    rows.truncate(height - 1);
-    rows.push(RetainedAgentRow::overflow(hidden));
-    rows
-}
-
-pub(super) fn paint(agents: &AgentFrame, frame: &mut Frame) -> Result<(), TuiError> {
-    let Some(area) = agents.area else {
-        return Ok(());
-    };
-    paint_rows(&agents.rows, frame, area, 0)
 }
 
 /// Explicit side-pane list from the very same frame snapshot; no target access is implied.

@@ -1,5 +1,13 @@
 ## 0.1.0-preview.24 — terminal input during turn completion (candidate)
 
+## 0.1.0-preview.25 — independent drafts and agent side-pane candidate
+
+13 September 2026, Melbourne. Opening submission now leaves an immediately editable independent composer. Accepted input records only its original bytes; untouched-composer undo remains available. Rejection preserves both original and newer drafts and offers a published-frame recovery control in the existing footer, followed by Switch saved draft. These are in-memory owners, with no duplicate recall store and no automatic resend.
+
+Routine child tool/provider events update their existing agent activity owner instead of appending parent conversation notices. The tree renders only in the Agents pane, preserving conversation height. Editor copy/cut requests while a read-only pane owns focus use its selected text instead of the composer payload; terminal clipboard transport remains explicit.
+
+6,550 standard tests across 39 suites and strict release workspace/all-target Clippy passed, alongside 22-file AST comparison, formatting and production LOC. Real terminal fixtures verify held admission, recovery without resend, side-pane tree and exact pane copy transport. Release build and executable probes precede installation. No Fable, 205 venue, main landing or physical smoothness acceptance claimed.
+
 13 September 2026, Melbourne. Child publications can no longer indefinitely extend the root turn's final live-event drain. Later retained events remain queued, and lag reports consume their actual skipped-event count. While exact input receipts, cancellation repair, checkpoint and final history reads settle, the terminal continues handling typing, navigation, resize and existing background view/voice/preference completions. Submit enters the normal follow-up queue after the finished runner input receiver closes; previously pending steers are requeued first.
 
 The actual-App checkpoint regression fails with the previous orchestrator while waiting for a typed frame. All 6,539 standard workspace tests, the separate channel/restart/MCP launch suites, strict Clippy, targeted AST and formatting checks passed. Preview.23 remains installed until the release build and executable probes finish. This does not close the remaining pending-admission draft work, physical Herdr performance acceptance, Fable review or exact-commit venue battery.

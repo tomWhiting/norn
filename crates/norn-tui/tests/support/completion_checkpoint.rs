@@ -85,3 +85,25 @@ impl PersistenceSink for FixtureSink {
         self.0.checkpoint().map_err(SessionPersistError::Io)
     }
 }
+
+/// First opening-input publication is held; one optional rejection precedes ordinary admission.
+pub struct OpeningSink {
+    pub gate: Arc<Gate>,
+    pub reject: bool,
+    pub entered: bool,
+}
+
+impl PersistenceSink for OpeningSink {
+    fn persist(&mut self, event: &SessionEvent) -> Result<(), SessionPersistError> {
+        if !self.entered && matches!(event, SessionEvent::UserMessage { .. }) {
+            self.entered = true;
+            self.gate.checkpoint().map_err(SessionPersistError::Io)?;
+            if self.reject {
+                return Err(SessionPersistError::Io(io::Error::other(
+                    "fixture rejects opening input",
+                )));
+            }
+        }
+        Ok(())
+    }
+}
