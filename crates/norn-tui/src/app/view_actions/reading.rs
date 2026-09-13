@@ -357,6 +357,9 @@ pub(in crate::app) fn finish_history(
     state: &mut AppState,
     result: HistoryResult,
 ) -> Result<(), TuiError> {
+    let Some(result) = crate::app::agent_conversations::history_result(state, result)? else {
+        return Ok(());
+    };
     if matches!(&result, Ok((request, _)) if &request.source != state.transcript.projection.source())
     {
         return Ok(());

@@ -173,11 +173,13 @@ pub(in crate::app) fn finish_publication(
         Ok(()) => {
             crate::app::render::reading_snapshot::published(&mut screen.conversation, &frame);
             commit_hit(screen, &frame);
+            crate::app::agent_pane::published(screen, &frame);
             crate::app::composer_recovery::published(screen, &frame);
             screen.display_frame = Some(frame);
             Ok(())
         }
         Err(error) => {
+            screen.agent_pane.revoke();
             screen.conversation.prepared_reading = None;
             screen.prepared_latest = None;
             screen.latest_hit = None;

@@ -1,6 +1,8 @@
 //! Application state and event loop.
 
 pub mod active_input;
+mod agent_conversations;
+mod agent_pane;
 pub mod autocomplete;
 mod changes;
 pub mod child_results;

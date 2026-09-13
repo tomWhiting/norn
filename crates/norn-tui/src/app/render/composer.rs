@@ -33,6 +33,9 @@ pub(super) fn paint_chrome(
     {
         write!(input, " • {activity}").map_err(interaction)?;
     }
+    if let Some(id) = state.agent_conversations.selected {
+        input = format!("composer → main • viewing {id} • {input}");
+    }
     let mut metadata = vec![status.model_name.clone()];
     if let Some(tier) = &status.service_tier {
         metadata.push(format!("tier:{tier}"));
@@ -128,8 +131,9 @@ pub(super) fn paint_chrome(
             value: latest.width(),
             source,
         })?;
-    let show_latest = (!state.screen.conversation.viewport.follows_tail()
-        || state.transcript.latest_pending())
+    let show_latest = state.agent_conversations.selected.is_none()
+        && (!state.screen.conversation.viewport.follows_tail()
+            || state.transcript.latest_pending())
         && latest_width <= panel.width;
     let hints_width = if show_latest {
         panel.width.saturating_sub(latest_width).saturating_sub(1)

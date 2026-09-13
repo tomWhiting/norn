@@ -430,7 +430,15 @@
         "crates/norn-tui/src/app/agent_conversations_tests.rs",
         "crates/norn-tui/src/app/render/agents.rs",
         "crates/norn-tui/src/app/render/agents_tests.rs",
-        "crates/norn-tui/src/app/display_selection_tests.rs"
+        "crates/norn-tui/src/app/display_selection_tests.rs",
+        "crates/norn-tui/src/app/agent_pane.rs",
+        "crates/norn-tui/src/app/agent_pane_tests.rs",
+        "crates/norn-tui/tests/support/retained_workspace.rs",
+        "crates/norn-tui/tests/support/agent_workspace.rs",
+        "crates/norn-tui/tests/retained_workspace.rs",
+        "crates/norn-tui/tests/support/interrupt_exit.rs",
+        "crates/norn-tui/tests/support/message_flood.rs",
+        "crates/norn-tui/tests/iridium_composer.rs"
       ],
       "requirements": [
         "R1: Rendering and navigation borrow a matched Transcript/ScreenState pair without access to provider, runtime, composer or command authority.",
@@ -445,7 +453,9 @@
         "R10: Extract per-conversation source-bound navigation, selection and display caches from global terminal geometry/publication. ConversationView borrows the selected presentation plus current layout and the one frontend dirty flag; it never owns or restores a terminal frame baseline. Update existing callers explicitly, no Deref/compatibility shim, preserve root rendering and all current controls.",
         "R11: Explicit agent selection opens only a requested registered descendant through ActionLogTree on a blocking worker, preserving the old view on failure and refusing stale selection completions. No eager all-agent histories, copied store or provider invocation.",
         "R12: Route selected painting, read demand, scrolling, tool expansion, original selection/copy and pane inspection to the selected source while root execution/publication remains fixed. Use one global terminal frame baseline; publish click authority only after a successful frame flush.",
-        "R13: Keep the full view-and-message goal. The first visible read-only inspection stage must label the main composer target explicitly; never silently redirect user input. Per-agent drafts, human-authored delivery and source-true live streaming remain unfinished until separately wired and verified."
+        "R13: Keep the full view-and-message goal. The first visible read-only inspection stage must label the main composer target explicitly; never silently redirect user input. Per-agent drafts, human-authored delivery and source-true live streaming remain unfinished until separately wired and verified.",
+        "R14: Agents pane uses typed identity from the painted row and only successfully published click targets. Click-and-release opens that descendant; a drag preserves text selection. Resize, source rotation, failed publication, pane change or a moved/replaced target cannot redirect a pending click. Highlight the selected agent without consuming another terminal row. Verify failed publication and changed rows, plus actual selection through App mouse dispatch.",
+        "R15: A committed child change arriving during a pending latest-history read must retain another refresh demand until that read finishes. Coalesce demand without dropping it, polling, replacing the captured frontier or scheduling a second concurrent history job. Pinning stops follow-tail reads; returning to main preserves root state."
       ],
       "verification": {
         "presentation_extraction": "passed; pane selection and messaging still in progress",
@@ -474,7 +484,7 @@
           "d13-read-owner-workspace.log"
         ]
       },
-      "remaining": "Actual agent selection, active-view input/navigation routing, live child refresh, per-agent drafts and human-authored child messaging remain unfinished. Neither the renderer extraction nor read owner is an installed visual feature.",
+      "remaining": "Complete source-owned child selection/copy/search/diff and actual-App terminal acceptance, then per-agent drafts, human-authored direct/CC messaging and source-true streaming. The selected viewer is not the complete D13 feature and is not installed.",
       "read_task_supervision_verification": {
         "standard_suites": 39,
         "passed": 6563,
@@ -502,7 +512,13 @@
           "d13-presentation-workspace.log"
         ]
       },
-      "presentation_ownership_remaining": "Source-specific ConversationScreen is extracted and used explicitly throughout current root UI controls. The next integration must create/select actual child owners, route read completions to them and connect the shared renderer and controls; child refresh and per-agent messaging/drafts remain unfinished."
+      "presentation_ownership_remaining": "Source-specific ConversationScreen is extracted and used explicitly throughout current root UI controls. The next integration must create/select actual child owners, route read completions to them and connect the shared renderer and controls; child refresh and per-agent messaging/drafts remain unfinished.",
+      "fixture_wall_extension": "The final Clippy build identified two shared Workspace::start callers needing an explicit disabled agent-fixture flag: interrupt_exit.rs and message_flood.rs. Add both to the wall before editing; behavior remains the original fixture.",
+      "review_findings": [
+        "Fix unsupported child-view/invalid agent commands to return a rejected local command without ending the TUI.",
+        "Clear successful opening feedback when child reader selection completes.",
+        "Existing recovery PTY assertion could accept stale transcript text before the composer changed; observe exact composer rows after each recovery action."
+      ]
     }
   ],
   "policy_debt": [
@@ -1113,5 +1129,38 @@
     "installation": "var/releases/preview.28-input-delivery/installation.json",
     "validation": "Preview.28 installed at 2026-09-13T16:04:28.537239+10:00 Melbourne from `b439186f87552d4d5c379e74d9b3106325fd7336`; SHA256 `d168049f109de2f60a947c9e90e6a9d0f383fbb4ec7961702ce7bd7d5d256401`. 6590 standard tests across 41 suites passed, plus the separate custom harnesses; strict workspace/all-target Clippy, fmt, delta AST/LOC and actual-CLI diagnostic/late-capability probes passed. Receipt `var/releases/preview.28-input-delivery/installation.json`. Preview.27 rollback retained. Includes producer-owned child-result origin, finite result/inbound/active-input batches and accepted child-message publication before hooks. Short actual-App message-flood tests passed; long-session physical typing/flicker, failed-result admission recovery, independent review and venue/main landing remain open. Existing processes were not restarted.",
     "review_handoff": "var/reviews/preview28-20260913; local only, Tom owns submission"
+  },
+  "d13_operator_delivery_next": {
+    "status": "design_and_code_read_complete_implementation_pending",
+    "requirements": [
+      "Capture the explicit composer recipient with the submission identity; later view changes cannot retarget acceptance, rejection, dictation or draft recovery.",
+      "Move complete Iridium draft ownership, including undo and selection, between conversations; retain one recall store. Root pending-publication resolution must address its original draft even while a child is visible.",
+      "Use a native operator-authored delivery entry point restricted to the attached root subtree. Do not invoke signal_agent as the root model or forge the root as the human sender.",
+      "Reuse existing sequenced router and recipient-owned durable pending mailbox. Distinguish routed, durably queued, rejected and accepted-with-audit-failure; retain exact message identity for uncertain persistence and never auto-resend.",
+      "Deliver at existing tool-safe boundaries without interrupting the running tool or waiting for the whole turn. Report a recipient requiring resume honestly; do not spawn a replacement session.",
+      "Leading @ addresses select the direct recipient; explicit mentions in a main-agent message produce per-recipient CC outcomes. Preserve the original submitted text and do not route mentions in quoted/code content accidentally.",
+      "Keep UI input processing live while delivery waits; own and settle the submission job on exit. Full/closed/terminal recipient paths preserve or recover the correct draft according to actual admission."
+    ],
+    "implementation_referents": [
+      "crates/norn-tui/src/app/composer_submission.rs: PendingSubmission and resolve currently own only the main draft.",
+      "crates/norn-tui/src/input/composer_draft.rs: DetachedComposerDraft moves the existing kernel and undo history without copying the recall store.",
+      "crates/norn/src/agent/message_router.rs: deliver stamps recipient and sequence at accepted channel publication.",
+      "crates/norn/src/tools/agent/coord/signal_agent.rs: model messaging resolves sender from AgentToolInfra and cannot serve as human attribution.",
+      "crates/norn/src/tools/agent/coord/signal_queue.rs: pending admission is authoritative in recipient timeline; sender copies are secondary."
+    ]
+  },
+  "closeout_direction": {
+    "at_melbourne": "2026-09-13T16:29:43+10:00",
+    "source": "Tom via Dot: close out current slice, install absent major issues, merge main and bookmark remaining work; pause new features for several days. Tom assigned Ripley the review because the separately arranged review will not arrive soon.",
+    "review": "Ripley final-source self-review under owner direction; do not describe as independent Fable review. No source disclosure to Anthropic authorized by this instruction.",
+    "scope": "Finish current verification/fixes, versioned install, exact-source venue landing and restart notes. Full programme remains open; do not start subsequent features."
+  },
+  "preview29_closeout": {
+    "status": "verification_in_progress",
+    "version": "0.1.0-preview.29",
+    "receipt_directory": "var/releases/preview.29-agent-inspection",
+    "review": "Owner-directed self-review; new pane and read paths traced, failure reporting corrected; final tests pending. Not independent Fable review.",
+    "restart": "Do not start new features after this closeout. Resume with remaining child reading/copy/search/diff controls, then source-owned drafts and native human messaging. Complete programme is retained above.",
+    "landing": "Only merge the exact reviewed source after a matching venue receipt; local installation is separate."
   }
 }

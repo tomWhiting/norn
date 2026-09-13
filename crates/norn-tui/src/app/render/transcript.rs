@@ -23,6 +23,9 @@ pub(super) fn conversation(
     frame: &mut Frame,
     area: Rect,
 ) -> Result<(), TuiError> {
+    if crate::app::agent_conversations::paint(state, frame, area)? {
+        return Ok(());
+    }
     let status = super::composer::activity_status(state);
     paint(
         &mut ConversationView::root(state)?,

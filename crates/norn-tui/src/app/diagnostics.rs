@@ -20,7 +20,18 @@ pub(super) fn finish(
 ) -> Result<(), TuiError> {
     match result {
         Ok(event) => {
-            let label = format!("{} · {}", event.level, event.target);
+            let explanation = event
+                .text
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty());
+            let label = match explanation {
+                Some(text) => format!("{} · {} — {text}", event.level, event.target),
+                None => format!(
+                    "{} · {} — diagnostic contained no message",
+                    event.level, event.target
+                ),
+            };
             let item = if event.level == tracing::Level::ERROR {
                 super::notices::error(state, &label, &event.text)?
             } else {

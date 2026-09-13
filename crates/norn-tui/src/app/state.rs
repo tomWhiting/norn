@@ -65,6 +65,7 @@ pub struct AppState {
     pub(super) preferences: super::frontend_preferences::PreferenceOwner,
     /// Retained semantic state bound to the actual store/agent source.
     pub transcript: Transcript,
+    pub(in crate::app) agent_conversations: super::agent_conversations::AgentConversations,
     /// Frontend-owned reads remain supervised across conversation selection and rotation.
     pub(in crate::app) read_tasks: super::read_tasks::ReadTasks,
     /// Retained full-screen geometry, focus and presentation cache.
@@ -179,6 +180,7 @@ impl AppState {
                 crate::frontend_preferences::FrontendPreferencesLaunch::run_only(),
             ),
             transcript: Transcript::new(source.clone()),
+            agent_conversations: super::agent_conversations::AgentConversations::default(),
             read_tasks: super::read_tasks::ReadTasks::default(),
             screen: super::render::ScreenState::new(source),
             export_tasks: tokio::task::JoinSet::new(),

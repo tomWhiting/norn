@@ -102,7 +102,7 @@ fn control_payloads_are_visible_and_generated_without_terminal_or_body_authority
         composer: None,
         cursor: None,
     };
-    paint_pane(&agents, &mut frame, area, 0)?;
+    paint_pane(&agents, &mut frame, area, 0, None)?;
     let output = frame.encode(&TerminalCaps::baseline())?;
     assert!(!output.windows(5).any(|window| window == b"\x1b]52;"));
     assert_eq!(frame.rows.len(), 1);
@@ -154,7 +154,7 @@ fn agents_pane_uses_full_typed_snapshot_and_explicit_row_scroll() -> TestResult 
         height: 2,
         ..changes
     };
-    paint_pane(&agents, &mut frame, area, 6)?;
+    paint_pane(&agents, &mut frame, area, 6, None)?;
     assert_eq!(frame.rows.len(), 2);
     assert_eq!(
         frame
@@ -215,5 +215,55 @@ fn full_list_deadline_is_used_only_for_visible_agents_content() -> TestResult {
         return Err("expected narrow single pane".into());
     }
     assert_eq!(agents.refresh_deadline(true), Some(full));
+    Ok(())
+}
+
+#[test]
+fn pane_targets_use_painted_ids_not_labels_and_exclude_overflow() -> TestResult {
+    let first = Uuid::new_v4();
+    let second = Uuid::new_v4();
+    let mut rows = vec![
+        status("same label"),
+        status("same label"),
+        RetainedAgentRow::overflow(2),
+    ];
+    rows[0].kind = RetainedAgentRowKind::Agent {
+        id: first,
+        parent_id: None,
+    };
+    rows[1].kind = RetainedAgentRowKind::Agent {
+        id: second,
+        parent_id: Some(first),
+    };
+    let layout = layout(120, 24, true)?;
+    let agents = AgentFrame {
+        layout,
+        pane_next_refresh: None,
+        all_rows: rows,
+    };
+    let mut frame = Frame {
+        layout,
+        rows: Vec::new(),
+        composer: None,
+        cursor: None,
+    };
+    let area = Rect {
+        column: 60,
+        row: 3,
+        width: 60,
+        height: 3,
+    };
+    let targets = paint_pane(&agents, &mut frame, area, 1, Some(second))?;
+    assert_eq!(
+        targets,
+        vec![AgentHit {
+            id: second,
+            area: Rect { height: 1, ..area }
+        }]
+    );
+    assert_eq!(frame.rows.len(), 2);
+    assert!(frame.rows[0].selected);
+    assert!(!frame.rows[1].selected);
+    assert_eq!(frame.rows[0].text.styled.text(), "same label");
     Ok(())
 }

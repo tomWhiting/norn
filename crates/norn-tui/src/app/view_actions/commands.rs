@@ -9,7 +9,7 @@ use crate::app::state::AppState;
 use crate::render::layout::SplitPreference;
 use std::num::{NonZeroU16, NonZeroUsize};
 
-const HELP: &str = "View controls\n/view focus composer|conversation|changes|divider\n/pane [diff|agents] · toggle or select pane content\n/view pane open|close|toggle|diff|agents\n/view split <conversation-weight> <changes-weight> · arrows resize focused divider\n/view up|down · PgUp/PgDn browse; Up/Down select rows outside composer\n/view expand|collapse|toggle|reset · Enter toggles selected tool\n/view compact|detailed · Ctrl+O toggles global tool detail\n/view follow|pin · return to live tail or keep current position\n/view older · demand one older history page\n/view more · demand next bytes of selected item's bodies\n/view history <events> · /view body <bytes> · positive demand preferences\n/view select <body-index> [<start-byte> <end-byte>] · select a whole loaded original body or explicit grapheme range\n/view selection [clear] · inspect/reset selection; mouse drag selects text\n/view copy · /view clipboard unspecified|disabled|osc52\n/view search [loaded|selected|older] <literal> · older requests one page and configured body prefixes; unavailable suffixes stay explicit\n/view next|previous · select a retained search hit; stale/unloaded revisions are refused\n/view export [--replace] <path> · original selection, create-new by default; spaces belong to the path\n/view status · current model, session, effort, tier, usage and local reading settings\n/view composer send-key enter|shift-enter|alt-enter · physical send key, independent of steer/queue\n/view preferences status|run|user|local|save · remembered or temporary frontend choices\n/view keys · current bindings · set <action> <stroke>... · clear <action>\n/view help · frontend actions never enter steer/queue";
+const HELP: &str = "View controls\n/view agent <uuid>|main · inspect a descendant; composer remains addressed to main\n/view focus composer|conversation|changes|divider\n/pane [diff|agents] · toggle or select pane content\n/view pane open|close|toggle|diff|agents\n/view split <conversation-weight> <changes-weight> · arrows resize focused divider\n/view up|down · PgUp/PgDn browse; Up/Down select rows outside composer\n/view expand|collapse|toggle|reset · Enter toggles selected tool\n/view compact|detailed · Ctrl+O toggles global tool detail\n/view follow|pin · return to live tail or keep current position\n/view older · demand one older history page\n/view more · demand next bytes of selected item's bodies\n/view history <events> · /view body <bytes> · positive demand preferences\n/view select <body-index> [<start-byte> <end-byte>] · select a whole loaded original body or explicit grapheme range\n/view selection [clear] · inspect/reset selection; mouse drag selects text\n/view copy · /view clipboard unspecified|disabled|osc52\n/view search [loaded|selected|older] <literal> · older requests one page and configured body prefixes; unavailable suffixes stay explicit\n/view next|previous · select a retained search hit; stale/unloaded revisions are refused\n/view export [--replace] <path> · original selection, create-new by default; spaces belong to the path\n/view status · current model, session, effort, tier, usage and local reading settings\n/view composer send-key enter|shift-enter|alt-enter · physical send key, independent of steer/queue\n/view preferences status|run|user|local|save · remembered or temporary frontend choices\n/view keys · current bindings · set <action> <stroke>... · clear <action>\n/view help · frontend actions never enter steer/queue";
 
 /// Whether this exact input belongs to the shared TUI-only view or pane commands.
 pub(in crate::app) fn is_frontend_command(text: &str) -> bool {
@@ -57,6 +57,30 @@ pub(in crate::app) fn command(
     text: &str,
     state: &mut AppState,
 ) -> Result<LocalCommandOutcome, TuiError> {
+    if let Some(target) = text.trim().strip_prefix("agent ") {
+        let target = if target == "main" {
+            Ok(state.tab_state.root_id())
+        } else {
+            uuid::Uuid::parse_str(target).map_err(interaction)
+        };
+        return match target
+            .and_then(|target| crate::app::agent_conversations::request(state, target))
+        {
+            Ok(()) => Ok(LocalCommandOutcome::Accepted),
+            Err(error) => {
+                command_error(state, &error.to_string())?;
+                Ok(LocalCommandOutcome::Rejected)
+            }
+        };
+    }
+    match crate::app::agent_conversations::command(state, text) {
+        Ok(true) => return Ok(LocalCommandOutcome::Accepted),
+        Ok(false) => {}
+        Err(error) => {
+            command_error(state, &error.to_string())?;
+            return Ok(LocalCommandOutcome::Rejected);
+        }
+    }
     if text.trim() != "follow" {
         crate::app::render::navigation::finish(state)?;
     }

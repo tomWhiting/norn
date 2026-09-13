@@ -218,6 +218,9 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         source,
         inputs.status_bar,
     );
+    state.agent_conversations.tree = inputs.executor.shared_context().and_then(|context| {
+        context.get_extension::<norn::session::action_log_tree::ActionLogTree>()
+    });
     state.diagnostics = inputs.diagnostics;
     super::frontend_preferences::install(&mut state, inputs.frontend_preferences);
     state
@@ -427,6 +430,9 @@ async fn outer_loop(
                 }
                 Some(result) = state.screen.changes.jobs.join_next() => {
                     crate::app::render::changes::finish(state, result)?;
+                }
+                Some(result) = state.agent_conversations.opening.join_next() => {
+                    crate::app::agent_conversations::finish(state, result)?;
                 }
                 Some(result) = state.read_tasks.history.join_next() => {
                 crate::app::view_actions::reading::finish_history(state, result)?;

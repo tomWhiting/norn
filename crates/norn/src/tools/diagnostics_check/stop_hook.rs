@@ -28,6 +28,14 @@ impl DiagnosticStopHook {
 #[async_trait]
 impl StopHook for DiagnosticStopHook {
     async fn on_stop(&self, _final_text: &str) -> HookOutcome {
+        if let Some(error) = &self.infra.configuration_error {
+            return HookOutcome::Block {
+                reason: format!(
+                    "{}: configured diagnostics unavailable: {error}",
+                    self.infra.workspace_root.join("CONVENTIONS.toml").display()
+                ),
+            };
+        }
         let files: Vec<PathBuf> = self.infra.modified_files().into_iter().collect();
         if files.is_empty() {
             return HookOutcome::Proceed;

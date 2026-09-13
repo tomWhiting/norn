@@ -64,6 +64,9 @@ impl TerminalCompletion<'_> {
                 Some(result) = state.screen.changes.jobs.join_next() => {
                     crate::app::render::changes::finish(state, result)?;
                 }
+                Some(result) = state.agent_conversations.opening.join_next() => {
+                    crate::app::agent_conversations::finish(state, result)?;
+                }
                 Some(result) = state.read_tasks.history.join_next() => {
                     crate::app::view_actions::reading::finish_history(state, result)?;
                 }

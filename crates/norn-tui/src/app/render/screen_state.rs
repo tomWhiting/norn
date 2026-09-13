@@ -18,6 +18,7 @@ pub(in crate::app) enum AuxiliaryPane {
 
 /// Geometry/cache state owned by one frontend, independent from the running agent.
 pub struct ScreenState {
+    pub(in crate::app) agent_pane: crate::app::agent_pane::AgentPane,
     pub(in crate::app) conversation: super::ConversationScreen,
     pub(in crate::app) focus: FocusState,
     pub(in crate::app) changes_open: bool,
@@ -51,6 +52,7 @@ impl ScreenState {
     /// Bind frontend navigation to the actual session/store identity.
     pub fn new(source: ViewSource) -> Self {
         Self {
+            agent_pane: crate::app::agent_pane::AgentPane::default(),
             conversation: super::ConversationScreen::new(source),
             focus: FocusState::new(),
             changes_open: false,
@@ -93,6 +95,7 @@ impl ScreenState {
     /// Retire source-bound caches and anchors while preserving frontend preferences.
     pub fn replace_source(&mut self, source: &ViewSource) {
         if self.conversation.replace_source(source) {
+            self.agent_pane.revoke();
             self.display_frame = None;
             self.display_selection = None;
             self.dragging_selection = false;

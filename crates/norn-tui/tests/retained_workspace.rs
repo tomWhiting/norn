@@ -707,3 +707,28 @@ fn agents_pane_command_copy_and_configurable_copy_use_only_selected_pane_text() 
         Ok(())
     })
 }
+
+#[test]
+fn actual_agent_pane_switches_child_history_while_root_runs_and_keeps_draft() -> TestResult {
+    support::with_agents(|app| {
+        app.command("/pane agents", "inspectable-child")?;
+        let before = app.snapshot()?;
+        let draft = "keep my root draft";
+        app.input(draft.as_bytes(), |screen| {
+            screen.lines()[screen.cursor.1] == draft
+        })?;
+        let child = app.click_label("inspectable-child", "Recorded child conversation")?;
+        assert!(child.contains("composer → main"));
+        assert!(child.lines().iter().any(|line| line == draft));
+        assert_eq!(
+            app.snapshot()?,
+            before,
+            "inspection invoked the provider or changed root history"
+        );
+        let main = app.click_label(" root  ", "workspace provider held")?;
+        assert!(!main.contains("composer → main"));
+        assert!(main.lines().iter().any(|line| line == draft));
+        assert_eq!(app.snapshot()?, before);
+        Ok(())
+    })
+}

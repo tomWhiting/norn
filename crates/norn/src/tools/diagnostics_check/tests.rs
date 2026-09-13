@@ -232,6 +232,7 @@ fn test_infra(workspace_root: PathBuf, conventions: Option<ConventionsConfig>) -
         workspace_root,
         socket_path,
         conventions,
+        configuration_error: None,
         lsp_backend: None,
         lsp_bridge: None,
         modified_files: Arc::new(Mutex::new(HashSet::new())),
@@ -2709,3 +2710,6 @@ clippy = { on = "tool", handling = "block" }
         );
     }
 }
+
+#[path = "admission_regression_tests.rs"]
+mod admission_regression;

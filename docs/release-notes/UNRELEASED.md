@@ -1,3 +1,13 @@
+## 0.1.0-preview.29 — agent conversation inspection
+
+The Agents pane can open a registered descendant's real conversation on click-and-release and highlights the selected agent. `/view agent <uuid>` opens the same view; `/view agent main` returns to main. Reads use the child's sealed source-bound history handle and the existing shared read supervisor. A change arriving during a history read retains another refresh demand; pinned views wait for explicit follow. Selection failures preserve the old view and draft.
+
+This is conversation inspection. The full-width composer still addresses main, explicitly labelled at the beginning of its status line when viewing a child. Per-agent drafts, human direct/CC messaging, source-true partial streaming and complete selected-child reading/copy/search/diff controls remain bookmarked follow-on work. Unsupported child-view commands are rejected without ending the TUI. The parent provider and its accepted input remain unchanged by inspection.
+
+Click targets come from the painted typed row and become active only after successful frame publication. Duplicate names do not resolve identities. Dragging remains displayed-text selection in the Agents pane; resize, source replacement, pane changes and changed targets revoke stale gestures. The original terminal layout and full-width composer remain in place.
+
+The owner's closeout direction on 13 September 2026 is to finish this slice, install it after verification, and pause additional features for several days. Ripley owns the closing source review; it is not an independent Fable verdict. Exact-source venue verification remains required for main. Local verification, installation, rollback and review receipts are under `var/releases/preview.29-agent-inspection/`. Remaining work and restart notes are in `docs/planning/NORN-CONTINUATION-20260913.json` and its Markdown companion.
+
 ## 0.1.0-preview.28 — message delivery and input fairness
 
 Preview.28 installed at 2026-09-13T16:04:28.537239+10:00 Melbourne from `b439186f87552d4d5c379e74d9b3106325fd7336`; SHA256 `d168049f109de2f60a947c9e90e6a9d0f383fbb4ec7961702ce7bd7d5d256401`. 6590 standard tests across 41 suites passed, plus the separate custom harnesses; strict workspace/all-target Clippy, fmt, delta AST/LOC and actual-CLI diagnostic/late-capability probes passed. Receipt `var/releases/preview.28-input-delivery/installation.json`. Preview.27 rollback retained. Includes producer-owned child-result origin, finite result/inbound/active-input batches and accepted child-message publication before hooks. Short actual-App message-flood tests passed; long-session physical typing/flicker, failed-result admission recovery, independent review and venue/main landing remain open. Existing processes were not restarted. This preview excludes the preserved unfinished D13 agent-selection draft.
@@ -269,3 +279,11 @@ An actual-App PTY reproduces the disappearing response before the fix and retain
 ## 0.1.0-preview.23 — progressive terminal negotiation
 
 Accept synchronized-output and Kitty keyboard replies that arrive after startup in both idle and active sessions. Use the same reducer as admission, keep duplicate keyboard replies idempotent, and preserve one owned alternate-screen push/pop even if setup fails. Only changeable Set/Reset synchronized-output reports enable frame envelopes. No extra startup delay, polling, screen clearing or new renderer is introduced. Local verification passed: 6,532 standard tests across 39 suites, separate channel/restart/MCP-launch tests, strict Clippy, eight-file AST, production LOC and release build. The actual CLI reproducer fails on preview.22 and passes on this candidate, with a single late keyboard push/pop and preserved parent state. Atomic local installation follows this source commit; physical terminal/multiplexer flicker acceptance remains separate.
+
+### Conventions admission and check failures
+
+Workspace conventions with unresolved activated tools or invalid configuration now fail ordinary agent assembly with the configuration path and reason. Direct embedders retain the load error and report failed checks/blocked stop rather than treating the workspace as unconfigured. Unavailable tool/language and outside-workspace post-check failures become structured validation findings; unresolved outside paths remain in the completion ledger. Committed edits remain committed even when their checks fail.
+
+`norn init conventions` now generates declarative pattern/LOC configuration that the production loader can use; installed compiler/formatter executables no longer create unusable workspace activations. Executable checks still require trusted runtime configuration or repository gates. Diagnostic headings include their explanatory first line and preserve complete expandable details.
+
+Validation and installation are pending in this source note. Child worktree policy rebinding, matcher caching, grouped repeated notices, and test-scope-aware blocking remain separately scoped work.

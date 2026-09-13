@@ -45,7 +45,10 @@ async fn diagnostics_are_local_expandable_notices_and_closure_disables_wait()
         .ok_or("notice absent")?
         .clone();
     assert!(matches!(item.kind, norn::session_view::ViewItemKind::Error));
-    assert_eq!(item.label.as_str(), "ERROR · norn::retry");
+    assert_eq!(
+        item.label.as_str(),
+        "ERROR · norn::retry — actual error detail"
+    );
     let reference = item.bodies.first().ok_or("expandable detail absent")?;
     let demand = state
         .transcript

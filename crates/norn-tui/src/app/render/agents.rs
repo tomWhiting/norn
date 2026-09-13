@@ -6,13 +6,15 @@ use std::time::Instant;
 use chrono::{DateTime, Utc};
 
 use crate::TuiError;
-use crate::agents::status_line::{AgentStatusPanel, RetainedAgentRow};
+use crate::agents::status_line::{AgentStatusPanel, RetainedAgentRow, RetainedAgentRowKind};
+use crate::app::agent_pane::AgentHit;
 use crate::render::frame::{Frame, PaintRow};
 use crate::render::layout::{Layout, Rect, UpperLayout, UpperPane};
 use crate::render::retained_markdown::{
     RenderedMarkdown, SourceDisplaySpan, SourceMapping, render_plain,
 };
 use crate::render::retained_text::{AtomKind, StyleSpan, StyledText};
+use uuid::Uuid;
 
 /// One agent snapshot and its allocation; the composer rectangle is unchanged.
 pub(super) struct AgentFrame {
@@ -63,11 +65,13 @@ pub(super) fn paint_pane(
     frame: &mut Frame,
     area: Rect,
     scroll: usize,
-) -> Result<(), TuiError> {
+    selected: Option<Uuid>,
+) -> Result<Vec<AgentHit>, TuiError> {
     if agents.all_rows.is_empty() {
-        return super::push_text(frame, "Agents · no registered agents", area, false, false);
+        super::push_text(frame, "Agents · no registered agents", area, false, false)?;
+        return Ok(Vec::new());
     }
-    paint_rows(&agents.all_rows, frame, area, scroll)
+    paint_rows(&agents.all_rows, frame, area, scroll, selected)
 }
 
 fn paint_rows(
@@ -75,7 +79,9 @@ fn paint_rows(
     frame: &mut Frame,
     area: Rect,
     scroll: usize,
-) -> Result<(), TuiError> {
+    selected: Option<Uuid>,
+) -> Result<Vec<AgentHit>, TuiError> {
+    let mut hits = Vec::new();
     for (index, row) in rows
         .iter()
         .skip(scroll)
@@ -87,21 +93,36 @@ fn paint_rows(
             .into_iter()
             .next()
         {
+            let offset = u16::try_from(index).map_err(|source| TuiError::FrameCoordinate {
+                value: index,
+                source,
+            })?;
+            let id = match row.kind {
+                RetainedAgentRowKind::Agent { id, .. } => Some(id),
+                RetainedAgentRowKind::Overflow { .. } => None,
+            };
+            if let Some(id) = id {
+                hits.push(AgentHit {
+                    id,
+                    area: Rect {
+                        row: area.row + offset,
+                        height: 1,
+                        ..area
+                    },
+                });
+            }
             frame.rows.push(PaintRow {
                 area,
-                row: u16::try_from(index).map_err(|source| TuiError::FrameCoordinate {
-                    value: index,
-                    source,
-                })?,
+                row: offset,
                 text,
                 geometry,
-                selected: false,
+                selected: id.is_some() && id == selected,
                 selection: Vec::new(),
                 composer: false,
             });
         }
     }
-    Ok(())
+    Ok(hits)
 }
 
 fn display_row(row: &RetainedAgentRow, columns: u16) -> Result<RenderedMarkdown, TuiError> {

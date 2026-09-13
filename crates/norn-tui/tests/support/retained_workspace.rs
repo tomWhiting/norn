@@ -20,7 +20,6 @@ use norn::provider::{
 };
 use norn::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
 use norn::session::store::EventStore;
-use norn::tool::ToolRegistry;
 use norn_tui::input::InputHistory;
 use norn_tui::render::fixed_panel::StatusBar;
 use portable_pty::{
@@ -32,11 +31,14 @@ use vte::{Parser, Perform};
 
 use crate::retained_screen::{self, Lifecycle, Screen};
 
+#[path = "agent_workspace.rs"]
+mod agent_workspace;
 /// Bounded fixture waits, not a latency claim or product timeout.
 #[path = "completion_checkpoint.rs"]
 mod completion_checkpoint;
 #[path = "message_flood.rs"]
 mod message_flood;
+pub use agent_workspace::with_agents;
 pub use message_flood::verify as verify_message_flood;
 
 const DEADLINE: Duration = Duration::from_secs(15);
@@ -74,6 +76,7 @@ pub fn child_entrypoint() -> TestResult {
 }
 
 async fn child_app() -> TestResult {
+    let agent_mode = std::env::var_os(agent_workspace::AGENTS_ENV).is_some();
     let composer_mode = std::env::var_os(COMPOSER_ENV).is_some();
     let frontend_preferences = if composer_mode {
         let root = std::env::current_dir()?;
@@ -130,7 +133,7 @@ async fn child_app() -> TestResult {
         ChildPolicy {
             messaging: MessagingScope::SiblingsAndParent,
             delegation: DelegationBudget {
-                remaining_depth: 0,
+                remaining_depth: u32::from(agent_mode),
                 max_concurrent_children: 1,
             },
             inbound_capacity: 1,
@@ -140,6 +143,9 @@ async fn child_app() -> TestResult {
     )?;
     let root_id = reservation.id();
     reservation.confirm()?;
+    let session_binding = Arc::new(norn::session::SessionBinding::ephemeral_root());
+    let executor =
+        agent_workspace::executor(agent_mode, root_id, &registry, &store, &session_binding)?;
     let (sender, receiver) = tokio::sync::broadcast::channel::<AgentEvent>(32);
     let root_event_sender = AgentEventSender::new(sender, root_id, "root".to_owned());
     let control_address = std::env::var(CONTROL_ENV)?;
@@ -164,7 +170,7 @@ async fn child_app() -> TestResult {
     let result = Box::pin(norn_tui::run_app(norn_tui::TuiInputs {
         diagnostics: None,
         frontend_preferences,
-        session_binding: Arc::new(norn::session::SessionBinding::ephemeral_root()),
+        session_binding,
         model_selection: norn::model_selection::ModelRuntime::new(
             provider.model_catalog_backend(),
             "gpt-5.5",
@@ -174,7 +180,7 @@ async fn child_app() -> TestResult {
             std::collections::BTreeMap::new(),
         )?,
         provider,
-        executor: Arc::new(ToolRegistry::new()),
+        executor,
         store: Arc::clone(&store),
         registry,
         loop_context: LoopContext::default(),
@@ -420,7 +426,7 @@ pub struct Workspace {
 
 /// Catch fixture assertions, then terminate/reap the child and join its reader before returning.
 pub fn with_workspace(exercise: impl FnOnce(&mut Workspace) -> TestResult) -> TestResult {
-    with_launch(None, false, false, None, |app| {
+    with_launch(None, false, false, false, None, |app| {
         exercise(app)?;
         Ok("workspace fixture prompt".to_owned())
     })
@@ -428,7 +434,7 @@ pub fn with_workspace(exercise: impl FnOnce(&mut Workspace) -> TestResult) -> Te
 
 /// Replay actual recorded tool events, then hold the one ordinary provider turn.
 pub fn with_recorded_tool(exercise: impl FnOnce(&mut Workspace) -> TestResult) -> TestResult {
-    with_launch(None, false, true, None, |app| {
+    with_launch(None, false, true, false, None, |app| {
         exercise(app)?;
         Ok("workspace fixture prompt".to_owned())
     })
@@ -448,12 +454,26 @@ pub fn with_composer_keyboard(
     kitty_confirmed: bool,
     exercise: impl FnOnce(&mut Workspace) -> TestResult<String>,
 ) -> TestResult {
-    with_launch(Some(send_key), kitty_confirmed, false, None, exercise)
+    with_launch(
+        Some(send_key),
+        kitty_confirmed,
+        false,
+        false,
+        None,
+        exercise,
+    )
 }
 
 /// Launch the real composer with a checkpoint held until explicitly released.
 pub fn with_checkpoint(exercise: impl FnOnce(&mut Workspace) -> TestResult<String>) -> TestResult {
-    with_launch(Some("enter"), false, false, Some("checkpoint"), exercise)
+    with_launch(
+        Some("enter"),
+        false,
+        false,
+        false,
+        Some("checkpoint"),
+        exercise,
+    )
 }
 
 /// Hold first opening admission, optionally reject it once, then permit an explicit retry.
@@ -463,6 +483,7 @@ pub fn with_opening(
 ) -> TestResult {
     with_launch(
         Some("enter"),
+        false,
         false,
         false,
         Some(if reject {
@@ -478,11 +499,12 @@ fn with_launch(
     send_key: Option<&str>,
     kitty_confirmed: bool,
     recorded_tool: bool,
+    agents: bool,
     checkpoint: Option<&str>,
     exercise: impl FnOnce(&mut Workspace) -> TestResult<String>,
 ) -> TestResult {
     let startup = Instant::now();
-    let mut app = Workspace::start(send_key, kitty_confirmed, recorded_tool, checkpoint)?;
+    let mut app = Workspace::start(send_key, kitty_confirmed, recorded_tool, agents, checkpoint)?;
     if let Some(send_key) = send_key {
         eprintln!(
             "{}",
@@ -509,6 +531,7 @@ impl Workspace {
         send_key: Option<&str>,
         kitty_confirmed: bool,
         recorded_tool: bool,
+        agents: bool,
         checkpoint: Option<&str>,
     ) -> TestResult<Self> {
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
@@ -548,6 +571,9 @@ impl Workspace {
             command.env(COMPOSER_ENV, send_key);
             command.env("NORN_HOME", &home);
             command.env("HOME", directory.path());
+        }
+        if agents {
+            command.env(agent_workspace::AGENTS_ENV, "1");
         }
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");

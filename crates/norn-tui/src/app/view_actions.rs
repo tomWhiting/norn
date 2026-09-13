@@ -90,6 +90,9 @@ fn browse_target_rows(
         };
         return Ok(());
     }
+    if super::agent_conversations::scroll(state, upwards, rows)? {
+        return Ok(());
+    }
     super::render::navigation::queue(state, upwards, rows)
 }
 

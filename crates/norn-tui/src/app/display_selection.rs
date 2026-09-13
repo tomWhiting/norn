@@ -283,6 +283,7 @@ fn insert_glyph(target: &mut BTreeMap<usize, Glyph>, glyph: Glyph) {
 
 /// Keep copy bytes, but no old frame may authorize a new pointer gesture.
 pub(super) fn revoke_pointer_mapping(screen: &mut ScreenState) {
+    screen.agent_pane.revoke();
     screen.dragging_selection = false;
     screen.display_frame = None;
 }

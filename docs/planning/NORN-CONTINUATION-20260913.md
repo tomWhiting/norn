@@ -677,3 +677,35 @@ Preview28 release-tree checks: 6590 standard tests across 41 suites passed, zero
 Preview.28 installed at 2026-09-13T16:04:28.537239+10:00 Melbourne from `b439186f87552d4d5c379e74d9b3106325fd7336`; SHA256 `d168049f109de2f60a947c9e90e6a9d0f383fbb4ec7961702ce7bd7d5d256401`. 6590 standard tests across 41 suites passed, plus the separate custom harnesses; strict workspace/all-target Clippy, fmt, delta AST/LOC and actual-CLI diagnostic/late-capability probes passed. Receipt `var/releases/preview.28-input-delivery/installation.json`. Preview.27 rollback retained. Includes producer-owned child-result origin, finite result/inbound/active-input batches and accepted child-message publication before hooks. Short actual-App message-flood tests passed; long-session physical typing/flicker, failed-result admission recovery, independent review and venue/main landing remain open. Existing processes were not restarted.
 
 Next: Complete D13 source-bound agent selection, navigation, per-agent drafts and human-authored messaging without retargeting root execution. Preserve original UI and verify through actual-App terminal tests. Long-session physical UI acceptance, retained failed-result admission and the full ordered programme remain open.
+
+## D13.2 pane selection continuation
+
+R14: Paint typed agent identities into the existing Agents pane; activate only after successful frame publication and a matching click/release. Dragging retains text selection. Resize, source rotation, failed publication and changed rows must not redirect input. Highlight the selected agent without an added header row. File wall adds `app/agent_pane.rs` and `app/agent_pane_tests.rs`; existing D13.2 renderer, mouse, screen, selection and tests remain in scope. Per-agent drafts and human messaging remain required follow-on work.
+
+R15: Retain a child refresh demand that arrives during an in-flight history read. Coalesce without losing the later event, polling or scheduling a concurrent read.
+
+### Next: operator delivery and per-agent drafts
+
+- Capture the explicit composer recipient with the submission identity; later view changes cannot retarget acceptance, rejection, dictation or draft recovery.
+- Move complete Iridium draft ownership, including undo and selection, between conversations; retain one recall store. Root pending-publication resolution must address its original draft even while a child is visible.
+- Use a native operator-authored delivery entry point restricted to the attached root subtree. Do not invoke signal_agent as the root model or forge the root as the human sender.
+- Reuse existing sequenced router and recipient-owned durable pending mailbox. Distinguish routed, durably queued, rejected and accepted-with-audit-failure; retain exact message identity for uncertain persistence and never auto-resend.
+- Deliver at existing tool-safe boundaries without interrupting the running tool or waiting for the whole turn. Report a recipient requiring resume honestly; do not spawn a replacement session.
+- Leading @ addresses select the direct recipient; explicit mentions in a main-agent message produce per-recipient CC outcomes. Preserve the original submitted text and do not route mentions in quoted/code content accidentally.
+- Keep UI input processing live while delivery waits; own and settle the submission job on exit. Full/closed/terminal recipient paths preserve or recover the correct draft according to actual admission.
+
+Current code: `composer_submission.rs` assumes the main draft; `composer_draft.rs` already moves Iridium ownership without copying recall. The router and recipient-owned pending mailbox can be reused, but `signal_agent` identifies its sender as a model, so human delivery needs its own typed entry point. These are recorded requirements, not completed features.
+
+R14/R15 verification wall also includes `tests/retained_workspace.rs`, `tests/support/retained_workspace.rs` and new `tests/support/agent_workspace.rs`: actual-App PTY selection while the root provider is held, using a registered source-bound child and no child provider calls.
+
+Fixture wall correction: final Clippy identified `tests/support/interrupt_exit.rs` and `tests/support/message_flood.rs` as additional `Workspace::start` callers. Both enter the wall for an explicit disabled agent-fixture argument; their scenarios remain unchanged.
+
+## Owner closeout direction — 13 September 2026 16:29 Melbourne
+
+Tom asked to finish this slice, install absent major issues, land what passes the venue requirements, and bookmark the remainder for several days. He assigned Ripley the review because his external review will not arrive soon. Record this as self-review under owner direction, not independent Fable review. No further feature slice is to start. The complete programme remains open.
+
+Self-review fixes: reject invalid/unsupported child-view commands without exiting; clear completed opening feedback; make recovery PTY assertions await exact composer rows rather than text that already exists in the transcript. The wall includes `tests/iridium_composer.rs` for that observer correction.
+
+## Preview.29 closeout and restart bookmark
+
+Receipts: `var/releases/preview.29-agent-inspection/`. This source contains agent conversation inspection; the composer is explicitly still addressed to main. Finish local checks, self-review under Tom's 16:29 instruction, versioned install and exact-source venue landing. Do not start another feature slice after closeout. On return, finish selected-child reading/copy/search/diff controls, then per-agent drafts and native human direct/CC messaging. Sustained terminal flicker is live-use acceptance. The entire D01–D20/S01/U01 and P/U follow-on programme remains open above.

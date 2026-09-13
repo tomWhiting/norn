@@ -499,17 +499,20 @@ fn rejected_opening_recovers_from_footer_without_losing_next_draft_or_resending(
         let census = app.snapshot()?;
         assert_eq!(census["provider_calls"], 0);
         assert_eq!(census["user_events"], json!([]));
+        app.click_label("[Recover rejected message]", "Draft recovered")?;
         plain(
-            &app.click_label("[Recover rejected message]", "Draft recovered")?,
+            &app.observe(|screen| draft(screen) == ["rejected original"])?,
             &["rejected original"],
         )?;
+        app.click_label("[Switch saved draft]", "next draft")?;
         plain(
-            &app.click_label("[Switch saved draft]", "next draft")?,
+            &app.observe(|screen| draft(screen) == ["next draft"])?,
             &["next draft"],
         )?;
         assert_eq!(app.snapshot()?, census, "recovery submitted provider input");
+        app.click_label("[Switch saved draft]", "rejected original")?;
         plain(
-            &app.click_label("[Switch saved draft]", "rejected original")?,
+            &app.observe(|screen| draft(screen) == ["rejected original"])?,
             &["rejected original"],
         )?;
         edit(app, b"\r", &[""])?;

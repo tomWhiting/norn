@@ -147,7 +147,7 @@ pub(crate) fn resolve_runtime_overlay(
     mut runtime_base: Option<LoadedRuntimeBase>,
     overrides: OverlayOverrides,
     working_dir: &Path,
-) -> RuntimeOverlay {
+) -> Result<RuntimeOverlay, NornError> {
     let runtime_rules = runtime_base.as_mut().and_then(|base| base.rules.take());
     let runtime_hooks = runtime_base.as_mut().and_then(|base| base.hooks.take());
     let diagnostic_infra = if let Some(infra) = overrides.diagnostic_infra {
@@ -161,6 +161,18 @@ pub(crate) fn resolve_runtime_overlay(
     } else {
         None
     };
+    if let Some(infra) = &diagnostic_infra
+        && let Some(error) = &infra.configuration_error
+    {
+        return Err(NornError::Config(
+            crate::error::ConfigError::InvalidConfig {
+                reason: format!(
+                    "{}: {error}",
+                    infra.workspace_root.join("CONVENTIONS.toml").display()
+                ),
+            },
+        ));
+    }
     // A caller-supplied diagnostic collector always wins; the runtime
     // base's collector backs it up only when the caller supplied none.
     let diagnostics = overrides.diagnostics.or_else(|| {
@@ -181,13 +193,13 @@ pub(crate) fn resolve_runtime_overlay(
     };
     let hook_source = overrides.hooks.or(runtime_hooks);
     let hooks = append_diagnostic_stop_hook(hook_source, diagnostic_infra.as_ref().map(Arc::clone));
-    RuntimeOverlay {
+    Ok(RuntimeOverlay {
         runtime_base,
         diagnostics,
         diagnostic_infra,
         rules,
         hooks,
-    }
+    })
 }
 
 /// Overlay the runtime base's loaders and monitors onto the loop context:

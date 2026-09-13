@@ -45,6 +45,9 @@ pub(in crate::app) fn finish_body(
     state: &mut super::state::AppState,
     result: BodyResult,
 ) -> Result<(), TuiError> {
+    let Some(result) = super::agent_conversations::body_result(state, result)? else {
+        return Ok(());
+    };
     if matches!(&result, Ok((source, _, _)) if source != state.transcript.projection.source()) {
         return Ok(());
     }

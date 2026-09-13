@@ -44,6 +44,9 @@ pub(super) struct DisplayCache {
 }
 
 impl ConversationScreen {
+    pub(in crate::app) fn retain_display(&mut self, pinned: &HashSet<BodyRef>) {
+        self.displayed.retain(|body, _| pinned.contains(body));
+    }
     pub fn new(source: ViewSource) -> Self {
         Self {
             viewport: Viewport::new(source, true),

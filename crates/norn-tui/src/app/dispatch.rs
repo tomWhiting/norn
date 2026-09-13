@@ -51,6 +51,7 @@ pub(super) use finalization::{channel_wake_pause_reason, write_error_line};
 /// region. Typed [`SubagentLifecycle`] events (always child-tagged)
 /// drive the status panel's activity column directly.
 pub fn handle_agent_event(state: &mut AppState, agent_event: AgentEvent) -> Result<(), TuiError> {
+    super::agent_conversations::changed(state, agent_event.agent_id);
     let root_id = state.tab_state.root_id();
     if agent_event.agent_id == root_id {
         if !state.transcript.observe_event(&agent_event)? {

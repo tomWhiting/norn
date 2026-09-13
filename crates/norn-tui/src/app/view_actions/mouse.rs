@@ -37,6 +37,41 @@ pub(in crate::app) fn mouse(event: MouseEvent, state: &mut AppState) -> bool {
 }
 
 fn apply_mouse(event: MouseEvent, state: &mut AppState) -> Result<bool, TuiError> {
+    if let Some(target) = crate::app::agent_pane::gesture(&mut state.screen, event) {
+        state.screen.dragging_selection = false;
+        crate::app::agent_conversations::request(state, target)?;
+        return Ok(true);
+    }
+    if crate::app::agent_conversations::selected(state).is_some() {
+        let conversation = match state.screen.layout {
+            Layout::Ready {
+                upper: UpperLayout::Split { conversation, .. },
+                ..
+            }
+            | Layout::Ready {
+                upper:
+                    UpperLayout::Single {
+                        pane: UpperPane::Conversation,
+                        area: conversation,
+                    },
+                ..
+            } => Some(conversation),
+            _ => None,
+        };
+        if conversation.is_some_and(|area| contains(area, event)) {
+            if matches!(
+                event.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            ) {
+                crate::app::agent_conversations::scroll(
+                    state,
+                    event.kind == MouseEventKind::ScrollUp,
+                    1,
+                )?;
+            }
+            return Ok(true);
+        }
+    }
     let Layout::Ready { upper, composer } = state.screen.layout else {
         return Ok(false);
     };
@@ -160,7 +195,9 @@ fn apply_mouse(event: MouseEvent, state: &mut AppState) -> Result<bool, TuiError
                 .focus(target, state.screen.availability())
                 .map_err(interaction)?;
             crate::app::autocomplete::dismiss(state);
-            pin_visible(state)?;
+            if target == Focus::Conversation {
+                pin_visible(state)?;
+            }
             state.screen.dragging_selection = false;
             state.screen.dragging_divider = target == Focus::Divider;
             state.screen.dragging_composer = false;

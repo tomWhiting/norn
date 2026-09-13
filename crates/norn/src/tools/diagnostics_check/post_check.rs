@@ -41,6 +41,18 @@ impl RuntimePostValidateCheck for DiagnosticsPostCheck {
             return PostCheckResult::pass();
         };
 
+        if let Some(error) = &infra.configuration_error {
+            return PostCheckResult {
+                outcome: PostValidateOutcome::Fail {
+                    errors: vec![format!(
+                        "{}: configured diagnostics unavailable: {error}",
+                        infra.workspace_root.join("CONVENTIONS.toml").display()
+                    )],
+                },
+                advisories: Vec::new(),
+            };
+        }
+
         if is_task_complete_output(output) {
             let files: Vec<PathBuf> = infra.modified_files().into_iter().collect();
             let Some(conventions) = infra.conventions.as_ref() else {
@@ -67,16 +79,22 @@ impl RuntimePostValidateCheck for DiagnosticsPostCheck {
         }
 
         for file_path in &paths {
-            if let Ok(relative_path) = workspace_relative_path(file_path, &infra.workspace_root) {
+            // Keep an unresolved absolute path too: completion must re-report the
+            // same failure instead of silently forgetting an unchecked mutation.
+            let tracked_path = match workspace_relative_path(file_path, &infra.workspace_root) {
+                Ok(relative) => relative,
+                Err(_) => file_path.clone(),
+            };
+            {
                 match infra.modified_files.lock() {
                     Ok(mut modified_files) => {
-                        modified_files.insert(relative_path);
+                        modified_files.insert(tracked_path);
                     }
                     Err(poisoned) => {
                         tracing::warn!(
                             "modified-files accumulator mutex was poisoned; recording path"
                         );
-                        poisoned.into_inner().insert(relative_path);
+                        poisoned.into_inner().insert(tracked_path);
                     }
                 }
             }
@@ -134,11 +152,10 @@ pub async fn run_diagnostics_for_trigger(
         )
         .await
         {
-            tracing::warn!(
-                path = %file_path.display(),
-                error = %error,
-                "diagnostics check failed for file"
-            );
+            all_errors.push(format!(
+                "{}: diagnostics check could not run: {error}",
+                file_path.display()
+            ));
         }
     }
 
@@ -256,20 +273,17 @@ async fn run_rule_activations(
                 continue;
             }
             let Some(language) = compiled.language.as_deref() else {
-                tracing::warn!(
-                    rule = rule_name,
-                    tool = tool_name,
-                    "matched rule has no resolved language; skipping tool activation"
-                );
+                findings.errors.push(format!(
+                    "{} [rule:{rule_name}] cannot run `{tool_name}`: no resolved language",
+                    ctx.file_path.display()
+                ));
                 continue;
             };
             let Some(tool) = ctx.conventions.lookup_tool(language, tool_name) else {
-                tracing::warn!(
-                    rule = rule_name,
-                    language,
-                    tool = tool_name,
-                    "activated tool was not found in language definition; skipping"
-                );
+                findings.errors.push(format!(
+                    "{} [rule:{rule_name}] cannot run unavailable tool `{language}.{tool_name}`",
+                    ctx.file_path.display()
+                ));
                 continue;
             };
 

@@ -43,6 +43,22 @@ fn apply_key(key: KeyEvent, state: &mut AppState) -> Result<bool, TuiError> {
         pin_visible(state)?;
     }
     let focus = state.screen.focus.visible(available).map_err(interaction)?;
+    if crate::app::agent_conversations::selected(state).is_some()
+        && action.is_none()
+        && focus == Focus::Conversation
+    {
+        match key.code {
+            KeyCode::Enter => {
+                crate::app::agent_conversations::command(state, "toggle")?;
+                return Ok(true);
+            }
+            KeyCode::Up | KeyCode::Down => {
+                crate::app::agent_conversations::scroll(state, key.code == KeyCode::Up, 1)?;
+                return Ok(true);
+            }
+            _ => {}
+        }
+    }
     let handled = if let Some(action) = action {
         apply_shortcut(action, state)?;
         true

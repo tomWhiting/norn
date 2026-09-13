@@ -18,8 +18,8 @@ use crate::util::read_workspace_text_file;
 /// Build diagnostic infrastructure for a workspace root.
 ///
 /// `CONVENTIONS.toml` is loaded from `workspace_root`. A missing file is
-/// treated as an unconfigured workspace; parse/validation errors are logged and
-/// also leave conventions disabled so agent startup remains best-effort.
+/// treated as an unconfigured workspace; parse/validation errors are retained and ordinary agent assembly refuses
+/// startup. Direct embedders receive explicit post-check and stop failures.
 ///
 /// `lsp_backend` plumbs an optional [`LspBackend`] into the resulting
 /// [`DiagnosticInfra`] so that convention-driven LSP test execution
@@ -75,15 +75,15 @@ pub(crate) fn build_diagnostic_infra_at_launch_root(
     );
 
     let conventions_path = workspace_root.join("CONVENTIONS.toml");
-    let conventions = match load_non_executing_conventions(workspace_root) {
-        Ok(config) => config,
+    let (conventions, configuration_error) = match load_non_executing_conventions(workspace_root) {
+        Ok(config) => (config, None),
         Err(err) => {
             tracing::warn!(
                 path = %conventions_path.display(),
                 error = %err,
-                "failed to load CONVENTIONS.toml; continuing without it"
+                "CONVENTIONS.toml is invalid; configured checks cannot run"
             );
-            None
+            (None, Some(err))
         }
     };
 
@@ -96,6 +96,7 @@ pub(crate) fn build_diagnostic_infra_at_launch_root(
         workspace_root: workspace_root.to_path_buf(),
         socket_path: diagnostics::server::default_socket_path(workspace_root),
         conventions,
+        configuration_error,
         lsp_backend,
         lsp_bridge,
         modified_files: Arc::new(Mutex::new(HashSet::new())),
@@ -124,6 +125,7 @@ fn load_non_executing_conventions(
     };
     let sanitized = strip_process_authority(&source)?;
     let config = ConventionsConfig::load_from_str(&sanitized)?;
+    validate_activations(&config)?;
     if !is_non_executing(&config) {
         return Err(ConventionsError::ParseError(
             "workspace conventions retained process authority after sanitization".to_owned(),
@@ -132,7 +134,12 @@ fn load_non_executing_conventions(
     Ok(Some(config))
 }
 
-fn strip_process_authority(source: &str) -> Result<String, ConventionsError> {
+/// Keep declarative language definitions for generated workspace configuration.
+///
+/// # Errors
+/// Returns the TOML parse or serialization error. Existing rule activations are
+/// deliberately retained so the loader can reject unavailable checks by name.
+pub fn strip_process_authority(source: &str) -> Result<String, ConventionsError> {
     let mut document: toml::Table =
         toml::from_str(source).map_err(|error| ConventionsError::ParseError(error.to_string()))?;
     for (_, value) in &mut document {
@@ -144,6 +151,24 @@ fn strip_process_authority(source: &str) -> Result<String, ConventionsError> {
         }
     }
     toml::to_string(&document).map_err(|error| ConventionsError::ParseError(error.to_string()))
+}
+
+fn validate_activations(config: &ConventionsConfig) -> Result<(), ConventionsError> {
+    for (name, compiled) in config.rules() {
+        for tool in compiled.rule.activations.keys() {
+            let language = compiled.language.as_deref().ok_or_else(|| {
+                ConventionsError::ParseError(format!(
+                    "rule `{name}` activates `{tool}` but has no resolved language"
+                ))
+            })?;
+            if config.lookup_tool(language, tool).is_none() {
+                return Err(ConventionsError::ParseError(format!(
+                    "rule `{name}` activates unavailable tool `{language}.{tool}`; workspace CONVENTIONS.toml permits patterns and LOC only; command-backed checks require a trusted runtime configuration"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn is_non_executing(config: &ConventionsConfig) -> bool {
@@ -199,6 +224,7 @@ report = { on = "tool" }
     fn retains_only_loc_and_pattern_checks() -> Result<(), Box<dyn std::error::Error>> {
         let sanitized = strip_process_authority(MIXED_CONVENTIONS)?;
         let config = ConventionsConfig::load_from_str(&sanitized)?;
+        validate_activations(&config)?;
 
         assert!(is_non_executing(&config));
         let rule = config.rule("rust-general").ok_or("rule missing")?;

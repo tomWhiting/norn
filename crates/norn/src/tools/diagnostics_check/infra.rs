@@ -32,6 +32,8 @@ pub struct DiagnosticInfra {
     /// Parsed `CONVENTIONS.toml` for the workspace. `None` when no file
     /// is present or the file failed to load.
     pub conventions: Option<ConventionsConfig>,
+    /// A declared configuration failed to load; never equivalent to an absent file.
+    pub configuration_error: Option<diagnostics::conventions::ConventionsError>,
     /// Optional LSP backend used by the post-check pipeline to discover
     /// and execute convention-driven tests (R3). `None` means LSP-driven
     /// tests are silently skipped (CO5 — graceful degradation).
@@ -42,7 +44,7 @@ pub struct DiagnosticInfra {
     /// (LD-012 R3). `None` means the LSP fast path is silently skipped
     /// (CO5 — graceful degradation when no language server is running).
     pub lsp_bridge: Option<Arc<LspBridge>>,
-    /// Workspace-relative paths modified by tool lifecycle mutations in this
+    /// Workspace-relative paths, plus unresolved absolute paths retained for failure reporting, modified in this
     /// session. Populated by [`super::post_check::DiagnosticsPostCheck`] and
     /// read by task-complete / stop lifecycle checks.
     pub modified_files: Arc<Mutex<HashSet<PathBuf>>>,

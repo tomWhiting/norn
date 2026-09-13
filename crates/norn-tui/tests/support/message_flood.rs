@@ -96,7 +96,7 @@ fn emit(store: &EventStore, events: &AgentEventSender, seq: u64) -> io::Result<(
 
 /// The producer is stopped only after the terminal has restored its modes.
 pub fn verify() -> TestResult {
-    let mut app = Workspace::start(Some("enter"), false, false, None)?;
+    let mut app = Workspace::start(Some("enter"), false, false, false, None)?;
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| exercise(&mut app)))
         .map_err(|payload| panic_error(payload.as_ref(), "message flood assertions"))
         .and_then(|result| result);

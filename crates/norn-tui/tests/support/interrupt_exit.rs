@@ -4,7 +4,7 @@ use super::*;
 
 /// Exercise both separate presses and a queued pair through the actual App.
 pub fn verify_interrupt_exit(queued_pair: bool) -> TestResult {
-    let mut app = Workspace::start(Some("enter"), false, false, None)?;
+    let mut app = Workspace::start(Some("enter"), false, false, false, None)?;
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         exercise(&mut app, queued_pair)
     }))

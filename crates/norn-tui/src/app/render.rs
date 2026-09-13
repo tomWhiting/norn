@@ -107,7 +107,10 @@ pub fn redraw_all(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(),
     {
         state.screen.dirty = true;
     }
-    let revision = state.transcript.projection.revision();
+    let revision = super::agent_conversations::selected(state).map_or_else(
+        || state.transcript.projection.revision(),
+        |child| child.transcript.projection.revision(),
+    );
     let indicator = state
         .streaming_indicator
         .repaint_key(guard.terminal_columns());
@@ -186,6 +189,7 @@ fn prepare(state: &mut AppState, columns: u16, rows: u16) -> Result<Frame, TuiEr
     state.screen.pane_switch = None;
     state.screen.prepared_recovery = None;
     state.screen.prepared_latest = None;
+    state.screen.agent_pane.prepared.clear();
     state.screen.composer_send_key_area = None;
     state.screen.conversation.prepared_reading = None;
     state.screen.conversation.visible.clear();
@@ -280,8 +284,29 @@ fn paint_auxiliary(
     area: Rect,
 ) -> Result<(), TuiError> {
     match state.screen.auxiliary {
+        AuxiliaryPane::Diff if state.agent_conversations.selected.is_some() => push_text(
+            frame,
+            "Agent history inspection · /pane agents for the tree · /view agent main returns to main",
+            area,
+            false,
+            false,
+        ),
         AuxiliaryPane::Diff => changes::paint(state, frame, area),
-        AuxiliaryPane::Agents => agents::paint_pane(agents, frame, area, state.screen.changes_row),
+        AuxiliaryPane::Agents => {
+            state.screen.agent_pane.prepared = agents::paint_pane(
+                agents,
+                frame,
+                area,
+                state.screen.changes_row,
+                Some(
+                    state
+                        .agent_conversations
+                        .selected
+                        .unwrap_or(state.tab_state.root_id()),
+                ),
+            )?;
+            Ok(())
+        }
     }
 }
 
@@ -344,6 +369,9 @@ pub(super) fn load_visible(state: &mut AppState) -> Result<(), TuiError> {
     // A deferred frame still describes the previous selection/geometry. Keep
     // every demand and permission pending until this finite input batch paints.
     if state.screen.ready_batch_remaining > 0 {
+        return Ok(());
+    }
+    if super::agent_conversations::load(state)? {
         return Ok(());
     }
     if !state.screen.conversation.viewport.follows_tail() {

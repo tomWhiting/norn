@@ -203,7 +203,7 @@ impl AgentBuilder {
                 lsp_workspace: self.lsp_workspace.take(),
             },
             &working_dir,
-        );
+        )?;
         // H14: keep a handle on the final merged registry so it can be
         // published on the shared tool context — sub-agent tools must observe
         // exactly the registry the loop dispatches.
