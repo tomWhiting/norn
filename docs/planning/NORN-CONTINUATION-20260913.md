@@ -655,3 +655,19 @@ Next execution slice: Prepare and install preview28 with the committed child-ori
 Input/flood final validation: 5772 tests in six suites passed (core 4749, TUI 991, interrupt/exit 3, Iridium composer 16, message flood 2, retained workspace 11), zero failed/ignored. Strict release workspace/all-target Clippy (live-api-smoke compiled only), fmt, 25-file AST and 20-file production LOC (maximum 484) passed. Log `var/verification/continuation-20260913/input-flood-regressions.log`. Checks include preserved D13 draft, excluded from this commit. No installation, final-source independent review, venue/main landing, long-session or physical-terminal acceptance.
 
 Same final source in broader regression run: 428 messages observed by exit; 2.610–5.575ms input-to-observed-frame, 16.818ms second Ctrl+C-to-restored; 0.25-second bounded exercise. Logs preserve both runs.
+
+## Local preview.28 release
+
+- R1: Release committed child-run origin, finite result and input collection, and accepted child-input publication before hooks as local preview28. Preserve unfinished D13 source and restore exact bytes after installation.
+
+- R2: Run fmt, strict workspace/all-target Clippy, normal workspace/all-target tests and release executable build on the release tree using usual target and repository-local TMPDIR. Retain AST/source hash proof. Verify actual candidate warning/exit and late-capability behaviour and real-App message flood.
+
+- R3: Commit/push source; install atomically with verified rollback and version/hash receipt. Do not restart existing processes. Announce through conversation only; no Mac say.
+
+- R4: Prepare exact-source review archive locally for Tom, with prompt/schema/diff/hashes. No private source transmission, independent verdict or main landing claim. Full queue, long-session physical acceptance and failed-result retention remain open.
+
+File wall: `Cargo.toml`, `Cargo.lock`, `README.md`, `docs/release-notes/UNRELEASED.md`, `docs/planning/NORN-CONTINUATION-20260913.json`, `docs/planning/NORN-CONTINUATION-20260913.md`.
+
+D13 snapshot: `/Users/tom/Developer/ablative/stack/norn/var/verification/continuation-20260913/d13-before-preview28`; stash `da74afca31e439db4de13b456504aa1c4a42229a`.
+
+Preview28 release-tree checks: 6590 standard tests across 41 suites passed, zero failed/ignored. Strict workspace/all-target Clippy (live-api-smoke compiled only), fmt, 29-file delta AST and production LOC (maximum 443) passed. Release tree excludes D13 draft. Executable build and actual-CLI probes must pass before atomic installation; no independent review, venue pass or long-session physical acceptance claimed.

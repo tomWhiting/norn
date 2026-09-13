@@ -1027,5 +1027,43 @@
       "production_loc": "20 files; maximum 484",
       "scope": "Checks include preserved D13 draft, excluded from this commit. No installation, final-source independent review, venue/main landing, long-session or physical-terminal acceptance."
     }
+  },
+  "preview28_release": {
+    "status": "in_progress",
+    "requirements": {
+      "R1": "Release committed child-run origin, finite result and input collection, and accepted child-input publication before hooks as local preview28. Preserve unfinished D13 source and restore exact bytes after installation.",
+      "R2": "Run fmt, strict workspace/all-target Clippy, normal workspace/all-target tests and release executable build on the release tree using usual target and repository-local TMPDIR. Retain AST/source hash proof. Verify actual candidate warning/exit and late-capability behaviour and real-App message flood.",
+      "R3": "Commit/push source; install atomically with verified rollback and version/hash receipt. Do not restart existing processes. Announce through conversation only; no Mac say.",
+      "R4": "Prepare exact-source review archive locally for Tom, with prompt/schema/diff/hashes. No private source transmission, independent verdict or main landing claim. Full queue, long-session physical acceptance and failed-result retention remain open."
+    },
+    "files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "README.md",
+      "docs/release-notes/UNRELEASED.md",
+      "docs/planning/NORN-CONTINUATION-20260913.json",
+      "docs/planning/NORN-CONTINUATION-20260913.md"
+    ],
+    "saved_d13": {
+      "snapshot": "/Users/tom/Developer/ablative/stack/norn/var/verification/continuation-20260913/d13-before-preview28",
+      "stash": "da74afca31e439db4de13b456504aa1c4a42229a"
+    },
+    "included_commits": [
+      "3933d8a2fedb772dd91cf57102a3895dad5a4f6b",
+      "5604fb858c973097a81a59a6a5acba8e933845fa",
+      "d737ab8befc2c341f57d0c4a43e76b503a41c692"
+    ],
+    "validation_before_install": {
+      "tests": 6590,
+      "suites": 41,
+      "failed": 0,
+      "ignored": 0,
+      "log": "var/verification/continuation-20260913/preview28-workspace.log",
+      "clippy": "strict release workspace/all-target with live-api-smoke compiled only; exit 0",
+      "fmt": "exit 0",
+      "ast": "29 changed Rust files since installed preview27, no added unwrap/expect or bypass patterns",
+      "production_loc": "17 production files, maximum 443",
+      "scope": "Release tree excludes D13 draft. Executable build and actual-CLI probes must pass before atomic installation; no independent review, venue pass or long-session physical acceptance claimed."
+    }
   }
 }

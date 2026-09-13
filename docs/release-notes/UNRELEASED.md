@@ -1,3 +1,7 @@
+## 0.1.0-preview.28 — candidate: message delivery and input fairness
+
+Candidate release containing the three completed changes below. Release verification and atomic installation are pending; preview.27 remains installed until its installation receipt is replaced. This preview excludes the unfinished D13 agent-selection draft. No main landing or independent-review verdict is claimed.
+
 ## Unreleased — finite inbound/input drains and terminal flood coverage
 
 Ordinary inbound and active human-input collection now stop at the captured queue frontier. Later arrivals stay queued; earlier peeked updates retain their position and do not independently wake an idle agent. No new runtime cap or timeout is introduced.
