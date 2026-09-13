@@ -287,3 +287,7 @@ Workspace conventions with unresolved activated tools or invalid configuration n
 `norn init conventions` now generates declarative pattern/LOC configuration that the production loader can use; installed compiler/formatter executables no longer create unusable workspace activations. Executable checks still require trusted runtime configuration or repository gates. Diagnostic headings include their explanatory first line and preserve complete expandable details.
 
 Validation and installation are pending in this source note. Child worktree policy rebinding, matcher caching, grouped repeated notices, and test-scope-aware blocking remain separately scoped work.
+
+### Preview.30 — convention startup regression
+
+Existing Norn-generated workspace conventions with LSP, compiler or formatter checks open again. The runtime retains restricted checks as explicit unavailable findings at their declared paths, tools and triggers; advisory checks do not block, and blocking checks do. Patterns and LOC continue to run. Workspace configuration does not gain subprocess authority. Malformed TOML and undeclared check names still fail configuration admission. Includes the Liminal configuration shape as a regression fixture. Verification and installation pending.

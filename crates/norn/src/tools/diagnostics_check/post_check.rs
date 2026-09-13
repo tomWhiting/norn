@@ -188,6 +188,9 @@ async fn check_convention_file(
     }
 
     let mut findings = Findings { errors, advisories };
+    infra
+        .unavailable_checks
+        .report(&relative_path, tool_name, trigger, &mut findings);
 
     // LSP is a special rule sub-struct and must run before the rule
     // activations: when it returns `Used`, the contract on

@@ -233,6 +233,7 @@ fn test_infra(workspace_root: PathBuf, conventions: Option<ConventionsConfig>) -
         socket_path,
         conventions,
         configuration_error: None,
+        unavailable_checks: super::UnavailableChecks::default(),
         lsp_backend: None,
         lsp_bridge: None,
         modified_files: Arc::new(Mutex::new(HashSet::new())),

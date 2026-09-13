@@ -32,6 +32,8 @@ pub struct DiagnosticInfra {
     /// Parsed `CONVENTIONS.toml` for the workspace. `None` when no file
     /// is present or the file failed to load.
     pub conventions: Option<ConventionsConfig>,
+    /// Restricted declarations retained as scoped advisory or blocking findings.
+    pub unavailable_checks: super::unavailable::UnavailableChecks,
     /// A declared configuration failed to load; never equivalent to an absent file.
     pub configuration_error: Option<diagnostics::conventions::ConventionsError>,
     /// Optional LSP backend used by the post-check pipeline to discover

@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use crate::tools::diagnostics_check::DiagnosticInfra;
+use crate::tools::diagnostics_check::{DiagnosticInfra, UnavailableChecks};
 use crate::tools::lsp::LspBackend;
 use diagnostics::conventions::{ConventionsConfig, ConventionsError, ToolRef};
 use diagnostics::lsp_bridge::LspBridge;
@@ -75,17 +75,27 @@ pub(crate) fn build_diagnostic_infra_at_launch_root(
     );
 
     let conventions_path = workspace_root.join("CONVENTIONS.toml");
-    let (conventions, configuration_error) = match load_non_executing_conventions(workspace_root) {
-        Ok(config) => (config, None),
-        Err(err) => {
-            tracing::warn!(
-                path = %conventions_path.display(),
-                error = %err,
-                "CONVENTIONS.toml is invalid; configured checks cannot run"
-            );
-            (None, Some(err))
-        }
-    };
+    let (conventions, unavailable_checks, configuration_error) =
+        match load_non_executing_conventions(workspace_root) {
+            Ok(Some((config, unavailable))) => {
+                if !unavailable.is_empty() {
+                    tracing::warn!(
+                        path = %conventions_path.display(),
+                        "Some convention checks require process authority unavailable to workspace configuration; patterns and LOC remain active; restricted checks retain their declared scope and advise/block handling"
+                    );
+                }
+                (Some(config), unavailable, None)
+            }
+            Ok(None) => (None, UnavailableChecks::default(), None),
+            Err(err) => {
+                tracing::warn!(
+                    path = %conventions_path.display(),
+                    error = %err,
+                    "CONVENTIONS.toml is invalid; configured checks cannot run"
+                );
+                (None, UnavailableChecks::default(), Some(err))
+            }
+        };
 
     let lsp_bridge =
         lsp_workspace.map(|workspace| Arc::new(LspBridge::new(workspace.diagnostics_arc())));
@@ -97,6 +107,7 @@ pub(crate) fn build_diagnostic_infra_at_launch_root(
         socket_path: diagnostics::server::default_socket_path(workspace_root),
         conventions,
         configuration_error,
+        unavailable_checks,
         lsp_backend,
         lsp_bridge,
         modified_files: Arc::new(Mutex::new(HashSet::new())),
@@ -105,7 +116,7 @@ pub(crate) fn build_diagnostic_infra_at_launch_root(
 
 fn load_non_executing_conventions(
     workspace_root: &Path,
-) -> Result<Option<ConventionsConfig>, ConventionsError> {
+) -> Result<Option<(ConventionsConfig, UnavailableChecks)>, ConventionsError> {
     let path = workspace_root.join("CONVENTIONS.toml");
     let source = {
         let _descriptor_permit =
@@ -124,14 +135,24 @@ fn load_non_executing_conventions(
         }
     };
     let declared = ConventionsConfig::load_from_str(&source)?;
-    for (name, rule) in declared.rules() {
-        if rule.rule.lsp.is_some() {
-            return Err(ConventionsError::ParseError(format!(
-                "rule `{name}` requests LSP execution; workspace CONVENTIONS.toml permits patterns and LOC only; use a trusted runtime configuration"
-            )));
+    validate_activations(&declared)?;
+    let unavailable = UnavailableChecks::from_declared(&declared);
+    let sanitized = strip_process_authority(&source)?;
+    let mut document: toml::Table = toml::from_str(&sanitized)
+        .map_err(|error| ConventionsError::ParseError(error.to_string()))?;
+    for (name, compiled) in declared.rules() {
+        if let Some(toml::Value::Table(table)) = document.get_mut(name) {
+            for tool in compiled.rule.activations.keys() {
+                if compiled.language.as_deref().is_some_and(|language| {
+                    matches!(declared.lookup_tool(language, tool), Some(def) if !matches!(def, ToolRef::Pattern(_)))
+                }) {
+                    table.remove(tool);
+                }
+            }
         }
     }
-    let sanitized = strip_process_authority(&source)?;
+    let sanitized = toml::to_string(&document)
+        .map_err(|error| ConventionsError::ParseError(error.to_string()))?;
     let config = ConventionsConfig::load_from_str(&sanitized)?;
     validate_activations(&config)?;
     if !is_non_executing(&config) {
@@ -139,14 +160,14 @@ fn load_non_executing_conventions(
             "workspace conventions retained process authority after sanitization".to_owned(),
         ));
     }
-    Ok(Some(config))
+    Ok(Some((config, unavailable)))
 }
 
 /// Keep declarative language definitions for generated workspace configuration.
 ///
 /// # Errors
 /// Returns the TOML parse or serialization error. Existing rule activations are
-/// deliberately retained so the loader can reject unavailable checks by name.
+/// retained here; workspace admission separately preserves restricted check metadata.
 pub fn strip_process_authority(source: &str) -> Result<String, ConventionsError> {
     let mut document: toml::Table =
         toml::from_str(source).map_err(|error| ConventionsError::ParseError(error.to_string()))?;
@@ -171,7 +192,7 @@ fn validate_activations(config: &ConventionsConfig) -> Result<(), ConventionsErr
             })?;
             if config.lookup_tool(language, tool).is_none() {
                 return Err(ConventionsError::ParseError(format!(
-                    "rule `{name}` activates unavailable tool `{language}.{tool}`; workspace CONVENTIONS.toml permits patterns and LOC only; command-backed checks require a trusted runtime configuration"
+                    "rule `{name}` activates unavailable tool `{language}.{tool}`; no matching definition was declared"
                 )));
             }
         }

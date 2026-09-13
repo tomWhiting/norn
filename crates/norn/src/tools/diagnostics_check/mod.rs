@@ -17,6 +17,7 @@ mod remediation;
 mod server_query;
 mod stop_hook;
 mod trigger;
+mod unavailable;
 
 #[cfg(test)]
 mod tests;
@@ -26,3 +27,5 @@ pub use self::post_check::{
     DiagnosticsPostCheck, errors_to_diagnostic_json, run_diagnostics_for_trigger,
 };
 pub use self::stop_hook::DiagnosticStopHook;
+
+pub use self::unavailable::UnavailableChecks;

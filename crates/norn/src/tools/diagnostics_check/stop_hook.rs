@@ -54,6 +54,18 @@ impl StopHook for DiagnosticStopHook {
         )
         .await;
 
+        let unavailable: Vec<&str> = result
+            .advisories
+            .iter()
+            .filter(|advisory| advisory.source == "conventions.unavailable")
+            .map(|advisory| advisory.message.as_str())
+            .collect();
+        if !unavailable.is_empty() {
+            tracing::warn!(
+                "Advisory convention checks were not run at stop: {}",
+                unavailable.join("; ")
+            );
+        }
         match result.outcome {
             PostValidateOutcome::Pass => HookOutcome::Proceed,
             PostValidateOutcome::Fail { errors } if errors.is_empty() => HookOutcome::Proceed,
