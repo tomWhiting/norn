@@ -1,3 +1,9 @@
+## Unreleased — finite core result batches and hook cancellation
+
+The core runner and TUI share the same finite receiver-batch helper. New arrivals remain queued for a later boundary, preserving order without adding a new count or time limit. Empty and disconnected channels retain the same semantics.
+
+After a child-result batch is successfully saved, its live conversation message is now updated inside the append acceptance owner, before asynchronous session-event hooks run. Cancelling a pending hook cannot leave the saved batch absent from that live message vector. Existing consumed-child usage accounting is preserved. Failed-append recovery and sustained terminal-traffic acceptance remain open; this source is not installed.
+
 ## Unreleased — identify the original child run
 
 Spawn and fork results now retain a producer-owned controller-run ID, actual session/store generation, initial-task or follow-up trigger, original start/completion times and exact before/after timeline frontiers. Completion is captured when the agent step returns, before wrapper hooks, cleanup or result delivery can delay it. Persistent wakes receive distinct run IDs. A timeline span can include concurrent audits; it does not claim exclusive event ownership or identify an external task-service record.

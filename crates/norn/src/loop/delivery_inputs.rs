@@ -1,7 +1,6 @@
 //! Injection paths for trusted operator input and completed child results.
 
-use std::fmt::Write as _;
-
+use crate::agent::result_batch::ready_frontier;
 use crate::agent::result_channel::{ChildAgentResult, frame_child_result};
 use crate::error::SessionError;
 use crate::integration::hooks::HookRegistry;
@@ -11,7 +10,7 @@ use crate::provider::request::{Message, MessageRole, ToolCallCaller};
 use crate::session::events::{EventBase, EventId, SessionEvent};
 use crate::session::store::EventStore;
 
-use super::helpers::{append_and_notify, append_and_notify_with_acceptance};
+use super::helpers::append_and_notify_with_acceptance;
 
 /// Drain human active-turn input and persist it as ordinary user messages.
 ///
@@ -75,6 +74,9 @@ async fn inject_active_inputs(
 /// Drain pending child-agent results and inject them into the running
 /// conversation. Returns `true` if any results were injected.
 ///
+/// The queue length is captured once; arrivals during collection remain queued
+/// for the next safe delivery boundary instead of extending this batch.
+///
 /// `seed` carries a result that was already received outside this call -
 /// the linger-await ([`super::linger`]) consumes one result when it wakes
 /// and hands it here so every delivery, mid-run or lingering, goes through
@@ -87,6 +89,7 @@ async fn inject_active_inputs(
 /// in the parent's conversation. Each drained batch is persisted as one
 /// `UserMessage` event and pushed as one user-role message, keeping the
 /// persisted event stream and live conversation in 1:1 correspondence. The
+/// live update runs at successful append, before any observer hook can await. The
 /// harness framing identifies runtime-delivered child output without claiming
 /// System or Developer authority for that User-authority context.
 ///
@@ -104,9 +107,7 @@ pub(super) async fn drain_child_results(
 ) -> Result<bool, SessionError> {
     let mut batch: Vec<ChildAgentResult> = seed.into_iter().collect();
     if let Some(rx) = rx {
-        while let Ok(result) = rx.try_recv() {
-            batch.push(result);
-        }
+        batch.extend(ready_frontier(rx));
     }
     if batch.is_empty() {
         return Ok(false);
@@ -120,31 +121,38 @@ pub(super) async fn drain_child_results(
     } else {
         let mut output = format!("Results from {} completed agents:\n\n", batch.len());
         for result in &batch {
-            let _ = write!(output, "{}\n\n", frame_child_result(result));
+            output.push_str(&frame_child_result(result));
+            output.push_str("\n\n");
         }
         output
     };
 
-    append_and_notify(
+    append_and_notify_with_acceptance(
         store,
         SessionEvent::UserMessage {
             base: EventBase::new(store.last_event_id()),
             content: formatted.clone(),
         },
         hooks,
+        |_| {
+            messages.push(Message {
+                response_items: Vec::new(),
+                role: MessageRole::User,
+                content: Some(formatted),
+                thinking: String::new(),
+                reasoning: Vec::new(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_call_kind: None,
+                tool_call_caller: ToolCallCaller::Absent,
+            });
+        },
     )
     .await?;
-    messages.push(Message {
-        response_items: Vec::new(),
-        role: MessageRole::User,
-        content: Some(formatted),
-        thinking: String::new(),
-        reasoning: Vec::new(),
-        tool_calls: Vec::new(),
-        tool_call_id: None,
-        tool_name: None,
-        tool_call_kind: None,
-        tool_call_caller: ToolCallCaller::Absent,
-    });
     Ok(true)
 }
+
+#[cfg(test)]
+#[path = "delivery_inputs_tests.rs"]
+mod tests;

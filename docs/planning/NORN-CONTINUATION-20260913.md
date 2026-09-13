@@ -590,8 +590,32 @@ Child-result delivery follow-on:
 
 - TUI pending child prompts are currently VecDeque<String>; preserve a typed batch until real model admission before adding receipt/admission timestamps. Do not label framing time as delivery time.
 
-- loop/delivery_inputs.rs still drains child results until try_recv is empty; apply the finite-frontier rule to core/driven consumption and prove retained later arrivals.
+- Implemented in child_delivery_frontier: core/driven and TUI child-result consumers share the captured finite queue frontier. Verification status and proof are recorded in that row.
 
 - Audit retention across append_and_notify failure: drain_child_results removes queued results and folds usage before persisting the batch. This is a source-control-flow finding, not a confirmed loss reproducer; preserve exact event identity across uncertain writes before adding replay.
 
 - External task links, consumer receipt/admission chronology, structured continuity recovery and sustained UI traffic acceptance remain open.
+
+## D01/D07 — finite child delivery and cancellation-safe acceptance
+
+D01/D07 child-result delivery follow-on; user reports repeated agent-message conversation rows and inability to type/quit. No claim that core drain caused the observed TUI freeze.
+
+- R1: Core and TUI result consumers share a finite captured queue frontier. Refilling producers cannot extend a batch; later arrivals and FIFO remain intact, including disconnected buffered channels and an already-received seed. No new count/time limit.
+
+- R2: After successful child-result event append, update the live message vector in the same synchronous acceptance owner before hooks await. Cancellation in an observer hook cannot leave accepted results absent from the live conversation. Keep existing usage accounting for consumed results, including hard errors.
+
+- R3: Test deterministic producer refill/empty/disconnected frontiers, core seed and queued-result framing/order/usage, and cancellation during a pending session hook. Preserve input authority and escaping.
+
+- R4: No invented delivery receipts, blind retries, or claim that failed append retention is solved; audit that separately with exact uncertain-write identity. Preserve D13 draft bytes. Run focused relevant tests, strict workspace Clippy, fmt, AST and production LOC; retain proof and push source.
+
+File wall: `crates/norn/src/agent/mod.rs`, `crates/norn/src/agent/result_batch.rs`, `crates/norn/src/agent/result_batch_tests.rs`, `crates/norn/src/loop/delivery_inputs.rs`, `crates/norn/src/loop/delivery_inputs_tests.rs`, `crates/norn-tui/src/app/child_results.rs`, `docs/planning/NORN-CONTINUATION-20260913.json`, `docs/planning/NORN-CONTINUATION-20260913.md`, `docs/release-notes/UNRELEASED.md`.
+
+Follow-on findings:
+
+- loop/inbound.rs InboundChannel::drain and loop/active_input.rs ActiveInputReceiver::drain still run try_recv until empty. Bound by captured frontier; retain peeked updates before later steers and active-input acknowledgements. No new capacity defaults.
+
+- Extend actual-App PTY support/retained_workspace.rs and interrupt_exit.rs with sustained typed message-audit traffic while provider is held. Assert draft remains editable, real frames exclude audit clutter, cancellation/exit restores terminal; report measured input-to-frame latency, not a native-performance claim from a generous deadline.
+
+- Child batches still leave the channel before persistence. Retained typed batch and immutable prepared event identity are required for uncertain-append recovery. Existing agent/pending_delivery.rs caches exact events for pending agent messages; do not blindly copy or generate a new ID on retry.
+
+Finite child-delivery validation: 4747 core and 991 TUI tests passed, zero failed/ignored; strict release workspace/all-target Clippy (live-api-smoke compiled only), fmt, 24-file AST and 21-file production LOC (maximum 484) passed. `var/verification/continuation-20260913/child-frontier-core-tui.log` and `child-frontier-clippy.log`. Checked tree includes preserved D13 draft, excluded from this commit. No installation, independent review, venue verdict, failed-append recovery or sustained-traffic terminal performance claim.
