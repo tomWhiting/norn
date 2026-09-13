@@ -567,29 +567,74 @@
     }
   },
   "installed_checkpoint": {
-    "installed_at_melbourne": "2026-09-13T14:33:55.102082+10:00",
-    "version": "norn 0.1.0-preview.27",
+    "installed_at_melbourne": "2026-09-13T16:04:28.537239+10:00",
+    "version": "norn 0.1.0-preview.28",
     "binary": "/Users/tom/.cargo/bin/norn",
-    "sha256": "c326e925be49d86c3963ecb0d76c411db96f244e746753df79dc8c4b333d0b4f",
-    "source_commit": "a2e98bc40fb979baad3625e2a41d08e38ce40ba4",
+    "sha256": "d168049f109de2f60a947c9e90e6a9d0f383fbb4ec7961702ce7bd7d5d256401",
+    "source_commit": "b439186f87552d4d5c379e74d9b3106325fd7336",
     "source_worktree": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate",
-    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.27-bounded-results-sourced-compaction/previous-norn-preview.26",
-    "previous_version": "norn 0.1.0-preview.26",
+    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.28-input-delivery/previous-norn-preview.27",
+    "previous_version": "norn 0.1.0-preview.27",
     "verification": {
-      "started_at_melbourne": "2026-09-13T14:21:58.403903+10:00",
+      "started_at_melbourne": "2026-09-13T15:47:54.492910+10:00",
       "cwd": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate",
       "target": "Cargo default target/",
       "TMPDIR": "/Users/tom/Developer/ablative/stack/norn/var/tmp",
       "exit_codes": {
         "AST and production LOC": 0,
-        "preview27-fmt": 0,
-        "preview27-clippy": 0,
-        "preview27-workspace": 0,
-        "preview27-build": 0
+        "preview28-fmt": 0,
+        "preview28-clippy": 0,
+        "preview28-workspace": 0,
+        "preview28-build": 0
+      },
+      "commands": {
+        "preview28-fmt": [
+          "cargo",
+          "fmt",
+          "--all",
+          "--",
+          "--check"
+        ],
+        "preview28-clippy": [
+          "cargo",
+          "clippy",
+          "--locked",
+          "--release",
+          "--workspace",
+          "--all-targets",
+          "--features",
+          "norn/live-api-smoke",
+          "-j6",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "preview28-workspace": [
+          "cargo",
+          "test",
+          "--locked",
+          "--release",
+          "--workspace",
+          "--all-targets",
+          "-j6",
+          "--",
+          "--nocapture"
+        ],
+        "preview28-build": [
+          "cargo",
+          "build",
+          "--locked",
+          "--release",
+          "-p",
+          "norn-cli",
+          "--bin",
+          "norn",
+          "-j6"
+        ]
       }
     },
-    "test_count": 6578,
-    "test_suites": 40,
+    "test_count": 6590,
+    "test_suites": 41,
     "pending": [
       "physical terminal typing latency and flicker under sustained agent traffic",
       "remaining Norn programme including D13",
@@ -597,9 +642,9 @@
     ],
     "scope": "local preview on codex/norn-integration-candidate; no main landing",
     "announcement": "conversation only; no Mac say; existing processes untouched",
-    "receipt": "var/releases/preview.27-bounded-results-sourced-compaction/installation.json"
+    "receipt": "var/releases/preview.28-input-delivery/installation.json"
   },
-  "next_slice": "Prepare and install preview28 with the committed child-origin, finite result/input drains and accepted-input hook-cancellation fixes; preserve the unfinished D13 draft and verify the actual candidate terminal. Then complete D13 source-bound agent selection, navigation, per-agent drafts and human-authored messaging without retargeting the running root. Long-session physical UI acceptance, retained failed-result admission and the full ordered programme remain open.",
+  "next_slice": "Complete D13 source-bound agent selection, navigation, per-agent drafts and human-authored messaging without retargeting root execution. Preserve original UI and verify through actual-App terminal tests. Long-session physical UI acceptance, retained failed-result admission and the full ordered programme remain open.",
   "disk_checkpoint": {
     "available_gib": 41,
     "build_cache_gib": 5.8,
@@ -634,10 +679,10 @@
     "note": "Refreshed remote main revealed it already contained preview.9; stale local main was fast-forwarded from preview.8 preserving its four-line documentation edit in working tree, stash and repository-local backup. No preview.14 landing claimed."
   },
   "review_handoff": {
-    "path": "var/reviews/preview27-20260913",
-    "source_commit": "a2e98bc40fb979baad3625e2a41d08e38ce40ba4",
+    "path": "var/reviews/preview28-20260913",
+    "source_commit": "b439186f87552d4d5c379e74d9b3106325fd7336",
     "status": "prepared_local_only_tom_owns_submission",
-    "scope": "Final source review; no source transmitted to Anthropic; no independent verdict or landing claim"
+    "scope": "Final-source review; no source transmitted to Anthropic; no independent verdict or landing claim"
   },
   "announcement_policy": "Tom, 13 September 2026 10:28 Melbourne: no further Mac say commands; use Dot or the requested messaging channel for update announcements.",
   "p02_6_app_recovery_wall": {
@@ -879,7 +924,7 @@
     }
   },
   "child_result_origin": {
-    "status": "implemented_locally_verified_pending_independent_review",
+    "status": "installed_local_preview28_remaining_acceptance_and_follow_on_open",
     "provenance": "D01/D07 chronology; Mercury stale result report e2abc778-6e22-4456-8dad-a516ab2c8e2e, 13 September 2026 14:03 Melbourne. No delivery-delay cause established.",
     "requirements": {
       "R1": "Every production spawn/fork result carries a fresh controller-run ID, actual bound source/session/store generation, initial-task versus follow-up trigger, original start/completion UTC timestamps and exact before/after event frontiers. Capture completion immediately after the step, before stop hooks or result-channel backpressure.",
@@ -938,7 +983,7 @@
     }
   },
   "child_delivery_frontier": {
-    "status": "implemented_locally_verified_pending_independent_review",
+    "status": "installed_local_preview28_remaining_acceptance_and_follow_on_open",
     "provenance": "D01/D07 child-result delivery follow-on; user reports repeated agent-message conversation rows and inability to type/quit. No claim that core drain caused the observed TUI freeze.",
     "requirements": {
       "R1": "Core and TUI result consumers share a finite captured queue frontier. Refilling producers cannot extend a batch; later arrivals and FIFO remain intact, including disconnected buffered channels and an already-received seed. No new count/time limit.",
@@ -977,7 +1022,7 @@
     }
   },
   "input_frontier_and_flood": {
-    "status": "implemented_locally_verified_pending_independent_review",
+    "status": "installed_local_preview28_remaining_acceptance_and_follow_on_open",
     "provenance": "U04 user reports conversation agent-message flood, typing blocked and difficult exit; child_delivery_frontier identified ordinary inbound and active-input unbounded drains.",
     "requirements": {
       "R1": "Bound ordinary inbound and active-input synchronous collection to the captured queue frontier. Preserve peeked-before-channel order, update-only suppression, wake semantics, original content and delivery acknowledgement. Reuse the existing finite queue helper, adding unbounded receiver support without product limits.",
@@ -1029,7 +1074,7 @@
     }
   },
   "preview28_release": {
-    "status": "in_progress",
+    "status": "installed_local_review_and_venue_pending",
     "requirements": {
       "R1": "Release committed child-run origin, finite result and input collection, and accepted child-input publication before hooks as local preview28. Preserve unfinished D13 source and restore exact bytes after installation.",
       "R2": "Run fmt, strict workspace/all-target Clippy, normal workspace/all-target tests and release executable build on the release tree using usual target and repository-local TMPDIR. Retain AST/source hash proof. Verify actual candidate warning/exit and late-capability behaviour and real-App message flood.",
@@ -1064,6 +1109,9 @@
       "ast": "29 changed Rust files since installed preview27, no added unwrap/expect or bypass patterns",
       "production_loc": "17 production files, maximum 443",
       "scope": "Release tree excludes D13 draft. Executable build and actual-CLI probes must pass before atomic installation; no independent review, venue pass or long-session physical acceptance claimed."
-    }
+    },
+    "installation": "var/releases/preview.28-input-delivery/installation.json",
+    "validation": "Preview.28 installed at 2026-09-13T16:04:28.537239+10:00 Melbourne from `b439186f87552d4d5c379e74d9b3106325fd7336`; SHA256 `d168049f109de2f60a947c9e90e6a9d0f383fbb4ec7961702ce7bd7d5d256401`. 6590 standard tests across 41 suites passed, plus the separate custom harnesses; strict workspace/all-target Clippy, fmt, delta AST/LOC and actual-CLI diagnostic/late-capability probes passed. Receipt `var/releases/preview.28-input-delivery/installation.json`. Preview.27 rollback retained. Includes producer-owned child-result origin, finite result/inbound/active-input batches and accepted child-message publication before hooks. Short actual-App message-flood tests passed; long-session physical typing/flicker, failed-result admission recovery, independent review and venue/main landing remain open. Existing processes were not restarted.",
+    "review_handoff": "var/reviews/preview28-20260913; local only, Tom owns submission"
   }
 }

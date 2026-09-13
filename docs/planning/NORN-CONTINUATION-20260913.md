@@ -482,7 +482,7 @@ Meridian fa83f0c4-96f6-4a20-adae-31d308405fe8, 13 September 2026 13:44 Melbourne
 
 U04 verification: 6572 standard workspace/all-target tests across 40 suites passed; separate channel/restart harnesses passed. Strict release workspace/all-target Clippy including live-api-smoke passed (provider smoke execution not enabled); fmt, 17-file AST scan and production LOC maximum 478 passed. Actual-App tests cover held-provider cancellation, independent draft retention, queued Ctrl+C pair, child-result cancellation and terminal restoration. Live typing/flicker under sustained traffic, independent review and exact-commit venue remain open. Release build and local installation follow; no main landing claimed.
 
-## Latest installed checkpoint — preview.26
+## Historical installed checkpoint — preview.26
 
 Preview.26 installed locally at 13:48 Melbourne on 13 September 2026, from `8a20c1478164b20c600e571491c6fa788f75b06a`; SHA256 `43eaa59c029945889b3cf7ce2ab35f94c1d6cf1891e2a9fb1fbfb9a9a1f73b9a`. Receipt: `var/releases/preview.26-interruption-message-audits/installation.json`; preview.25 rollback retained. Executable diagnostic/late-capability probes passed. Existing processes were not restarted. The U04 audit-row/exit corrections are installed; physical sustained-traffic typing/flicker acceptance remains open. Review package: `var/reviews/preview26-20260913`; Tom owns submission. No main landing or venue pass is claimed. Cleanup removed 377,628,413 bytes in 14 closed obsolete preview.25 library artifacts; current build cache and sessions preserved.
 
@@ -554,7 +554,7 @@ D13 preserved: var/verification/continuation-20260913/d13-before-preview27; stas
 
 Preview.27 source checks: 6578 standard workspace/all-target tests across 40 suites passed, zero failed/ignored; stdio channel 14, channel TUI 4, composer preference restart 4 and frontend preference restart 5 passed. Strict release workspace/all-target Clippy with live-api-smoke compiled only, fmt, four-file AST and production LOC checks passed. Final executable build and actual-CLI probes precede installation; no physical sustained-traffic acceptance claimed.
 
-## Latest installed checkpoint — preview.27
+## Historical installed checkpoint — preview.27
 
 Preview.27 installed at 2026-09-13T14:33:55.102082+10:00 Melbourne from `a2e98bc40fb979baad3625e2a41d08e38ce40ba4`; SHA256 `c326e925be49d86c3963ecb0d76c411db96f244e746753df79dc8c4b333d0b4f`. 6578 standard tests across 40 suites passed, plus separate custom harnesses; strict workspace/all-target Clippy, fmt, AST and actual-CLI diagnostic/late-capability probes passed. Receipt `var/releases/preview.27-bounded-results-sourced-compaction/installation.json`; preview26 rollback preserved. Includes sourced compaction input and bounded child-result batches. No live sustained-traffic typing/flicker, independent review, venue pass or main landing claim. Existing sessions were not restarted.
 
@@ -671,3 +671,9 @@ File wall: `Cargo.toml`, `Cargo.lock`, `README.md`, `docs/release-notes/UNRELEAS
 D13 snapshot: `/Users/tom/Developer/ablative/stack/norn/var/verification/continuation-20260913/d13-before-preview28`; stash `da74afca31e439db4de13b456504aa1c4a42229a`.
 
 Preview28 release-tree checks: 6590 standard tests across 41 suites passed, zero failed/ignored. Strict workspace/all-target Clippy (live-api-smoke compiled only), fmt, 29-file delta AST and production LOC (maximum 443) passed. Release tree excludes D13 draft. Executable build and actual-CLI probes must pass before atomic installation; no independent review, venue pass or long-session physical acceptance claimed.
+
+## Latest installed checkpoint — preview.28
+
+Preview.28 installed at 2026-09-13T16:04:28.537239+10:00 Melbourne from `b439186f87552d4d5c379e74d9b3106325fd7336`; SHA256 `d168049f109de2f60a947c9e90e6a9d0f383fbb4ec7961702ce7bd7d5d256401`. 6590 standard tests across 41 suites passed, plus the separate custom harnesses; strict workspace/all-target Clippy, fmt, delta AST/LOC and actual-CLI diagnostic/late-capability probes passed. Receipt `var/releases/preview.28-input-delivery/installation.json`. Preview.27 rollback retained. Includes producer-owned child-result origin, finite result/inbound/active-input batches and accepted child-message publication before hooks. Short actual-App message-flood tests passed; long-session physical typing/flicker, failed-result admission recovery, independent review and venue/main landing remain open. Existing processes were not restarted.
+
+Next: Complete D13 source-bound agent selection, navigation, per-agent drafts and human-authored messaging without retargeting root execution. Preserve original UI and verify through actual-App terminal tests. Long-session physical UI acceptance, retained failed-result admission and the full ordered programme remain open.

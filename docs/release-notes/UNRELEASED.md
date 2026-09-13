@@ -1,26 +1,26 @@
-## 0.1.0-preview.28 — candidate: message delivery and input fairness
+## 0.1.0-preview.28 — message delivery and input fairness
 
-Candidate release containing the three completed changes below. Release verification and atomic installation are pending; preview.27 remains installed until its installation receipt is replaced. This preview excludes the unfinished D13 agent-selection draft. No main landing or independent-review verdict is claimed.
+Preview.28 installed at 2026-09-13T16:04:28.537239+10:00 Melbourne from `b439186f87552d4d5c379e74d9b3106325fd7336`; SHA256 `d168049f109de2f60a947c9e90e6a9d0f383fbb4ec7961702ce7bd7d5d256401`. 6590 standard tests across 41 suites passed, plus the separate custom harnesses; strict workspace/all-target Clippy, fmt, delta AST/LOC and actual-CLI diagnostic/late-capability probes passed. Receipt `var/releases/preview.28-input-delivery/installation.json`. Preview.27 rollback retained. Includes producer-owned child-result origin, finite result/inbound/active-input batches and accepted child-message publication before hooks. Short actual-App message-flood tests passed; long-session physical typing/flicker, failed-result admission recovery, independent review and venue/main landing remain open. Existing processes were not restarted. This preview excludes the preserved unfinished D13 agent-selection draft.
 
-## Unreleased — finite inbound/input drains and terminal flood coverage
+### Input collection and terminal flood coverage
 
 Ordinary inbound and active human-input collection now stop at the captured queue frontier. Later arrivals stay queued; earlier peeked updates retain their position and do not independently wake an idle agent. No new runtime cap or timeout is introduced.
 
-A real-App PTY fixture now creates a 256-message backlog and continues delivering typed messages while the user edits a draft and confirms Ctrl+C exit. The bounded probe preserved the draft, hid transport-audit clutter, restored terminal modes and made no extra provider call. Observed keystroke-to-frame times were 2.096–4.995 ms and second-Ctrl+C-to-restoration was 13.744 ms, including fixture overhead; this is not a physical-terminal or long-session performance claim. This source is not installed.
+A real-App PTY fixture now creates a 256-message backlog and continues delivering typed messages while the user edits a draft and confirms Ctrl+C exit. The bounded probe preserved the draft, hid transport-audit clutter, restored terminal modes and made no extra provider call. Observed keystroke-to-frame times were 2.096–4.995 ms and second-Ctrl+C-to-restoration was 13.744 ms, including fixture overhead; this is not a physical-terminal or long-session performance claim. Installed in preview.28.
 
-## Unreleased — finite core result batches and hook cancellation
+### Result delivery and hook cancellation
 
 The core runner and TUI share the same finite receiver-batch helper. New arrivals remain queued for a later boundary, preserving order without adding a new count or time limit. Empty and disconnected channels retain the same semantics.
 
-After a child-result batch is successfully saved, its live conversation message is now updated inside the append acceptance owner, before asynchronous session-event hooks run. Cancelling a pending hook cannot leave the saved batch absent from that live message vector. Existing consumed-child usage accounting is preserved. Failed-append recovery and sustained terminal-traffic acceptance remain open; this source is not installed.
+After a child-result batch is successfully saved, its live conversation message is now updated inside the append acceptance owner, before asynchronous session-event hooks run. Cancelling a pending hook cannot leave the saved batch absent from that live message vector. Existing consumed-child usage accounting is preserved. Failed-append recovery and sustained terminal-traffic acceptance remain open; installed in preview.28.
 
-## Unreleased — identify the original child run
+### Child-run origin
 
 Spawn and fork results now retain a producer-owned controller-run ID, actual session/store generation, initial-task or follow-up trigger, original start/completion times and exact before/after timeline frontiers. Completion is captured when the agent step returns, before wrapper hooks, cleanup or result delivery can delay it. Persistent wakes receive distinct run IDs. A timeline span can include concurrent audits; it does not claim exclusive event ownership or identify an external task-service record.
 
 Model-facing result frames preserve this structured origin, escaping opaque identifiers and retaining explicit unavailable provenance for embedders that supply none. Ordinary child-result text is unchanged; additional run details live in separately inspectable metadata, with Melbourne timestamps and daylight-saving handling. No old session is rewritten, no receipt timestamp is substituted for completion, and arrival order does not imply supersession.
 
-This change is not installed. Consumer receipt/admission records, structured continuity recovery and live UI performance acceptance remain open. Source binding is obtained on a blocking worker before child confirmation; fault-injection stores retain their actual child binding.
+Installed in preview.28. Consumer receipt/admission records, structured continuity recovery and live UI performance acceptance remain open. Source binding is obtained on a blocking worker before child confirmation; fault-injection stores retain their actual child binding.
 
 ## 0.1.0-preview.27 — bounded result batches and sourced compaction
 
