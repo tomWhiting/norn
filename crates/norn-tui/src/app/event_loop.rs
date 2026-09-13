@@ -230,7 +230,7 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
     }
 
     redraw_all(&mut state, &mut guard)?;
-    load_visible(&mut state, &inputs.store)?;
+    load_visible(&mut state)?;
     redraw_all(&mut state, &mut guard)?;
 
     // Spawn the terminal-event reader thread up front so the initial
@@ -414,7 +414,7 @@ async fn outer_loop(
     let mut inbound_closed = false;
     loop {
         redraw_all(state, guard)?;
-        load_visible(state, &runtime.store)?;
+        load_visible(state)?;
         redraw_all(state, guard)?;
         tokio::select! {
             biased;
@@ -553,7 +553,7 @@ async fn dispatch_input(
             }
             if super::view_actions::key(key, state) {
                 redraw_all(state, guard)?;
-                load_visible(state, &runtime.store)?;
+                load_visible(state)?;
                 return Ok(InputOutcome::Continue);
             }
             let popup_open = state.autocomplete.is_some();
@@ -574,7 +574,7 @@ async fn dispatch_input(
         Event::Mouse(event) => {
             if super::view_actions::mouse(event, state) {
                 redraw_all(state, guard)?;
-                load_visible(state, &runtime.store)?;
+                load_visible(state)?;
             }
             Ok(InputOutcome::Continue)
         }

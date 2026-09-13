@@ -298,7 +298,7 @@ async fn run_turn(
     let ui_result: Result<(), TuiError> = async {
         while completion.is_none() {
             redraw_all(state, guard)?;
-            load_visible(state, &runtime.store)?;
+            load_visible(state)?;
             redraw_all(state, guard)?;
             tokio::select! {
                 biased;
@@ -329,7 +329,7 @@ async fn run_turn(
                                 &cancel,
                                 &mut cancel_requested,
                             )?;
-                            load_visible(state, &runtime.store)?;
+                            load_visible(state)?;
                         }
                     }
                     Some(Err(err)) => return Err(TuiError::Io(err)),
@@ -390,7 +390,7 @@ async fn run_turn(
                 }
                 _ = tick.tick() => {
                     redraw_streaming_tick(state, guard, Instant::now())?;
-                    load_visible(state, &runtime.store)?;
+                    load_visible(state)?;
                     redraw_all(state, guard)?;
                 }
             }
@@ -468,14 +468,9 @@ async fn run_turn(
         .await?;
     loop {
         let request = state.transcript.newer_history()?;
+        let reader = state.transcript.history_reader()?;
         let page = terminal
-            .wait(
-                state,
-                crate::app::transcript::read_history(
-                    std::sync::Arc::clone(&runtime.store),
-                    request,
-                ),
-            )
+            .wait(state, crate::app::transcript::read_history(reader, request))
             .await??;
         if !state.transcript.accept_history(&page)? {
             return Err(norn::session_view::ViewError::AttemptMismatch.into());
@@ -507,7 +502,7 @@ async fn run_turn(
         write_error_line(state, message)?;
     }
     redraw_all(state, guard)?;
-    load_visible(state, &runtime.store)?;
+    load_visible(state)?;
     redraw_all(state, guard)?;
     Ok(TurnOutcome {
         interrupt_prompt,

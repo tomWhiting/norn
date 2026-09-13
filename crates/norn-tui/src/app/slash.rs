@@ -273,6 +273,10 @@ async fn handle_new(
     };
 
     let new_source = new_store.bind_view_source(&new_binding, state.tab_state.root_id(), None)?;
+    let new_store = Arc::new(new_store);
+    let reader = super::transcript::open_history_reader(Arc::clone(&new_store)).await?;
+    let mut new_transcript = super::transcript::Transcript::new(new_source);
+    new_transcript.attach_history_reader(reader)?;
 
     // Phase 2 — infallible commit: reset the context-edit ledger for
     // the new conversation FIRST (rotation replays the incoming store's
@@ -288,13 +292,13 @@ async fn handle_new(
         runtime.executor.shared_context(),
         &mut runtime.store,
         &mut runtime.loop_context,
-        Arc::new(new_store),
+        new_store,
         Arc::clone(&new_binding),
     )
     .await;
     runtime.session_binding = new_binding;
     let config = state.transcript.config.clone();
-    state.transcript = super::transcript::Transcript::new(new_source);
+    state.transcript = new_transcript;
     state.context_status.clear_activity();
     state
         .context_status

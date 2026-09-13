@@ -318,7 +318,7 @@
       "status": "installed_local_preview_25",
       "scope": "Immediately editable next draft during opening-input admission, preserving exact rejected input and each draft undo state with one recall store.",
       "wall": "See P02.6 Markdown wall",
-      "remaining": "Release build, executable probes and atomic local installation. Independent final-source review and venue remain separate.",
+      "remaining": "Independent final-source review and exact-commit venue verification remain separate; preview.25 release build, executable probes and local installation are complete.",
       "tests": "6550 standard tests across39 suites, strict Clippy,22-file AST, production LOC and formatting passed; actual-App held opening acceptance/rejection and footer recovery preserve both drafts and exact provider census.",
       "owner_decision": "Tom explicitly selected Keep new draft; offer recovery. Recovery preserves both draft owners."
     },
@@ -382,14 +382,31 @@
         "crates/norn-tui/src/app/view_actions.rs",
         "docs/planning/NORN-CONTINUATION-20260913.json",
         "docs/planning/NORN-CONTINUATION-20260913.md",
-        "crates/norn-tui/src/app/render/reading_snapshot_tests.rs"
+        "crates/norn-tui/src/app/render/reading_snapshot_tests.rs",
+        "crates/norn-tui/src/app/transcript.rs",
+        "crates/norn-tui/src/app/transcript/read_access.rs",
+        "crates/norn-tui/src/app/transcript/read_access_tests.rs",
+        "crates/norn-tui/src/app/session_replay.rs",
+        "crates/norn-tui/src/app/render.rs",
+        "crates/norn-tui/src/app/event_loop.rs",
+        "crates/norn-tui/src/app/slash.rs",
+        "crates/norn-tui/src/app/turn/run.rs",
+        "crates/norn-tui/src/app/view_actions/reading.rs",
+        "crates/norn-tui/src/app/view_actions/reading_tests.rs",
+        "crates/norn-tui/src/app/view_actions/latest_tests.rs",
+        "crates/norn-tui/src/app/render/navigation_tests.rs",
+        "crates/norn-tui/src/app/render/navigation_page_tests.rs",
+        "crates/norn-tui/src/app/render/resumed_compaction_tests.rs"
       ],
       "requirements": [
         "R1: Rendering and navigation borrow a matched Transcript/ScreenState pair without access to provider, runtime, composer or command authority.",
         "R2: Root adapters preserve the existing styled renderer, reading snapshots, exact selection and finite-batch navigation; no extra event store or raw-history clone.",
         "R3: A mismatched display/source is refused before changing either owner. A child transcript uses the same rendering path and cannot mutate root transcript, draft or viewport.",
         "R4: Test two actual source-bound stores with distinct content, bounded approved page/body loading, independent navigation and source-isolated original selection.",
-        "R5: Preserve root TUI regressions. Pane selection, background read supervision, live source refresh and messaging remain unfinished until wired and verified in the actual App."
+        "R5: Preserve root TUI regressions. Pane selection, background read supervision, live source refresh and messaging remain unfinished until wired and verified in the actual App.",
+        "R6: Each conversation retains only its matching sealed history reader; no mutable runtime store is supplied to display reads. Acquire/validate store access off the terminal executor, once at startup/rotation or selected-view opening.",
+        "R7: Reader/source mismatch and missing access fail before scheduling or marking a demand pending. Existing bounded/coalesced history and body tasks stay supervised; no per-frame store binding, copied store or history.",
+        "R8: Prove source refusal, continued async reads without writable store authority, future append visibility and root rotation preserving existing reader identity; rerun actual-App navigation and input tests."
       ],
       "verification": {
         "presentation_extraction": "passed; pane selection and messaging still in progress",
@@ -404,7 +421,21 @@
           "d13-view-final-clippy.log",
           "d13-view-final-workspace.log"
         ]
-      }
+      },
+      "read_owner_verification": {
+        "standard_suites": 39,
+        "passed": 6561,
+        "failed": 0,
+        "ignored": 0,
+        "strict_clippy": "workspace/all-targets passed, live-api-smoke compiled/linted only",
+        "ast": "d13-read-owner-ast.json: 15 changed Rust files; no added bypass patterns or unwrap/expect calls",
+        "production_loc": "d13-read-owner-loc.json: nine production files, maximum 490",
+        "logs": [
+          "d13-read-owner-final-clippy.log",
+          "d13-read-owner-workspace.log"
+        ]
+      },
+      "remaining": "Actual agent selection, active-view input/navigation routing, live child refresh, per-agent drafts and human-authored child messaging remain unfinished. Neither the renderer extraction nor read owner is an installed visual feature."
     }
   ],
   "policy_debt": [
@@ -493,7 +524,7 @@
     "scope": "local preview on codex/norn-integration-candidate; main remains preview.9",
     "announcement": "Dot channel closed; update in conversation; no Mac say"
   },
-  "next_slice": "D13.1 read-only selected live-child history, then persisted selected history D03.3b and TUI conversation/message selection D13; physical P02/P01 acceptance, U02 and the full ordered programme remain open.",
+  "next_slice": "D13.2 connect source-bound agent selection to the existing Agents pane and route selected navigation/drafts/messages without retargeting the running root. D03.3b persisted descendant reads, physical P02/P01 acceptance, U02 and the full ordered programme remain open.",
   "disk_checkpoint": {
     "available_gib": 41,
     "build_cache_gib": 5.8,
@@ -561,5 +592,11 @@
     "owner_request": "13 September 2026 10:50 Melbourne: routine child activity in side-pane tree, no parent conversation flood, select and copy pane text only",
     "wall": "See U03 Markdown wall",
     "acceptance": "No routine child notices in parent transcript; attributed failures/final results retained; tree solely in Agents pane; exact pane selection/copy and preserved draft."
+  },
+  "latest_disk_checkpoint": {
+    "available_bytes": 89599631360,
+    "observed_at_melbourne": "2026-09-13T12:12:46.196583+10:00",
+    "removed_bytes_this_slice": 0,
+    "note": "Shared source-bound reader and renderer work reused the repository-local build-preview10 cache. Current build, installed/rollback binaries and session data preserved."
   }
 }

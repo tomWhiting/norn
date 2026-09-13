@@ -308,6 +308,9 @@ async fn scrolling_before_resumed_tail_loads_one_older_page_without_resetting_vi
         crate::render::fixed_panel::StatusBar::default(),
     );
     state.input_editor.paste_cells("draft to keep")?;
+    state
+        .transcript
+        .attach_history_reader(store.history_reader()?)?;
     let initial = store.history_page(&state.transcript.initial_history()?)?;
     state.transcript.accept_history(&initial)?;
     assert_eq!(state.transcript.projection.items().len(), 20);
@@ -322,9 +325,9 @@ async fn scrolling_before_resumed_tail_loads_one_older_page_without_resetting_vi
     );
     let anchor = state.screen.viewport.anchor().cloned();
     let draft = state.input_editor.text();
-    super::super::load_visible(&mut state, &store)?;
+    super::super::load_visible(&mut state)?;
     assert_eq!(state.transcript.history_tasks.len(), 1);
-    super::super::load_visible(&mut state, &store)?;
+    super::super::load_visible(&mut state)?;
     assert_eq!(state.transcript.history_tasks.len(), 1);
     let result = state
         .transcript

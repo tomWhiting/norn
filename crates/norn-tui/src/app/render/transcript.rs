@@ -463,7 +463,7 @@ mod tests {
         state.screen.terminal_event(1);
         state.screen.request_older = true;
         state.screen.request_more = true;
-        super::super::load_visible(&mut state, &store)?;
+        super::super::load_visible(&mut state)?;
         assert!(state.screen.request_older);
         assert!(state.screen.request_more);
         assert!(state.screen.allow_body_load);
@@ -484,7 +484,7 @@ mod tests {
                 .iter()
                 .any(|(_, body)| body == &reference)
         );
-        super::super::load_visible(&mut state, &store)?;
+        super::super::load_visible(&mut state)?;
         assert!(!state.screen.request_older);
         assert!(!state.screen.request_more);
         assert!(!state.screen.allow_body_load);

@@ -7,7 +7,7 @@ use termina::event::{KeyCode, KeyEvent, Modifiers};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn fixture() -> TestResult<(AppState, Arc<EventStore>)> {
+fn fixture() -> TestResult<AppState> {
     let store = Arc::new(EventStore::new());
     for number in 0..65 {
         store.append(SessionEvent::UserMessage {
@@ -27,12 +27,15 @@ fn fixture() -> TestResult<(AppState, Arc<EventStore>)> {
         source,
         crate::render::fixed_panel::StatusBar::default(),
     );
+    state
+        .transcript
+        .attach_history_reader(store.history_reader()?)?;
     state.input_editor.paste_cells("draft to keep")?;
     state
         .transcript
         .accept_history(&store.history_page(&state.transcript.initial_history()?)?)?;
     super::super::prepare(&mut state, 80, 14)?;
-    Ok((state, store))
+    Ok(state)
 }
 
 fn scroll_to_boundary(state: &mut AppState) -> TestResult {
@@ -51,11 +54,10 @@ fn scroll_to_boundary(state: &mut AppState) -> TestResult {
 
 async fn next_page(
     state: &mut AppState,
-    store: &Arc<EventStore>,
 ) -> TestResult<crate::app::view_actions::reading::HistoryResult> {
-    super::super::load_visible(state, store)?;
+    super::super::load_visible(state)?;
     assert_eq!(state.transcript.history_tasks.len(), 1);
-    super::super::load_visible(state, store)?;
+    super::super::load_visible(state)?;
     assert_eq!(
         state.transcript.history_tasks.len(),
         1,
@@ -71,7 +73,7 @@ async fn next_page(
 
 #[tokio::test]
 async fn one_scroll_crosses_three_pages_without_repeated_motion_or_losing_draft() -> TestResult {
-    let (mut state, store) = fixture()?;
+    let mut state = fixture()?;
     scroll_to_boundary(&mut state)?;
     for _ in 0..3 {
         let anchor = state.screen.viewport.anchor().cloned();
@@ -100,7 +102,7 @@ async fn one_scroll_crosses_three_pages_without_repeated_motion_or_losing_draft(
             state.transcript.history_tasks.is_empty(),
             "paint cannot start a read"
         );
-        let result = next_page(&mut state, &store).await?;
+        let result = next_page(&mut state).await?;
         crate::app::view_actions::reading::finish_history(&mut state, result)?;
         super::super::prepare(&mut state, 80, 14)?;
         assert_ne!(state.screen.viewport.anchor(), anchor.as_ref());
@@ -119,16 +121,16 @@ async fn one_scroll_crosses_three_pages_without_repeated_motion_or_losing_draft(
         state.screen.viewport.anchor().map(|anchor| &anchor.item),
         Some(&first.id)
     );
-    super::super::load_visible(&mut state, &store)?;
+    super::super::load_visible(&mut state)?;
     assert!(state.transcript.history_tasks.is_empty());
     Ok(())
 }
 
 #[tokio::test]
 async fn reverse_scroll_retires_remainder_before_a_late_page() -> TestResult {
-    let (mut state, store) = fixture()?;
+    let mut state = fixture()?;
     scroll_to_boundary(&mut state)?;
-    let result = next_page(&mut state, &store).await?;
+    let result = next_page(&mut state).await?;
     queue(&mut state, false, 1)?;
     super::super::prepare(&mut state, 80, 14)?;
     let anchor = state.screen.viewport.anchor().cloned();
@@ -142,7 +144,7 @@ async fn reverse_scroll_retires_remainder_before_a_late_page() -> TestResult {
 
 #[test]
 fn reversal_in_one_input_batch_does_not_wait_for_older_history() -> TestResult {
-    let (mut state, _) = fixture()?;
+    let mut state = fixture()?;
     queue(&mut state, true, 10_000)?;
     queue(&mut state, false, 1)?;
     super::super::prepare(&mut state, 80, 14)?;
@@ -154,9 +156,9 @@ fn reversal_in_one_input_batch_does_not_wait_for_older_history() -> TestResult {
 #[tokio::test]
 async fn explicit_barriers_prevent_late_page_motion() -> TestResult {
     for barrier in ["latest", "resize", "select", "expand", "pane", "source"] {
-        let (mut state, store) = fixture()?;
+        let mut state = fixture()?;
         scroll_to_boundary(&mut state)?;
-        let result = next_page(&mut state, &store).await?;
+        let result = next_page(&mut state).await?;
         let (columns, rows) = if barrier == "resize" {
             (70, 16)
         } else {
@@ -216,9 +218,9 @@ async fn explicit_barriers_prevent_late_page_motion() -> TestResult {
 
 #[tokio::test]
 async fn failed_page_retires_motion_and_does_not_retry_automatically() -> TestResult {
-    let (mut state, store) = fixture()?;
+    let mut state = fixture()?;
     scroll_to_boundary(&mut state)?;
-    let (request, _) = next_page(&mut state, &store).await??;
+    let (request, _) = next_page(&mut state).await??;
     crate::app::view_actions::reading::finish_history(
         &mut state,
         Ok((
@@ -230,7 +232,7 @@ async fn failed_page_retires_motion_and_does_not_retry_automatically() -> TestRe
         )),
     )?;
     super::super::prepare(&mut state, 80, 14)?;
-    super::super::load_visible(&mut state, &store)?;
+    super::super::load_visible(&mut state)?;
     assert!(state.screen.navigation.is_none());
     assert!(!state.screen.request_older);
     assert!(state.transcript.history_tasks.is_empty());
@@ -246,7 +248,7 @@ async fn failed_page_retires_motion_and_does_not_retry_automatically() -> TestRe
 
 #[test]
 fn additional_backward_input_accumulates_while_the_page_is_pending() -> TestResult {
-    let (mut state, _) = fixture()?;
+    let mut state = fixture()?;
     scroll_to_boundary(&mut state)?;
     let remaining = state
         .screen
@@ -270,14 +272,14 @@ fn additional_backward_input_accumulates_while_the_page_is_pending() -> TestResu
 
 #[tokio::test]
 async fn nonprogressing_page_retires_motion_without_an_automatic_read_loop() -> TestResult {
-    let (mut state, store) = fixture()?;
+    let mut state = fixture()?;
     scroll_to_boundary(&mut state)?;
-    let (request, page) = next_page(&mut state, &store).await??;
+    let (request, page) = next_page(&mut state).await??;
     let mut page = page?;
     page.records.clear();
     crate::app::view_actions::reading::finish_history(&mut state, Ok((request, Ok(page))))?;
     super::super::prepare(&mut state, 80, 14)?;
-    super::super::load_visible(&mut state, &store)?;
+    super::super::load_visible(&mut state)?;
     assert!(state.screen.navigation.is_none());
     assert!(!state.screen.request_older);
     assert!(state.transcript.history_tasks.is_empty());
@@ -286,7 +288,7 @@ async fn nonprogressing_page_retires_motion_without_an_automatic_read_loop() -> 
 
 #[test]
 fn pointer_motion_without_a_button_does_not_cancel_waiting_scroll() -> TestResult {
-    let (mut state, _) = fixture()?;
+    let mut state = fixture()?;
     scroll_to_boundary(&mut state)?;
     let anchor = state.screen.viewport.anchor().cloned();
     assert!(!crate::app::view_actions::mouse(

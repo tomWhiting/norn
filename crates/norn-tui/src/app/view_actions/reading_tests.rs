@@ -18,21 +18,20 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 fn fixture() -> Result<(Arc<EventStore>, AppState), Box<dyn std::error::Error>> {
     let store = Arc::new(EventStore::new());
     let source = store.bind_view_source(&SessionBinding::ephemeral_root(), Uuid::new_v4(), None)?;
-    let state = AppState::new(
+    let mut state = AppState::new(
         TerminalCaps::baseline(),
         InputHistory::in_memory(),
         Arc::new(RwLock::new(AgentRegistry::new())),
         source,
         StatusBar::default(),
     );
+    state
+        .transcript
+        .attach_history_reader(store.history_reader()?)?;
     Ok((store, state))
 }
 
-fn body(
-    state: &mut AppState,
-    store: &Arc<EventStore>,
-    text: &str,
-) -> Result<ItemId, Box<dyn std::error::Error>> {
+fn body(state: &mut AppState, text: &str) -> Result<ItemId, Box<dyn std::error::Error>> {
     let id = state
         .transcript
         .notice(ViewItemKind::Notice, "original fixture", Some(text))?;
@@ -43,14 +42,14 @@ fn body(
         .and_then(|item| item.bodies.first())
         .ok_or("missing fixture body")?
         .clone();
-    state.transcript.load_body(store, &id, &reference, false)?;
+    state.transcript.load_body(&id, &reference, false)?;
     Ok(id)
 }
 
 #[test]
 fn search_hit_uses_original_graphemes_and_refuses_an_evicted_revision() -> TestResult {
-    let (store, mut state) = fixture()?;
-    let id = body(&mut state, &store, "**e\u{301}** 👩‍💻 e\u{301}\nlast")?;
+    let mut state = fixture()?.1;
+    let id = body(&mut state, "**e\u{301}** 👩‍💻 e\u{301}\nlast")?;
     search(&mut state, SearchScope::LoadedTranscript, "e\u{301}")?;
     assert_eq!(state.screen.selection_item.as_ref(), Some(&id));
     assert_eq!(super::super::selected_text(&state)?, "e\u{301}");
@@ -65,12 +64,12 @@ fn search_hit_uses_original_graphemes_and_refuses_an_evicted_revision() -> TestR
 
 #[test]
 fn missing_body_and_unknown_suffix_never_become_complete_no_match() -> TestResult {
-    let (store, mut state) = fixture()?;
+    let mut state = fixture()?.1;
     state
         .transcript
         .config
         .set_body_demand(std::num::NonZeroUsize::new(2).ok_or("zero fixture demand")?);
-    body(&mut state, &store, "first matching later")?;
+    body(&mut state, "first matching later")?;
     state
         .transcript
         .notice(ViewItemKind::Notice, "unloaded", Some("matching"))?;
@@ -101,7 +100,7 @@ async fn older_search_reads_exact_requested_page_and_reports_unloaded_suffixes()
         .accept_history(&store.history_page(&state.transcript.initial_history()?)?)?;
     search(&mut state, SearchScope::RequestedOlderHistory, "needle")?;
     let mut pinned = HashSet::new();
-    load_requests(&mut state, &store, &mut pinned)?;
+    load_requests(&mut state, &mut pinned)?;
     let result = state
         .transcript
         .history_tasks
@@ -109,11 +108,11 @@ async fn older_search_reads_exact_requested_page_and_reports_unloaded_suffixes()
         .await
         .ok_or("history request was not scheduled")?;
     finish_history(&mut state, result)?;
-    load_requests(&mut state, &store, &mut pinned)?;
+    load_requests(&mut state, &mut pinned)?;
     while let Some(result) = state.transcript.body_tasks.join_next().await {
         state.transcript.finish_body(result)?;
     }
-    load_requests(&mut state, &store, &mut pinned)?;
+    load_requests(&mut state, &mut pinned)?;
     let summary = state
         .screen
         .search
@@ -129,12 +128,8 @@ async fn older_search_reads_exact_requested_page_and_reports_unloaded_suffixes()
 
 #[tokio::test]
 async fn export_keeps_exact_original_bytes_and_is_joined_after_view_rotation() -> TestResult {
-    let (store, mut state) = fixture()?;
-    let id = body(
-        &mut state,
-        &store,
-        "**original**\nsoft wraps never enter\u{1b}",
-    )?;
+    let mut state = fixture()?.1;
+    let id = body(&mut state, "**original**\nsoft wraps never enter\u{1b}")?;
     state
         .screen
         .viewport

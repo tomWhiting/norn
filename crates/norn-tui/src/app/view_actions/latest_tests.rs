@@ -13,6 +13,7 @@ fn fixture() -> TestResult<(Arc<EventStore>, Transcript)> {
     let store = Arc::new(EventStore::new());
     let source = store.bind_view_source(&SessionBinding::ephemeral_root(), Uuid::new_v4(), None)?;
     let mut view = Transcript::new(source);
+    view.attach_history_reader(store.history_reader()?)?;
     view.config
         .set_history_demand(NonZeroUsize::new(2).ok_or("fixture demand invalid")?);
     Ok((store, view))
@@ -138,9 +139,9 @@ async fn latest_waits_for_existing_older_job_and_cancelled_completion_never_reen
     let (store, mut view) = fixture()?;
     append(&store, 7)?;
     view.accept_history(&store.history_page(&view.initial_history()?)?)?;
-    assert!(view.load_older(&store)?);
+    assert!(view.load_older()?);
     view.request_latest();
-    assert!(!view.load_latest(&store)?);
+    assert!(!view.load_latest()?);
     assert_eq!(view.history_tasks.len(), 1);
     let result = view
         .history_tasks
@@ -149,7 +150,7 @@ async fn latest_waits_for_existing_older_job_and_cancelled_completion_never_reen
         .ok_or("older job missing")?;
     view.finish_history(result)?;
     assert!(view.latest_pending());
-    assert!(view.load_latest(&store)?);
+    assert!(view.load_latest()?);
     view.cancel_latest();
     let result = view
         .history_tasks
@@ -158,7 +159,7 @@ async fn latest_waits_for_existing_older_job_and_cancelled_completion_never_reen
         .ok_or("latest job missing")?;
     view.finish_history(result)?;
     assert!(!view.latest_pending());
-    assert!(!view.load_latest(&store)?);
+    assert!(!view.load_latest()?);
     assert!(view.history_tasks.is_empty());
     Ok(())
 }

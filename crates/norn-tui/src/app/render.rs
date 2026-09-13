@@ -338,10 +338,7 @@ pub(super) fn interaction(error: impl std::error::Error + Send + Sync + 'static)
 }
 
 /// Schedule only previously identified visible demands, never called by frame encoding.
-pub(super) fn load_visible(
-    state: &mut AppState,
-    store: &Arc<norn::session::EventStore>,
-) -> Result<(), TuiError> {
+pub(super) fn load_visible(state: &mut AppState) -> Result<(), TuiError> {
     // A deferred frame still describes the previous selection/geometry. Keep
     // every demand and permission pending until this finite input batch paints.
     if state.screen.ready_batch_remaining > 0 {
@@ -350,9 +347,9 @@ pub(super) fn load_visible(
     if !state.screen.viewport.follows_tail() {
         state.transcript.cancel_latest();
     }
-    state.transcript.load_latest(store)?;
+    state.transcript.load_latest()?;
     if state.screen.request_older
-        && (!state.transcript.has_older || state.transcript.load_older(store)?)
+        && (!state.transcript.has_older || state.transcript.load_older()?)
     {
         state.screen.request_older = false;
     }
@@ -366,7 +363,7 @@ pub(super) fn load_visible(
         let id = item.id.clone();
         let bodies = item.bodies.clone();
         for body in bodies {
-            state.transcript.load_body(store, &id, &body, true)?;
+            state.transcript.load_body(&id, &body, true)?;
         }
     }
     if !state.screen.allow_body_load {
@@ -403,12 +400,10 @@ pub(super) fn load_visible(
     if let Some(selection) = &state.screen.selection {
         pinned.insert(selection.reference().clone());
     }
-    super::view_actions::reading::load_requests(state, store, &mut pinned)?;
+    super::view_actions::reading::load_requests(state, &mut pinned)?;
     let had_demands = !demands.is_empty();
     for (item, reference) in demands {
-        state
-            .transcript
-            .load_body(store, &item, &reference, false)?;
+        state.transcript.load_body(&item, &reference, false)?;
     }
     state.screen.dirty |= had_demands;
     changes::demand(state);

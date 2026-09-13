@@ -3,9 +3,8 @@
 use std::collections::HashSet;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use norn::session::store::{EventStore, HistoryDirection, HistoryPage, HistoryRead};
+use norn::session::store::{HistoryDirection, HistoryPage, HistoryRead};
 use norn::session_view::{BodyRef, CoverageGap, ItemId, ViewSource};
 
 use crate::TuiError;
@@ -292,7 +291,6 @@ pub(super) fn next_hit(state: &mut AppState, backwards: bool) -> Result<(), TuiE
 /// Run explicit older-search requests outside paint; pin only currently requested prefixes.
 pub(in crate::app) fn load_requests(
     state: &mut AppState,
-    store: &Arc<EventStore>,
     pinned: &mut HashSet<BodyRef>,
 ) -> Result<(), TuiError> {
     let Some(mut older) = state.screen.search.older.take() else {
@@ -300,7 +298,7 @@ pub(in crate::app) fn load_requests(
     };
     match older.phase {
         OlderPhase::Requested => {
-            if state.transcript.load_older(store)? {
+            if state.transcript.load_older()? {
                 older.phase = OlderPhase::History;
             }
             state.screen.search.older = Some(older);
@@ -319,7 +317,7 @@ pub(in crate::app) fn load_requests(
                 .collect();
             for (item, reference) in &bodies {
                 pinned.insert(reference.clone());
-                state.transcript.load_body(store, item, reference, false)?;
+                state.transcript.load_body(item, reference, false)?;
             }
             if state.transcript.body_tasks.is_empty() {
                 scan(

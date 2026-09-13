@@ -85,10 +85,10 @@ fn text(frame: &Frame) -> String {
 
 // Advance only actual pending tasks. The finite fixture bound detects an accidental
 // demand loop; there is no sleep or simulated body injection.
-async fn settle(state: &mut AppState, store: &Arc<EventStore>) -> TestResult<Frame> {
+async fn settle(state: &mut AppState) -> TestResult<Frame> {
     for _ in 0..100 {
         let frame = prepare(state, 100, 30)?;
-        load_visible(state, store)?;
+        load_visible(state)?;
         if state.transcript.history_tasks.is_empty() && state.transcript.body_tasks.is_empty() {
             return Ok(frame);
         }
@@ -168,6 +168,9 @@ async fn disk_resume_browses_superseded_tools_and_returns_to_latest_without_writ
         source,
         crate::render::fixed_panel::StatusBar::default(),
     );
+    state
+        .transcript
+        .attach_history_reader(store.history_reader()?)?;
     state.input_editor.paste_cells(DRAFT)?;
     state
         .transcript
@@ -176,12 +179,12 @@ async fn disk_resume_browses_superseded_tools_and_returns_to_latest_without_writ
     state
         .transcript
         .accept_history(&store.history_page(&state.transcript.initial_history()?)?)?;
-    let initial = settle(&mut state, &store).await?;
+    let initial = settle(&mut state).await?;
     assert!(text(&initial).contains("newest post-compaction turn"));
     assert!(state.transcript.has_older);
     assert!(!text(&initial).contains(DESCRIPTION));
     navigation::queue(&mut state, true, 10_000)?;
-    settle(&mut state, &store).await?;
+    settle(&mut state).await?;
     assert!(!state.transcript.has_older);
     assert!(state.screen.navigation.is_none());
     assert_eq!(
@@ -214,7 +217,7 @@ async fn disk_resume_browses_superseded_tools_and_returns_to_latest_without_writ
         &state.transcript.projection,
     )?;
     crate::app::view_actions::command("expand", &mut state)?;
-    let expanded = settle(&mut state, &store).await?;
+    let expanded = settle(&mut state).await?;
     assert!(text(&expanded).contains(DESCRIPTION));
     assert!(text(&expanded).contains(OLD_RESULT), "{}", text(&expanded));
     assert_eq!(state.input_editor.text(), DRAFT);
@@ -232,7 +235,7 @@ async fn disk_resume_browses_superseded_tools_and_returns_to_latest_without_writ
             .all(|body| state.transcript.body(body).is_none())
     );
     state.screen.allow_body_load = true;
-    let reloaded = settle(&mut state, &store).await?;
+    let reloaded = settle(&mut state).await?;
     assert!(text(&reloaded).contains(OLD_RESULT));
     assert!(
         references
@@ -240,7 +243,7 @@ async fn disk_resume_browses_superseded_tools_and_returns_to_latest_without_writ
             .all(|body| state.transcript.body(body).is_some())
     );
     crate::app::view_actions::command("follow", &mut state)?;
-    let latest = settle(&mut state, &store).await?;
+    let latest = settle(&mut state).await?;
     assert!(state.screen.viewport.follows_tail());
     assert!(text(&latest).contains("newest post-compaction turn"));
     assert_eq!(state.input_editor.text(), DRAFT);

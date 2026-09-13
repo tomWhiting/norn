@@ -1,12 +1,12 @@
 //! Frontend semantic ownership, explicit history demand and revision-bound body cache.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use norn::model_selection::ModelRuntime;
 use norn::provider::AgentEvent;
 use norn::session::store::{
-    BodyPage, BodyRead, EventStore, HistoryAnchor, HistoryDirection, HistoryPage, HistoryRead,
+    BodyPage, BodyRead, HistoryAnchor, HistoryDirection, HistoryPage, HistoryRead,
+    SessionHistoryReader,
 };
 use norn::session_view::{
     AcceptedModel, AttemptKey, BodyOrigin, BodyRange, BodyRef, BodyRepresentation, HistoryCursor,
@@ -18,6 +18,9 @@ use super::view_config::ViewConfig;
 use crate::TuiError;
 
 pub(crate) mod publication;
+mod read_access;
+use read_access::read_committed_body;
+pub(super) use read_access::{open_history_reader, read_history};
 
 /// Loaded original bytes for one approved body revision, before display escaping.
 #[derive(Clone, Debug)]
@@ -63,6 +66,8 @@ pub struct BodyDemand {
 
 /// One frontend's projection and demanded content; no terminal coordinates.
 pub struct Transcript {
+    /// Sealed read access bound once by the store owner, never opened while painting.
+    history_reader: Option<SessionHistoryReader>,
     /// Shared semantic reducer used by the local frontend and later session host.
     pub projection: SessionProjection,
     /// Frontend-local declared read/detail preferences.
@@ -96,6 +101,7 @@ impl Transcript {
     pub fn new(source: ViewSource) -> Self {
         Self {
             projection: SessionProjection::new(source),
+            history_reader: None,
             config: ViewConfig::default(),
             bodies: HashMap::new(),
             pending_bodies: HashSet::new(),
@@ -234,15 +240,15 @@ impl Transcript {
     }
 
     /// Request one earlier owner-bound page; concurrent duplicate requests are coalesced.
-    pub fn load_older(&mut self, store: &Arc<EventStore>) -> Result<bool, TuiError> {
+    pub fn load_older(&mut self) -> Result<bool, TuiError> {
         if self.pending_history || !self.has_older {
             return Ok(false);
         }
         let request = self.older_history()?;
-        let store = Arc::clone(store);
+        let reader = self.history_reader()?;
         self.pending_history = true;
         self.history_tasks.spawn(async move {
-            let result = read_history(store, request.clone()).await;
+            let result = read_history(reader, request.clone()).await;
             (request, result)
         });
         Ok(true)
@@ -263,7 +269,7 @@ impl Transcript {
     }
 
     /// Schedule one configured page; completion, not a timer, advances the captured frontier.
-    pub(super) fn load_latest(&mut self, store: &Arc<EventStore>) -> Result<bool, TuiError> {
+    pub(super) fn load_latest(&mut self) -> Result<bool, TuiError> {
         if self.pending_history || !self.latest.pending() {
             return Ok(false);
         }
@@ -272,13 +278,13 @@ impl Transcript {
         } else {
             self.newer_history()?
         };
+        let reader = self.history_reader()?;
         if !self.latest.start() {
             return Ok(false);
         }
         self.pending_history = true;
-        let store = Arc::clone(store);
         self.history_tasks.spawn(async move {
-            let result = read_history(store, request.clone()).await;
+            let result = read_history(reader, request.clone()).await;
             (request, result)
         });
         Ok(true)
@@ -441,18 +447,21 @@ impl Transcript {
     /// Schedule an explicit visible-body demand outside paint and resize.
     pub fn load_body(
         &mut self,
-        store: &Arc<EventStore>,
         item: &ItemId,
         reference: &BodyRef,
         more: bool,
     ) -> Result<(), TuiError> {
+        let reader = if is_committed(reference) {
+            Some(self.history_reader()?)
+        } else {
+            None
+        };
         let Some(demand) = self.demand_body(item, reference, more)? else {
             return Ok(());
         };
-        if is_committed(reference) {
-            let store = Arc::clone(store);
+        if let Some(reader) = reader {
             self.body_tasks.spawn(async move {
-                let result = read_committed_body(store, demand.clone())
+                let result = read_committed_body(reader, demand.clone())
                     .await
                     .map(|(_, page)| page);
                 (demand, result)
@@ -504,36 +513,6 @@ impl Transcript {
         self.projection.item(id).is_some_and(|row| row.bodies.contains(reference)
             || matches!(&row.kind, ViewItemKind::Tool(tool) if tool.arguments.as_ref() == Some(reference) || tool.result.as_ref() == Some(reference)))
     }
-}
-
-/// Run only explicit history work off the terminal executor.
-pub async fn read_history(
-    store: Arc<EventStore>,
-    request: HistoryRead,
-) -> Result<HistoryPage, TuiError> {
-    tokio::task::spawn_blocking(move || store.history_page(&request))
-        .await
-        .map_err(|source| TuiError::ViewTask {
-            operation: "history page",
-            source,
-        })?
-        .map_err(TuiError::from)
-}
-
-/// Run only an approved committed body demand off the terminal executor.
-pub async fn read_committed_body(
-    store: Arc<EventStore>,
-    demand: BodyDemand,
-) -> Result<(BodyDemand, LoadedBody), TuiError> {
-    tokio::task::spawn_blocking(move || {
-        let page = store.read_body(&demand.read)?;
-        Ok((demand, LoadedBody::from(page)))
-    })
-    .await
-    .map_err(|source| TuiError::ViewTask {
-        operation: "body range",
-        source,
-    })?
 }
 
 /// Whether the store rather than the projection owns this body capability.
