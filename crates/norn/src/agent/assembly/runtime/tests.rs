@@ -140,7 +140,8 @@ fn fully_explicit_config_overlays_every_field() {
 fn install_agent_infra_publishes_action_log_tree_with_root_log() -> Result<(), Box<dyn Error>> {
     let tool_registry = Arc::new(ToolRegistry::new());
     let ctx = ToolContext::empty();
-    let action_log = Arc::new(ActionLog::new(Arc::new(EventStore::new())));
+    let event_store = Arc::new(EventStore::new());
+    let action_log = Arc::new(ActionLog::new(Arc::clone(&event_store)));
     ctx.insert_extension(Arc::clone(&action_log));
 
     let agent_id = Uuid::new_v4();
@@ -158,13 +159,13 @@ fn install_agent_infra_publishes_action_log_tree_with_root_log() -> Result<(), B
         child_result_capacity: 256,
     };
     let root_cancel = tokio_util::sync::CancellationToken::new();
-    let _child_rx = install_agent_infra(
+    let child_rx = install_agent_infra(
         &tool_registry,
         &ctx,
         AgentInfraParts {
             registry: AgentRegistry::shared(),
             provider,
-            event_store: Arc::new(EventStore::new()),
+            event_store: Arc::clone(&event_store),
             session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
             id: agent_id,
             mailbox_lease: Arc::new(crate::agent::PendingMailboxLease::new()),
@@ -173,7 +174,8 @@ fn install_agent_infra_publishes_action_log_tree_with_root_log() -> Result<(), B
             cancel: root_cancel.clone(),
             terminal_reclamation: true,
         },
-    );
+    )?;
+    assert!(!child_rx.is_closed());
 
     let published = ctx
         .get_extension::<CoordinationEnvelope>()
@@ -196,6 +198,25 @@ fn install_agent_infra_publishes_action_log_tree_with_root_log() -> Result<(), B
         .ok_or_else(|| io::Error::other("root action log was not registered"))?;
     assert!(Arc::ptr_eq(&root_log, &action_log));
     assert!(tree.children_of(agent_id).is_empty());
+    let reader = tree.history_reader(agent_id, agent_id)?;
+    assert_eq!(reader.source().agent_id, agent_id);
+    assert_eq!(reader.source().parent_agent_id, None);
+    let event_id = event_store.append(crate::session::events::SessionEvent::UserMessage {
+        base: crate::session::events::EventBase::new(None),
+        content: "assembled root history".to_owned(),
+    })?;
+    let page = reader.history_page(&crate::session::store::HistoryRead {
+        source: reader.source().clone(),
+        anchor: crate::session::store::HistoryAnchor::Start,
+        direction: crate::session::store::HistoryDirection::After,
+        max_events: std::num::NonZeroUsize::MIN,
+    })?;
+    assert_eq!(page.total_events, 1);
+    assert!(matches!(
+        page.records.first().map(|record| record.cursor().position()),
+        Some(crate::session_view::HistoryPosition::Event { event_id: actual, .. })
+            if actual == &event_id
+    ));
     Ok(())
 }
 

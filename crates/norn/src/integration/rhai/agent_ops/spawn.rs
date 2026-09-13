@@ -145,6 +145,7 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
             model: model.clone(),
             working_dir: ctx.working_dir.get().display().to_string(),
         },
+        ctx.agent_id,
     )
     .map_err(|e| {
         Box::new(rhai_error(format!(

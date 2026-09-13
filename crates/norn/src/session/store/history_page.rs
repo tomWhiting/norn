@@ -166,6 +166,15 @@ pub(super) struct BoundViewSource {
 }
 
 impl EventStore {
+    /// Read the already established owner; opening a reader never creates a binding.
+    pub(super) fn bound_history_source(&self) -> Result<ViewSource, HistoryReadError> {
+        let bound = self.view_binding.get().ok_or(HistoryReadError::Unbound {
+            generation: self.view_generation,
+        })?;
+        self.validate_view_source(&bound.source)?;
+        Ok(bound.source.clone())
+    }
+
     /// Bind an actual owner-supplied session and agent once for this store instance.
     /// Managed stores also compare the spool's registered session generation.
     /// Sinkless stores cannot independently prove the supplied owner relationship.

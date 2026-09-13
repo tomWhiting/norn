@@ -91,12 +91,31 @@ pub(crate) fn branch_child_off_executor(
     binding: &crate::session::SessionBinding,
     parent_store: &crate::session::store::EventStore,
     request: &crate::session::ChildBranchRequest,
+    parent_agent_id: Uuid,
 ) -> Result<crate::session::BranchedChild, crate::session::SessionPersistError> {
+    let mint = || {
+        let child_id = Uuid::parse_str(&request.child_session_id).map_err(|error| {
+            crate::session::SessionPersistError::EventStore(format!(
+                "child {} of agent {parent_agent_id} has an invalid agent id: {error}",
+                request.child_session_id
+            ))
+        })?;
+        let child = binding.branch_child(parent_store, request)?;
+        child
+            .store
+            .bind_view_source(&child.binding, child_id, Some(parent_agent_id))
+            .map_err(|error| {
+                crate::session::SessionPersistError::EventStore(format!(
+                    "child {child_id} of agent {parent_agent_id} history binding failed: {error}"
+                ))
+            })?;
+        Ok(child)
+    };
     match tokio::runtime::Handle::try_current() {
         Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
-            tokio::task::block_in_place(|| binding.branch_child(parent_store, request))
+            tokio::task::block_in_place(mint)
         }
-        _ => binding.branch_child(parent_store, request),
+        _ => mint(),
     }
 }
 

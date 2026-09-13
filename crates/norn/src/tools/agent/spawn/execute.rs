@@ -254,6 +254,7 @@ pub(super) async fn execute(
             model: child_model.clone(),
             working_dir: ctx.working_dir().display().to_string(),
         },
+        infra.agent_id,
     )
     .map_err(|e| ToolError::ExecutionFailed {
         reason: format!("spawn_agent: session branch failed: {e}"),

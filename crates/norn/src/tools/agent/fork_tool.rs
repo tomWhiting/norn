@@ -213,6 +213,7 @@ impl Tool for ForkTool {
                 model: args.model.clone(),
                 working_dir: ctx.working_dir().display().to_string(),
             },
+            infra.agent_id,
         )
         .map_err(|e| ToolError::ExecutionFailed {
             reason: format!("fork: session branch failed: {e}"),

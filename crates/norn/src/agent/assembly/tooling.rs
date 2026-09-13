@@ -132,6 +132,12 @@ pub(crate) fn install_agent_infra(
     shared: &ToolContext,
     parts: AgentInfraParts,
 ) -> Result<mpsc::Receiver<ChildAgentResult>, SessionError> {
+    parts
+        .event_store
+        .bind_view_source(&parts.session, parts.id, None)
+        .map_err(|error| SessionError::StorageError {
+            reason: format!("root agent {} history binding failed: {error}", parts.id),
+        })?;
     let router = Arc::new(MessageRouter::new());
     if let Some(root_inbound) = parts.root_inbound {
         router.register(parts.id, root_inbound);

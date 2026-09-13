@@ -4,6 +4,7 @@ mod append_batch;
 mod history_page;
 #[cfg(test)]
 mod history_page_tests;
+mod history_reader;
 mod idempotent_append;
 #[cfg(test)]
 mod test_support;
@@ -25,6 +26,7 @@ pub use super::jsonl_sink::{DurabilityPolicy, JsonlSink};
 pub use history_page::{
     BodyPage, BodyRead, HistoryAnchor, HistoryDirection, HistoryPage, HistoryRead, HistoryReadError,
 };
+pub use history_reader::SessionHistoryReader;
 
 /// Append-only, in-memory event store.
 ///

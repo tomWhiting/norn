@@ -315,12 +315,57 @@
     },
     {
       "id": "P02.6",
-      "status": "app_and_recovery_verified_candidate_25",
+      "status": "installed_local_preview_25",
       "scope": "Immediately editable next draft during opening-input admission, preserving exact rejected input and each draft undo state with one recall store.",
       "wall": "See P02.6 Markdown wall",
       "remaining": "Release build, executable probes and atomic local installation. Independent final-source review and venue remain separate.",
       "tests": "6550 standard tests across39 suites, strict Clippy,22-file AST, production LOC and formatting passed; actual-App held opening acceptance/rejection and footer recovery preserve both drafts and exact provider census.",
       "owner_decision": "Tom explicitly selected Keep new draft; offer recovery. Recovery preserves both draft owners."
+    },
+    {
+      "id": "D13.1",
+      "status": "verified_candidate_not_installed",
+      "scope": "Read-only paged history over the selected registered agent actual event store; no resume, copied event store, or new runtime.",
+      "wall": [
+        "crates/norn/src/session/store.rs",
+        "crates/norn/src/session/store/history_page.rs",
+        "crates/norn/src/session/store/history_reader.rs",
+        "crates/norn/src/session/action_log.rs",
+        "crates/norn/src/session/action_log_tree.rs",
+        "crates/norn/src/session/action_log_tree_history.rs",
+        "crates/norn/src/session/action_log_tree_history_tests.rs",
+        "docs/planning/NORN-CONTINUATION-20260913.json",
+        "docs/planning/NORN-CONTINUATION-20260913.md",
+        "crates/norn/src/agent/assembly/tooling.rs",
+        "crates/norn/src/tools/agent/delegation.rs",
+        "crates/norn/src/tools/agent/spawn/execute.rs",
+        "crates/norn/src/tools/agent/fork_tool.rs",
+        "crates/norn/src/integration/rhai/agent_ops/spawn.rs",
+        "crates/norn/src/agent/assembly/runtime/tests.rs"
+      ],
+      "requirements": [
+        "R1: Return a read-only handle over the existing store and exact bound source, not a mutable store or agent execution handle.",
+        "R2: Require registered caller and target in the caller subtree; validate target and parent against the store binding; reject unbound/miswired stores explicitly.",
+        "R3: Reuse approved history/body projection, caller-declared page and byte demand, and existing cursor/source/generation validation.",
+        "R4: Existing handles observe accepted future appends and remain tied to the old store across root rotation; opening another root handle observes the replacement.",
+        "R5: Prove sibling/ancestor/unknown denial, source/body isolation, unbound retry, actual appended history and rotation behavior.",
+        "R6: Bind actual root/child sources at producer construction, including spawn, fork and Rhai child allocation; a reader must not invent the missing source."
+      ],
+      "remaining": "This prerequisite does not complete selected TUI conversations, persisted descendant reads or child messaging.",
+      "verification": {
+        "standard_suites": 39,
+        "standard_passed": 6555,
+        "failed": 0,
+        "ignored": 0,
+        "logs": [
+          "var/verification/continuation-20260913/d13-history-final-clippy.log",
+          "var/verification/continuation-20260913/d13-history-final-workspace.log"
+        ],
+        "ast": "13 changed Rust files, no added unwrap/expect or bypass-pattern counts; d13-history-ast.json",
+        "production_loc": "11 production files; maximum 469 lines; d13-history-loc.json",
+        "source_hashes": "d13-history-source-hashes.json",
+        "first_clippy_finding": "A redundant clone in a new test was removed; original diagnostic retained in d13-history-clippy.log."
+      }
     }
   ],
   "policy_debt": [
@@ -385,31 +430,31 @@
     }
   },
   "installed_checkpoint": {
-    "installed_at_melbourne": "2026-09-13T10:27:31.463050+10:00",
-    "version": "norn 0.1.0-preview.24",
+    "installed_at_melbourne": "2026-09-13T11:12:00.380197+10:00",
+    "version": "norn 0.1.0-preview.25",
     "binary": "/Users/tom/.cargo/bin/norn",
-    "sha256": "1dacb45fbb4489074a5e79981bfd4e81d1ae2c1f0f09abdd982e62aa8dd6452f",
-    "source_commit": "f897bda22f1a5648535d574e4f4dc46e7ee496e8",
+    "sha256": "e1fb260fcda862f54e73a486b3098741c444299fe6f8ef5397629ca5ce47b099",
+    "source_commit": "d6ad384bf355da3cf1956c91c791826d96b751f5",
     "source_worktree": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate",
-    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.24-completion-input/previous-norn-preview.23",
-    "previous_version": "norn 0.1.0-preview.23",
+    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.25-drafts-agent-pane/previous-norn-preview.24",
+    "previous_version": "norn 0.1.0-preview.24",
     "verification": [
-      "6539 standard workspace/all-target tests passed, including 4733 core, 578 CLI, 966 TUI, 24 PTY and 14 composer cases; separate real Rust stdio channel scenarios passed",
+      "6550 standard workspace/all-target tests across 39 suites, zero failed/ignored; separate Rust stdio channel fixtures passed",
       "Strict release workspace/all-target Clippy passed; live-api-smoke compiled/linted only",
-      "8 changed Rust files AST-scanned; production LOC under 500; format and whitespace clean",
-      "Previous orchestrator fails actual-App held-checkpoint typing regression; candidate preserves typing, Option word motion, resize and exact provider history while checkpoint remains held",
-      "Captured broadcast frontier preserves later queued events and accounts for actual lag; closed-runner input preserves prior steer ordering",
-      "Release build and exact candidate loopback warning/capability probes passed"
+      "Changed Rust files AST scanned; production LOC below 500; format clean",
+      "Actual App pending opening acceptance/rejection, repeated Submit, footer recovery and independent draft preserved; original provider census exact",
+      "Actual App child tree in Agents pane and pane-scoped Command/Option copy transport",
+      "Release build and exact candidate loopback diagnostic/capability probes passed"
     ],
     "pending": [
-      "physical Herdr input/frame latency and flicker acceptance",
-      "independent next draft during opening-input admission",
-      "remaining storage and full ordered product programme",
+      "physical Herdr input/frame latency and clipboard acceptance",
+      "remaining full ordered Norn programme",
       "independent final-source review and exact-commit venue battery"
     ],
-    "scope": "local preview installation on codex/norn-integration-candidate; main remains preview.9"
+    "scope": "local preview on codex/norn-integration-candidate; main remains preview.9",
+    "announcement": "Dot channel closed; update in conversation; no Mac say"
   },
-  "next_slice": "Install verified preview.25 draft recovery and agent-pane/copy changes; then continue physical P02/P01 acceptance, U02, D03.3b/D13 and the full ordered programme.",
+  "next_slice": "D13.1 read-only selected live-child history, then persisted selected history D03.3b and TUI conversation/message selection D13; physical P02/P01 acceptance, U02 and the full ordered programme remain open.",
   "disk_checkpoint": {
     "available_gib": 41,
     "build_cache_gib": 5.8,
@@ -444,10 +489,10 @@
     "note": "Refreshed remote main revealed it already contained preview.9; stale local main was fast-forwarded from preview.8 preserving its four-line documentation edit in working tree, stash and repository-local backup. No preview.14 landing claimed."
   },
   "review_handoff": {
-    "source_commit": "f897bda22f1a5648535d574e4f4dc46e7ee496e8",
+    "source_commit": "d6ad384bf355da3cf1956c91c791826d96b751f5",
     "base_commit": "7ec7ee272788e940cbacc030001bfb3c58e48f41",
-    "directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview24-20260913",
-    "status": "Local immutable preview.24 package prepared; Tom owns Fable submission and verdict. No source sent to Anthropic. New P02.6 source requires later final-source review.",
+    "directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview25-20260913",
+    "status": "Local immutable preview.25 package prepared; Tom owns Fable submission and verdict. No source sent to Anthropic. Later source changes require final-source review.",
     "owner": "Tom"
   },
   "announcement_policy": "Tom, 13 September 2026 10:28 Melbourne: no further Mac say commands; use Dot or the requested messaging channel for update announcements.",

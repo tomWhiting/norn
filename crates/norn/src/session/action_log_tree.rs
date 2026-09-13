@@ -32,9 +32,17 @@
 //!
 //! The tree is purely in-memory and session-scoped. On session resume,
 //! only the root agent's log is rebuilt from the persisted event store
-//! (see [`crate::agent::resume::rebuild_action_log`]); child session
-//! branches are not persisted today, so a resumed session's tree starts
-//! with the root alone.
+//! (see [`crate::agent::resume::rebuild_action_log`]). Persistent child
+//! branches remain discoverable through the registered session directory;
+//! they are not eagerly loaded or registered as live agents on resume.
+
+#[path = "action_log_tree_history.rs"]
+mod history;
+#[cfg(test)]
+#[path = "action_log_tree_history_tests.rs"]
+mod history_tests;
+
+pub use history::AgentHistoryError;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -197,16 +205,21 @@ impl ActionLogTree {
     /// or sibling.
     #[must_use]
     pub fn is_in_subtree(&self, ancestor: Uuid, candidate: Uuid) -> bool {
+        self.inner.read().is_in_subtree(ancestor, candidate)
+    }
+}
+
+impl TreeInner {
+    fn is_in_subtree(&self, ancestor: Uuid, candidate: Uuid) -> bool {
         if candidate == ancestor {
             return true;
         }
-        let inner = self.inner.read();
         let mut cursor = candidate;
         // Parent links form a forest (each child registers exactly one
         // parent and ids are unique), so this walk terminates; the hop
         // bound is a defensive guard, not a semantic limit.
-        for _ in 0..=inner.parents.len() {
-            match inner.parents.get(&cursor) {
+        for _ in 0..=self.parents.len() {
+            match self.parents.get(&cursor) {
                 Some(parent) if *parent == ancestor => return true,
                 Some(parent) => cursor = *parent,
                 None => return false,

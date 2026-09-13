@@ -368,6 +368,13 @@ impl std::fmt::Debug for ActionLog {
 }
 
 impl ActionLog {
+    /// Share the actual conversation store without exposing mutation to its viewer.
+    pub(crate) fn history_reader(
+        &self,
+    ) -> Result<super::store::SessionHistoryReader, super::store::HistoryReadError> {
+        self.event_store.history_reader()
+    }
+
     /// Create a fresh action log backed by `event_store`.
     ///
     /// The same [`Arc<EventStore>`] threaded through the agent loop
