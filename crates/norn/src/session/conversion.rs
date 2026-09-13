@@ -39,14 +39,34 @@ pub fn prompt_events_to_messages(events: &[SessionEvent]) -> Vec<Message> {
 }
 
 fn events_to_messages_inner(events: &[SessionEvent], include_compactions: bool) -> Vec<Message> {
+    let mut messages = Vec::new();
+    visit_messages(events, include_compactions, |_, message| {
+        messages.push(message);
+    });
+    messages
+}
+
+/// Visit prompt messages alongside their original source event, preserving tool attribution.
+/// As with `prompt_events_to_messages`, callers supply an already-filtered prompt view.
+pub(crate) fn visit_prompt_messages(
+    events: &[SessionEvent],
+    visit: impl FnMut(&SessionEvent, Message),
+) {
+    visit_messages(events, true, visit);
+}
+
+fn visit_messages(
+    events: &[SessionEvent],
+    include_compactions: bool,
+    mut visit: impl FnMut(&SessionEvent, Message),
+) {
     let mut pending_calls = Vec::new();
-    events
-        .iter()
-        .filter_map(|event| {
-            let resolved_call = apply_local_tool_event(&mut pending_calls, event);
-            event_to_message(event, resolved_call, include_compactions)
-        })
-        .collect()
+    for event in events {
+        let resolved_call = apply_local_tool_event(&mut pending_calls, event);
+        if let Some(message) = event_to_message(event, resolved_call, include_compactions) {
+            visit(event, message);
+        }
+    }
 }
 
 fn event_to_message(

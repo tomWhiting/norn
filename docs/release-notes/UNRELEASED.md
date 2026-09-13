@@ -1,3 +1,11 @@
+## Pending — source references in compaction requests
+
+Compaction summary input now retains each projected message's original event ID, parent ID and event creation timestamp, plus tool-call IDs for exact action-log tool lookup. The shared converter preserves call/result kind and caller attribution across skipped metadata. Summarization renders one converted message at a time rather than retaining an additional full message vector. Original session records and normal provider replay remain unchanged.
+
+Summary instructions now explicitly preserve scoped authority, ownership, pending obligations and evidence references, and distinguish recorded progress from current operational state. This is not a runtime-validated continuity checkpoint or recovery manifest; summary event timestamps do not invent original child-result or voice occurrence times.
+
+All 4,738 core tests and strict workspace/all-target Clippy passed; source-reference regressions failed before the fix. This source change is not yet in the installed preview.26 binary.
+
 ## 0.1.0-preview.26 — reliable cancellation and compact message audits
 
 13 September 2026, Melbourne. An active Ctrl+C now cancels the current turn and arms the same three-second exit confirmation used while idle. A second distinct press requests application exit, cancels the run tree, and keeps the terminal responsive while execution settles. Automatic channels, root messages and child-result follow-ups cannot clear or bypass exit confirmation. Other deliberate input disarms confirmation; terminal replies and key releases do not. Confirmed exit still collects an already-accepted MCP command result and cannot submit new work while it settles.

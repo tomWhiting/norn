@@ -485,3 +485,35 @@ U04 verification: 6572 standard workspace/all-target tests across 40 suites pass
 ## Latest installed checkpoint — preview.26
 
 Preview.26 installed locally at 13:48 Melbourne on 13 September 2026, from `8a20c1478164b20c600e571491c6fa788f75b06a`; SHA256 `43eaa59c029945889b3cf7ce2ab35f94c1d6cf1891e2a9fb1fbfb9a9a1f73b9a`. Receipt: `var/releases/preview.26-interruption-message-audits/installation.json`; preview.25 rollback retained. Executable diagnostic/late-capability probes passed. Existing processes were not restarted. The U04 audit-row/exit corrections are installed; physical sustained-traffic typing/flicker acceptance remains open. Review package: `var/reviews/preview26-20260913`; Tom owns submission. No main landing or venue pass is claimed. Cleanup removed 377,628,413 bytes in 14 closed obsolete preview.25 library artifacts; current build cache and sessions preserved.
+
+## D01/D07 — sourced compaction input
+
+Status: in progress. Current summarization flattens canonical prompt messages without source event IDs/timestamps, and legacy tool labels omit call IDs. Preserve references without changing normal provider replay, durable records or selection policy. This does not constitute runtime-validated structured checkpoint/recovery.
+
+- R1: Reuse the canonical prompt-message conversion while retaining the exact source event association; preserve tool-call kind/caller matching and metadata omission.
+
+- R2: Label each summary transcript block with escaped structured event ID, parent ID and original occurrence timestamp; mark it as a prompt-view projection rather than complete raw history.
+
+- R3: Preserve legacy tool-call IDs and tool-result call IDs so action_log detail/context can retrieve exact evidence.
+
+- R4: Tell the summarizer to preserve binding authority/ownership/pending obligations and evidence references, separate reported state from live verification, and preserve supersession chronology. This does not create a runtime-validated structured checkpoint.
+
+- R5: Regression tests cover skipped metadata between events, custom/function tool attribution, exact original timestamps, IDs with control text, original record immutability and existing repeated/restored compaction selection.
+
+File wall: `crates/norn/src/session/conversion.rs`, `crates/norn/src/loop/summarization.rs`, `crates/norn/src/loop/summarization_provenance_tests.rs`, `docs/planning/NORN-CONTINUATION-20260913.json`, `docs/planning/NORN-CONTINUATION-20260913.md`, `docs/release-notes/UNRELEASED.md`.
+
+### Correlated voice timeline feedback
+
+Meridian 528e8170-d2e3-4030-95e3-0ebfc216c2a2, 13 September 2026 13:53 Melbourne. Observed missing acknowledgement despite reported playback underway; latency, queueing, playback and attention are not distinguished; no dropped-audio diagnosis. Correlate original utterance/ingress, queue/step start, model first output, say acceptance and playback start/completion; retain interruption, supersession and replay markers. Measure time to acknowledgement before attributing improvement to compaction. Preserve historical evidence without burying fresh actionable input.
+
+### Stale automatic child-result example
+
+Meridian e2abc778-6e22-4456-8dad-a516ab2c8e2e, 13 September 2026 14:03 Melbourne. Reviewer db13d44d-30b4-4ac7-b190-fad471819a92 automatic result reported an older 522-LOC blocker after later STEER37 approval, fixture split and passing gates. Mercury reports checking candidate 0f188fe and f25c2 ancestry/bytes; these repository claims are not independently verified here.
+
+ChildAgentResult in agent/result_channel.rs carries agent_id/role/outcome/text/usage, but no originating step/task or completion timestamp. frame_child_result exposes only from/from_id/succeeded. No cause for delayed arrival has been established.
+
+Acceptance: Capture task/step/generation and completion identity at the producer; distinguish occurrence and delivery time; report actual source evidence where captured. Do not infer supersession from arrival order, drop old evidence or fabricate unknown historical metadata.
+
+Summary-header timestamp scope: Header occurred_at is the source SessionEvent creation timestamp, not the original time of an embedded voice utterance or child completion. Those need producer-owned occurrence/delivery metadata; this change does not invent it.
+
+D01/D07 sourced-summary checkpoint: Two source-reference regressions failed on the old renderer, then all three new provenance cases and the full 4738-test core library suite passed. Strict release workspace/all-target Clippy including live-api-smoke compiled only and formatting passed on the current worktree; 21 changed Rust files AST-scanned, corrected production LOC maximum 484. Restored D13 draft remains outside this commit; no full-workspace runtime, live provider, physical UI or installation claim. Proof: `var/verification/continuation-20260913/d01-provenance-{before,core,clippy,fmt}.log; d01-provenance-source-hashes.json; d01-provenance-final-ast.json; d01-provenance-corrected-loc.json`. The size helper initially counted a multiline-attribute test module as production; its original and corrected exclusion artifacts remain recorded. Installed binary remains preview.26.

@@ -28,7 +28,7 @@ use crate::provider::events::StopReason;
 use crate::provider::request::{Message, MessageRole, ProviderRequest};
 use crate::provider::traits::Provider;
 use crate::provider::usage::Usage;
-use crate::session::conversion::prompt_events_to_messages;
+use crate::session::conversion::visit_prompt_messages;
 use crate::session::events::SessionEvent;
 
 /// Instructions sent as the system message of every summarization request.
@@ -40,7 +40,14 @@ successor needs to continue seamlessly: the user's objectives and constraints, \
 decisions made and their reasons, key facts and values discovered, tools that \
 were run and what they returned or changed, errors encountered and how they were \
 resolved, and any unfinished work or open questions. Use concrete names, paths, \
-identifiers, and numbers from the transcript. Do not add commentary about the \
+identifiers, and numbers from the transcript. Retain exact event IDs and tool-call \
+IDs beside the decisions, failures and unfinished obligations they support. \
+Preserve the newest applicable instruction and its scope, distinguish authority \
+from reported progress, and keep file/worktree owners, pending messages, active \
+process references and unfinished gates explicit when the transcript records them. \
+Recorded running state is historical, not proof that a process is still running. \
+Do not turn missing evidence into completed work, a vanished worker, or permission. \
+Do not add commentary about the \
 summarization task itself; output only the summary.";
 
 /// Instruction appended after the transcript in the user message.
@@ -204,18 +211,27 @@ pub(super) async fn request_compaction_summary(
 /// Render the elided events to a labelled plain-text transcript.
 ///
 /// Uses the same event-to-message projection as prompt construction
-/// ([`prompt_events_to_messages`]) so tool-call arguments, tool results,
+/// ([`visit_prompt_messages`]) so tool-call arguments, tool results,
 /// and prior compaction summaries appear exactly as the model originally
 /// saw them, then flattens each message to a role-labelled block.
 pub(super) fn render_transcript(elided: &[SessionEvent]) -> String {
-    let messages = prompt_events_to_messages(elided);
     let mut transcript = String::new();
-    for message in &messages {
+    visit_prompt_messages(elided, |event, message| {
         if !transcript.is_empty() {
             transcript.push_str("\n\n");
         }
-        transcript.push_str(&render_message(message));
-    }
+        let identity = serde_json::json!({
+            "event_id": event.base().id,
+            "parent_event_id": event.base().parent_id,
+            "occurred_at": event.base().timestamp,
+            "projection": "prompt_view",
+            "tool_call_id": message.tool_call_id,
+        });
+        transcript.push_str("[event ");
+        transcript.push_str(&identity.to_string());
+        transcript.push_str("]\n");
+        transcript.push_str(&render_message(&message));
+    });
     transcript
 }
 
@@ -250,6 +266,9 @@ fn render_message(message: &Message) -> String {
         block.push_str(content);
     }
     for call in &message.tool_calls {
+        let identity = serde_json::json!({ "call_id": call.call_id, "kind": call.kind });
+        block.push_str("\n[tool call identity] ");
+        block.push_str(&identity.to_string());
         block.push_str("\n[tool call] ");
         block.push_str(&call.name);
         block.push('(');
@@ -748,3 +767,7 @@ mod tests {
         assert!(empty.usable_summary().is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "summarization_provenance_tests.rs"]
+mod provenance_tests;
