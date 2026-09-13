@@ -537,3 +537,19 @@ Targeted TUI tests, strict workspace/all-target Clippy, formatting, AST scan. No
 U04.1 tracking wall addition: `/Users/tom/Developer/ablative/docs/tracking/INDEX-20260904.md`, Ripley Norn paragraph only.
 
 U04.1 source verification: All seven child-result tests passed after the final edit, including refill/empty/disconnected frontiers and exact frame/attribution regressions. Strict release workspace/all-target Clippy including live-api-smoke compiled only, fmt, 19-file AST comparison and production LOC maximum 484 passed. No full runtime suite or physical typing acceptance; installed preview26 unchanged. Initial manual_ok_err Clippy finding was fixed; original log retained. Logs and scans: `var/verification/continuation-20260913/u04-frontier-*`.
+
+## Preview.27 — source-bound local release
+
+- R1: Release the committed compaction provenance and finite child-result batch fixes as local preview27; exclude and preserve unfinished D13 source.
+
+- R2: Run source-bound workspace tests, strict Clippy, fmt and AST/LOC checks in usual target; actual-binary diagnostic/terminal probes must pass before atomic installation.
+
+- R3: Retain preview26 rollback and exact source/binary/check receipts; restore D13 source after install. Announce in conversation; do not restart existing sessions.
+
+- R4: Prepare local final-source review handoff only; Tom owns submission. No main landing or live sustained-traffic acceptance is implied.
+
+File wall: `Cargo.toml`, `Cargo.lock`, `README.md`, `docs/release-notes/UNRELEASED.md`, `docs/planning/NORN-CONTINUATION-20260913.json`, `docs/planning/NORN-CONTINUATION-20260913.md`.
+
+D13 preserved: var/verification/continuation-20260913/d13-before-preview27; stash d1b4b8d62c8868471afeeaffd60bfbc2cd44e156.
+
+Preview.27 source checks: 6578 standard workspace/all-target tests across 40 suites passed, zero failed/ignored; stdio channel 14, channel TUI 4, composer preference restart 4 and frontend preference restart 5 passed. Strict release workspace/all-target Clippy with live-api-smoke compiled only, fmt, four-file AST and production LOC checks passed. Final executable build and actual-CLI probes precede installation; no physical sustained-traffic acceptance claimed.
