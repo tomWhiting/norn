@@ -36,7 +36,7 @@ impl HitRow {
 
 /// Highlight only ranges proved by the current original body and actual cached map.
 pub(super) fn selection_ranges(
-    state: &crate::app::state::AppState,
+    state: &crate::app::conversation_view::ConversationView<'_>,
     item: &norn::session_view::ItemId,
     reference: Option<&BodyRef>,
     mapped: &RenderedMarkdown,
@@ -48,7 +48,7 @@ pub(super) fn selection_ranges(
     };
     if reference != Some(selection.reference())
         || state.screen.selection_item.as_ref() != Some(item)
-        || crate::app::view_actions::selected_text(state).is_err()
+        || crate::app::conversation_view::selected_text(state.transcript, state.screen).is_err()
     {
         return Vec::new();
     }

@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::app::display_selection::{DisplayPane, DisplaySelection};
+use crate::app::state::AppState;
 use crate::app::view_actions;
 use crate::render::retained_text::TextAttribute;
 use norn::provider::agent_event::{AgentEvent, AgentEventKind};

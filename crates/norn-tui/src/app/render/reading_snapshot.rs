@@ -6,7 +6,7 @@ use std::sync::Arc;
 use norn::session_view::ViewSource;
 
 use crate::TuiError;
-use crate::app::state::AppState;
+use crate::app::conversation_view::ConversationView;
 use crate::app::viewport::{AnchorPosition, ViewAnchor};
 use crate::render::frame::{Frame, PaintRow};
 use crate::render::layout::Rect;
@@ -83,7 +83,11 @@ pub(in crate::app) fn published(screen: &mut ScreenState, frame: &Arc<Frame>) {
 }
 
 /// Reflow the displayed snapshot only; no body read, identity substitution or live hit map.
-pub(super) fn paint(state: &mut AppState, frame: &mut Frame, area: Rect) -> Result<bool, TuiError> {
+pub(super) fn paint(
+    state: &mut ConversationView<'_>,
+    frame: &mut Frame,
+    area: Rect,
+) -> Result<bool, TuiError> {
     let Some(snapshot) = state.screen.reading_snapshot.as_mut() else {
         return Ok(false);
     };

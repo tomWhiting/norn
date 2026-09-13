@@ -9,6 +9,7 @@ pub(crate) mod composer_geometry;
 mod composer_recovery;
 pub(crate) mod composer_submission;
 mod context_status;
+mod conversation_view;
 mod diagnostics;
 pub mod dispatch;
 mod display_selection;

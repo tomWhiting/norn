@@ -366,6 +366,45 @@
         "source_hashes": "d13-history-source-hashes.json",
         "first_clippy_finding": "A redundant clone in a new test was removed; original diagnostic retained in d13-history-clippy.log."
       }
+    },
+    {
+      "id": "D13.2",
+      "status": "in_progress",
+      "scope": "Separate conversation presentation from AppState runtime ownership, then connect selected-agent views.",
+      "wall": [
+        "crates/norn-tui/src/app/mod.rs",
+        "crates/norn-tui/src/app/conversation_view.rs",
+        "crates/norn-tui/src/app/conversation_view_tests.rs",
+        "crates/norn-tui/src/app/render/transcript.rs",
+        "crates/norn-tui/src/app/render/navigation.rs",
+        "crates/norn-tui/src/app/render/reading_snapshot.rs",
+        "crates/norn-tui/src/app/render/hit.rs",
+        "crates/norn-tui/src/app/view_actions.rs",
+        "docs/planning/NORN-CONTINUATION-20260913.json",
+        "docs/planning/NORN-CONTINUATION-20260913.md",
+        "crates/norn-tui/src/app/render/reading_snapshot_tests.rs"
+      ],
+      "requirements": [
+        "R1: Rendering and navigation borrow a matched Transcript/ScreenState pair without access to provider, runtime, composer or command authority.",
+        "R2: Root adapters preserve the existing styled renderer, reading snapshots, exact selection and finite-batch navigation; no extra event store or raw-history clone.",
+        "R3: A mismatched display/source is refused before changing either owner. A child transcript uses the same rendering path and cannot mutate root transcript, draft or viewport.",
+        "R4: Test two actual source-bound stores with distinct content, bounded approved page/body loading, independent navigation and source-isolated original selection.",
+        "R5: Preserve root TUI regressions. Pane selection, background read supervision, live source refresh and messaging remain unfinished until wired and verified in the actual App."
+      ],
+      "verification": {
+        "presentation_extraction": "passed; pane selection and messaging still in progress",
+        "standard_suites": 39,
+        "standard_passed": 6558,
+        "failed": 0,
+        "ignored": 0,
+        "strict_clippy": "passed workspace/all-targets, live-api-smoke compiled only",
+        "ast": "d13-view-ast.json: nine changed Rust files",
+        "production_loc": "d13-view-loc.json: seven production files, maximum 402",
+        "logs": [
+          "d13-view-final-clippy.log",
+          "d13-view-final-workspace.log"
+        ]
+      }
     }
   ],
   "policy_debt": [

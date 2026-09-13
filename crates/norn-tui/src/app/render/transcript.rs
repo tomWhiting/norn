@@ -5,6 +5,7 @@ use std::sync::Arc;
 use norn::session_view::{BodyRef, ItemDirection, ItemInclusion, ViewItem, ViewItemKind};
 
 use crate::TuiError;
+use crate::app::conversation_view::ConversationView;
 use crate::app::state::AppState;
 use crate::app::viewport::{AnchorPosition, AnchorState, ViewAnchor};
 use crate::render::frame::{Frame, PaintRow};
@@ -23,6 +24,22 @@ pub(super) fn conversation(
     area: Rect,
 ) -> Result<(), TuiError> {
     let status = super::composer::activity_status(state);
+    paint(
+        &mut ConversationView::root(state)?,
+        frame,
+        area,
+        status.as_deref(),
+    )
+}
+
+/// Render a selected conversation using its own semantic and presentation owners.
+/// The caller supplies status text; this operation has no running-agent access.
+pub(in crate::app) fn paint(
+    state: &mut ConversationView<'_>,
+    frame: &mut Frame,
+    area: Rect,
+    status: Option<&str>,
+) -> Result<(), TuiError> {
     let status_area = status.as_ref().filter(|_| area.height > 1).map(|_| Rect {
         row: area.row + area.height - 1,
         height: 1,
@@ -43,7 +60,7 @@ pub(super) fn conversation(
     ) {
         if super::reading_snapshot::paint(state, frame, area)? {
             if let (Some(status), Some(area)) = (status, status_area) {
-                push_text(frame, &status, area, false, false)?;
+                push_text(frame, status, area, false, false)?;
             }
             return Ok(());
         }
@@ -56,7 +73,7 @@ pub(super) fn conversation(
         )?;
         return Ok(());
     }
-    super::navigation::apply(state)?;
+    super::navigation::apply_view(state)?;
     let anchor = state.screen.viewport.anchor().cloned();
     let follows = state.screen.viewport.follows_tail();
     let mut visible = window(
@@ -127,7 +144,7 @@ pub(super) fn conversation(
     }
     state.screen.prepared_reading = Some(area);
     if let (Some(status), Some(area)) = (status, status_area) {
-        push_text(frame, &status, area, false, false)?;
+        push_text(frame, status, area, false, false)?;
     }
     Ok(())
 }
@@ -142,7 +159,7 @@ struct RowWindow<'a> {
 }
 
 fn window(
-    state: &mut AppState,
+    state: &mut ConversationView<'_>,
     columns: u16,
     anchor: Option<&ViewAnchor>,
     backwards: bool,
@@ -196,8 +213,8 @@ fn window(
         };
         has_earlier = true;
         let groups = item_groups(
-            &state.transcript,
-            &mut state.screen,
+            state.transcript,
+            state.screen,
             item,
             if matches!(item.kind, ViewItemKind::Input) {
                 columns.saturating_sub(2).max(1)
@@ -209,12 +226,7 @@ fn window(
         )?;
         let requested = RowWindow {
             anchor: anchor.filter(|anchor| anchor.item == item.id),
-            cached_position: super::navigation::locate_cursor(
-                &state.screen,
-                item,
-                &groups,
-                columns,
-            ),
+            cached_position: super::navigation::locate_cursor(state.screen, item, &groups, columns),
             backwards,
             limit: limit.saturating_sub(rows.len()),
             exclusive,
@@ -817,15 +829,36 @@ mod tests {
     #[test]
     fn one_row_navigation_crosses_distinct_spacers_in_both_directions() -> TestResult {
         let mut state = readable_state()?;
-        let all = window(&mut state, 100, None, false, 100, false)?;
+        let all = window(
+            &mut ConversationView::root(&mut state)?,
+            100,
+            None,
+            false,
+            100,
+            false,
+        )?;
         assert!(!all.is_empty());
         for pair in all.windows(2) {
             let first = &pair[0].0;
             let second = &pair[1].0;
             assert_ne!(first, second);
-            let forward = window(&mut state, 100, Some(first), false, 1, true)?;
+            let forward = window(
+                &mut ConversationView::root(&mut state)?,
+                100,
+                Some(first),
+                false,
+                1,
+                true,
+            )?;
             assert_eq!(forward.first().map(|row| &row.0), Some(second));
-            let backward = window(&mut state, 100, Some(second), true, 1, true)?;
+            let backward = window(
+                &mut ConversationView::root(&mut state)?,
+                100,
+                Some(second),
+                true,
+                1,
+                true,
+            )?;
             assert_eq!(backward.first().map(|row| &row.0), Some(first));
         }
         let body = all
@@ -857,7 +890,14 @@ mod tests {
             .screen
             .viewport
             .scroll_to(anchor.clone(), &state.transcript.projection)?;
-        let narrow = window(&mut state, 12, Some(&anchor), false, 5, false)?;
+        let narrow = window(
+            &mut ConversationView::root(&mut state)?,
+            12,
+            Some(&anchor),
+            false,
+            5,
+            false,
+        )?;
         assert!(!narrow.is_empty());
         assert_eq!(state.screen.viewport.anchor(), Some(&anchor));
         assert_eq!(

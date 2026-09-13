@@ -7,6 +7,7 @@ use norn::session_view::{
 };
 
 use crate::TuiError;
+use crate::app::conversation_view::ConversationView;
 use crate::app::state::AppState;
 use crate::app::viewport::{AnchorPosition, ViewAnchor};
 use crate::render::layout::{Layout, UpperLayout, UpperPane};
@@ -57,12 +58,21 @@ pub(in crate::app) fn queue(
     backwards: bool,
     rows: usize,
 ) -> Result<(), TuiError> {
+    queue_view(&mut ConversationView::root(state)?, backwards, rows)
+}
+
+/// Queue navigation for exactly the borrowed conversation, independently of a runtime.
+pub(in crate::app) fn queue_view(
+    state: &mut ConversationView<'_>,
+    backwards: bool,
+    rows: usize,
+) -> Result<(), TuiError> {
     if rows == 0 {
         return Ok(());
     }
     state.transcript.cancel_latest();
     if !backwards {
-        cancel_deferred(state);
+        cancel_deferred_screen(state.screen);
     }
     let columns = match state.screen.layout {
         Layout::Ready {
@@ -132,7 +142,12 @@ pub(in crate::app) fn queue(
     Ok(())
 }
 
+/// Apply queued root navigation through the same source-checked presentation boundary.
 pub(in crate::app) fn apply(state: &mut AppState) -> Result<(), TuiError> {
+    apply_view(&mut ConversationView::root(state)?)
+}
+
+pub(in crate::app) fn apply_view(state: &mut ConversationView<'_>) -> Result<(), TuiError> {
     let Some(mut plan) = state.screen.navigation.take() else {
         return Ok(());
     };
@@ -184,14 +199,17 @@ pub(in crate::app) fn finish(state: &mut AppState) -> Result<(), TuiError> {
 
 /// A failed/nonprogressing page must not leave an automatic retry armed.
 pub(in crate::app) fn cancel_deferred(state: &mut AppState) {
-    if state
-        .screen
+    cancel_deferred_screen(&mut state.screen);
+}
+
+fn cancel_deferred_screen(screen: &mut ScreenState) {
+    if screen
         .navigation
         .as_ref()
         .is_some_and(|plan| plan.waiting.is_some())
     {
-        state.screen.navigation = None;
-        state.screen.request_older = false;
+        screen.navigation = None;
+        screen.request_older = false;
     }
 }
 
@@ -221,7 +239,7 @@ pub(super) fn locate_cursor(
     })
 }
 
-fn advance(state: &mut AppState, motion: &Motion) -> Result<usize, TuiError> {
+fn advance(state: &mut ConversationView<'_>, motion: &Motion) -> Result<usize, TuiError> {
     let anchor = state.screen.viewport.anchor().cloned();
     let direction = if motion.backwards {
         ItemDirection::Earlier
@@ -274,15 +292,15 @@ fn advance(state: &mut AppState, motion: &Motion) -> Result<usize, TuiError> {
             motion.columns
         };
         let groups = item_groups(
-            &state.transcript,
-            &mut state.screen,
+            state.transcript,
+            state.screen,
             item,
             width,
             state.display_toggles.secondary_fields_visible,
             separator,
         )?;
         let local_anchor = anchor.as_ref().filter(|anchor| anchor.item == item.id);
-        let position = locate_cursor(&state.screen, item, &groups, motion.columns)
+        let position = locate_cursor(state.screen, item, &groups, motion.columns)
             .or_else(|| local_anchor.and_then(|anchor| locate_anchor(&groups, &anchor.position)));
         if motion.backwards
             && position.is_none()

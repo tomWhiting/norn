@@ -204,50 +204,11 @@ fn original_for<'a>(
     item: &norn::session_view::ItemId,
     reference: &'a norn::session_view::BodyRef,
 ) -> Result<super::selection::OriginalBody<'a>, TuiError> {
-    let projection = &state.transcript.projection;
-    if state.screen.viewport.source() != projection.source() {
-        return Err(interaction(std::io::Error::other(format!(
-            "view source {:?} no longer matches projection {:?}",
-            state.screen.viewport.source(),
-            projection.source()
-        ))));
-    }
-    let current_id = projection.alias(item).unwrap_or(item);
-    if projection
-        .item(current_id)
-        .is_none_or(|item| !item.bodies.contains(reference))
-    {
-        return Err(interaction(std::io::Error::other(format!(
-            "selected original body revision is no longer current for {item:?}"
-        ))));
-    }
-    let body = state.transcript.body(reference).ok_or_else(|| {
-        interaction(std::io::Error::other(format!(
-            "selected original body is not loaded for {item:?}"
-        )))
-    })?;
-    Ok(super::selection::OriginalBody::new(
-        reference,
-        &body.original,
-        body.next_offset.is_none(),
-    ))
+    super::conversation_view::original_for(&state.transcript, &state.screen, item, reference)
 }
 
 pub(in crate::app) fn selected_text(state: &AppState) -> Result<&str, TuiError> {
-    let selection = state.screen.selection.as_ref().ok_or_else(|| {
-        interaction(std::io::Error::other(
-            "no original text selection; drag text or use /view select",
-        ))
-    })?;
-    let item = state
-        .screen
-        .selection_item
-        .as_ref()
-        .ok_or_else(|| interaction(std::io::Error::other("selection has no item owner")))?;
-    let original = original_for(state, item, selection.reference())?;
-    selection
-        .read(state.transcript.projection.source(), Some(original))
-        .map_err(interaction)
+    super::conversation_view::selected_text(&state.transcript, &state.screen)
 }
 
 fn select_original(
