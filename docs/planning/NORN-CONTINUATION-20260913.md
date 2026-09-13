@@ -517,3 +517,23 @@ Acceptance: Capture task/step/generation and completion identity at the producer
 Summary-header timestamp scope: Header occurred_at is the source SessionEvent creation timestamp, not the original time of an embedded voice utterance or child completion. Those need producer-owned occurrence/delivery metadata; this change does not invent it.
 
 D01/D07 sourced-summary checkpoint: Two source-reference regressions failed on the old renderer, then all three new provenance cases and the full 4738-test core library suite passed. Strict release workspace/all-target Clippy including live-api-smoke compiled only and formatting passed on the current worktree; 21 changed Rust files AST-scanned, corrected production LOC maximum 484. Restored D13 draft remains outside this commit; no full-workspace runtime, live provider, physical UI or installation claim. Proof: `var/verification/continuation-20260913/d01-provenance-{before,core,clippy,fmt}.log; d01-provenance-source-hashes.json; d01-provenance-final-ast.json; d01-provenance-corrected-loc.json`. The size helper initially counted a multiline-attribute test module as production; its original and corrected exclusion artifacts remain recorded. Installed binary remains preview.26.
+
+## U04.1 — finite child-result batches
+
+U04; Tom confirms repeated agent message entries were in the conversation itself. The installed preview26 filters valid message audits; sustained traffic acceptance remains open.
+
+- R1: Capture the child-result receiver queue length once per batch; results arriving after that frontier remain queued for a later event-loop iteration.
+
+- R2: Retain FIFO, exact result attribution and model frames without loss or arbitrary numeric caps. Return control to terminal selection after the captured batch.
+
+- R3: Deterministic tests refill the queue during consumption, verify finite completion and leave later results available; also cover empty and disconnected buffered receivers.
+
+- R4: Do not claim this independently fixes the observed audit flood or all live typing/flicker; preserve installed preview26 and unfinished D13 work.
+
+File wall: `crates/norn-tui/src/app/child_results.rs`, `docs/planning/NORN-CONTINUATION-20260913.json`, `docs/planning/NORN-CONTINUATION-20260913.md`, `docs/release-notes/UNRELEASED.md`.
+
+Targeted TUI tests, strict workspace/all-target Clippy, formatting, AST scan. No main landing or installation claim from source checks.
+
+U04.1 tracking wall addition: `/Users/tom/Developer/ablative/docs/tracking/INDEX-20260904.md`, Ripley Norn paragraph only.
+
+U04.1 source verification: All seven child-result tests passed after the final edit, including refill/empty/disconnected frontiers and exact frame/attribution regressions. Strict release workspace/all-target Clippy including live-api-smoke compiled only, fmt, 19-file AST comparison and production LOC maximum 484 passed. No full runtime suite or physical typing acceptance; installed preview26 unchanged. Initial manual_ok_err Clippy finding was fixed; original log retained. Logs and scans: `var/verification/continuation-20260913/u04-frontier-*`.

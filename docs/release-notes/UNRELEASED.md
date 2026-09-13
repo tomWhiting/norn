@@ -1,3 +1,9 @@
+## Pending — bounded child-result delivery batches
+
+The TUI now captures the available child-result queue once per batch. Results arriving during that batch remain queued for a later event-loop iteration, so a producer cannot keep extending the synchronous drain ahead of keyboard handling. Original result order, child attribution and model-delivery frames are preserved. This removes one starvation path; it does not establish that all reported typing lag or flicker is resolved. This source change is not yet installed.
+
+Seven child-result tests, strict workspace/all-target Clippy, formatting and AST checks passed. Sustained-traffic terminal acceptance remains open.
+
 ## Pending — source references in compaction requests
 
 Compaction summary input now retains each projected message's original event ID, parent ID and event creation timestamp, plus tool-call IDs for exact action-log tool lookup. The shared converter preserves call/result kind and caller attribution across skipped metadata. Summarization renders one converted message at a time rather than retaining an additional full message vector. Original session records and normal provider replay remain unchanged.

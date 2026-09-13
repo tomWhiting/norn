@@ -41,9 +41,7 @@ pub(super) fn render_child_result_batch(
 ) -> Result<(), TuiError> {
     let mut batch = vec![first];
     if let Some(rx) = child_rx.as_mut() {
-        while let Ok(result) = rx.try_recv() {
-            batch.push(result);
-        }
+        batch.extend(ready_frontier(rx));
     }
     for result in &batch {
         let detail = format_child_result_detail(result)?;
@@ -51,6 +49,17 @@ pub(super) fn render_child_result_batch(
     }
     pending_child_prompts.push_back(format_child_result_batch(&batch));
     Ok(())
+}
+
+/// Consume only the captured queue frontier, leaving later arrivals to the event
+/// loop so a producer cannot extend this synchronous batch past keyboard input.
+fn ready_frontier<T>(
+    receiver: &mut tokio::sync::mpsc::Receiver<T>,
+) -> impl Iterator<Item = T> + '_ {
+    let remaining = receiver.len();
+    // Empty and disconnected both end this batch; buffered results remain readable
+    // after sender disconnection, and the normal receiver owns future arrivals.
+    std::iter::from_fn(move || receiver.try_recv().ok()).take(remaining)
 }
 
 /// Preserve the actual outcome and every returned diagnostic as display data.
@@ -89,6 +98,52 @@ mod tests {
     use super::*;
     use norn::provider::Usage;
     use uuid::Uuid;
+
+    #[test]
+    fn refilling_producer_cannot_extend_the_captured_batch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
+        sender.try_send(1)?;
+        sender.try_send(2)?;
+        {
+            let mut batch = ready_frontier(&mut receiver);
+            assert_eq!(batch.next(), Some(1));
+            sender.try_send(3)?;
+            assert_eq!(batch.next(), Some(2));
+            sender.try_send(4)?;
+            assert_eq!(batch.next(), None);
+        }
+        assert_eq!(receiver.try_recv()?, 3);
+        assert_eq!(receiver.try_recv()?, 4);
+        Ok(())
+    }
+
+    #[test]
+    fn empty_frontier_does_not_consume_later_arrival() -> Result<(), Box<dyn std::error::Error>> {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        {
+            let mut batch = ready_frontier(&mut receiver);
+            sender.try_send(1)?;
+            assert_eq!(batch.next(), None);
+        }
+        assert_eq!(receiver.try_recv()?, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn disconnected_frontier_retains_every_buffered_result()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
+        sender.try_send(1)?;
+        sender.try_send(2)?;
+        drop(sender);
+        assert_eq!(ready_frontier(&mut receiver).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(
+            receiver.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+        );
+        Ok(())
+    }
 
     fn result(role: &str, body: &str) -> ChildAgentResult {
         ChildAgentResult {
