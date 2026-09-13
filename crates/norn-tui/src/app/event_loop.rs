@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
 use termina::event::{KeyCode, KeyEventKind, Modifiers};
-use termina::{Event, EventReader, Terminal as _};
+use termina::{Event, Terminal as _};
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
@@ -40,6 +40,7 @@ use super::render::{load_visible, redraw_all, sync_input_area, write_user_messag
 use super::session_replay::replay_visible_session_history;
 use super::slash::{SlashOutcome, try_dispatch_slash};
 use super::state::AppState;
+use super::terminal_events::spawn_event_reader;
 use super::turn::{
     run_pending_child_prompts, run_ready_mcp_channels, run_ready_root_inbound, run_turn_and_pending,
 };
@@ -113,8 +114,8 @@ pub struct TuiInputs {
     /// `AgentParts::cancel`, the same token published to every spawned
     /// descendant as `AgentCancellation`.
     ///
-    /// The TUI uses it in exactly two places (retry-forever DESIGN D7):
-    /// every turn runs on a `child_token` of it, and
+    /// The TUI roots every turn in this token (retry-forever DESIGN D7):
+    /// every turn runs on a `child_token` of it; confirmed exit cancels it, and
     /// [`RootCancelOnExit`] cancels it when the app returns, so no
     /// descendant's retry loop outlives the TUI. Callers that assemble
     /// through `AgentBuilder` pass `parts.cancel`; an embedder without
@@ -141,8 +142,8 @@ pub(super) const RENDER_TICK: Duration = Duration::from_millis(8);
 /// future exit path can forget to.
 ///
 /// Per-turn cancellation is deliberately NOT this token: each turn runs on
-/// a `child_token` of it (`turn::run::turn_cancel_token`), so Ctrl+C
-/// mid-turn stays turn-local while exit cascades.
+/// a `child_token` of it (`turn::run::turn_cancel_token`), so the first Ctrl+C
+/// mid-turn stays turn-local while confirmed exit cascades.
 pub(super) struct RootCancelOnExit(tokio_util::sync::CancellationToken);
 
 impl RootCancelOnExit {
@@ -171,7 +172,7 @@ impl Drop for RootCancelOnExit {
 /// run tree's ROOT token, which makes the two directions explicit and
 /// opposite:
 ///
-/// - **Ctrl+C during a turn stays turn-local**: cancelling the returned
+/// - **The first Ctrl+C during a turn stays turn-local**: cancelling the returned
 ///   token ends this step only. The root — and therefore every spawned
 ///   child, which the operator closes through `close_agent` — is untouched.
 /// - **App exit cascades**: [`RootCancelOnExit`] cancels the root, which
@@ -191,7 +192,7 @@ pub(super) fn turn_cancel_token(
 /// Drive the TUI to completion.
 ///
 /// Sets up the terminal, constructs [`AppState`], and enters the main
-/// `tokio::select!` loop. Returns on confirmed idle Ctrl+C or `/exit`
+/// `tokio::select!` loop. Returns on confirmed Ctrl+C or `/exit`
 /// or on a fatal terminal I/O error.
 ///
 /// # Errors
@@ -305,37 +306,6 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
     super::frontend_preferences::exit_outcome(outcome, saves, exports)
 }
 
-/// Spawn the dedicated OS thread that reads terminal events.
-///
-/// [`EventReader::read`] blocks the calling thread, so it cannot run
-/// inside the tokio runtime. The thread forwards each event onto an
-/// unbounded mpsc channel; the returned receiver is the single source
-/// of terminal events for both the outer loop and the in-flight turn
-/// (Ctrl+C interrupt path).
-fn spawn_event_reader(
-    event_reader: EventReader,
-) -> mpsc::UnboundedReceiver<std::io::Result<Event>> {
-    let (term_tx, term_rx) = mpsc::unbounded_channel::<std::io::Result<Event>>();
-    std::thread::spawn(move || {
-        loop {
-            match event_reader.read(|_| true) {
-                Ok(event) => {
-                    if term_tx.send(Ok(event)).is_err() {
-                        break;
-                    }
-                }
-                Err(err) => {
-                    if term_tx.send(Err(err)).is_err() {
-                        tracing::debug!("terminal error receiver has closed");
-                    }
-                    break;
-                }
-            }
-        }
-    });
-    term_rx
-}
-
 /// Runtime references threaded through the turn helper.
 ///
 /// `pub(super)` so [`super::slash`] can read and mutate fields when
@@ -413,6 +383,12 @@ async fn outer_loop(
     let mut events_closed = false;
     let mut inbound_closed = false;
     loop {
+        if state
+            .exit_confirmation
+            .ready_to_exit(mcp_exit_is_blocked(runtime.mcp_command.as_ref()))
+        {
+            return Ok(());
+        }
         redraw_all(state, guard)?;
         load_visible(state)?;
         redraw_all(state, guard)?;
@@ -467,7 +443,7 @@ async fn outer_loop(
                     Some(session) => session.wake_ready().await,
                     None => std::future::pending().await,
                 }
-            }, if !channel_wake_paused => {
+            }, if !channel_wake_paused && !state.exit_confirmation.blocks_automatic_work() => {
                 readiness?;
                 channel_wake_paused = !run_ready_mcp_channels(state, runtime, guard, &mut term_rx, agent_event_rx, &mut child_results).await?;
             }
@@ -476,13 +452,17 @@ async fn outer_loop(
                     Some(inbound) => inbound.steer_ready().await,
                     None => std::future::pending().await,
                 }
-            }, if !inbound_closed => {
+            }, if !inbound_closed && !state.exit_confirmation.blocks_automatic_work() => {
                 if ready { run_ready_root_inbound(state, runtime, guard, &mut term_rx, agent_event_rx, &mut child_results).await?; }
                 else { inbound_closed = true; }
             }
             Some(first) = super::child_results::recv_child_result(&mut child_results.rx) => {
                 super::child_results::render_child_result_batch(state, &mut child_results.rx, &mut child_results.pending_prompts, first)?;
                 state.screen.conversation.allow_body_load = true;
+                run_pending_child_prompts(state, runtime, guard, &mut term_rx, agent_event_rx, &mut child_results).await?;
+            }
+            () = std::future::ready(()), if !child_results.pending_prompts.is_empty()
+                && !state.exit_confirmation.blocks_automatic_work() => {
                 run_pending_child_prompts(state, runtime, guard, &mut term_rx, agent_event_rx, &mut child_results).await?;
             }
             _ = tick.tick() => { state.tick(Instant::now()); }
@@ -532,12 +512,7 @@ async fn dispatch_input(
         redraw_all(state, guard)?;
         return Ok(InputOutcome::Continue);
     }
-    if matches!(&event, Event::Paste(_))
-        || matches!(&event, Event::Key(key) if key.kind != KeyEventKind::Release
-            && !(key.code == KeyCode::Char('c') && key.modifiers.contains(Modifiers::CONTROL)))
-    {
-        state.screen.dirty |= state.exit_confirmation.clear();
-    }
+    state.screen.dirty |= state.exit_confirmation.observe_input(&event);
     match event {
         Event::Key(key) => {
             let cols = guard.terminal_columns();
@@ -628,6 +603,11 @@ async fn handle_action(
     agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
     child_results: &mut ChildResultState,
 ) -> Result<InputOutcome, TuiError> {
+    if state.exit_confirmation.requested()
+        && matches!(action, InputAction::Submit | InputAction::Exit)
+    {
+        return Ok(InputOutcome::Continue);
+    }
     let mut outcome = InputOutcome::Continue;
     match action {
         InputAction::Exit => {

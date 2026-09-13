@@ -183,7 +183,10 @@ pub(crate) async fn run_pending_child_prompts(
     agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
     child_results: &mut ChildResultState,
 ) -> Result<(), TuiError> {
-    while let Some(prompt) = child_results.pending_prompts.pop_front() {
+    while !state.exit_confirmation.blocks_automatic_work() {
+        let Some(prompt) = child_results.pending_prompts.pop_front() else {
+            break;
+        };
         let outcome = run_turn(
             state,
             runtime,
@@ -222,6 +225,9 @@ async fn run_followup_prompts(
         .interrupt_prompt
         .or_else(|| state.in_flight_input.pop_queued_followup());
     while let Some(prompt) = next {
+        if state.exit_confirmation.requested() {
+            return Ok(ran_operator_turn);
+        }
         ran_operator_turn = true;
         let input = write_user_message(prompt, state)?;
         let outcome = run_turn(
@@ -269,7 +275,6 @@ async fn run_turn(
     )?;
     let observation = state.transcript.observation();
     crate::app::composer_submission::bind(state, local_input.as_ref(), observation.as_ref())?;
-    state.screen.dirty |= state.exit_confirmation.clear();
     state.turn_start = Some(Instant::now());
     state.in_flight_input.set_running(true);
 
@@ -317,9 +322,11 @@ async fn run_turn(
                     Some(Ok(event)) => {
                         crate::app::composer_submission::resolve(state)?;
                         state.screen.terminal_event(term_rx.len());
+                        state.screen.dirty |= state.exit_confirmation.observe_input(&event);
                         if is_ctrl_c(&event) {
                             cancel_requested = true;
-                            cancel.cancel();
+                            state.exit_confirmation.interrupt(Instant::now(), &cancel, &runtime.root_cancel);
+                            state.screen.dirty = true;
                         } else {
                             handle_mid_turn_event(
                                 event,
@@ -443,6 +450,7 @@ async fn run_turn(
         terminal: term_rx,
         active_input: &active_input_tx,
         cancel: &cancel,
+        root_cancel: &runtime.root_cancel,
         cancel_requested: &mut cancel_requested,
         closed: terminal_closed,
         tick: &mut tick,

@@ -213,6 +213,13 @@ mod tests {
         ));
         started.await;
         assert!(mcp_exit_is_blocked(task.as_ref()));
+        let now = std::time::Instant::now();
+        assert!(!app.exit_confirmation.press(now));
+        assert!(app.exit_confirmation.press(now));
+        assert!(
+            !app.exit_confirmation
+                .ready_to_exit(mcp_exit_is_blocked(task.as_ref()))
+        );
         assert!(matches!(
             handle_mcp("list", Some(&control), &mut task, &mut app)?,
             LocalCommandOutcome::Rejected
@@ -227,6 +234,10 @@ mod tests {
             .ok_or("MCP task handle was missing")??;
         assert!(completion.is_ok());
         assert!(!mcp_exit_is_blocked(task.as_ref()));
+        assert!(
+            app.exit_confirmation
+                .ready_to_exit(mcp_exit_is_blocked(task.as_ref()))
+        );
         Ok(())
     }
 

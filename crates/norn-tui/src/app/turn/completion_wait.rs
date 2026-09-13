@@ -21,6 +21,7 @@ pub(super) struct TerminalCompletion<'a> {
     pub terminal: &'a mut mpsc::UnboundedReceiver<std::io::Result<Event>>,
     pub active_input: &'a ActiveInputSender,
     pub cancel: &'a CancellationToken,
+    pub root_cancel: &'a CancellationToken,
     pub cancel_requested: &'a mut bool,
     pub closed: bool,
     pub tick: &'a mut tokio::time::Interval,
@@ -85,9 +86,15 @@ impl TerminalCompletion<'_> {
             Some(Ok(event)) => {
                 crate::app::composer_submission::resolve(state)?;
                 state.screen.terminal_event(self.terminal.len());
+                state.screen.dirty |= state.exit_confirmation.observe_input(&event);
                 if is_ctrl_c(&event) {
                     *self.cancel_requested = true;
-                    self.cancel.cancel();
+                    state.exit_confirmation.interrupt(
+                        Instant::now(),
+                        self.cancel,
+                        self.root_cancel,
+                    );
+                    state.screen.dirty = true;
                 } else {
                     super::super::mid::handle_mid_turn_event(
                         event,

@@ -1,3 +1,11 @@
+## 0.1.0-preview.26 — reliable cancellation and compact message audits
+
+13 September 2026, Melbourne. An active Ctrl+C now cancels the current turn and arms the same three-second exit confirmation used while idle. A second distinct press requests application exit, cancels the run tree, and keeps the terminal responsive while execution settles. Automatic channels, root messages and child-result follow-ups cannot clear or bypass exit confirmation. Other deliberate input disarms confirmation; terminal replies and key releases do not. Confirmed exit still collects an already-accepted MCP command result and cannot submit new work while it settles.
+
+Valid queued, dequeued, sent and delivered agent-message audit records now appear only with metadata expanded, including audit copies made by another agent. The actual delivered message remains a conversation input. Malformed audits remain explicitly unavailable. Stored session records are unchanged. This corrects the unsupported `agent_message.queued`/`agent_message.dequeued` transcript rows found in Tom's live session; it is not a claim that every observed typing freeze or flicker is solved.
+
+The unfinished D13 agent selection work is preserved separately while this fix is verified. The local install, final-source review and exact-commit venue battery are pending. Cargo uses the worktree's ordinary `target/` directory; the existing cache was moved there without duplication.
+
 ## 0.1.0-preview.24 — terminal input during turn completion (candidate)
 
 ## 0.1.0-preview.25 — independent drafts and agent side-pane candidate

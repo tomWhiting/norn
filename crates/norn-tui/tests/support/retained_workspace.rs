@@ -1140,3 +1140,7 @@ fn panic_error(payload: &(dyn Any + Send), label: &str) -> io::Error {
     };
     io::Error::other(format!("{label} panicked: {message}"))
 }
+
+#[path = "interrupt_exit.rs"]
+mod interrupt_exit;
+pub use interrupt_exit::verify_interrupt_exit;

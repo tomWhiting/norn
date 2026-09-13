@@ -91,12 +91,13 @@ pub(super) fn paint_chrome(
     let send_shortcut = state
         .view_shortcuts
         .hint(crate::input::view_shortcuts::ViewAction::SendKeyCycle);
-    let exit_hint = if state.in_flight_input.is_running() {
-        "^C cancel turn"
-    } else {
-        state.exit_confirmation.hint()
-    };
-    let hints = if state.exit_confirmation.is_armed() {
+    let exit_hint =
+        if state.in_flight_input.is_running() && !state.exit_confirmation.blocks_automatic_work() {
+            "^C cancel turn"
+        } else {
+            state.exit_confirmation.hint()
+        };
+    let hints = if state.exit_confirmation.blocks_automatic_work() {
         // Confirmation comes first so narrow panes cannot clip the exit instruction.
         format!("{exit_hint}  {button}  {newline} newline")
     } else {

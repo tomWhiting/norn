@@ -333,14 +333,10 @@ impl SessionProjection {
                 label,
                 description.as_ref().map(|_| DisplayField::LabelDescription),
             )?,
-            SessionEvent::Custom { event_type, .. } => rows.push(
-                if event_type == PROVIDER_STATE_PROVENANCE_EVENT_TYPE {
-                    ViewItemKind::Metadata
-                } else if known_lifecycle(event_type) {
-                    ViewItemKind::Notice
-                } else {
-                    ViewItemKind::Unavailable
-                },
+            SessionEvent::Custom {
+                event_type, data, ..
+            } => rows.push(
+                custom_kind(event_type, data),
                 event_type,
                 known_lifecycle(event_type).then_some(DisplayField::CustomLifecycle),
             )?,
@@ -366,5 +362,34 @@ impl SessionProjection {
             )?,
         }
         Ok(rows.items)
+    }
+}
+
+/// Message transport audits stay inspectable without occupying ordinary conversation rows.
+fn custom_kind(event_type: &str, data: &serde_json::Value) -> ViewItemKind {
+    use crate::agent::{
+        AGENT_MESSAGE_DEQUEUED_EVENT_TYPE, AGENT_MESSAGE_QUEUED_EVENT_TYPE,
+        PendingAgentMessageLifecycle,
+    };
+    use crate::provider::agent_event::{
+        AGENT_MESSAGE_DELIVERED_EVENT_TYPE, AGENT_MESSAGE_SENT_EVENT_TYPE, AgentMessageLifecycle,
+    };
+    use serde::Deserialize as _;
+    let message_valid = match event_type {
+        AGENT_MESSAGE_QUEUED_EVENT_TYPE | AGENT_MESSAGE_DEQUEUED_EVENT_TYPE => Some(
+            PendingAgentMessageLifecycle::deserialize(data)
+                .is_ok_and(|event| event.session_event_type() == event_type),
+        ),
+        AGENT_MESSAGE_SENT_EVENT_TYPE | AGENT_MESSAGE_DELIVERED_EVENT_TYPE => Some(
+            AgentMessageLifecycle::deserialize(data)
+                .is_ok_and(|event| event.session_event_type() == event_type),
+        ),
+        _ => None,
+    };
+    match message_valid {
+        Some(true) => ViewItemKind::Metadata,
+        None if event_type == PROVIDER_STATE_PROVENANCE_EVENT_TYPE => ViewItemKind::Metadata,
+        None if known_lifecycle(event_type) => ViewItemKind::Notice,
+        Some(false) | None => ViewItemKind::Unavailable,
     }
 }

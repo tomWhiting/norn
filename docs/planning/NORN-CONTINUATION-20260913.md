@@ -390,3 +390,74 @@ D13.2 selected-view ownership for the next integration: retain the root transcri
 D13.2 R10 wall extension before editing: the JSON wall enumerates the existing source-presentation callers under `app/`, plus new `app/render/conversation_screen.rs`. Extract source-bound scroll/selection/reading/display caches into ConversationScreen; keep physical geometry, display-selection publication, pane/composer controls and the terminal frame baseline in ScreenState. ConversationView receives the current layout and frontend dirty flag separately. No Deref compatibility layer, second frame owner or transcript swap. Preserve existing root controls and source-replacement behavior while making child presentation independently ownable.
 
 D13.2 R10 verification: ConversationScreen now owns source-specific scroll/selection, search, body demand and display caches. ConversationView borrows it with the current layout value; it has no terminal frame baseline. ScreenState retains physical frame publication, focus/geometry, pane/composer controls and the diff pane owner. Existing root callers use the ownership explicitly, without a forwarding shim. Source retirement also releases old diagnostic item identities. All 6,563 standard cases across 39 suites passed, zero failed/ignored; strict release workspace/all-target Clippy (live-api-smoke compiled/linted only), 44-file AST comparison, formatting and whitespace passed. Production LOC: 32 files, maximum 490. The original local LOC helper counted `admission_tests` because it recognized only a module named `tests`; the corrected helper uses AST module ranges with explicit cfg(test) attribution and retains other production code. Initial result, exclusions and corrected result are preserved as `d13-presentation-loc-{initial,exclusions}.json` and `d13-presentation-loc.json`. Logs: `d13-presentation-{clippy,workspace}.log`. This is verified ownership separation, not an agent-selection or installation claim. Actual child owner selection, event/read routing, controls and messaging remain in progress; preview.25 remains installed.
+
+D13.2 R11–R13 selection integration: the JSON wall adds `app/agent_conversations.rs` and its tests, agent-pane hit preparation/publication, selected renderer/read/navigation/copy/diff routing and the three frontend event loops. Open only the explicitly selected descendant using ActionLogTree on a blocking worker; keep the current view on failure, refuse stale selection completion, and retain per-source bookmarks. Root runtime ownership stays fixed. The first reviewable inspection stage must explicitly label the composer as targeting main; it does not complete per-agent drafts or human-authored child messaging. Full view-and-message scope and live source provenance remain required.
+
+## U04 — interruption during message storms (13 September 2026 Melbourne)
+
+Status: in progress. Tom reports repeated “agent message” rows, blocked typing and difficulty quitting.
+
+- **R1** An active Ctrl+C cancels the turn and arms the existing exit confirmation; a second distinct press inside its window requests app exit and cancels the root tree.
+- **R2** Automatic child-result, root-inbound and channel turns cannot start while exit confirmation is armed or exit is requested. Starting background work cannot clear exit intent.
+- **R3** Keep processing terminal input while cancelled work settles; preserve the single execution worker and join its ownership before exit.
+- **R4** Diagnose repeated message rendering separately; do not claim the flood or typing latency fixed from cancellation tests.
+
+File wall:
+
+- `crates/norn-tui/src/app/exit_confirmation.rs`
+- `crates/norn-tui/src/app/exit_confirmation_tests.rs`
+- `crates/norn-tui/src/app/event_loop.rs`
+- `crates/norn-tui/src/app/turn/run.rs`
+- `crates/norn-tui/src/app/turn/completion_wait.rs`
+- `crates/norn-tui/src/app/render/composer.rs`
+
+Validation: Deterministic turn/root cancellation and confirmation deadline tests, focused TUI tests, strict Clippy, AST scans; live storm acceptance still required.
+
+Build location correction (13 September 2026 Melbourne): Tom requested the usual build directory. The existing owned cache was moved, not copied, from `var/build-preview10` to `.worktrees/integration-candidate/target`. Cargo now uses its default worktree `target/`; temporary compiler files stay in `target/tmp`. Historical receipts keep their original paths.
+
+U04 file-wall addition: `crates/norn-tui/src/app/terminal_events.rs` and `crates/norn-tui/src/app/mod.rs`. The blocking reader is extracted unchanged from the oversized event-loop module.
+
+U04 R5: actual-App PTY proof must cancel a held provider, retain a typed next draft, show exit confirmation and exit on the second press without releasing the provider. Two queued presses must also restore the terminal. File wall extends to `tests/interrupt_exit.rs`, `tests/support/interrupt_exit.rs` and `tests/support/retained_workspace.rs` under `crates/norn-tui/`.
+
+U04 R6: validated queued/dequeued/sent/delivered audit records belong to metadata, including copies from other agents; actual delivered input remains visible and malformed records remain explicitly unavailable. No session bytes change. File wall adds `crates/norn/src/session_view/{body.rs,committed.rs,message_audit_tests.rs,mod.rs}`. Live evidence: Live session d1dbabd4-36ba-4259-b389-89a3c36a608d: since 13 September 2026 12:45 Melbourne, 24 queued, 19 dequeued, 44 sent and 46 delivered audit records; no repeated lifecycle identity found. Queued/dequeued were not recognized by known_lifecycle and projected as Unavailable rows.
+
+U04 R7: confirmed exit retains any accepted MCP command waiter until its result is collected, while rejecting new submissions during settlement. File wall extends to `crates/norn-tui/src/app/mcp_slash.rs` for the existing held-command test.
+
+## Mercury recovery feedback — 13 September 2026, 13:35 Melbourne
+
+Meridian message d525722f-052d-4848-8fe1-3d54edbbc5e3 from Mercury Toast, received 13 September 2026 13:35 Melbourne. observations and proposals; not diagnosed causes or approved architecture; no authority to modify Mercury session/worktrees. Session `d1dbabd4-36ba-4259-b389-89a3c36a608d`, reported recovered root `060451a9-f18a-4ab5-8f97-5cca1768cdb9`.
+
+1. **Recovery manifest**: Expose old/current generations, stable logical worker identity, live/idle/resumable/terminal/unknown handles, owned files, pending messages, observed processes, Git state, reviews and operational leases. Missing registry visibility does not prove a worker is gone; do not silently resurrect work. Cause of lost handles is unknown, not attributed to compaction or restart.
+
+2. **Structured execution checkpoint**: Preserve current/superseded instructions, authorized/prohibited mutations, file owners, reserved Git/index/worktree, compiler holder, exact tested source, failures and dependent deferred work. Keep evidence references and historical failures. Revalidate ephemeral process claims. Approval, test, commit, merge, push and install remain distinct.
+
+3. **Actionable send and wake**: Consider atomic idempotent steer plus wake with separate queued, delivered and run-started receipts. Current signal_agent queued/resume_required can require wake_agent. Short handle prefixes failed; full UUID worked.
+
+4. **Exclusive resource leases**: Consider compiler/cache, Git index and worktree leases with explicit transfer receipts. Recovery/expiry must fence or verify the previous process holder before admitting another.
+
+5. **Validation receipts**: Bind revision plus dirty-tree digest, command/environment, result/log and resulting commit/candidate. Keep syntax, static checks, tests, review and deployed state separate; HEAD alone does not describe scoped commits with other WIP.
+
+6. **Historical notifications**: Show occurrence versus delivery time, replay/staleness, generation and superseded status. Retain evidence without presenting old starting-work messages as new progress. Old voice invitation had expired.
+
+7. **Runtime capability discovery**: Version runtime-aware skills and expose compact current capabilities with tool detail on demand. Collective CLI skill attempted https://localhost:19876 and failed while Meridian MCP worked.
+
+Mercury values the action log, durable process output, filtered background watches and explicit ownership. Investigation references (not verified process state):
+
+- `~/.norn/outputs/d1dbabd4-36ba-4259-b389-89a3c36a608d/processes/d97e200d-82d7-4a95-9a20-8cfdd221bf9d`
+- `~/.norn/outputs/d1dbabd4-36ba-4259-b389-89a3c36a608d/processes/045c3e49-d619-4b3c-83c1-7bbc8026b292`
+
+### Compaction and continuity acceptance
+
+Meridian a6e5edac-d854-440d-a3fa-3b5269c94e66, 13 September 2026 13:36 Melbourne. Mercury relays Tom prioritising compaction and continuity; consistent with the existing programme. No additional mutation authority inferred.
+
+1. Compact while a child owns files: preserve logical identity, resolve correct current handle/state, deliver completion exactly once; do not orphan or duplicate work.
+2. Compact between actionable enqueue and wake: execute or visibly retain pending work; queued must not imply started.
+3. Compact during a background build, including before exit: recover process identity, watch, output cursor, exit result and source identity without restarting the command or losing its result.
+4. Compact after staging: retain exact authorised index/worktree scope and unfinished gate; no broad staging or false commit claim.
+5. Compact after changed priorities/permissions: preserve newest ruling with scope. Permission to contact an off-duty worker for context does not authorise assigning implementation.
+6. Replay older notifications after a newer checkpoint: preserve occurrence/delivery chronology and staleness; old progress must not overwrite current state.
+7. Diagnostics distinguish context compaction, process restart and session/worker generation replacement. Missing handles are evidence, not proof of a compaction cause.
+
+Same work, authority, ownership and pending obligations, with truthful uncertainty where recovery is incomplete; remembered prose alone does not establish continuity.
+
+Build temporary-path correction: compiled artifacts remain in the ordinary worktree `target/`. Five Unix-socket fixture binds exceeded macOS SUN_LEN under `target/tmp`; `TMPDIR` now uses the shorter repository-local `/Users/tom/Developer/ablative/stack/norn/var/tmp`. The failed run is retained as `preview26-workspace-long-tmp-failed.log`.

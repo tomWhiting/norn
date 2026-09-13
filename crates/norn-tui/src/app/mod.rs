@@ -33,6 +33,7 @@ pub mod slash;
 mod slash_catalog;
 pub mod state;
 pub mod streaming;
+mod terminal_events;
 pub mod tool_calls;
 pub mod transcript;
 mod turn;

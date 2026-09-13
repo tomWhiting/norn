@@ -425,7 +425,12 @@
         "crates/norn-tui/src/app/view_actions/mouse.rs",
         "crates/norn-tui/src/app/view_actions/shortcut_commands.rs",
         "crates/norn-tui/src/app/voice.rs",
-        "crates/norn-tui/src/app/voice_tests.rs"
+        "crates/norn-tui/src/app/voice_tests.rs",
+        "crates/norn-tui/src/app/agent_conversations.rs",
+        "crates/norn-tui/src/app/agent_conversations_tests.rs",
+        "crates/norn-tui/src/app/render/agents.rs",
+        "crates/norn-tui/src/app/render/agents_tests.rs",
+        "crates/norn-tui/src/app/display_selection_tests.rs"
       ],
       "requirements": [
         "R1: Rendering and navigation borrow a matched Transcript/ScreenState pair without access to provider, runtime, composer or command authority.",
@@ -437,7 +442,10 @@
         "R7: Reader/source mismatch and missing access fail before scheduling or marking a demand pending. Existing bounded/coalesced history and body tasks stay supervised; no per-frame store binding, copied store or history.",
         "R8: Prove source refusal, continued async reads without writable store authority, future append visibility and root rotation preserving existing reader identity; rerun actual-App navigation and input tests.",
         "R9: One frontend read-task supervisor owns accepted history/body work across selected-view changes and root rotation. Route each completion by its captured source before touching navigation, search or draft state. No scanning all child task sets per key/frame and no added polling, worker actor or copied history.",
-        "R10: Extract per-conversation source-bound navigation, selection and display caches from global terminal geometry/publication. ConversationView borrows the selected presentation plus current layout and the one frontend dirty flag; it never owns or restores a terminal frame baseline. Update existing callers explicitly, no Deref/compatibility shim, preserve root rendering and all current controls."
+        "R10: Extract per-conversation source-bound navigation, selection and display caches from global terminal geometry/publication. ConversationView borrows the selected presentation plus current layout and the one frontend dirty flag; it never owns or restores a terminal frame baseline. Update existing callers explicitly, no Deref/compatibility shim, preserve root rendering and all current controls.",
+        "R11: Explicit agent selection opens only a requested registered descendant through ActionLogTree on a blocking worker, preserving the old view on failure and refusing stale selection completions. No eager all-agent histories, copied store or provider invocation.",
+        "R12: Route selected painting, read demand, scrolling, tool expansion, original selection/copy and pane inspection to the selected source while root execution/publication remains fixed. Use one global terminal frame baseline; publish click authority only after a successful frame flush.",
+        "R13: Keep the full view-and-message goal. The first visible read-only inspection stage must label the main composer target explicitly; never silently redirect user input. Per-agent drafts, human-authored delivery and source-true live streaming remain unfinished until separately wired and verified."
       ],
       "verification": {
         "presentation_extraction": "passed; pane selection and messaging still in progress",
@@ -657,5 +665,114 @@
     "observed_at_melbourne": "2026-09-13T12:38:26.457591+10:00",
     "removed_bytes_this_slice": 0,
     "note": "No new versioned artifacts eligible for cleanup were introduced; same repository-local cache, installed/rollback binaries and session data preserved."
+  },
+  "u04_interrupt_storm": {
+    "status": "in_progress",
+    "owner_request": "13 September 2026 Melbourne: repeated agent message entries prevent typing and reliable quitting",
+    "requirements": {
+      "R1": "An active Ctrl+C cancels the turn and arms the existing exit confirmation; a second distinct press inside its window requests app exit and cancels the root tree.",
+      "R2": "Automatic child-result, root-inbound and channel turns cannot start while exit confirmation is armed or exit is requested. Starting background work cannot clear exit intent.",
+      "R3": "Keep processing terminal input while cancelled work settles; preserve the single execution worker and join its ownership before exit.",
+      "R4": "Diagnose repeated message rendering separately; do not claim the flood or typing latency fixed from cancellation tests.",
+      "R5": "An actual-App PTY scenario must cancel a held provider, retain the next draft, show exit confirmation and exit on the second Ctrl+C without releasing the provider; another scenario confirms two queued presses during execution restore the terminal.",
+      "R6": "Typed queued/dequeued/sent/delivered message audit records render as metadata even when copied from another agent; actual delivered input remains visible. Invalid phase/type payloads remain explicitly unavailable. Session bytes are not changed.",
+      "R7": "Confirmed exit must collect any already-accepted MCP command result before returning, without admitting new submissions while it settles."
+    },
+    "files": [
+      "crates/norn-tui/src/app/exit_confirmation.rs",
+      "crates/norn-tui/src/app/exit_confirmation_tests.rs",
+      "crates/norn-tui/src/app/event_loop.rs",
+      "crates/norn-tui/src/app/turn/run.rs",
+      "crates/norn-tui/src/app/turn/completion_wait.rs",
+      "crates/norn-tui/src/app/render/composer.rs",
+      "crates/norn-tui/src/app/terminal_events.rs",
+      "crates/norn-tui/src/app/mod.rs",
+      "crates/norn-tui/tests/interrupt_exit.rs",
+      "crates/norn-tui/tests/support/interrupt_exit.rs",
+      "crates/norn-tui/tests/support/retained_workspace.rs",
+      "crates/norn/src/session_view/body.rs",
+      "crates/norn/src/session_view/committed.rs",
+      "crates/norn/src/session_view/message_audit_tests.rs",
+      "crates/norn/src/session_view/mod.rs",
+      "Cargo.toml",
+      "Cargo.lock",
+      "docs/release-notes/UNRELEASED.md",
+      "crates/norn-tui/src/app/mcp_slash.rs"
+    ],
+    "validation": "Deterministic turn/root cancellation and confirmation deadline tests, focused TUI tests, strict Clippy, AST scans; live storm acceptance still required.",
+    "evidence": "Live session d1dbabd4-36ba-4259-b389-89a3c36a608d: since 13 September 2026 12:45 Melbourne, 24 queued, 19 dequeued, 44 sent and 46 delivered audit records; no repeated lifecycle identity found. Queued/dequeued were not recognized by known_lifecycle and projected as Unavailable rows.",
+    "saved_d13_draft": "git stash f351de4efc7dfd4e64f77f9303abba0e39645d10; restore after hotfix installation, preserving D13 R11-R13 scope"
+  },
+  "build_directory": {
+    "path": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate/target",
+    "source": "Tom, 13 September 2026 Melbourne: just use usual build dir",
+    "migration": "Existing var/build-preview10 cache moved, not copied; Cargo default target directory, compiler temporary files in target/tmp.",
+    "temporary_path": "/Users/tom/Developer/ablative/stack/norn/var/tmp",
+    "temporary_reason": "The longer worktree target/tmp exceeds macOS SUN_LEN in five Unix-socket test fixtures; only temporary files use this shorter repository-local path. Compiled artifacts stay in the usual target/."
+  },
+  "mercury_recovery_feedback": {
+    "source": "Meridian message d525722f-052d-4848-8fe1-3d54edbbc5e3 from Mercury Toast, received 13 September 2026 13:35 Melbourne",
+    "status": "observations and proposals; not diagnosed causes or approved architecture; no authority to modify Mercury session/worktrees",
+    "session": "d1dbabd4-36ba-4259-b389-89a3c36a608d",
+    "recovered_root": "060451a9-f18a-4ab5-8f97-5cca1768cdb9",
+    "items": [
+      {
+        "priority": 1,
+        "topic": "Recovery manifest",
+        "request": "Expose old/current generations, stable logical worker identity, live/idle/resumable/terminal/unknown handles, owned files, pending messages, observed processes, Git state, reviews and operational leases. Missing registry visibility does not prove a worker is gone; do not silently resurrect work. Cause of lost handles is unknown, not attributed to compaction or restart."
+      },
+      {
+        "priority": 2,
+        "topic": "Structured execution checkpoint",
+        "request": "Preserve current/superseded instructions, authorized/prohibited mutations, file owners, reserved Git/index/worktree, compiler holder, exact tested source, failures and dependent deferred work. Keep evidence references and historical failures. Revalidate ephemeral process claims. Approval, test, commit, merge, push and install remain distinct."
+      },
+      {
+        "priority": 3,
+        "topic": "Actionable send and wake",
+        "request": "Consider atomic idempotent steer plus wake with separate queued, delivered and run-started receipts. Current signal_agent queued/resume_required can require wake_agent. Short handle prefixes failed; full UUID worked."
+      },
+      {
+        "priority": 4,
+        "topic": "Exclusive resource leases",
+        "request": "Consider compiler/cache, Git index and worktree leases with explicit transfer receipts. Recovery/expiry must fence or verify the previous process holder before admitting another."
+      },
+      {
+        "priority": 5,
+        "topic": "Validation receipts",
+        "request": "Bind revision plus dirty-tree digest, command/environment, result/log and resulting commit/candidate. Keep syntax, static checks, tests, review and deployed state separate; HEAD alone does not describe scoped commits with other WIP."
+      },
+      {
+        "priority": 6,
+        "topic": "Historical notifications",
+        "request": "Show occurrence versus delivery time, replay/staleness, generation and superseded status. Retain evidence without presenting old starting-work messages as new progress. Old voice invitation had expired."
+      },
+      {
+        "priority": 7,
+        "topic": "Runtime capability discovery",
+        "request": "Version runtime-aware skills and expose compact current capabilities with tool detail on demand. Collective CLI skill attempted https://localhost:19876 and failed while Meridian MCP worked."
+      }
+    ],
+    "positive_feedback": [
+      "Action log with arguments/results",
+      "Durable process output and filtered background watches",
+      "Explicit agent ownership",
+      "Source work continuing during builds"
+    ],
+    "evidence_paths": [
+      "~/.norn/outputs/d1dbabd4-36ba-4259-b389-89a3c36a608d/processes/d97e200d-82d7-4a95-9a20-8cfdd221bf9d",
+      "~/.norn/outputs/d1dbabd4-36ba-4259-b389-89a3c36a608d/processes/045c3e49-d619-4b3c-83c1-7bbc8026b292"
+    ],
+    "followup_source": "Meridian a6e5edac-d854-440d-a3fa-3b5269c94e66, 13 September 2026 13:36 Melbourne",
+    "reported_owner_priority": "Mercury relays Tom prioritising compaction and continuity; consistent with the existing programme. No additional mutation authority inferred.",
+    "continuity_acceptance": [
+      "Compact while a child owns files: preserve logical identity, resolve correct current handle/state, deliver completion exactly once; do not orphan or duplicate work.",
+      "Compact between actionable enqueue and wake: execute or visibly retain pending work; queued must not imply started.",
+      "Compact during a background build, including before exit: recover process identity, watch, output cursor, exit result and source identity without restarting the command or losing its result.",
+      "Compact after staging: retain exact authorised index/worktree scope and unfinished gate; no broad staging or false commit claim.",
+      "Compact after changed priorities/permissions: preserve newest ruling with scope. Permission to contact an off-duty worker for context does not authorise assigning implementation.",
+      "Replay older notifications after a newer checkpoint: preserve occurrence/delivery chronology and staleness; old progress must not overwrite current state.",
+      "Diagnostics distinguish context compaction, process restart and session/worker generation replacement. Missing handles are evidence, not proof of a compaction cause."
+    ],
+    "continuity_invariant": "Same work, authority, ownership and pending obligations, with truthful uncertainty where recovery is incomplete; remembered prose alone does not establish continuity."
   }
 }

@@ -3,6 +3,10 @@
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
 
+use crate::agent::{
+    AGENT_MESSAGE_DEQUEUED_EVENT_TYPE, AGENT_MESSAGE_QUEUED_EVENT_TYPE,
+    PendingAgentMessageLifecycle,
+};
 use crate::provider::agent_event::{
     AGENT_MESSAGE_DELIVERED_EVENT_TYPE, AGENT_MESSAGE_SENT_EVENT_TYPE, AgentCompaction,
     AgentMessageLifecycle, COMPACTION_EVENT_TYPE, SUBAGENT_COMPLETED_EVENT_TYPE,
@@ -420,6 +424,8 @@ pub fn known_lifecycle(event_type: &str) -> bool {
             | SUBAGENT_COMPLETED_EVENT_TYPE
             | AGENT_MESSAGE_SENT_EVENT_TYPE
             | AGENT_MESSAGE_DELIVERED_EVENT_TYPE
+            | AGENT_MESSAGE_QUEUED_EVENT_TYPE
+            | AGENT_MESSAGE_DEQUEUED_EVENT_TYPE
             | COMPACTION_EVENT_TYPE
     )
 }
@@ -461,6 +467,16 @@ fn lifecycle_body(event: &SessionEvent, value: &serde_json::Value) -> Result<Str
                 lifecycle: &decoded,
                 user_event_id: value.get("user_event_id"),
             })
+        }
+        AGENT_MESSAGE_QUEUED_EVENT_TYPE | AGENT_MESSAGE_DEQUEUED_EVENT_TYPE => {
+            let decoded = serde_json::from_value::<PendingAgentMessageLifecycle>(value.clone())
+                .map_err(|source| malformed(event, &source))?;
+            if decoded.session_event_type() != event_type {
+                return Err(ViewError::LifecycleMismatch {
+                    event_id: event.base().id.clone(),
+                });
+            }
+            serde_json::to_string(&decoded)
         }
         COMPACTION_EVENT_TYPE => serde_json::from_value::<AgentCompaction>(value.clone())
             .and_then(|event| serde_json::to_string(&event)),

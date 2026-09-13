@@ -10,6 +10,8 @@ pub mod error;
 mod index;
 mod live;
 mod local;
+#[cfg(test)]
+mod message_audit_tests;
 mod notifications;
 #[cfg(test)]
 mod notifications_tests;
