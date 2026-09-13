@@ -553,3 +553,9 @@ File wall: `Cargo.toml`, `Cargo.lock`, `README.md`, `docs/release-notes/UNRELEAS
 D13 preserved: var/verification/continuation-20260913/d13-before-preview27; stash d1b4b8d62c8868471afeeaffd60bfbc2cd44e156.
 
 Preview.27 source checks: 6578 standard workspace/all-target tests across 40 suites passed, zero failed/ignored; stdio channel 14, channel TUI 4, composer preference restart 4 and frontend preference restart 5 passed. Strict release workspace/all-target Clippy with live-api-smoke compiled only, fmt, four-file AST and production LOC checks passed. Final executable build and actual-CLI probes precede installation; no physical sustained-traffic acceptance claimed.
+
+## Latest installed checkpoint — preview.27
+
+Preview.27 installed at 2026-09-13T14:33:55.102082+10:00 Melbourne from `a2e98bc40fb979baad3625e2a41d08e38ce40ba4`; SHA256 `c326e925be49d86c3963ecb0d76c411db96f244e746753df79dc8c4b333d0b4f`. 6578 standard tests across 40 suites passed, plus separate custom harnesses; strict workspace/all-target Clippy, fmt, AST and actual-CLI diagnostic/late-capability probes passed. Receipt `var/releases/preview.27-bounded-results-sourced-compaction/installation.json`; preview26 rollback preserved. Includes sourced compaction input and bounded child-result batches. No live sustained-traffic typing/flicker, independent review, venue pass or main landing claim. Existing sessions were not restarted.
+
+Preview.27 final-source review package is local at `var/reviews/preview27-20260913`; Tom owns submission. Cleanup removed 345,638,211 bytes across eight verified closed preview26 core library artifacts; current binaries, rollback and sessions retained.

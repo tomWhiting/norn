@@ -567,28 +567,28 @@
     }
   },
   "installed_checkpoint": {
-    "installed_at_melbourne": "2026-09-13T13:48:22.188954+10:00",
-    "version": "norn 0.1.0-preview.26",
+    "installed_at_melbourne": "2026-09-13T14:33:55.102082+10:00",
+    "version": "norn 0.1.0-preview.27",
     "binary": "/Users/tom/.cargo/bin/norn",
-    "sha256": "43eaa59c029945889b3cf7ce2ab35f94c1d6cf1891e2a9fb1fbfb9a9a1f73b9a",
-    "source_commit": "8a20c1478164b20c600e571491c6fa788f75b06a",
+    "sha256": "c326e925be49d86c3963ecb0d76c411db96f244e746753df79dc8c4b333d0b4f",
+    "source_commit": "a2e98bc40fb979baad3625e2a41d08e38ce40ba4",
     "source_worktree": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate",
-    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.26-interruption-message-audits/previous-norn-preview.25",
-    "previous_version": "norn 0.1.0-preview.25",
+    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.27-bounded-results-sourced-compaction/previous-norn-preview.26",
+    "previous_version": "norn 0.1.0-preview.26",
     "verification": {
-      "started_at_melbourne": "2026-09-13T13:44:21.820697+10:00",
+      "started_at_melbourne": "2026-09-13T14:21:58.403903+10:00",
       "cwd": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate",
       "target": "Cargo default target/",
       "TMPDIR": "/Users/tom/Developer/ablative/stack/norn/var/tmp",
       "exit_codes": {
         "AST and production LOC": 0,
-        "preview26-fmt": 0,
-        "preview26-clippy": 0,
-        "preview26-workspace": 0,
-        "preview26-build": 0
+        "preview27-fmt": 0,
+        "preview27-clippy": 0,
+        "preview27-workspace": 0,
+        "preview27-build": 0
       }
     },
-    "test_count": 6572,
+    "test_count": 6578,
     "test_suites": 40,
     "pending": [
       "physical terminal typing latency and flicker under sustained agent traffic",
@@ -597,7 +597,7 @@
     ],
     "scope": "local preview on codex/norn-integration-candidate; no main landing",
     "announcement": "conversation only; no Mac say; existing processes untouched",
-    "receipt": "var/releases/preview.26-interruption-message-audits/installation.json"
+    "receipt": "var/releases/preview.27-bounded-results-sourced-compaction/installation.json"
   },
   "next_slice": "D13.2 connect source-bound agent selection to the existing Agents pane and route selected navigation/drafts/messages without retargeting the running root. D03.3b persisted descendant reads, physical P02/P01 acceptance, U02 and the full ordered programme remain open.",
   "disk_checkpoint": {
@@ -634,11 +634,10 @@
     "note": "Refreshed remote main revealed it already contained preview.9; stale local main was fast-forwarded from preview.8 preserving its four-line documentation edit in working tree, stash and repository-local backup. No preview.14 landing claimed."
   },
   "review_handoff": {
-    "source_commit": "8a20c1478164b20c600e571491c6fa788f75b06a",
-    "base_commit": "7ec7ee272788e940cbacc030001bfb3c58e48f41",
-    "directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview26-20260913",
-    "status": "Local immutable preview.26 package prepared; Tom owns Fable submission and verdict. No source sent to Anthropic.",
-    "owner": "Tom"
+    "path": "var/reviews/preview27-20260913",
+    "source_commit": "a2e98bc40fb979baad3625e2a41d08e38ce40ba4",
+    "status": "prepared_local_only_tom_owns_submission",
+    "scope": "Final source review; no source transmitted to Anthropic; no independent verdict or landing claim"
   },
   "announcement_policy": "Tom, 13 September 2026 10:28 Melbourne: no further Mac say commands; use Dot or the requested messaging channel for update announcements.",
   "p02_6_app_recovery_wall": {
@@ -810,7 +809,7 @@
     }
   },
   "d01_summary_provenance": {
-    "status": "verified_source_not_installed",
+    "status": "installed_local_preview27_structured_checkpoint_still_open",
     "scope": "D01/D07: preserve exact event/time/tool-call references in summarization input; no claim of structured execution-state recovery",
     "requirements": [
       "R1: Reuse the canonical prompt-message conversion while retaining the exact source event association; preserve tool-call kind/caller matching and metadata omission.",
@@ -832,7 +831,7 @@
     "proof": "var/verification/continuation-20260913/d01-provenance-{before,core,clippy,fmt}.log; d01-provenance-source-hashes.json; d01-provenance-final-ast.json; d01-provenance-corrected-loc.json"
   },
   "u04_child_result_frontier": {
-    "status": "verified_source_not_installed",
+    "status": "installed_local_preview27_live_acceptance_pending",
     "provenance": "U04; Tom confirms repeated agent message entries were in the conversation itself. The installed preview26 filters valid message audits; sustained traffic acceptance remains open.",
     "requirements": {
       "R1": "Capture the child-result receiver queue length once per batch; results arriving after that frontier remain queued for a later event-loop iteration.",
@@ -852,7 +851,7 @@
     "proof_prefix": "var/verification/continuation-20260913/u04-frontier-"
   },
   "preview27_release": {
-    "status": "in_progress",
+    "status": "installed_local_review_and_venue_pending",
     "requirements": {
       "R1": "Release the committed compaction provenance and finite child-result batch fixes as local preview27; exclude and preserve unfinished D13 source.",
       "R2": "Run source-bound workspace tests, strict Clippy, fmt and AST/LOC checks in usual target; actual-binary diagnostic/terminal probes must pass before atomic installation.",
@@ -868,6 +867,15 @@
       "docs/planning/NORN-CONTINUATION-20260913.md"
     ],
     "saved_d13": "var/verification/continuation-20260913/d13-before-preview27; stash d1b4b8d62c8868471afeeaffd60bfbc2cd44e156",
-    "verification": "6578 standard workspace/all-target tests across 40 suites passed, zero failed/ignored; stdio channel 14, channel TUI 4, composer preference restart 4 and frontend preference restart 5 passed. Strict release workspace/all-target Clippy with live-api-smoke compiled only, fmt, four-file AST and production LOC checks passed. Final executable build and actual-CLI probes precede installation; no physical sustained-traffic acceptance claimed."
+    "verification": "6578 standard workspace/all-target tests across 40 suites passed, zero failed/ignored; stdio channel 14, channel TUI 4, composer preference restart 4 and frontend preference restart 5 passed. Strict release workspace/all-target Clippy with live-api-smoke compiled only, fmt, four-file AST and production LOC checks passed. Final executable build and actual-CLI probes precede installation; no physical sustained-traffic acceptance claimed.",
+    "installation": "var/releases/preview.27-bounded-results-sourced-compaction/installation.json",
+    "validation": "Preview.27 installed at 2026-09-13T14:33:55.102082+10:00 Melbourne from `a2e98bc40fb979baad3625e2a41d08e38ce40ba4`; SHA256 `c326e925be49d86c3963ecb0d76c411db96f244e746753df79dc8c4b333d0b4f`. 6578 standard tests across 40 suites passed, plus separate custom harnesses; strict workspace/all-target Clippy, fmt, AST and actual-CLI diagnostic/late-capability probes passed. Receipt `var/releases/preview.27-bounded-results-sourced-compaction/installation.json`; preview26 rollback preserved. Includes sourced compaction input and bounded child-result batches. No live sustained-traffic typing/flicker, independent review, venue pass or main landing claim. Existing sessions were not restarted.",
+    "review_handoff": "var/reviews/preview27-20260913; local only, Tom owns submission",
+    "cleanup": {
+      "removed_files": 8,
+      "removed_bytes": 345638211,
+      "receipt": "var/verification/continuation-20260913/preview27-old-libraries-cleanup.json",
+      "scope": "Closed preview26 core archives and metadata only; current binaries, rollback files, sessions and dependencies retained"
+    }
   }
 }

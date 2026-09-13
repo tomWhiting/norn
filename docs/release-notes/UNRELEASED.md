@@ -1,6 +1,6 @@
-## 0.1.0-preview.27 — bounded result batches and sourced compaction (candidate)
+## 0.1.0-preview.27 — bounded result batches and sourced compaction
 
-The TUI now captures the available child-result queue once per batch. Results arriving during that batch remain queued for a later event-loop iteration, so a producer cannot keep extending the synchronous drain ahead of keyboard handling. Original result order, child attribution and model-delivery frames are preserved. This removes one starvation path; it does not establish that all reported typing lag or flicker is resolved. This source change is not yet installed.
+The TUI now captures the available child-result queue once per batch. Results arriving during that batch remain queued for a later event-loop iteration, so a producer cannot keep extending the synchronous drain ahead of keyboard handling. Original result order, child attribution and model-delivery frames are preserved. This removes one starvation path; it does not establish that all reported typing lag or flicker is resolved. Installed in preview.27; see the installation receipt below.
 
 Seven child-result tests, strict workspace/all-target Clippy, formatting and AST checks passed. Sustained-traffic terminal acceptance remains open.
 
@@ -10,7 +10,9 @@ Compaction summary input now retains each projected message's original event ID,
 
 Summary instructions now explicitly preserve scoped authority, ownership, pending obligations and evidence references, and distinguish recorded progress from current operational state. This is not a runtime-validated continuity checkpoint or recovery manifest; summary event timestamps do not invent original child-result or voice occurrence times.
 
-All 4,738 core tests and strict workspace/all-target Clippy passed; source-reference regressions failed before the fix. This source change is not yet in the installed preview.26 binary.
+All 4,738 core tests and strict workspace/all-target Clippy passed; source-reference regressions failed before the fix. These compaction changes are included in preview.27.
+
+Preview.27 installed at 2026-09-13T14:33:55.102082+10:00 Melbourne from `a2e98bc40fb979baad3625e2a41d08e38ce40ba4`; SHA256 `c326e925be49d86c3963ecb0d76c411db96f244e746753df79dc8c4b333d0b4f`. 6578 standard tests across 40 suites passed, plus separate custom harnesses; strict workspace/all-target Clippy, fmt, AST and actual-CLI diagnostic/late-capability probes passed. Receipt `var/releases/preview.27-bounded-results-sourced-compaction/installation.json`; preview26 rollback preserved. Includes sourced compaction input and bounded child-result batches. No live sustained-traffic typing/flicker, independent review, venue pass or main landing claim. Existing sessions were not restarted.
 
 ## 0.1.0-preview.26 — reliable cancellation and compact message audits
 
