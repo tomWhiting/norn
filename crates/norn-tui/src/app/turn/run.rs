@@ -380,13 +380,11 @@ async fn run_turn(
                 Some(result) = state.screen.changes.jobs.join_next() => {
                     crate::app::render::changes::finish(state, result)?;
                 }
-                Some(result) = state.transcript.history_tasks.join_next() => {
+                Some(result) = state.read_tasks.history.join_next() => {
                     crate::app::view_actions::reading::finish_history(state, result)?;
                 }
-                Some(result) = state.transcript.body_tasks.join_next() => {
-                    state.transcript.finish_body(result)?;
-                    state.screen.allow_body_load = true;
-                    state.screen.dirty = true;
+                Some(result) = state.read_tasks.bodies.join_next() => {
+                    crate::app::read_tasks::finish_body(state, result)?;
                 }
                 _ = tick.tick() => {
                     redraw_streaming_tick(state, guard, Instant::now())?;

@@ -18,8 +18,7 @@ use super::view_config::ViewConfig;
 use crate::TuiError;
 
 pub(crate) mod publication;
-mod read_access;
-use read_access::read_committed_body;
+pub(in crate::app) mod read_access;
 pub(super) use read_access::{open_history_reader, read_history};
 
 /// Loaded original bytes for one approved body revision, before display escaping.
@@ -84,10 +83,6 @@ pub struct Transcript {
     /// Accepted events observed by the latest page, not a durable watermark.
     pub observed_events: usize,
     configuration_revision: u64,
-    /// Explicit body reads owned by this frontend; completion wakes the event loop.
-    pub body_tasks: tokio::task::JoinSet<(BodyDemand, Result<LoadedBody, TuiError>)>,
-    /// Explicit history-page work, observed through a completion event.
-    pub history_tasks: tokio::task::JoinSet<(HistoryRead, Result<HistoryPage, TuiError>)>,
     pending_history: bool,
     latest: super::view_actions::latest::LatestHistory,
     publication: publication::PublicationState,
@@ -112,8 +107,6 @@ impl Transcript {
             has_newer: false,
             observed_events: 0,
             configuration_revision: 0,
-            body_tasks: tokio::task::JoinSet::new(),
-            history_tasks: tokio::task::JoinSet::new(),
             pending_history: false,
             latest: super::view_actions::latest::LatestHistory::default(),
             publication: publication::PublicationState::default(),
@@ -240,17 +233,17 @@ impl Transcript {
     }
 
     /// Request one earlier owner-bound page; concurrent duplicate requests are coalesced.
-    pub fn load_older(&mut self) -> Result<bool, TuiError> {
+    pub(in crate::app) fn load_older(
+        &mut self,
+        jobs: &mut super::read_tasks::ReadTasks,
+    ) -> Result<bool, TuiError> {
         if self.pending_history || !self.has_older {
             return Ok(false);
         }
         let request = self.older_history()?;
         let reader = self.history_reader()?;
         self.pending_history = true;
-        self.history_tasks.spawn(async move {
-            let result = read_history(reader, request.clone()).await;
-            (request, result)
-        });
+        jobs.history(reader, request);
         Ok(true)
     }
 
@@ -269,7 +262,10 @@ impl Transcript {
     }
 
     /// Schedule one configured page; completion, not a timer, advances the captured frontier.
-    pub(super) fn load_latest(&mut self) -> Result<bool, TuiError> {
+    pub(super) fn load_latest(
+        &mut self,
+        jobs: &mut super::read_tasks::ReadTasks,
+    ) -> Result<bool, TuiError> {
         if self.pending_history || !self.latest.pending() {
             return Ok(false);
         }
@@ -283,10 +279,7 @@ impl Transcript {
             return Ok(false);
         }
         self.pending_history = true;
-        self.history_tasks.spawn(async move {
-            let result = read_history(reader, request.clone()).await;
-            (request, result)
-        });
+        jobs.history(reader, request);
         Ok(true)
     }
 
@@ -339,6 +332,11 @@ impl Transcript {
     #[must_use]
     pub fn body(&self, reference: &BodyRef) -> Option<&CachedBody> {
         self.bodies.get(reference)
+    }
+
+    /// Whether this conversation has outstanding body demand, independent of other views.
+    pub(in crate::app) fn bodies_pending(&self) -> bool {
+        !self.pending_bodies.is_empty()
     }
 
     /// Keep only body revisions explicitly pinned by visibility, expansion or selection.
@@ -445,8 +443,9 @@ impl Transcript {
     }
 
     /// Schedule an explicit visible-body demand outside paint and resize.
-    pub fn load_body(
+    pub(in crate::app) fn load_body(
         &mut self,
+        jobs: &mut super::read_tasks::ReadTasks,
         item: &ItemId,
         reference: &BodyRef,
         more: bool,
@@ -460,12 +459,7 @@ impl Transcript {
             return Ok(());
         };
         if let Some(reader) = reader {
-            self.body_tasks.spawn(async move {
-                let result = read_committed_body(reader, demand.clone())
-                    .await
-                    .map(|(_, page)| page);
-                (demand, result)
-            });
+            jobs.body(reader, demand);
         } else {
             match self.read_local_body(&demand) {
                 Ok(page) => {
@@ -481,14 +475,14 @@ impl Transcript {
     }
 
     /// Accept one explicitly scheduled read or retain its named error.
-    pub fn finish_body(
-        &mut self,
-        result: Result<(BodyDemand, Result<LoadedBody, TuiError>), tokio::task::JoinError>,
-    ) -> Result<(), TuiError> {
-        let (demand, page) = result.map_err(|source| TuiError::ViewTask {
+    pub fn finish_body(&mut self, result: super::read_tasks::BodyResult) -> Result<(), TuiError> {
+        let (source, demand, page) = result.map_err(|source| TuiError::ViewTask {
             operation: "body completion",
             source,
         })?;
+        if &source != self.projection.source() {
+            return Ok(());
+        }
         match page {
             Ok(page) => {
                 self.accept_body(&demand, page)?;

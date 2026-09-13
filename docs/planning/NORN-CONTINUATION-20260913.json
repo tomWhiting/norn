@@ -396,7 +396,11 @@
         "crates/norn-tui/src/app/view_actions/latest_tests.rs",
         "crates/norn-tui/src/app/render/navigation_tests.rs",
         "crates/norn-tui/src/app/render/navigation_page_tests.rs",
-        "crates/norn-tui/src/app/render/resumed_compaction_tests.rs"
+        "crates/norn-tui/src/app/render/resumed_compaction_tests.rs",
+        "crates/norn-tui/src/app/read_tasks.rs",
+        "crates/norn-tui/src/app/read_tasks_tests.rs",
+        "crates/norn-tui/src/app/state.rs",
+        "crates/norn-tui/src/app/turn/completion_wait.rs"
       ],
       "requirements": [
         "R1: Rendering and navigation borrow a matched Transcript/ScreenState pair without access to provider, runtime, composer or command authority.",
@@ -406,7 +410,8 @@
         "R5: Preserve root TUI regressions. Pane selection, background read supervision, live source refresh and messaging remain unfinished until wired and verified in the actual App.",
         "R6: Each conversation retains only its matching sealed history reader; no mutable runtime store is supplied to display reads. Acquire/validate store access off the terminal executor, once at startup/rotation or selected-view opening.",
         "R7: Reader/source mismatch and missing access fail before scheduling or marking a demand pending. Existing bounded/coalesced history and body tasks stay supervised; no per-frame store binding, copied store or history.",
-        "R8: Prove source refusal, continued async reads without writable store authority, future append visibility and root rotation preserving existing reader identity; rerun actual-App navigation and input tests."
+        "R8: Prove source refusal, continued async reads without writable store authority, future append visibility and root rotation preserving existing reader identity; rerun actual-App navigation and input tests.",
+        "R9: One frontend read-task supervisor owns accepted history/body work across selected-view changes and root rotation. Route each completion by its captured source before touching navigation, search or draft state. No scanning all child task sets per key/frame and no added polling, worker actor or copied history."
       ],
       "verification": {
         "presentation_extraction": "passed; pane selection and messaging still in progress",
@@ -435,7 +440,21 @@
           "d13-read-owner-workspace.log"
         ]
       },
-      "remaining": "Actual agent selection, active-view input/navigation routing, live child refresh, per-agent drafts and human-authored child messaging remain unfinished. Neither the renderer extraction nor read owner is an installed visual feature."
+      "remaining": "Actual agent selection, active-view input/navigation routing, live child refresh, per-agent drafts and human-authored child messaging remain unfinished. Neither the renderer extraction nor read owner is an installed visual feature.",
+      "read_task_supervision_verification": {
+        "standard_suites": 39,
+        "passed": 6563,
+        "failed": 0,
+        "ignored": 0,
+        "strict_clippy": "release workspace/all-targets passed; live-api-smoke compiled/linted only",
+        "ast": "d13-read-tasks-ast.json: 19 Rust files, no added unwrap/expect or bypass patterns",
+        "production_loc": "d13-read-tasks-loc.json: 11 production files, maximum 490",
+        "logs": [
+          "d13-read-tasks-final-clippy.log",
+          "d13-read-tasks-workspace.log"
+        ]
+      },
+      "selected_view_ownership": "Keep the root transcript and runtime publication fixed. Separate source-specific presentation/bookmarks from the single physical terminal frame owner; selected child views reuse ConversationView and their sealed reader. The frontend read_tasks supervisor routes completions by captured ViewSource, never by whichever agent is currently visible. Preserve per-agent drafts and explicit human attribution when wiring messaging; no blind AppState transcript swaps around provider calls."
     }
   ],
   "policy_debt": [
@@ -594,9 +613,9 @@
     "acceptance": "No routine child notices in parent transcript; attributed failures/final results retained; tree solely in Agents pane; exact pane selection/copy and preserved draft."
   },
   "latest_disk_checkpoint": {
-    "available_bytes": 89599631360,
-    "observed_at_melbourne": "2026-09-13T12:12:46.196583+10:00",
+    "available_bytes": 89953951744,
+    "observed_at_melbourne": "2026-09-13T12:26:45.924034+10:00",
     "removed_bytes_this_slice": 0,
-    "note": "Shared source-bound reader and renderer work reused the repository-local build-preview10 cache. Current build, installed/rollback binaries and session data preserved."
+    "note": "Same repository-local cache. No installed binary or session files changed."
   }
 }

@@ -136,31 +136,24 @@ fn empty_initial_store_completes_but_truncated_frontier_reports_refusal() -> Tes
 #[tokio::test]
 async fn latest_waits_for_existing_older_job_and_cancelled_completion_never_reenables_it()
 -> TestResult {
+    let mut jobs = crate::app::read_tasks::ReadTasks::default();
     let (store, mut view) = fixture()?;
     append(&store, 7)?;
     view.accept_history(&store.history_page(&view.initial_history()?)?)?;
-    assert!(view.load_older()?);
+    assert!(view.load_older(&mut jobs)?);
     view.request_latest();
-    assert!(!view.load_latest()?);
-    assert_eq!(view.history_tasks.len(), 1);
-    let result = view
-        .history_tasks
-        .join_next()
-        .await
-        .ok_or("older job missing")?;
+    assert!(!view.load_latest(&mut jobs)?);
+    assert_eq!(jobs.history.len(), 1);
+    let result = jobs.history.join_next().await.ok_or("older job missing")?;
     view.finish_history(result)?;
     assert!(view.latest_pending());
-    assert!(view.load_latest()?);
+    assert!(view.load_latest(&mut jobs)?);
     view.cancel_latest();
-    let result = view
-        .history_tasks
-        .join_next()
-        .await
-        .ok_or("latest job missing")?;
+    let result = jobs.history.join_next().await.ok_or("latest job missing")?;
     view.finish_history(result)?;
     assert!(!view.latest_pending());
-    assert!(!view.load_latest()?);
-    assert!(view.history_tasks.is_empty());
+    assert!(!view.load_latest(&mut jobs)?);
+    assert!(jobs.history.is_empty());
     Ok(())
 }
 

@@ -118,8 +118,8 @@ fn conversation_view_renders_and_scrolls_child_without_mutating_root_or_draft() 
     let earlier = paint(&mut view)?;
     assert_ne!(displayed(&earlier)?, displayed(&tail)?);
     assert!(!view.screen.viewport.follows_tail());
-    assert!(view.transcript.history_tasks.is_empty());
-    assert!(view.transcript.body_tasks.is_empty());
+    assert!(root.read_tasks.history.is_empty());
+    assert!(root.read_tasks.bodies.is_empty());
     assert_eq!(root.screen.viewport, root_viewport);
     assert_eq!(root.transcript.projection.revision(), root_revision);
     root.input_editor.validate_snapshot(&draft)?;

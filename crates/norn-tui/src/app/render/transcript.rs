@@ -467,8 +467,8 @@ mod tests {
         assert!(state.screen.request_older);
         assert!(state.screen.request_more);
         assert!(state.screen.allow_body_load);
-        assert!(state.transcript.history_tasks.is_empty());
-        assert!(state.transcript.body_tasks.is_empty());
+        assert!(state.read_tasks.history.is_empty());
+        assert!(state.read_tasks.bodies.is_empty());
         assert!(state.transcript.body(&reference).is_none());
 
         crate::app::event_loop::insert_paste_text(&mut state, "draft survives")?;
@@ -821,8 +821,8 @@ mod tests {
                     .iter()
                     .all(|span| span.style.foreground == Some([80, 160, 220]))
         }));
-        assert!(state.transcript.body_tasks.is_empty());
-        assert!(state.transcript.history_tasks.is_empty());
+        assert!(state.read_tasks.bodies.is_empty());
+        assert!(state.read_tasks.history.is_empty());
         Ok(())
     }
 

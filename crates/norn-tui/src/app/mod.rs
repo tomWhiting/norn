@@ -23,6 +23,7 @@ pub mod helpers;
 mod mcp_slash;
 mod model_selection;
 pub mod notices;
+mod read_tasks;
 pub mod render;
 pub mod rotation;
 mod search;

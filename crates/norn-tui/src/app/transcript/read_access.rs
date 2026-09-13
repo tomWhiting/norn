@@ -64,7 +64,7 @@ pub(in crate::app) async fn read_history(
 }
 
 /// Run only an approved committed body demand off the terminal executor.
-pub(super) async fn read_committed_body(
+pub(in crate::app) async fn read_committed_body(
     reader: SessionHistoryReader,
     demand: BodyDemand,
 ) -> Result<(BodyDemand, LoadedBody), TuiError> {

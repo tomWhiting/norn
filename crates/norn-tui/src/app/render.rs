@@ -347,9 +347,9 @@ pub(super) fn load_visible(state: &mut AppState) -> Result<(), TuiError> {
     if !state.screen.viewport.follows_tail() {
         state.transcript.cancel_latest();
     }
-    state.transcript.load_latest()?;
+    state.transcript.load_latest(&mut state.read_tasks)?;
     if state.screen.request_older
-        && (!state.transcript.has_older || state.transcript.load_older()?)
+        && (!state.transcript.has_older || state.transcript.load_older(&mut state.read_tasks)?)
     {
         state.screen.request_older = false;
     }
@@ -363,7 +363,9 @@ pub(super) fn load_visible(state: &mut AppState) -> Result<(), TuiError> {
         let id = item.id.clone();
         let bodies = item.bodies.clone();
         for body in bodies {
-            state.transcript.load_body(&id, &body, true)?;
+            state
+                .transcript
+                .load_body(&mut state.read_tasks, &id, &body, true)?;
         }
     }
     if !state.screen.allow_body_load {
@@ -403,7 +405,9 @@ pub(super) fn load_visible(state: &mut AppState) -> Result<(), TuiError> {
     super::view_actions::reading::load_requests(state, &mut pinned)?;
     let had_demands = !demands.is_empty();
     for (item, reference) in demands {
-        state.transcript.load_body(&item, &reference, false)?;
+        state
+            .transcript
+            .load_body(&mut state.read_tasks, &item, &reference, false)?;
     }
     state.screen.dirty |= had_demands;
     changes::demand(state);

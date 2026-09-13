@@ -89,13 +89,13 @@ async fn settle(state: &mut AppState) -> TestResult<Frame> {
     for _ in 0..100 {
         let frame = prepare(state, 100, 30)?;
         load_visible(state)?;
-        if state.transcript.history_tasks.is_empty() && state.transcript.body_tasks.is_empty() {
+        if state.read_tasks.history.is_empty() && state.read_tasks.bodies.is_empty() {
             return Ok(frame);
         }
-        while let Some(result) = state.transcript.history_tasks.join_next().await {
+        while let Some(result) = state.read_tasks.history.join_next().await {
             crate::app::view_actions::reading::finish_history(state, result)?;
         }
-        while let Some(result) = state.transcript.body_tasks.join_next().await {
+        while let Some(result) = state.read_tasks.bodies.join_next().await {
             state.transcript.finish_body(result)?;
             state.screen.allow_body_load = true;
             state.screen.dirty = true;

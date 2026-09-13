@@ -42,7 +42,9 @@ fn body(state: &mut AppState, text: &str) -> Result<ItemId, Box<dyn std::error::
         .and_then(|item| item.bodies.first())
         .ok_or("missing fixture body")?
         .clone();
-    state.transcript.load_body(&id, &reference, false)?;
+    state
+        .transcript
+        .load_body(&mut state.read_tasks, &id, &reference, false)?;
     Ok(id)
 }
 
@@ -102,14 +104,14 @@ async fn older_search_reads_exact_requested_page_and_reports_unloaded_suffixes()
     let mut pinned = HashSet::new();
     load_requests(&mut state, &mut pinned)?;
     let result = state
-        .transcript
-        .history_tasks
+        .read_tasks
+        .history
         .join_next()
         .await
         .ok_or("history request was not scheduled")?;
     finish_history(&mut state, result)?;
     load_requests(&mut state, &mut pinned)?;
-    while let Some(result) = state.transcript.body_tasks.join_next().await {
+    while let Some(result) = state.read_tasks.bodies.join_next().await {
         state.transcript.finish_body(result)?;
     }
     load_requests(&mut state, &mut pinned)?;

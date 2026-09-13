@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::path::PathBuf;
 
-use norn::session::store::{HistoryDirection, HistoryPage, HistoryRead};
+use norn::session::store::HistoryDirection;
 use norn::session_view::{BodyRef, CoverageGap, ItemId, ViewSource};
 
 use crate::TuiError;
@@ -66,8 +66,7 @@ pub(in crate::app) struct ExportScope {
 }
 
 pub(in crate::app) type ExportResult = Result<ExportReceipt<ExportScope>, ExportError>;
-pub(in crate::app) type HistoryResult =
-    Result<(HistoryRead, Result<HistoryPage, TuiError>), tokio::task::JoinError>;
+pub(in crate::app) type HistoryResult = crate::app::read_tasks::HistoryResult;
 
 pub(super) fn search(
     state: &mut AppState,
@@ -298,7 +297,7 @@ pub(in crate::app) fn load_requests(
     };
     match older.phase {
         OlderPhase::Requested => {
-            if state.transcript.load_older()? {
+            if state.transcript.load_older(&mut state.read_tasks)? {
                 older.phase = OlderPhase::History;
             }
             state.screen.search.older = Some(older);
@@ -317,17 +316,19 @@ pub(in crate::app) fn load_requests(
                 .collect();
             for (item, reference) in &bodies {
                 pinned.insert(reference.clone());
-                state.transcript.load_body(item, reference, false)?;
+                state
+                    .transcript
+                    .load_body(&mut state.read_tasks, item, reference, false)?;
             }
-            if state.transcript.body_tasks.is_empty() {
+            if state.transcript.bodies_pending() {
+                state.screen.search.older = Some(older);
+            } else {
                 scan(
                     state,
                     SearchScope::RequestedOlderHistory,
                     &older.query,
                     Some(&older.items),
                 )?;
-            } else {
-                state.screen.search.older = Some(older);
             }
         }
     }
@@ -339,6 +340,10 @@ pub(in crate::app) fn finish_history(
     state: &mut AppState,
     result: HistoryResult,
 ) -> Result<(), TuiError> {
+    if matches!(&result, Ok((request, _)) if &request.source != state.transcript.projection.source())
+    {
+        return Ok(());
+    }
     let accepted_items = match &result {
         Ok((request, Ok(page)))
             if request.direction == HistoryDirection::Before

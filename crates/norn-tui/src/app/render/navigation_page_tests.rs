@@ -56,16 +56,16 @@ async fn next_page(
     state: &mut AppState,
 ) -> TestResult<crate::app::view_actions::reading::HistoryResult> {
     super::super::load_visible(state)?;
-    assert_eq!(state.transcript.history_tasks.len(), 1);
+    assert_eq!(state.read_tasks.history.len(), 1);
     super::super::load_visible(state)?;
     assert_eq!(
-        state.transcript.history_tasks.len(),
+        state.read_tasks.history.len(),
         1,
         "requests must be coalesced"
     );
     state
-        .transcript
-        .history_tasks
+        .read_tasks
+        .history
         .join_next()
         .await
         .ok_or_else(|| "expected history job".into())
@@ -99,7 +99,7 @@ async fn one_scroll_crosses_three_pages_without_repeated_motion_or_losing_draft(
             remaining
         );
         assert!(
-            state.transcript.history_tasks.is_empty(),
+            state.read_tasks.history.is_empty(),
             "paint cannot start a read"
         );
         let result = next_page(&mut state).await?;
@@ -122,7 +122,7 @@ async fn one_scroll_crosses_three_pages_without_repeated_motion_or_losing_draft(
         Some(&first.id)
     );
     super::super::load_visible(&mut state)?;
-    assert!(state.transcript.history_tasks.is_empty());
+    assert!(state.read_tasks.history.is_empty());
     Ok(())
 }
 
@@ -235,7 +235,7 @@ async fn failed_page_retires_motion_and_does_not_retry_automatically() -> TestRe
     super::super::load_visible(&mut state)?;
     assert!(state.screen.navigation.is_none());
     assert!(!state.screen.request_older);
-    assert!(state.transcript.history_tasks.is_empty());
+    assert!(state.read_tasks.history.is_empty());
     assert!(
         state
             .transcript
@@ -282,7 +282,7 @@ async fn nonprogressing_page_retires_motion_without_an_automatic_read_loop() -> 
     super::super::load_visible(&mut state)?;
     assert!(state.screen.navigation.is_none());
     assert!(!state.screen.request_older);
-    assert!(state.transcript.history_tasks.is_empty());
+    assert!(state.read_tasks.history.is_empty());
     Ok(())
 }
 

@@ -320,18 +320,18 @@ async fn scrolling_before_resumed_tail_loads_one_older_page_without_resetting_vi
     super::super::prepare(&mut state, 80, 14)?;
     assert!(state.screen.request_older);
     assert!(
-        state.transcript.history_tasks.is_empty(),
+        state.read_tasks.history.is_empty(),
         "paint must not start I/O"
     );
     let anchor = state.screen.viewport.anchor().cloned();
     let draft = state.input_editor.text();
     super::super::load_visible(&mut state)?;
-    assert_eq!(state.transcript.history_tasks.len(), 1);
+    assert_eq!(state.read_tasks.history.len(), 1);
     super::super::load_visible(&mut state)?;
-    assert_eq!(state.transcript.history_tasks.len(), 1);
+    assert_eq!(state.read_tasks.history.len(), 1);
     let result = state
-        .transcript
-        .history_tasks
+        .read_tasks
+        .history
         .join_next()
         .await
         .ok_or("history task absent")?;
