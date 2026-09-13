@@ -108,6 +108,7 @@ pub(super) async fn flush_pending_agent_messages(
             loop_context,
             event_tx,
             &prepared.message,
+            agent_id,
             &user_event_id,
         )
         .await;
@@ -120,13 +121,16 @@ async fn emit_delivered_observation(
     loop_context: &LoopContext,
     event_tx: Option<&AgentEventSender>,
     message: &crate::r#loop::inbound::ChannelMessage,
+    recipient_id: uuid::Uuid,
     user_event_id: &EventId,
 ) {
     let delivered = AgentMessageLifecycle::Delivered {
         message_id: message.id,
         from_id: message.sender_id,
         from: message.from.clone(),
-        to_id: message.to_id,
+        // The queued address is historical provenance. Delivery belongs to the
+        // runtime consuming that same durable mailbox after a resume.
+        to_id: recipient_id,
         seq: message.seq,
         delivered_at: chrono::Utc::now(),
     };
@@ -242,3 +246,7 @@ mod notification_binding_tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "delivery_pending_resume_tests.rs"]
+mod resume_tests;

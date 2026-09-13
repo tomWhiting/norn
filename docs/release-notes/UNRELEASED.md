@@ -291,3 +291,7 @@ Validation and installation are pending in this source note. Child worktree poli
 ### Preview.30 — convention startup regression
 
 Existing Norn-generated workspace conventions with LSP, compiler or formatter checks open again. The runtime retains restricted checks as explicit unavailable findings at their declared paths, tools and triggers; advisory checks do not block, and blocking checks do. Patterns and LOC continue to run. Workspace configuration does not gain subprocess authority. Malformed TOML and undeclared check names still fail configuration admission. Includes the Liminal configuration shape as a regression fixture. Verification and installation pending.
+
+### Preview.31 — resumed pending-message identity
+
+A pending message addressed to a previous runtime now reports delivery to the current runtime consuming the same durable mailbox. This prevents a live TUI identity mismatch on resume without rewriting the original queued address, duplicating input, or weakening view ownership checks. Validation and installation pending.
