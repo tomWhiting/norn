@@ -72,6 +72,7 @@ async fn malformed_and_stripped_activations_are_not_absent_configuration() -> Te
     for source in [
         "[invalid",
         MISSING_TOOL,
+        &format!("{MISSING_TOOL}\nlsp = {{ tests = {{ on = \"tool\", scope = \"package\" }} }}"),
         &format!(
             "{MISSING_TOOL}\n[rust.diagnostics]\nclippy = {{ target = \"package\", handling = \"block\" }}"
         ),

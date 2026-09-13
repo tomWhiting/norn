@@ -669,8 +669,10 @@ mod tests {
         assert_eq!(python.loc, Some((300, "advise")));
 
         assert!(generated.rules.iter().any(|rule| rule.name == "go-general"));
+        // Gleam's bundled template has only executable checks and no ruled
+        // LOC limit. Do not advertise an empty enforcement rule for it.
         assert!(
-            generated
+            !generated
                 .rules
                 .iter()
                 .any(|rule| rule.name == "gleam-general")

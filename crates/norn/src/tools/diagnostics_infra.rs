@@ -123,6 +123,14 @@ fn load_non_executing_conventions(
             }
         }
     };
+    let declared = ConventionsConfig::load_from_str(&source)?;
+    for (name, rule) in declared.rules() {
+        if rule.rule.lsp.is_some() {
+            return Err(ConventionsError::ParseError(format!(
+                "rule `{name}` requests LSP execution; workspace CONVENTIONS.toml permits patterns and LOC only; use a trusted runtime configuration"
+            )));
+        }
+    }
     let sanitized = strip_process_authority(&source)?;
     let config = ConventionsConfig::load_from_str(&sanitized)?;
     validate_activations(&config)?;
@@ -224,7 +232,9 @@ report = { on = "tool" }
     fn retains_only_loc_and_pattern_checks() -> Result<(), Box<dyn std::error::Error>> {
         let sanitized = strip_process_authority(MIXED_CONVENTIONS)?;
         let config = ConventionsConfig::load_from_str(&sanitized)?;
-        validate_activations(&config)?;
+        // Filtering keeps declarative checks, but dangling activations must
+        // still be rejected when this document is admitted for execution.
+        assert!(validate_activations(&config).is_err());
 
         assert!(is_non_executing(&config));
         let rule = config.rule("rust-general").ok_or("rule missing")?;

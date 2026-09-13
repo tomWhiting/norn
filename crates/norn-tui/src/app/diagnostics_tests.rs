@@ -29,7 +29,7 @@ async fn diagnostics_are_local_expandable_notices_and_closure_disables_wait()
         sequence: 1,
         level: tracing::Level::ERROR,
         target: "norn::retry".to_owned(),
-        text: Arc::from("actual error detail\n"),
+        text: Arc::from("2026-09-13T00:00:00Z ERROR norn::retry: actual error detail\n"),
     })?;
     let result = wait(&mut state.diagnostics).await;
     assert_eq!(acknowledged.load(Ordering::Acquire), 0);
@@ -56,7 +56,7 @@ async fn diagnostics_are_local_expandable_notices_and_closure_disables_wait()
         .ok_or("detail demand absent")?;
     assert_eq!(
         state.transcript.read_local_body(&demand)?.text,
-        "actual error detail\n"
+        "2026-09-13T00:00:00Z ERROR norn::retry: actual error detail\n"
     );
     finish(&mut state, Err(RecvError::Lagged(3)))?;
     drop(sender);

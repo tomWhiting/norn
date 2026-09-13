@@ -25,6 +25,11 @@ pub(super) fn finish(
                 .lines()
                 .map(str::trim)
                 .find(|line| !line.is_empty());
+            let target_prefix = format!("{}: ", event.target);
+            let explanation = explanation.map(|line| {
+                line.split_once(target_prefix.as_str())
+                    .map_or(line, |(_, message)| message)
+            });
             let label = match explanation {
                 Some(text) => format!("{} · {} — {text}", event.level, event.target),
                 None => format!(
