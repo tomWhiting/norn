@@ -567,29 +567,37 @@
     }
   },
   "installed_checkpoint": {
-    "installed_at_melbourne": "2026-09-13T11:12:00.380197+10:00",
-    "version": "norn 0.1.0-preview.25",
+    "installed_at_melbourne": "2026-09-13T13:48:22.188954+10:00",
+    "version": "norn 0.1.0-preview.26",
     "binary": "/Users/tom/.cargo/bin/norn",
-    "sha256": "e1fb260fcda862f54e73a486b3098741c444299fe6f8ef5397629ca5ce47b099",
-    "source_commit": "d6ad384bf355da3cf1956c91c791826d96b751f5",
+    "sha256": "43eaa59c029945889b3cf7ce2ab35f94c1d6cf1891e2a9fb1fbfb9a9a1f73b9a",
+    "source_commit": "8a20c1478164b20c600e571491c6fa788f75b06a",
     "source_worktree": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate",
-    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.25-drafts-agent-pane/previous-norn-preview.24",
-    "previous_version": "norn 0.1.0-preview.24",
-    "verification": [
-      "6550 standard workspace/all-target tests across 39 suites, zero failed/ignored; separate Rust stdio channel fixtures passed",
-      "Strict release workspace/all-target Clippy passed; live-api-smoke compiled/linted only",
-      "Changed Rust files AST scanned; production LOC below 500; format clean",
-      "Actual App pending opening acceptance/rejection, repeated Submit, footer recovery and independent draft preserved; original provider census exact",
-      "Actual App child tree in Agents pane and pane-scoped Command/Option copy transport",
-      "Release build and exact candidate loopback diagnostic/capability probes passed"
-    ],
+    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.26-interruption-message-audits/previous-norn-preview.25",
+    "previous_version": "norn 0.1.0-preview.25",
+    "verification": {
+      "started_at_melbourne": "2026-09-13T13:44:21.820697+10:00",
+      "cwd": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate",
+      "target": "Cargo default target/",
+      "TMPDIR": "/Users/tom/Developer/ablative/stack/norn/var/tmp",
+      "exit_codes": {
+        "AST and production LOC": 0,
+        "preview26-fmt": 0,
+        "preview26-clippy": 0,
+        "preview26-workspace": 0,
+        "preview26-build": 0
+      }
+    },
+    "test_count": 6572,
+    "test_suites": 40,
     "pending": [
-      "physical Herdr input/frame latency and clipboard acceptance",
-      "remaining full ordered Norn programme",
+      "physical terminal typing latency and flicker under sustained agent traffic",
+      "remaining Norn programme including D13",
       "independent final-source review and exact-commit venue battery"
     ],
-    "scope": "local preview on codex/norn-integration-candidate; main remains preview.9",
-    "announcement": "Dot channel closed; update in conversation; no Mac say"
+    "scope": "local preview on codex/norn-integration-candidate; no main landing",
+    "announcement": "conversation only; no Mac say; existing processes untouched",
+    "receipt": "var/releases/preview.26-interruption-message-audits/installation.json"
   },
   "next_slice": "D13.2 connect source-bound agent selection to the existing Agents pane and route selected navigation/drafts/messages without retargeting the running root. D03.3b persisted descendant reads, physical P02/P01 acceptance, U02 and the full ordered programme remain open.",
   "disk_checkpoint": {
@@ -626,10 +634,10 @@
     "note": "Refreshed remote main revealed it already contained preview.9; stale local main was fast-forwarded from preview.8 preserving its four-line documentation edit in working tree, stash and repository-local backup. No preview.14 landing claimed."
   },
   "review_handoff": {
-    "source_commit": "d6ad384bf355da3cf1956c91c791826d96b751f5",
+    "source_commit": "8a20c1478164b20c600e571491c6fa788f75b06a",
     "base_commit": "7ec7ee272788e940cbacc030001bfb3c58e48f41",
-    "directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview25-20260913",
-    "status": "Local immutable preview.25 package prepared; Tom owns Fable submission and verdict. No source sent to Anthropic. Later source changes require final-source review.",
+    "directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview26-20260913",
+    "status": "Local immutable preview.26 package prepared; Tom owns Fable submission and verdict. No source sent to Anthropic.",
     "owner": "Tom"
   },
   "announcement_policy": "Tom, 13 September 2026 10:28 Melbourne: no further Mac say commands; use Dot or the requested messaging channel for update announcements.",
@@ -661,13 +669,13 @@
     "acceptance": "No routine child notices in parent transcript; attributed failures/final results retained; tree solely in Agents pane; exact pane selection/copy and preserved draft."
   },
   "latest_disk_checkpoint": {
-    "available_bytes": 89228173312,
-    "observed_at_melbourne": "2026-09-13T12:38:26.457591+10:00",
-    "removed_bytes_this_slice": 0,
-    "note": "No new versioned artifacts eligible for cleanup were introduced; same repository-local cache, installed/rollback binaries and session data preserved."
+    "available_bytes": 84883783680,
+    "observed_at_melbourne": "2026-09-13T13:49:44.039287+10:00",
+    "removed_bytes_this_slice": 377628413,
+    "note": "14 positively identified preview.25 library files removed after open-handle and identity checks. Current target cache, executables, installed/rollback binaries and session data preserved."
   },
   "u04_interrupt_storm": {
-    "status": "verified_local_build_pending",
+    "status": "installed_local_preview_26_live_storm_acceptance_pending",
     "owner_request": "13 September 2026 Melbourne: repeated agent message entries prevent typing and reliable quitting",
     "requirements": {
       "R1": "An active Ctrl+C cancels the turn and arms the existing exit confirmation; a second distinct press inside its window requests app exit and cancels the root tree.",
@@ -704,7 +712,8 @@
     ],
     "validation": "6572 standard workspace/all-target tests across 40 suites passed; separate channel/restart harnesses passed. Strict release workspace/all-target Clippy including live-api-smoke passed (provider smoke execution not enabled); fmt, 17-file AST scan and production LOC maximum 478 passed. Actual-App tests cover held-provider cancellation, independent draft retention, queued Ctrl+C pair, child-result cancellation and terminal restoration. Live typing/flicker under sustained traffic, independent review and exact-commit venue remain open.",
     "evidence": "Live session d1dbabd4-36ba-4259-b389-89a3c36a608d: since 13 September 2026 12:45 Melbourne, 24 queued, 19 dequeued, 44 sent and 46 delivered audit records; no repeated lifecycle identity found. Queued/dequeued were not recognized by known_lifecycle and projected as Unavailable rows.",
-    "saved_d13_draft": "git stash f351de4efc7dfd4e64f77f9303abba0e39645d10; restore after hotfix installation, preserving D13 R11-R13 scope"
+    "saved_d13_draft": "git stash f351de4efc7dfd4e64f77f9303abba0e39645d10; restore after hotfix installation, preserving D13 R11-R13 scope",
+    "installation": "var/releases/preview.26-interruption-message-audits/installation.json"
   },
   "build_directory": {
     "path": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate/target",
