@@ -154,12 +154,11 @@
       "provenance": "Tom, 13 September 2026: UI very unresponsive at times with flicker; no shortcuts; user base sensitive to this.",
       "acceptance": "Instrument input-to-frame latency, frame preparation/publication and synchronous agent work; reproduce typing, scroll, resize, pane expansion and streaming under load in a real terminal/multiplexer; no visual quality claim from unit tests alone.",
       "open_findings": [
-        "Stale pinned transcript after ordinary composer typing",
-        "Late synchronized-output capability replies",
-        "Post-turn broadcast drain fairness under child load",
+        "Post-turn completion fairness under child load and slow persistence",
         "Independent next draft during pending opening-input admission, with exact rejection recovery",
         "Actual Herdr input/frame latency and flicker acceptance"
-      ]
+      ],
+      "delivered_local": "Preview.20 execution isolation; preview.21 word motion; preview.22 retained pinned reading snapshot; preview.23 late terminal capability handling. Physical performance acceptance remains open."
     },
     {
       "id": "U02",
@@ -296,12 +295,22 @@
     },
     {
       "id": "P02.4",
-      "status": "verified_local_release_pending",
+      "status": "installed_local_preview",
       "scope": "Process delayed synchronized-output and Kitty capability replies in startup, idle and active terminal handling, with exact screen-local push/pop ownership.",
       "wall": "See P02.4 Markdown wall",
-      "remaining": "Atomic local installation/probe, physical terminal/multiplexer acceptance and independent review/exact-commit venue battery.",
+      "remaining": "Physical terminal/multiplexer performance acceptance and independent final-source review/exact-commit venue battery.",
       "tests": "6532 standard workspace/all-target tests across 39 suites passed, zero failed/ignored; 4733 core, 578 CLI, 960 TUI, 24 PTY and 13 composer test cases. Separate channel stdio 14, channel TUI 4, frontend preference restart 5, composer preference restart 4 and MCP launch 10 passed. Strict Clippy, eight-file AST, production LOC and release build passed.",
-      "actual_cli": "Installed preview.22 fails after Primary-DA-only first paint and late sync/Kitty replies. Built preview.23 passes with typed-cursor acknowledgement, one push/pop, parent keyboard restoration and zero loopback provider calls. Logs p02-caps-cli-{baseline-timed,timed}.log and hashed receipts under var/releases/preview.23-progressive-terminal."
+      "actual_cli": "Installed preview.22 fails after Primary-DA-only first paint and late sync/Kitty replies. Built preview.23 passes with typed-cursor acknowledgement, one push/pop, parent keyboard restoration and zero loopback provider calls. Logs p02-caps-cli-{baseline-timed,timed}.log and hashed receipts under var/releases/preview.23-progressive-terminal.",
+      "installation_receipt": "var/releases/preview.23-progressive-terminal/installation.json"
+    },
+    {
+      "id": "P02.5",
+      "status": "verified_local_release_pending",
+      "scope": "Finite live-event frontier at completion, followed by terminal-responsive input-receipt, checkpoint and history settlement. Preserve queued child events and exact root history.",
+      "wall": "See P02.5 Markdown wall",
+      "remaining": "Release build, executable probes, immutable review package and local installation. Physical terminal acceptance and external landing gates remain separate.",
+      "baseline": "Previous HEAD orchestrator fails the actual-App blocked-checkpoint typing fixture after 15.03 seconds (exit 101); p02-completion-checkpoint-baseline.log.",
+      "tests": "6539 standard workspace/all-target tests across 39 suites passed; zero failed/ignored. Core 4733, CLI 578, TUI 966, PTY 24, composer 14. Separate channel/restart/MCP launch suites passed. Strict Clippy, eight-file AST, formatting and production LOC passed. Actual held-checkpoint interaction and follow-up order tests passed."
     }
   ],
   "policy_debt": [
@@ -366,33 +375,33 @@
     }
   },
   "installed_checkpoint": {
-    "installed_at_melbourne": "2026-09-13T09:21:28.605350+10:00",
-    "version": "norn 0.1.0-preview.22",
+    "installed_at_melbourne": "2026-09-13T09:50:36.347279+10:00",
+    "version": "norn 0.1.0-preview.23",
     "binary": "/Users/tom/.cargo/bin/norn",
-    "sha256": "8fc5d2f060d48142de3b799c3c7cfdd2047ba8c51a419a3c2a4585930effdbb3",
-    "source_commit": "51bc564af2aedd238b79a7fd1f9f19832b4eb6dd",
+    "sha256": "17588992d4e191b2ad91cb3f5064d81304f41555fd551e63e7f86c5a0fc4abc7",
+    "source_commit": "90fd5a0e601b00e2503dfb01d5393b97b164f90e",
     "source_worktree": "/Users/tom/Developer/ablative/stack/norn/.worktrees/integration-candidate",
-    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.22-reading-view/previous-norn-preview.21",
-    "previous_version": "norn 0.1.0-preview.21",
+    "rollback": "/Users/tom/Developer/ablative/stack/norn/var/releases/preview.23-progressive-terminal/previous-norn-preview.22",
+    "previous_version": "norn 0.1.0-preview.22",
     "verification": [
-      "Release workspace/all-target tests passed, including 4733 core, 578 CLI, 957 TUI, 24 PTY and 14 real Rust stdio channel scenarios; zero failures/ignored",
+      "Release workspace/all-target tests passed, including 4733 core, 578 CLI, 960 TUI, 24 PTY and 14 real Rust stdio channel scenarios; zero failures/ignored",
       "strict release workspace/all-target Clippy passed; live-api-smoke compiled/linted only",
-      "7 changed Rust files AST-scanned against prior commit; no added unwrap/expect or lint bypass/discard matches",
-      "Actual App streaming-completion reproducer fails before fix and passes after; editable draft, resize, exact provider history and terminal restoration retained",
-      "Retired source copy/export refused; display-snapshot copy, visible-only reflow with graphemes/styles/highlights, failed flush and source replacement tested",
+      "8 changed Rust files AST-scanned against prior commit; no added unwrap/expect or lint bypass/discard matches",
+      "Actual installed preview.22 late-capability reproducer fails; preview.23 candidate passes after a first unsynchronized frame, with one keyboard push/pop and preserved parent state",
+      "Idle/active capability transitions preserve exact draft/provider history; duplicate replies, changeable sync states, failed late keyboard flush and screen ownership tested; existing retained-reading tests also pass",
       "format and whitespace checks passed",
       "release build passed",
       "exact candidate hash unchanged across loopback-only HTTP-429 warning probe: collapsed notice, no raw tracing writes, two requests, Kitty and terminal restoration passed"
     ],
     "pending": [
       "physical Herdr test drive and broader input/frame latency measurement",
-      "remaining intermittent flicker, publication/input races and progressive capability negotiation",
+      "physical flicker acceptance, publication/input races and sustained-event fairness",
       "remaining storage and ordered product work",
       "independent final-source review and exact-commit venue battery"
     ],
     "scope": "local preview installation on codex/norn-integration-candidate; main remains preview.9"
   },
-  "next_slice": "Install verified preview.23, then P02 event-drain fairness and publication/input-admission races. Physical flicker acceptance, P01 matched-route latency, U02 termina/Iridium dependency reconciliation, D03.3b and the full D01-D20/S01/U01 programme remain open.",
+  "next_slice": "Install verified preview.24 after its release build/probes, then independent next draft during pending opening-input admission. Physical flicker acceptance, P01 matched-route latency, U02 dependency reconciliation, D03.3b and the full D01-D20/S01/U01 programme remain open.",
   "disk_checkpoint": {
     "available_gib": 41,
     "build_cache_gib": 5.8,
@@ -427,13 +436,10 @@
     "note": "Refreshed remote main revealed it already contained preview.9; stale local main was fast-forwarded from preview.8 preserving its four-line documentation edit in working tree, stash and repository-local backup. No preview.14 landing claimed."
   },
   "review_handoff": {
-    "source_commit": "68802a046310784faff301db1f0277a68f4b87d9",
+    "source_commit": "90fd5a0e601b00e2503dfb01d5393b97b164f90e",
     "base_commit": "7ec7ee272788e940cbacc030001bfb3c58e48f41",
-    "directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview17-20260913",
-    "status": "Tom will arrange the independent Fable review. He explicitly declined agent transmission of source to Anthropic. No review was launched by Ripley; reviewed commit and verdict await Tom.",
-    "owner": "Tom",
-    "additional_candidate_commit": "f525686c44b7dc7ea0fe6c3c3854e200118f35cd",
-    "supplement_directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview18-20260913",
-    "supplement_note": "Local preparation only. SINCE-PREVIEW17.patch isolates later changes; Tom owns submission and returned verdict."
+    "directory": "/Users/tom/Developer/ablative/stack/norn/var/reviews/preview23-20260913",
+    "status": "Local immutable package prepared. Tom owns independent Fable submission and verdict; Ripley has not transmitted source to Anthropic. Preview.24 source is now in verification and needs its own final-source package.",
+    "owner": "Tom"
   }
 }

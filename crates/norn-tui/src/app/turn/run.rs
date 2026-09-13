@@ -28,6 +28,12 @@ use super::seed::{TurnSeed, reset_turn_state};
 #[path = "worker.rs"]
 mod worker;
 
+#[path = "completion_events.rs"]
+mod completion_events;
+
+#[path = "completion_wait.rs"]
+mod completion_wait;
+
 use super::mid::{
     handle_active_input_delivery, handle_mid_turn_agent_event, handle_mid_turn_event,
 };
@@ -409,48 +415,68 @@ async fn run_turn(
     drop(worker_cancel);
     ui_result?;
 
-    loop {
-        match agent_event_rx.try_recv() {
+    completion_events::drain_frontier(agent_event_rx, |event| {
+        match event {
             Ok(agent_ev) => handle_mid_turn_agent_event(state, agent_ev)?,
             Err(broadcast::error::TryRecvError::Lagged(missed)) => {
                 state.mark_live_events_lagged(missed)?;
             }
-            Err(broadcast::error::TryRecvError::Empty) => break,
             Err(broadcast::error::TryRecvError::Closed) => {
                 state.close_live_events("Live event source closed")?;
-                break;
             }
+            Err(broadcast::error::TryRecvError::Empty) => {}
         }
-    }
+        Ok::<(), TuiError>(())
+    })?;
     while let Some(delivery) = active_delivery_rx.try_recv() {
         handle_active_input_delivery(&delivery, state, &runtime.store)?;
     }
     state.transcript.drain_publications()?;
     crate::app::composer_submission::resolve(state)?;
-    while let Some(result) = state.transcript.input_tasks.join_next().await {
-        state.transcript.finish_input(result)?;
-    }
     let interrupt_prompt = state.in_flight_input.take_interrupt_prompt();
     if interrupt_prompt.is_none() && !cancel_requested {
         state.in_flight_input.requeue_pending_steers();
     }
-    state.stop_live_phase();
+    // The joined runner cannot receive more steers. Close before terminal input
+    // resumes so Submit takes the existing closed-channel follow-up path.
     runtime.loop_context.active_input_rx = None;
-
-    if cancel_requested {
-        norn::agent_loop::ensure_tool_results_complete(runtime.store.as_ref()).await;
+    let mut terminal = completion_wait::TerminalCompletion {
+        guard,
+        terminal: term_rx,
+        active_input: &active_input_tx,
+        cancel: &cancel,
+        cancel_requested: &mut cancel_requested,
+        closed: terminal_closed,
+        tick: &mut tick,
+    };
+    // These reads were spawned by the finite final delivery set. Move their
+    // task owner locally so the editor can borrow state while a read is pending.
+    let mut input_reads = std::mem::take(&mut state.transcript.input_tasks);
+    while let Some(result) = terminal.wait(state, input_reads.join_next()).await? {
+        state.transcript.finish_input(result)?;
     }
-    // Checkpoint before the final render pass: every event of the turn is
-    // already appended, and the off-executor await cannot run inside the
-    // synchronous scroll-region closure below. A failure message is
-    // carried into the closure and written in the error style there.
-    let checkpoint_failure = checkpoint_session(&runtime.store).await;
-    loop {
-        let page = crate::app::transcript::read_history(
-            std::sync::Arc::clone(&runtime.store),
-            state.transcript.newer_history()?,
-        )
+    if *terminal.cancel_requested {
+        terminal
+            .wait(
+                state,
+                norn::agent_loop::ensure_tool_results_complete(runtime.store.as_ref()),
+            )
+            .await?;
+    }
+    let checkpoint_failure = terminal
+        .wait(state, checkpoint_session(&runtime.store))
         .await?;
+    loop {
+        let request = state.transcript.newer_history()?;
+        let page = terminal
+            .wait(
+                state,
+                crate::app::transcript::read_history(
+                    std::sync::Arc::clone(&runtime.store),
+                    request,
+                ),
+            )
+            .await??;
         if !state.transcript.accept_history(&page)? {
             return Err(norn::session_view::ViewError::AttemptMismatch.into());
         }
@@ -458,6 +484,7 @@ async fn run_turn(
             break;
         }
     }
+    state.stop_live_phase();
     let interrupted = cancel_requested
         || !matches!(
             &step_result,

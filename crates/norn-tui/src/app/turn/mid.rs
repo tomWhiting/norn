@@ -300,4 +300,34 @@ mod pane_tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn completed_runner_submission_queues_after_recovered_steers()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = state(InFlightSubmitMode::Steer);
+        let (sender, receiver, mut deliveries) = active_input_channel();
+        state
+            .in_flight_input
+            .push_pending_steer(uuid::Uuid::new_v4(), "earlier input".to_owned());
+        state.in_flight_input.requeue_pending_steers();
+        drop(receiver);
+        state.input_editor.paste_cells("next input")?;
+        let cancel = CancellationToken::new();
+        let mut cancelled = false;
+        submit_mid_turn_input(&mut state, &sender, &cancel, &mut cancelled)?;
+        assert!(state.input_editor.is_empty());
+        assert!(!state.in_flight_input.has_pending_steers());
+        assert!(deliveries.try_recv().is_none());
+        assert_eq!(
+            state.in_flight_input.pop_queued_followup().as_deref(),
+            Some("earlier input")
+        );
+        assert_eq!(
+            state.in_flight_input.pop_queued_followup().as_deref(),
+            Some("next input")
+        );
+        assert!(state.in_flight_input.pop_queued_followup().is_none());
+        assert!(!cancelled);
+        Ok(())
+    }
 }

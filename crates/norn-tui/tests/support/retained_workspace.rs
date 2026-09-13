@@ -33,11 +33,15 @@ use vte::{Parser, Perform};
 use crate::retained_screen::{self, Lifecycle, Screen};
 
 /// Bounded fixture waits, not a latency claim or product timeout.
+#[path = "completion_checkpoint.rs"]
+mod completion_checkpoint;
+
 const DEADLINE: Duration = Duration::from_secs(15);
 const CHILD_ENV: &str = "NORN_RETAINED_WORKSPACE_CHILD";
 const CONTROL_ENV: &str = "NORN_RETAINED_WORKSPACE_CONTROL";
 const REPORT_ENV: &str = "NORN_RETAINED_WORKSPACE_REPORT";
 const COMPOSER_ENV: &str = "NORN_RETAINED_COMPOSER_SEND_KEY";
+const CHECKPOINT_ENV: &str = "NORN_RETAINED_CHECKPOINT_BARRIER";
 const RECORDED_TOOL_ENV: &str = "NORN_RETAINED_RECORDED_TOOL";
 /// Recorded history, never a tool executed by this fixture.
 pub const TOOL_DESCRIPTION: &str = "Recorded tool selection";
@@ -92,7 +96,14 @@ async fn child_app() -> TestResult {
         inner: Arc::clone(&inner),
         gate: Arc::clone(&gate),
     });
-    let store = Arc::new(EventStore::new());
+    let checkpoint =
+        std::env::var_os(CHECKPOINT_ENV).map(|_| Arc::new(completion_checkpoint::Gate::default()));
+    let store = Arc::new(match &checkpoint {
+        Some(gate) => EventStore::with_sink(Box::new(completion_checkpoint::FixtureSink(
+            Arc::clone(gate),
+        ))),
+        None => EventStore::new(),
+    });
     if std::env::var_os(RECORDED_TOOL_ENV).is_some() {
         append_recorded_tool(&store)?;
     }
@@ -127,7 +138,13 @@ async fn child_app() -> TestResult {
     let control_store = Arc::clone(&store);
     let control_provider = Arc::clone(&inner);
     let control_thread = std::thread::spawn(move || {
-        serve_control(control, &control_store, &control_provider, &gate)
+        serve_control(
+            control,
+            &control_store,
+            &control_provider,
+            &gate,
+            checkpoint.as_deref(),
+        )
     });
     let result = Box::pin(norn_tui::run_app(norn_tui::TuiInputs {
         diagnostics: None,
@@ -272,6 +289,7 @@ fn serve_control(
     store: &EventStore,
     provider: &MockProvider,
     gate: &Notify,
+    checkpoint: Option<&completion_checkpoint::Gate>,
 ) -> io::Result<()> {
     let mut stream = BufReader::new(stream);
     loop {
@@ -309,6 +327,18 @@ fn serve_control(
                 gate.notify_one();
                 json!({"released": true})
             }
+            Some("wait_checkpoint" | "release_checkpoint" | "confirm_checkpoint_held") => {
+                let checkpoint =
+                    checkpoint.ok_or_else(|| io::Error::other("checkpoint fixture not enabled"))?;
+                if operation == Some("wait_checkpoint") {
+                    checkpoint.wait_entered()?;
+                } else if operation == Some("confirm_checkpoint_held") {
+                    checkpoint.confirm_held()?;
+                } else {
+                    checkpoint.release()?;
+                }
+                json!({"checkpoint": operation})
+            }
             Some("close") => json!({"closed": true}),
             _ => return Err(io::Error::other("unknown fixture control operation")),
         };
@@ -342,7 +372,7 @@ pub struct Workspace {
 
 /// Catch fixture assertions, then terminate/reap the child and join its reader before returning.
 pub fn with_workspace(exercise: impl FnOnce(&mut Workspace) -> TestResult) -> TestResult {
-    with_launch(None, false, false, |app| {
+    with_launch(None, false, false, false, |app| {
         exercise(app)?;
         Ok("workspace fixture prompt".to_owned())
     })
@@ -350,7 +380,7 @@ pub fn with_workspace(exercise: impl FnOnce(&mut Workspace) -> TestResult) -> Te
 
 /// Replay actual recorded tool events, then hold the one ordinary provider turn.
 pub fn with_recorded_tool(exercise: impl FnOnce(&mut Workspace) -> TestResult) -> TestResult {
-    with_launch(None, false, true, |app| {
+    with_launch(None, false, true, false, |app| {
         exercise(app)?;
         Ok("workspace fixture prompt".to_owned())
     })
@@ -370,17 +400,23 @@ pub fn with_composer_keyboard(
     kitty_confirmed: bool,
     exercise: impl FnOnce(&mut Workspace) -> TestResult<String>,
 ) -> TestResult {
-    with_launch(Some(send_key), kitty_confirmed, false, exercise)
+    with_launch(Some(send_key), kitty_confirmed, false, false, exercise)
+}
+
+/// Launch the real composer with a checkpoint held until explicitly released.
+pub fn with_checkpoint(exercise: impl FnOnce(&mut Workspace) -> TestResult<String>) -> TestResult {
+    with_launch(Some("enter"), false, false, true, exercise)
 }
 
 fn with_launch(
     send_key: Option<&str>,
     kitty_confirmed: bool,
     recorded_tool: bool,
+    checkpoint: bool,
     exercise: impl FnOnce(&mut Workspace) -> TestResult<String>,
 ) -> TestResult {
     let startup = Instant::now();
-    let mut app = Workspace::start(send_key, kitty_confirmed, recorded_tool)?;
+    let mut app = Workspace::start(send_key, kitty_confirmed, recorded_tool, checkpoint)?;
     if let Some(send_key) = send_key {
         eprintln!(
             "{}",
@@ -407,6 +443,7 @@ impl Workspace {
         send_key: Option<&str>,
         kitty_confirmed: bool,
         recorded_tool: bool,
+        checkpoint: bool,
     ) -> TestResult<Self> {
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
         let address = listener.local_addr()?;
@@ -429,6 +466,9 @@ impl Workspace {
         command.env(CHILD_ENV, "1");
         command.env(CONTROL_ENV, address.to_string());
         command.env(REPORT_ENV, &final_report);
+        if checkpoint {
+            command.env(CHECKPOINT_ENV, "1");
+        }
         if recorded_tool {
             command.env(RECORDED_TOOL_ENV, "1");
         }
@@ -768,6 +808,26 @@ impl Workspace {
                     .filter(|screen| screen.rows == current.rows && screen.cols == current.cols))
             },
         )
+    }
+
+    /// Finish the provider, then acknowledge entry into the still-blocked checkpoint.
+    pub fn hold_at_checkpoint(&mut self) -> io::Result<()> {
+        self.control("release")?;
+        self.control("wait_checkpoint")?;
+        Ok(())
+    }
+
+    /// Prove checkpoint settlement has not finished or timed out during interaction.
+    pub fn confirm_checkpoint_held(&mut self) -> io::Result<()> {
+        self.control("confirm_checkpoint_held")?;
+        Ok(())
+    }
+
+    /// Release persistence and observe final turn usage without changing the draft.
+    pub fn release_checkpoint(&mut self) -> io::Result<Screen> {
+        let after = self.output.bytes()?.len();
+        self.control("release_checkpoint")?;
+        self.frame(after, |screen| screen.contains("3↑ 4↓"))
     }
 
     /// Complete the already-running provider and observe its real usage update outside the dragged pane.

@@ -435,3 +435,29 @@ fn progressive_terminal_replies_work_idle_and_during_execution() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn typing_and_resize_continue_while_completed_turn_checkpoint_is_held() -> TestResult {
+    workspace_support::with_checkpoint(|app| {
+        edit(app, b"checkpoint fixture", &["checkpoint fixture"])?;
+        submit(app, "checkpoint fixture")?;
+        app.hold_at_checkpoint()?;
+        app.confirm_checkpoint_held()?;
+        // Persistence is causally still blocked: no release is sent until after
+        // these actual terminal frames have acknowledged typing and navigation.
+        edit(app, b"next draft", &["next draft"])?;
+        app.input(b"\x1bb", |screen| screen.cursor.0 == 5)?;
+        edit(app, b"new ", &["next new draft"])?;
+        plain(&app.resize(120, 24)?, &["next new draft"])?;
+        let before = app.snapshot()?;
+        assert_eq!(before["provider_calls"], 1);
+        app.confirm_checkpoint_held()?;
+        plain(&app.release_checkpoint()?, &["next new draft"])?;
+        assert_eq!(
+            app.snapshot()?,
+            before,
+            "completion editing admitted another turn"
+        );
+        Ok("checkpoint fixture".to_owned())
+    })
+}
