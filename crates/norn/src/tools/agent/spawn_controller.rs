@@ -47,6 +47,7 @@ use crate::session::store::EventStore;
 pub(super) struct SpawnController {
     pub(super) provider: Arc<dyn Provider>,
     pub(super) executor: SubAgentExecutor,
+    pub(super) result_source: crate::session_view::ViewSource,
     pub(super) store: Arc<EventStore>,
     pub(super) loop_ctx: LoopContext,
     pub(super) tool_defs: Vec<ToolDefinition>,
@@ -82,6 +83,7 @@ impl SpawnController {
         let Self {
             provider,
             executor,
+            result_source,
             store,
             mut loop_ctx,
             tool_defs,
@@ -124,6 +126,12 @@ impl SpawnController {
         let mut closed_mailbox = None;
 
         loop {
+            let trigger = if initial.is_some() {
+                crate::agent::result_origin::ChildRunTrigger::InitialTask
+            } else {
+                crate::agent::result_origin::ChildRunTrigger::FollowupMessages
+            };
+            let run = crate::agent::result_origin::ChildRun::begin(&store, &result_source, trigger);
             let outcome = if let Some(task) = initial.take() {
                 AssertUnwindSafe(run_agent_step(AgentStepRequest {
                     provider: provider.as_ref(),
@@ -160,6 +168,7 @@ impl SpawnController {
                 .await
             };
 
+            let origin = run.finish(&store);
             let mut summary = match outcome {
                 Ok(step_outcome) => {
                     extract_outcome_summary(step_outcome, delivered_children.snapshot())
@@ -326,7 +335,14 @@ impl SpawnController {
                      the parent store; the child's result is still delivered",
                 );
             }
-            deliver_step_result(result_sender.as_ref(), child_id, &agent_role, &summary).await;
+            deliver_step_result(
+                result_sender.as_ref(),
+                child_id,
+                &agent_role,
+                &summary,
+                origin,
+            )
+            .await;
 
             if will_terminate {
                 if !stop_blocked {

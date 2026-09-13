@@ -35,6 +35,7 @@ use crate::session::store::EventStore;
 pub(super) struct ChildLaunch {
     pub(super) provider: Arc<dyn Provider>,
     pub(super) executor: SubAgentExecutor,
+    pub(super) result_source: crate::session_view::ViewSource,
     pub(super) store: Arc<EventStore>,
     pub(super) loop_ctx: LoopContext,
     pub(super) tool_defs: Vec<ToolDefinition>,
@@ -71,6 +72,7 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
     let ChildLaunch {
         provider,
         executor,
+        result_source,
         store,
         mut loop_ctx,
         tool_defs,
@@ -142,6 +144,7 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
     let controller = SpawnController {
         provider,
         executor,
+        result_source,
         store,
         loop_ctx,
         tool_defs,

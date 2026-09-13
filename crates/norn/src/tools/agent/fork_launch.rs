@@ -42,6 +42,7 @@ use crate::session::store::EventStore;
 pub(super) struct ForkLaunch {
     pub(super) provider: Arc<dyn Provider>,
     pub(super) executor: SubAgentExecutor,
+    pub(super) result_source: crate::session_view::ViewSource,
     pub(super) child_store: Arc<EventStore>,
     pub(super) parent_store: Arc<EventStore>,
     pub(super) loop_ctx: LoopContext,
@@ -115,6 +116,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
     let ForkLaunch {
         provider,
         executor,
+        result_source,
         child_store,
         parent_store,
         mut loop_ctx,
@@ -219,6 +221,11 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
             &mut fork_config,
             &model,
         );
+        let run = crate::agent::result_origin::ChildRun::begin(
+            &child_store,
+            &result_source,
+            crate::agent::result_origin::ChildRunTrigger::InitialTask,
+        );
         let step = std::panic::AssertUnwindSafe(run_agent_step(AgentStepRequest {
             provider: provider.as_ref(),
             executor: &executor,
@@ -235,6 +242,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         }))
         .catch_unwind()
         .await;
+        let origin = run.finish(&child_store);
         let mut outcome = match step {
             Ok(step_result) => {
                 if let Err(ref e) = step_result {
@@ -411,6 +419,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
             let (succeeded, formatted_message, error) =
                 crate::agent::fork::format_fork_outcome(fork_id, &outcome, &requirement_names);
             let result = ChildAgentResult {
+                origin: Some(origin),
                 agent_id: fork_id,
                 agent_role,
                 succeeded,

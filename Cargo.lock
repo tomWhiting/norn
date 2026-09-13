@@ -3425,6 +3425,7 @@ version = "0.1.0-preview.27"
 dependencies = [
  "async-trait",
  "chrono",
+ "chrono-tz",
  "comfy-table",
  "diffy",
  "dirs",

@@ -44,6 +44,10 @@ async fn signal_to_idle_child_queues_follow_up_and_wake_drains_mailbox() -> Test
     let initial = rx.try_recv()?;
     assert_eq!(initial.agent_id, child_id);
     assert!(initial.succeeded);
+    let initial_origin = initial
+        .origin
+        .as_ref()
+        .ok_or("initial result origin missing")?;
 
     let signal_tool = SignalAgentTool::new();
     let signal_out = signal_tool
@@ -95,6 +99,23 @@ async fn signal_to_idle_child_queues_follow_up_and_wake_drains_mailbox() -> Test
         .ok_or("required test value")?;
     assert_eq!(resumed.agent_id, child_id);
     assert!(resumed.succeeded);
+    let resumed_origin = resumed
+        .origin
+        .as_ref()
+        .ok_or("wake result origin missing")?;
+    assert_ne!(initial_origin.run_id, resumed_origin.run_id);
+    assert_eq!(initial_origin.source, resumed_origin.source);
+    assert_eq!(initial_origin.source.agent_id, child_id);
+    assert_eq!(
+        initial_origin.trigger,
+        crate::agent::result_origin::ChildRunTrigger::InitialTask
+    );
+    assert_eq!(
+        resumed_origin.trigger,
+        crate::agent::result_origin::ChildRunTrigger::FollowupMessages
+    );
+    assert!(resumed_origin.start_after_event.is_some());
+    assert_ne!(initial_origin.end_at_event, resumed_origin.end_at_event);
     assert!(
         resumed
             .formatted_message

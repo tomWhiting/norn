@@ -261,9 +261,18 @@ pub(super) async fn execute(
     })?;
     let child_store = Arc::clone(&branched.store);
     #[cfg(test)]
-    let child_store = ctx
-        .get_extension::<super::super::TestChildEventStore>()
-        .map_or(child_store, |override_store| Arc::clone(&override_store.0));
+    let child_store = match ctx.get_extension::<super::super::TestChildEventStore>() {
+        Some(override_store) => {
+            override_store
+                .0
+                .bind_view_source(&branched.binding, child_id, Some(infra.agent_id))
+                .map_err(|error| ToolError::ExecutionFailed {
+                    reason: format!("test child {child_id} binding: {error}"),
+                })?;
+            Arc::clone(&override_store.0)
+        }
+        None => child_store,
+    };
 
     let child_event_sender = ctx
         .get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
@@ -433,6 +442,8 @@ pub(super) async fn execute(
     // confirmation, so every Active child has a durable recipient timeline;
     // no blocking hook or other await exists between confirmation and the
     // synchronous controller launch.
+    let result_source =
+        super::super::result_source::capture(Arc::clone(&child_store), child_id).await?;
     let mailbox_lease = Arc::new(crate::agent::PendingMailboxLease::new());
     infra
         .pending_messages
@@ -454,6 +465,7 @@ pub(super) async fn execute(
     let handle = launch_child(ChildLaunch {
         provider: Arc::clone(&infra.provider),
         executor: child_executor,
+        result_source,
         store: child_store,
         loop_ctx: child_loop_ctx,
         tool_defs,

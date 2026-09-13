@@ -876,6 +876,7 @@ async fn deliver_fixture_child(
 ) -> io::Result<()> {
     tokio::time::sleep(Duration::from_millis(75)).await;
     let result = ChildAgentResult {
+        origin: None,
         agent_id: uuid::Uuid::new_v4(),
         agent_role: "spawn/worker".to_string(),
         succeeded: true,

@@ -111,6 +111,7 @@ pub(super) async fn deliver_step_result(
     child_id: Uuid,
     agent_role: &str,
     summary: &ChildOutcomeSummary,
+    origin: crate::agent::result_origin::ChildResultOrigin,
 ) {
     let succeeded = summary.status == AgentStatus::Completed;
     let subtree_usage = summary.usage.clone() + summary.children_usage.clone();
@@ -129,6 +130,7 @@ pub(super) async fn deliver_step_result(
             )
         };
         let result = ChildAgentResult {
+            origin: Some(origin),
             agent_id: child_id,
             agent_role: agent_role.to_owned(),
             succeeded,

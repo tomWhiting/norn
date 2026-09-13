@@ -18,6 +18,8 @@ use crate::provider::usage::Usage;
 /// turn.
 #[derive(Clone, Debug)]
 pub struct ChildAgentResult {
+    /// Producer-owned run facts; absent only when an embedder supplied no provenance.
+    pub origin: Option<super::result_origin::ChildResultOrigin>,
     /// Registry id of the completed child.
     pub agent_id: Uuid,
     /// Display role, e.g. "fork/gpt-5.4-mini" or "spawn/reviewer".
@@ -77,8 +79,13 @@ pub struct ChildAgentResult {
 /// trust.
 #[must_use]
 pub fn frame_child_result(result: &ChildAgentResult) -> String {
+    let origin = result.origin.as_ref().map_or_else(
+        || "unavailable".to_owned(),
+        |origin| origin.metadata().to_string(),
+    );
     format!(
-        "<agent_result from=\"{from}\" from_id=\"{from_id}\" succeeded=\"{succeeded}\">\n{content}\n</agent_result>",
+        "<agent_result from=\"{from}\" from_id=\"{from_id}\" succeeded=\"{succeeded}\" origin=\"{origin}\">\n{content}\n</agent_result>",
+        origin = escape_xml(&origin),
         from = escape_xml(&result.agent_role),
         from_id = result.agent_id,
         succeeded = result.succeeded,
@@ -107,6 +114,7 @@ mod tests {
 
     fn result_with_message(message: &str) -> ChildAgentResult {
         ChildAgentResult {
+            origin: None,
             agent_id: Uuid::new_v4(),
             agent_role: "spawn/worker".to_string(),
             succeeded: true,

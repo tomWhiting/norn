@@ -30,6 +30,7 @@ pub(crate) mod prompt_install;
 pub mod registry;
 pub(crate) mod registry_assembly;
 pub mod result_channel;
+pub mod result_origin;
 pub mod resume;
 pub(crate) mod session_open;
 pub mod session_spec;

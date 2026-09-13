@@ -559,3 +559,39 @@ Preview.27 source checks: 6578 standard workspace/all-target tests across 40 sui
 Preview.27 installed at 2026-09-13T14:33:55.102082+10:00 Melbourne from `a2e98bc40fb979baad3625e2a41d08e38ce40ba4`; SHA256 `c326e925be49d86c3963ecb0d76c411db96f244e746753df79dc8c4b333d0b4f`. 6578 standard tests across 40 suites passed, plus separate custom harnesses; strict workspace/all-target Clippy, fmt, AST and actual-CLI diagnostic/late-capability probes passed. Receipt `var/releases/preview.27-bounded-results-sourced-compaction/installation.json`; preview26 rollback preserved. Includes sourced compaction input and bounded child-result batches. No live sustained-traffic typing/flicker, independent review, venue pass or main landing claim. Existing sessions were not restarted.
 
 Preview.27 final-source review package is local at `var/reviews/preview27-20260913`; Tom owns submission. Cleanup removed 345,638,211 bytes across eight verified closed preview26 core library artifacts; current binaries, rollback and sessions retained.
+
+## D01/D07 — producer-owned child-result origin
+
+D01/D07 chronology; Mercury stale result report e2abc778-6e22-4456-8dad-a516ab2c8e2e, 13 September 2026 14:03 Melbourne. No delivery-delay cause established.
+
+Status: implemented_locally_verified_pending_independent_review.
+
+- R1: Every production spawn/fork result carries a fresh controller-run ID, actual bound source/session/store generation, initial-task versus follow-up trigger, original start/completion UTC timestamps and exact before/after event frontiers. Capture completion immediately after the step, before stop hooks or result-channel backpressure.
+
+- R2: Source binding is obtained before child confirmation/launch; missing/invalid bindings fail setup explicitly. A run ID identifies the controller invocation; event frontiers bound its timeline interval and do not claim every concurrent audit belongs to it. No invented task IDs or supersession inference.
+
+- R3: Preserve original provenance through framed model delivery and visible result detail. Metadata from embedders without provenance is explicitly unavailable; never stamp it with receipt time. Existing historical records are unchanged.
+
+- R4: Test persistent wake runs, spawn/fork source attribution, delayed delivery, escaping and absent provenance. No automatic result dropping or runtime-state override based on timestamps. Consumer receipt/admission receipts and structured recovery remain separate follow-on work.
+
+- R5: Keep the ordinary child-result body unchanged. Store origin as separately inspectable metadata, hidden in the ordinary conversation view; verify default and expanded metadata visibility using the existing renderer. Do not add a wall of run identifiers to every visible result.
+
+- R6: Acquire source validation on a blocking worker before confirmation; source/spool validation must not perform filesystem work on the asynchronous executor. Existing fault-injection store replacements must acquire the real child binding rather than disabling provenance checks.
+
+File wall: `crates/norn/src/agent/result_origin.rs`, `crates/norn/src/agent/result_origin_tests.rs`, `crates/norn/src/agent/result_channel.rs`, `crates/norn/src/agent/mod.rs`, `crates/norn/src/tools/agent/spawn/execute.rs`, `crates/norn/src/tools/agent/spawn_launch.rs`, `crates/norn/src/tools/agent/spawn_controller.rs`, `crates/norn/src/tools/agent/spawn_completion.rs`, `crates/norn/src/tools/agent/fork_tool.rs`, `crates/norn/src/tools/agent/fork_launch.rs`, `crates/norn/src/tools/agent/spawn/tests/mod.rs`, `crates/norn/src/tools/agent/spawn/tests/result_origin.rs`, `crates/norn/src/loop/linger.rs`, `crates/norn/src/loop/runner/tests/children_usage.rs`, `crates/norn-tui/src/app/child_results.rs`, `crates/norn-tui/tests/pty_smoke.rs`, `docs/planning/NORN-CONTINUATION-20260913.json`, `docs/planning/NORN-CONTINUATION-20260913.md`, `docs/release-notes/UNRELEASED.md`, `crates/norn/src/tools/agent/spawn/tests/signal_resume.rs`, `crates/norn/src/tools/agent/fork_tool/tests/hooks_lifecycle.rs`, `crates/norn-tui/Cargo.toml`, `Cargo.lock`, `crates/norn/src/tools/agent/mod.rs`, `crates/norn/src/tools/agent/result_source.rs`.
+
+Validation: 4742 core and 994 TUI tests passed, zero failed/ignored. Strict release workspace/all-target Clippy (live-api-smoke compiled only), fmt, 38-file AST and 30-file production LOC (maximum 484) passed. Logs: `var/verification/continuation-20260913/child-origin-core-tui-corrected.log` and `var/verification/continuation-20260913/child-origin-clippy-corrected.log`.
+
+Checks include the preserved uncommitted D13 draft. Origin commit excludes those 18 files. No final-source independent review, installation, venue acceptance or sustained live-traffic claim.
+
+First run: 4737 passed, four failures: one incorrect new empty-frontier assertion and three existing unbound replacement-store fixtures; corrected without weakening failure assertions.
+
+Child-result delivery follow-on:
+
+- TUI pending child prompts are currently VecDeque<String>; preserve a typed batch until real model admission before adding receipt/admission timestamps. Do not label framing time as delivery time.
+
+- loop/delivery_inputs.rs still drains child results until try_recv is empty; apply the finite-frontier rule to core/driven consumption and prove retained later arrivals.
+
+- Audit retention across append_and_notify failure: drain_child_results removes queued results and folds usage before persisting the batch. This is a source-control-flow finding, not a confirmed loss reproducer; preserve exact event identity across uncertain writes before adding replay.
+
+- External task links, consumer receipt/admission chronology, structured continuity recovery and sustained UI traffic acceptance remain open.

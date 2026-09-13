@@ -24,6 +24,7 @@ async fn buffered_child_results_fold_into_children_usage_at_step_start() -> Test
     let (tx, rx) = tokio::sync::mpsc::channel(4);
     for (input, output) in [(7_u64, 3_u64), (11, 6)] {
         tx.send(ChildAgentResult {
+            origin: None,
             agent_id: Uuid::new_v4(),
             agent_role: "spawn/worker".to_string(),
             succeeded: true,
@@ -112,6 +113,7 @@ async fn child_results_arriving_during_tool_iteration_reach_next_request() -> Te
         "send_child_result".to_string(),
         Box::new(move |_| {
             tx.try_send(ChildAgentResult {
+                origin: None,
                 agent_id: Uuid::new_v4(),
                 agent_role: "spawn/worker".to_string(),
                 succeeded: true,
@@ -199,6 +201,7 @@ async fn reused_loop_context_reports_each_steps_children_only() -> TestResult {
     use uuid::Uuid;
 
     let child_result = |input: u64, output: u64| ChildAgentResult {
+        origin: None,
         agent_id: Uuid::new_v4(),
         agent_role: "spawn/worker".to_string(),
         succeeded: true,

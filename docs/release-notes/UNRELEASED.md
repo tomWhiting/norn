@@ -1,3 +1,11 @@
+## Unreleased — identify the original child run
+
+Spawn and fork results now retain a producer-owned controller-run ID, actual session/store generation, initial-task or follow-up trigger, original start/completion times and exact before/after timeline frontiers. Completion is captured when the agent step returns, before wrapper hooks, cleanup or result delivery can delay it. Persistent wakes receive distinct run IDs. A timeline span can include concurrent audits; it does not claim exclusive event ownership or identify an external task-service record.
+
+Model-facing result frames preserve this structured origin, escaping opaque identifiers and retaining explicit unavailable provenance for embedders that supply none. Ordinary child-result text is unchanged; additional run details live in separately inspectable metadata, with Melbourne timestamps and daylight-saving handling. No old session is rewritten, no receipt timestamp is substituted for completion, and arrival order does not imply supersession.
+
+This change is not installed. Consumer receipt/admission records, structured continuity recovery and live UI performance acceptance remain open. Source binding is obtained on a blocking worker before child confirmation; fault-injection stores retain their actual child binding.
+
 ## 0.1.0-preview.27 — bounded result batches and sourced compaction
 
 The TUI now captures the available child-result queue once per batch. Results arriving during that batch remain queued for a later event-loop iteration, so a producer cannot keep extending the synchronous drain ahead of keyboard handling. Original result order, child attribution and model-delivery frames are preserved. This removes one starvation path; it does not establish that all reported typing lag or flicker is resolved. Installed in preview.27; see the installation receipt below.

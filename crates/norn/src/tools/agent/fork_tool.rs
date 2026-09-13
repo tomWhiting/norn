@@ -220,9 +220,18 @@ impl Tool for ForkTool {
         })?;
         let child_store = Arc::clone(&branched.store);
         #[cfg(test)]
-        let child_store = ctx
-            .get_extension::<super::TestChildEventStore>()
-            .map_or(child_store, |override_store| Arc::clone(&override_store.0));
+        let child_store = match ctx.get_extension::<super::TestChildEventStore>() {
+            Some(override_store) => {
+                override_store
+                    .0
+                    .bind_view_source(&branched.binding, fork_id, Some(infra.agent_id))
+                    .map_err(|error| ToolError::ExecutionFailed {
+                        reason: format!("test child {fork_id} binding: {error}"),
+                    })?;
+                Arc::clone(&override_store.0)
+            }
+            None => child_store,
+        };
         let forked_session_id = branched.session_id.clone();
 
         // The seed copy is the parent history UP TO the anchor the
@@ -408,6 +417,8 @@ impl Tool for ForkTool {
         // The recipient timeline and controller lease are installed before
         // the reservation becomes Active. There is no await or fallible
         // assembly after confirmation and before the synchronous launch.
+        let result_source =
+            super::result_source::capture(Arc::clone(&child_store), fork_id).await?;
         let mailbox_lease = Arc::new(crate::agent::PendingMailboxLease::new());
         infra
             .pending_messages
@@ -430,6 +441,7 @@ impl Tool for ForkTool {
             ForkLaunch {
                 provider: Arc::clone(&infra.provider),
                 executor,
+                result_source,
                 child_store,
                 parent_store: Arc::clone(&infra.event_store),
                 loop_ctx,

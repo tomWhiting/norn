@@ -15,6 +15,7 @@ mod policy_validation;
 mod prompt_authority;
 mod reasoning;
 mod reclamation;
+mod result_origin;
 mod runtime_model;
 mod signal_resume;
 mod skills;

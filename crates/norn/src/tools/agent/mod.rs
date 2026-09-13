@@ -4,6 +4,8 @@
 //! Implementations live in named submodules; this file only declares them
 //! and re-exports the public surface.
 
+pub(crate) mod result_source;
+
 pub mod coord;
 pub(crate) mod delegation;
 pub(super) mod fork_context;

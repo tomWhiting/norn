@@ -136,6 +136,7 @@ async fn fork_emits_typed_lifecycle_events_on_channel_and_parent_store() -> Test
         out.content,
     );
     let handle = remove_fork_handle(&ctx, fork_id)?;
+    let child_source = handle.event_store.history_reader()?.source().clone();
     handle.join_handle.await?;
 
     // Live carrier: child-tagged Started then Completed, with the
@@ -241,6 +242,18 @@ async fn fork_emits_typed_lifecycle_events_on_channel_and_parent_store() -> Test
     // childless fork's subtree total equals its own usage (W3.6).
     let result = rx.try_recv()?;
     assert_eq!(result.agent_id, fork_id);
+    let origin = result.origin.as_ref().ok_or("fork result origin missing")?;
+    assert_eq!(origin.source, child_source);
+    assert_eq!(origin.source.parent_agent_id, Some(parent));
+    assert_eq!(
+        origin.trigger,
+        crate::agent::result_origin::ChildRunTrigger::InitialTask
+    );
+    assert_eq!(
+        origin.start_after_event, None,
+        "this ephemeral fork starts with empty inherited history"
+    );
+    assert!(origin.end_at_event.is_some());
     assert_eq!(result.usage.input_tokens, 5);
     assert_eq!(result.usage.output_tokens, 2);
     assert_eq!(result.subtree_usage.input_tokens, 5);

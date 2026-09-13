@@ -8,6 +8,7 @@ authors.workspace = true
 
 [dependencies]
 chrono = { workspace = true }
+chrono-tz = "0.9"
 comfy-table = { version = "7.2", features = ["custom_styling"] }
 diffy = { workspace = true }
 dirs = { workspace = true }

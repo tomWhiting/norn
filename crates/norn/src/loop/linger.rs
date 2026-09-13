@@ -480,6 +480,7 @@ mod tests {
 
     fn child_result(role: &str, message: &str) -> ChildAgentResult {
         ChildAgentResult {
+            origin: None,
             agent_id: Uuid::new_v4(),
             agent_role: role.to_string(),
             succeeded: true,
