@@ -612,10 +612,46 @@ File wall: `crates/norn/src/agent/mod.rs`, `crates/norn/src/agent/result_batch.r
 
 Follow-on findings:
 
-- loop/inbound.rs InboundChannel::drain and loop/active_input.rs ActiveInputReceiver::drain still run try_recv until empty. Bound by captured frontier; retain peeked updates before later steers and active-input acknowledgements. No new capacity defaults.
+- Implemented in input_frontier_and_flood: InboundChannel::drain and ActiveInputReceiver::drain use captured finite frontiers, preserving peeked-first order and existing acknowledgement behaviour. Validation is recorded in that row.
 
-- Extend actual-App PTY support/retained_workspace.rs and interrupt_exit.rs with sustained typed message-audit traffic while provider is held. Assert draft remains editable, real frames exclude audit clutter, cancellation/exit restores terminal; report measured input-to-frame latency, not a native-performance claim from a generous deadline.
+- Actual-App message_flood PTY now covers a 256-message backlog plus concurrent typed deliveries during editing and confirmed exit; source, measured short-probe observations and long-session/physical-terminal limits are recorded in input_frontier_and_flood.
 
 - Child batches still leave the channel before persistence. Retained typed batch and immutable prepared event identity are required for uncertain-append recovery. Existing agent/pending_delivery.rs caches exact events for pending agent messages; do not blindly copy or generate a new ID on retry.
 
 Finite child-delivery validation: 4747 core and 991 TUI tests passed, zero failed/ignored; strict release workspace/all-target Clippy (live-api-smoke compiled only), fmt, 24-file AST and 21-file production LOC (maximum 484) passed. `var/verification/continuation-20260913/child-frontier-core-tui.log` and `child-frontier-clippy.log`. Checked tree includes preserved D13 draft, excluded from this commit. No installation, independent review, venue verdict, failed-append recovery or sustained-traffic terminal performance claim.
+
+## U04 — finite input drains and actual terminal message flood
+
+U04 user reports conversation agent-message flood, typing blocked and difficult exit; child_delivery_frontier identified ordinary inbound and active-input unbounded drains.
+
+- R1: Bound ordinary inbound and active-input synchronous collection to the captured queue frontier. Preserve peeked-before-channel order, update-only suppression, wake semantics, original content and delivery acknowledgement. Reuse the existing finite queue helper, adding unbounded receiver support without product limits.
+
+- R2: Use an actual-App PTY with held mock provider and concurrently persisted/broadcast typed message deliveries. Keep producer running during draft editing and Ctrl+C confirmation/exit. Assert no metadata clutter in ordinary conversation, draft retention, terminal restoration and unchanged provider admission. Report observed input-to-frame timings separately from generous fixture deadlines.
+
+- R3: Own and stop every fixture worker on success/failure; all fixture state stays under repository-local TMPDIR and normal target. Preserve D13 draft unchanged unless a demonstrated UI fault requires an explicitly extended wall.
+
+- R4: Strict Clippy, fmt, AST, production LOC, focused queue/input regressions and actual terminal test; commit/push with exact limits and installed-state distinction.
+
+File wall: `crates/norn/src/agent/result_batch.rs`, `crates/norn/src/agent/result_batch_tests.rs`, `crates/norn/src/loop/inbound.rs`, `crates/norn/src/loop/active_input.rs`, `crates/norn-tui/tests/message_flood.rs`, `crates/norn-tui/tests/support/message_flood.rs`, `crates/norn-tui/tests/support/retained_workspace.rs`, `docs/planning/NORN-CONTINUATION-20260913.json`, `docs/planning/NORN-CONTINUATION-20260913.md`, `docs/release-notes/UNRELEASED.md`.
+
+Input/flood terminal evidence:
+
+- first_run: Failed fixture assertion for a trailing space: screen text trims trailing whitespace. Corrected to require both rendered trimmed text and exact cursor position; no product change for this failure.
+
+- short_probe: 14 keys with concurrent deliveries: 1.403-2.009ms input-to-observed-frame; 1.502ms second Ctrl+C-to-restored; 23 messages observed by exit.
+
+- backlog_probe: 256 initial deliveries exceeded the fixture 32-event broadcast capacity; ongoing paced deliveries continued during 47 keys and exit. 402 messages observed by exit; 2.096-4.995ms input-to-observed-frame, 13.744ms second Ctrl+C-to-restored.
+
+- log: var/verification/continuation-20260913/input-flood-terminal-backlog.log
+
+- observations: var/verification/continuation-20260913/input-flood-terminal-observations.json
+
+- limits: Mock-provider actual-App PTY, 0.24-second bounded exercise including fixture overhead. Not physical Ghostty/Herdr/Manifold or long-session flicker acceptance. D13 draft present during checks; not installed.
+
+- running_processes: Five visible Norn process start times predate the preview27 installation. Read-only census in var/verification/continuation-20260913/input-flood-running-processes.json; no restart or exact running-binary version claim.
+
+Next execution slice: Prepare and install preview28 with the committed child-origin, finite result/input drains and accepted-input hook-cancellation fixes; preserve the unfinished D13 draft and verify the actual candidate terminal. Then complete D13 source-bound agent selection, navigation, per-agent drafts and human-authored messaging without retargeting the running root. Long-session physical UI acceptance, retained failed-result admission and the full ordered programme remain open.
+
+Input/flood final validation: 5772 tests in six suites passed (core 4749, TUI 991, interrupt/exit 3, Iridium composer 16, message flood 2, retained workspace 11), zero failed/ignored. Strict release workspace/all-target Clippy (live-api-smoke compiled only), fmt, 25-file AST and 20-file production LOC (maximum 484) passed. Log `var/verification/continuation-20260913/input-flood-regressions.log`. Checks include preserved D13 draft, excluded from this commit. No installation, final-source independent review, venue/main landing, long-session or physical-terminal acceptance.
+
+Same final source in broader regression run: 428 messages observed by exit; 2.610–5.575ms input-to-observed-frame, 16.818ms second Ctrl+C-to-restored; 0.25-second bounded exercise. Logs preserve both runs.

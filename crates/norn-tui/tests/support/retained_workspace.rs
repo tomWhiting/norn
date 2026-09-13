@@ -35,6 +35,9 @@ use crate::retained_screen::{self, Lifecycle, Screen};
 /// Bounded fixture waits, not a latency claim or product timeout.
 #[path = "completion_checkpoint.rs"]
 mod completion_checkpoint;
+#[path = "message_flood.rs"]
+mod message_flood;
+pub use message_flood::verify as verify_message_flood;
 
 const DEADLINE: Duration = Duration::from_secs(15);
 const CHILD_ENV: &str = "NORN_RETAINED_WORKSPACE_CHILD";
@@ -147,6 +150,7 @@ async fn child_app() -> TestResult {
     })?;
     let control_store = Arc::clone(&store);
     let control_provider = Arc::clone(&inner);
+    let control_events = root_event_sender.clone();
     let control_thread = std::thread::spawn(move || {
         serve_control(
             control,
@@ -154,6 +158,7 @@ async fn child_app() -> TestResult {
             &control_provider,
             &gate,
             checkpoint.as_deref(),
+            &control_events,
         )
     });
     let result = Box::pin(norn_tui::run_app(norn_tui::TuiInputs {
@@ -296,68 +301,101 @@ fn census(store: &EventStore, provider: &MockProvider) -> Value {
 
 fn serve_control(
     stream: TcpStream,
-    store: &EventStore,
+    store: &Arc<EventStore>,
     provider: &MockProvider,
     gate: &Notify,
     checkpoint: Option<&completion_checkpoint::Gate>,
+    events: &AgentEventSender,
 ) -> io::Result<()> {
     let mut stream = BufReader::new(stream);
-    loop {
-        let mut line = String::new();
-        if stream.read_line(&mut line)? == 0 {
-            return Ok(());
-        }
-        let request: Value = serde_json::from_str(&line)?;
-        let operation = request.get("operation").and_then(Value::as_str);
-        let response = match operation {
-            Some("snapshot") => census(store, provider),
-            Some("append_history") => {
-                let content = request
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| io::Error::other("append_history fixture content missing"))?;
-                let event = SessionEvent::AssistantMessage {
-                    base: EventBase::new(None),
-                    response_items: Vec::new(),
-                    content: content.to_owned(),
-                    thinking: String::new(),
-                    reasoning: Vec::new(),
-                    tool_calls: Vec::new(),
-                    usage: EventUsage::default(),
-                    stop_reason: "end_turn".to_owned(),
-                    response_id: None,
-                };
-                let event_id = event.base().id.clone();
-                store.append(event).map_err(|error| {
-                    io::Error::other(format!("append_history fixture: {error}"))
-                })?;
-                json!({"event_id": event_id})
+    let mut traffic: Option<message_flood::Traffic> = None;
+    let result = (|| {
+        loop {
+            let mut line = String::new();
+            if stream.read_line(&mut line)? == 0 {
+                return Ok(());
             }
-            Some("release") => {
-                gate.notify_one();
-                json!({"released": true})
-            }
-            Some("wait_checkpoint" | "release_checkpoint" | "confirm_checkpoint_held") => {
-                let checkpoint =
-                    checkpoint.ok_or_else(|| io::Error::other("checkpoint fixture not enabled"))?;
-                if operation == Some("wait_checkpoint") {
-                    checkpoint.wait_entered()?;
-                } else if operation == Some("confirm_checkpoint_held") {
-                    checkpoint.confirm_held()?;
-                } else {
-                    checkpoint.release()?;
+            let request: Value = serde_json::from_str(&line)?;
+            let operation = request.get("operation").and_then(Value::as_str);
+            let response = match operation {
+                Some("snapshot") => census(store, provider),
+                Some("start_flood") => {
+                    if traffic.is_some() {
+                        return Err(io::Error::other("message flood already running"));
+                    }
+                    let started = message_flood::Traffic::start(Arc::clone(store), events.clone())?;
+                    let count = started.count();
+                    traffic = Some(started);
+                    json!({"count": count})
                 }
-                json!({"checkpoint": operation})
+                Some("flood_count") => {
+                    let traffic = traffic
+                        .as_ref()
+                        .ok_or_else(|| io::Error::other("message flood not running"))?;
+                    json!({"count": traffic.count()})
+                }
+                Some("append_history") => {
+                    let content =
+                        request
+                            .get("content")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| {
+                                io::Error::other("append_history fixture content missing")
+                            })?;
+                    let event = SessionEvent::AssistantMessage {
+                        base: EventBase::new(None),
+                        response_items: Vec::new(),
+                        content: content.to_owned(),
+                        thinking: String::new(),
+                        reasoning: Vec::new(),
+                        tool_calls: Vec::new(),
+                        usage: EventUsage::default(),
+                        stop_reason: "end_turn".to_owned(),
+                        response_id: None,
+                    };
+                    let event_id = event.base().id.clone();
+                    store.append(event).map_err(|error| {
+                        io::Error::other(format!("append_history fixture: {error}"))
+                    })?;
+                    json!({"event_id": event_id})
+                }
+                Some("release") => {
+                    gate.notify_one();
+                    json!({"released": true})
+                }
+                Some("wait_checkpoint" | "release_checkpoint" | "confirm_checkpoint_held") => {
+                    let checkpoint = checkpoint
+                        .ok_or_else(|| io::Error::other("checkpoint fixture not enabled"))?;
+                    if operation == Some("wait_checkpoint") {
+                        checkpoint.wait_entered()?;
+                    } else if operation == Some("confirm_checkpoint_held") {
+                        checkpoint.confirm_held()?;
+                    } else {
+                        checkpoint.release()?;
+                    }
+                    json!({"checkpoint": operation})
+                }
+                Some("close") => json!({"closed": true}),
+                _ => return Err(io::Error::other("unknown fixture control operation")),
+            };
+            serde_json::to_writer(stream.get_mut(), &response)?;
+            stream.get_mut().write_all(b"\n")?;
+            stream.get_mut().flush()?;
+            if operation == Some("close") {
+                return Ok(());
             }
-            Some("close") => json!({"closed": true}),
-            _ => return Err(io::Error::other("unknown fixture control operation")),
-        };
-        serde_json::to_writer(stream.get_mut(), &response)?;
-        stream.get_mut().write_all(b"\n")?;
-        stream.get_mut().flush()?;
-        if operation == Some("close") {
-            return Ok(());
         }
+    })();
+    let cleanup = match traffic {
+        Some(traffic) => traffic.finish(),
+        None => Ok(()),
+    };
+    match (result, cleanup) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(error), Err(cleanup)) => Err(io::Error::other(format!(
+            "fixture control: {error}; producer cleanup: {cleanup}"
+        ))),
     }
 }
 

@@ -135,14 +135,10 @@ pub struct ActiveInputReceiver {
 }
 
 impl ActiveInputReceiver {
-    /// Drain every currently buffered active input without awaiting.
+    /// Drain the captured active-input frontier; later arrivals wait for the next boundary.
     #[must_use]
     pub fn drain(&mut self) -> Vec<ActiveInput> {
-        let mut drained = Vec::new();
-        while let Ok(input) = self.rx.try_recv() {
-            drained.push(input);
-        }
-        drained
+        crate::agent::result_batch::ready_unbounded_frontier(&mut self.rx).collect()
     }
 }
 

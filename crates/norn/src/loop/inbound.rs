@@ -185,7 +185,7 @@ impl InboundChannel {
         }
     }
 
-    /// Drain all currently-buffered messages without awaiting.
+    /// Drain the captured queue frontier without awaiting. Later arrivals remain queued.
     ///
     /// Returns the messages in the order they were sent — anything
     /// buffered by an earlier [`Self::steer_ready`] await first (it
@@ -194,9 +194,7 @@ impl InboundChannel {
     /// disconnect.
     pub fn drain(&mut self) -> Vec<ChannelMessage> {
         let mut drained = std::mem::take(&mut self.peeked);
-        while let Ok(msg) = self.rx.try_recv() {
-            drained.push(msg);
-        }
+        drained.extend(crate::agent::result_batch::ready_frontier(&mut self.rx));
         drained
     }
 

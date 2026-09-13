@@ -45,3 +45,41 @@ fn disconnected_frontier_retains_every_buffered_result() -> Result<(), Box<dyn s
     );
     Ok(())
 }
+
+#[test]
+fn unbounded_refill_stays_after_original_frontier() -> Result<(), Box<dyn std::error::Error>> {
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    sender.send(1)?;
+    sender.send(2)?;
+    {
+        let mut batch = super::ready_unbounded_frontier(&mut receiver);
+        assert_eq!(batch.next(), Some(1));
+        sender.send(3)?;
+        assert_eq!(batch.next(), Some(2));
+        sender.send(4)?;
+        assert_eq!(batch.next(), None);
+    }
+    drop(sender);
+    assert_eq!(
+        super::ready_unbounded_frontier(&mut receiver).collect::<Vec<_>>(),
+        [3, 4]
+    );
+    assert!(
+        super::ready_unbounded_frontier(&mut receiver)
+            .next()
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn unbounded_empty_frontier_keeps_later_input() -> Result<(), Box<dyn std::error::Error>> {
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    {
+        let mut batch = super::ready_unbounded_frontier(&mut receiver);
+        sender.send(1)?;
+        assert_eq!(batch.next(), None);
+    }
+    assert_eq!(receiver.try_recv()?, 1);
+    Ok(())
+}

@@ -1,3 +1,9 @@
+## Unreleased — finite inbound/input drains and terminal flood coverage
+
+Ordinary inbound and active human-input collection now stop at the captured queue frontier. Later arrivals stay queued; earlier peeked updates retain their position and do not independently wake an idle agent. No new runtime cap or timeout is introduced.
+
+A real-App PTY fixture now creates a 256-message backlog and continues delivering typed messages while the user edits a draft and confirms Ctrl+C exit. The bounded probe preserved the draft, hid transport-audit clutter, restored terminal modes and made no extra provider call. Observed keystroke-to-frame times were 2.096–4.995 ms and second-Ctrl+C-to-restoration was 13.744 ms, including fixture overhead; this is not a physical-terminal or long-session performance claim. This source is not installed.
+
 ## Unreleased — finite core result batches and hook cancellation
 
 The core runner and TUI share the same finite receiver-batch helper. New arrivals remain queued for a later boundary, preserving order without adding a new count or time limit. Empty and disconnected channels retain the same semantics.
